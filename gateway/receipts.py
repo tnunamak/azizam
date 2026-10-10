@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
+from gateway.model_ids import display_model_id
 from gateway.backends.request_shape import (
     TERMINAL_REASONS,
     sanitize_request_shape_fields_for_admin,
@@ -427,6 +428,9 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
         out.update(sanitize_admin_metadata(metadata))
         return out
     client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+    for model_field in ("requested_model", "resolved_model"):
+        if isinstance(client_data.get(model_field), str):
+            client_data[model_field] = display_model_id(client_data[model_field])
     if "refusal" in client_data:
         refusal = sanitize_refusal(client_data.pop("refusal"))
         if refusal is not None:

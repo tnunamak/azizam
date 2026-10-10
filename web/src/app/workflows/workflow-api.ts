@@ -1,3 +1,5 @@
+import type { WorkflowAvailability } from "@/lib/workflow-availability";
+
 export interface WorkflowInput {
   name: string;
   type: string;
@@ -10,6 +12,17 @@ export interface WorkflowInput {
   required?: boolean;
   accepted: boolean;
   description?: string;
+  /** Set when the manifest declares a media file; its JSON type is still "string". */
+  asset?: boolean;
+  /** Short noun phrase the manifest declares, such as "a face photo". */
+  label?: string;
+}
+
+export interface WorkflowOutput {
+  name: string;
+  media_type?: string;
+  description?: string;
+  label?: string;
 }
 
 export interface Workflow {
@@ -20,9 +33,12 @@ export interface Workflow {
   description: string;
   technical_notes?: string;
   inputs: WorkflowInput[];
-  outputs?: { name: string; media_type?: string; description?: string }[];
+  outputs?: WorkflowOutput[];
   engine_binding: string | null;
-  availability: { status: string; reason_code: string; available?: boolean };
+  availability: WorkflowAvailability & {
+    status: string;
+    reason_code: string;
+  };
   typical_seconds: number | null;
   aliases: string[];
   examples: { curl: string; python: string; javascript: string };

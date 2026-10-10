@@ -47,25 +47,27 @@ export function PageHeader({
   const longSubtitle = copy && wordCount(copy) > 8 ? copy : null;
 
   return (
-    <header className={tight ? "mb-6" : "mb-8"}>
-      <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+    // DESIGN "Spacing and page geometry": 24 from the header to the first
+    // section, 4 from the title to a one-line subtitle.
+    <header className="mb-(--space-title)">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-balance">
+          <h1 className="text-title text-balance">
             {title}
             {typeof count === "number" ? (
-              <span className="text-subtle-foreground figures ml-2.5 text-lg font-normal">
+              <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
                 {count}
               </span>
             ) : null}
           </h1>
           {shortSubtitle && (
-            <p className="text-muted-foreground mt-2 max-w-2xl text-sm">
+            <p className="text-muted-foreground text-meta mt-1 max-w-2xl">
               {shortSubtitle}
             </p>
           )}
           {longSubtitle && (
-            <details className="text-muted-foreground mt-2 max-w-2xl text-sm">
-              <summary className="min-h-11 w-fit cursor-pointer py-3">
+            <details className="text-muted-foreground text-meta mt-1 max-w-2xl">
+              <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
                 About this page
               </summary>
               <p className="mt-2">{longSubtitle}</p>

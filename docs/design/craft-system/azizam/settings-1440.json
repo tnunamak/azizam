@@ -1,0 +1,1207 @@
+{
+ "scope": "main",
+ "url": "/ui/settings/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 1440,
+   "h": 900
+  },
+  "pageHeight": 900,
+  "sidebarWidth": 232,
+  "main": {
+   "x": 236,
+   "w": 1200,
+   "padding": "40px 48px 48px 48px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1024px",
+  "contentMaxWidthEl": "div.max-w-5xl",
+  "contentLeftFromViewport": 284,
+  "contentRightFromViewport": 132,
+  "contentLeftFromMainEdge": 48,
+  "contentRightFromMainEdge": 128,
+  "titleTop": 45,
+  "titleTopFromMain": 45,
+  "title": {
+   "text": "Settings",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.max-w-5xl",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 40,
+    "height": 40,
+    "sample": "Settings"
+   },
+   {
+    "tag": "nav",
+    "classes": "mb-2 flex gap-2 overflow-x-auto pb-3",
+    "top": 112,
+    "height": 44,
+    "sample": "Instance Sign-in Defaults Media admissio"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 164,
+    "height": 113,
+    "sample": "Instance Azizam https://ai.household.exa"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 277,
+    "height": 113,
+    "sample": "Sign-in Built-in accounts and identity p"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 390,
+    "height": 113,
+    "sample": "Defaults Everyone People can create apps"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 503,
+    "height": 113,
+    "sample": "Media admission Queue depth follows runt"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 616,
+    "height": 105,
+    "sample": "Extensions No extensions installed Edit"
+   },
+   {
+    "tag": "section",
+    "classes": "grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10",
+    "top": 721,
+    "height": 113,
+    "sample": "Advanced Redacted configuration snapshot"
+   }
+  ],
+  "sectionGaps": [
+   32,
+   8,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 32,
+    "from": "Settings",
+    "to": "Instance Sign-in Defaults Medi"
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 8,
+    "from": "Instance Sign-in Defaults Medi",
+    "to": "Instance Azizam https://ai.hou"
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 0,
+    "from": "Instance Azizam https://ai.hou",
+    "to": "Sign-in Built-in accounts and "
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 0,
+    "from": "Sign-in Built-in accounts and ",
+    "to": "Defaults Everyone People can c"
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 0,
+    "from": "Defaults Everyone People can c",
+    "to": "Media admission Queue depth fo"
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 0,
+    "from": "Media admission Queue depth fo",
+    "to": "Extensions No extensions insta"
+   },
+   {
+    "parent": "div.max-w-5xl",
+    "gap": 0,
+    "from": "Extensions No extensions insta",
+    "to": "Advanced Redacted configuratio"
+   }
+  ],
+  "headingGaps": [
+   {
+    "tag": "h2",
+    "text": "Instance",
+    "gap": -48
+   },
+   {
+    "tag": "h2",
+    "text": "Sign-in",
+    "gap": -48
+   },
+   {
+    "tag": "h2",
+    "text": "Defaults",
+    "gap": -48
+   },
+   {
+    "tag": "h2",
+    "text": "Media admission",
+    "gap": -48
+   },
+   {
+    "tag": "h2",
+    "text": "Extensions",
+    "gap": -40
+   },
+   {
+    "tag": "h2",
+    "text": "Advanced",
+    "gap": -48
+   }
+  ]
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Settings",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 45,
+    "w": 84.1,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Instance",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 112,
+    "w": 79,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Sign-in",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 371,
+    "y": 112,
+    "w": 66,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Defaults",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 445,
+    "y": 112,
+    "w": 79,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Media admission",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 532,
+    "y": 112,
+    "w": 131,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Extensions",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 671,
+    "y": 112,
+    "w": 93,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Advanced",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 772,
+    "y": 112,
+    "w": 87,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Instance",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 197,
+    "w": 220,
+    "h": 48,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Azizam",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 197,
+    "w": 337,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "https://ai.household.example · Follows d",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 221,
+    "w": 337,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 197,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Sign-in",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 310,
+    "w": 220,
+    "h": 48,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Built-in accounts and identity provider",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 310,
+    "w": 243,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "No identity provider enabled",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 334,
+    "w": 243,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 310,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Defaults",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 423,
+    "w": 220,
+    "h": 48,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Everyone",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 423,
+    "w": 366,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "People can create apps · Personal app cr",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 447,
+    "w": 366,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 423,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Media admission",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 536,
+    "w": 220,
+    "h": 48,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Queue depth follows runtime default",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 536,
+    "w": 238,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "No media admission rules set",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 560,
+    "w": 238,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 536,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Extensions",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 649,
+    "w": 220,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "No extensions installed",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 649,
+    "w": 149,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 649,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Advanced",
+   "role": "h2",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 284,
+    "y": 754,
+    "w": 220,
+    "h": 48,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Redacted configuration snapshot",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 754,
+    "w": 210,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Read-only export for inspection.",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 24,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 544,
+    "y": 778,
+    "w": 210,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Edit",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 1158,
+    "y": 754,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Instance",
+   "height": 32,
+   "width": 79,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 284,
+    "y": 112,
+    "w": 79,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Sign-in",
+   "height": 32,
+   "width": 66,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 371,
+    "y": 112,
+    "w": 66,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Defaults",
+   "height": 32,
+   "width": 79,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 445,
+    "y": 112,
+    "w": 79,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Media admission",
+   "height": 32,
+   "width": 131,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 532,
+    "y": 112,
+    "w": 131,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Extensions",
+   "height": 32,
+   "width": 93,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 671,
+    "y": 112,
+    "w": 93,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Advanced",
+   "height": 32,
+   "width": 87,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 772,
+    "y": 112,
+    "w": 87,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Instance",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 197,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Sign-in",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 310,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Defaults",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 423,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Media admission",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 536,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Extensions",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 649,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Edit Advanced",
+   "height": 40,
+   "width": 58,
+   "borderRadius": "6px",
+   "padding": "0px 16px 0px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 1158,
+    "y": 754,
+    "w": 58,
+    "h": 40,
+    "inViewport": true
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "div.max-w-5xl",
+   "count": 6,
+   "visualRows": 6,
+   "perRow": 1,
+   "itemHeights": [
+    113,
+    113,
+    113,
+    113,
+    105,
+    113
+   ],
+   "heights": [
+    113,
+    113,
+    113,
+    113,
+    105,
+    113
+   ],
+   "gaps": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 670,
+   "sample": "Instance Azizam https://ai.household.exa",
+   "box": {
+    "x": 284,
+    "y": 40,
+    "w": 1024,
+    "h": 794,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "nav.mb-2.flex.gap-2.overflow-x-auto",
+   "count": 6,
+   "visualRows": 1,
+   "perRow": 6,
+   "itemHeights": [
+    32,
+    32,
+    32,
+    32,
+    32,
+    32
+   ],
+   "heights": [
+    32
+   ],
+   "gaps": [],
+   "columnGaps": [
+    8,
+    8,
+    8,
+    8,
+    8
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 32,
+   "sample": "Instance",
+   "box": {
+    "x": 284,
+    "y": 112,
+    "w": 1024,
+    "h": 44,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {},
+ "textColors": {
+  "rgb(16, 35, 42)": 25,
+  "rgb(61, 79, 85)": 5
+ },
+ "bgColors": {
+  "rgb(255, 255, 255)": 6
+ },
+ "surface": "settings",
+ "width": 1440,
+ "actualRoute": "/ui/settings/",
+ "bodyTextLength": 527
+}

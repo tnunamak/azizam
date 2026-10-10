@@ -78,6 +78,7 @@ import {
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
+import { safeModelId } from "@/lib/model-name";
 import { api } from "@/lib/api";
 import {
   MAKING_COPY,
@@ -1609,12 +1610,14 @@ function CreationViewer({
                     label="Model name"
                     value={
                       asset.model ? (
-                        <span className="font-mono text-xs">{asset.model}</span>
+                        <span className="font-mono text-xs">
+                          {safeModelId(asset.model)}
+                        </span>
                       ) : (
                         ""
                       )
                     }
-                    title={asset.model || undefined}
+                    title={asset.model ? safeModelId(asset.model) : undefined}
                   />
                   <Detail label="Seed" value={asset.seed ?? ""} />
                   {asset.source ? (
@@ -2082,11 +2085,9 @@ export default function LibraryPage() {
         >
           <SelectTrigger
             aria-label="Person"
-            // Match the segmented control and Filters (40 px) above phone width.
-            className={cn(
-              "sm:data-[size=default]:h-10",
-              place === "sheet" ? "w-full" : "w-auto min-w-40",
-            )}
+            // A toolbar control: 32, like the segments and Filters (44 on a phone).
+            size="sm"
+            className={place === "sheet" ? "w-full" : "w-auto min-w-40"}
           >
             <SelectValue />
           </SelectTrigger>
@@ -2200,6 +2201,7 @@ export default function LibraryPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search your creations"
+            size="sm"
             className="pl-9"
           />
         </label>

@@ -89,7 +89,7 @@ export function errorCopy(
     );
   if (status !== null && status >= 500)
     return result("The gateway could not complete this request.", "retry");
-  if (error instanceof TypeError)
+  if (error instanceof TypeError || code === "network_unavailable")
     return result(
       "The gateway could not be reached. Check your connection.",
       "retry",

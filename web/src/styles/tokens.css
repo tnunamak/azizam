@@ -58,7 +58,7 @@
   --success-tint: #e3f3ea;
   --success-fill: #2e9e63;
   --warning: #b45309;
-  --warning-tint: #fdf1dc;
+  --warning-tint: #fef4e3; /* 4.6:1 under the Degraded badge's ink */
   --warning-fill: #d97706;
   --danger: var(--destructive);
   --danger-tint: #fce9e7;
@@ -71,6 +71,14 @@
   --blocked-fill: #5b3a9e;
   --neutral: #6a7c81;
   --nocheck-fill: #c9d3d6;
+
+  /* Charts (DESIGN "Colour budget"): one series takes --chart-1; a
+     breakdown takes at most --chart-2 and --chart-3 plus Other in the
+     neutral. Each fill is 3:1 or better on the card (state_palette.py). */
+  --chart-1: var(--primary);
+  --chart-2: #2f8f9b;
+  --chart-3: #8c7a55;
+  --chart-other: var(--neutral);
 
   /* Household people: a stable hue per person, ink text on top */
   --person-ink: #10232a;
@@ -93,7 +101,8 @@
 
   /* Shape */
   --radius: 6px; /* controls: buttons, inputs, menus */
-  --radius-card: 10px; /* panels and dialogs */
+  --radius-card: 8px; /* cards, panels, dialogs and popovers */
+  --radius-badge: 4px; /* status badges and chips */
   --radius-media: 6px; /* creation tiles */
 
   /* Elevation: borders build structure; shadows only lift overlays */
@@ -110,6 +119,46 @@
   --rail-width: 72px;
   --content-max: 1200px;
   --overlay: rgb(6 22 27 / 45%);
+
+  /* Page geometry (DESIGN "System numbers v2"). --page-pad and --page-top
+     step down on narrower screens in the media queries below. */
+  --page-pad: 2rem;
+  --page-top: 2rem;
+  --content-read: 720px; /* settings, detail, Status and the Try form */
+  --space-section: 2rem; /* between sections, always */
+  --space-heading: 0.75rem; /* a section heading to its content */
+  --space-title: 1.5rem; /* the page header to the first section */
+  --space-stack: 1rem; /* blocks inside a card */
+
+  /* Rows and controls. Desktop controls are 32 or 40; 44 only below 640. */
+  --row-1: 2.5rem;
+  --row-1-dense: 2.25rem;
+  --row-2: 3.75rem;
+  --row-setting: 4rem;
+  --row-phone-1: 3rem;
+  --row-phone-2: 4rem;
+  --control-sm: 2rem;
+  --control-md: 2.5rem;
+  --control-touch: 2.75rem;
+
+  /* The KPI figure steps down on a phone. */
+  --figure-size: 1.5rem;
+  --figure-leading: 2rem;
+}
+
+@media (max-width: 1023.98px) {
+  :root {
+    --page-pad: 1.5rem;
+  }
+}
+
+@media (max-width: 639.98px) {
+  :root {
+    --page-pad: 1.25rem;
+    --page-top: 1.5rem;
+    --figure-size: 1.25rem;
+    --figure-leading: 1.75rem;
+  }
 }
 
 .dark {
@@ -159,6 +208,9 @@
   --blocked-fill: #d6c4ff;
   --neutral: #8aa1a7;
   --nocheck-fill: #3b5961;
+  --chart-1: var(--link);
+  --chart-2: #2f7f88;
+  --chart-3: #b9a274;
   --capability-chat: #8cc8cb;
   --capability-image: #c2a8f0;
   --capability-video: #f0a3bf;
@@ -183,7 +235,34 @@
   --font-display: var(--font-sans);
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
-  /* Type scale (px): 12 · 13 · 14 · 16 · 20 · 24 · 30 · 40.
+  /* Type roles (DESIGN "System numbers v2"): one utility per role, with its
+     line height and weight. New code uses these. */
+  --text-title: 1.5rem;
+  --text-title--line-height: 2rem;
+  --text-title--font-weight: 600;
+  --text-title--letter-spacing: -0.015em;
+  --text-verdict: 1.25rem;
+  --text-verdict--line-height: 1.75rem;
+  --text-verdict--font-weight: 600;
+  --text-heading: 1rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--font-weight: 600;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.375rem;
+  --text-meta: 0.875rem;
+  --text-meta--line-height: 1.25rem;
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.125rem;
+  --text-label--font-weight: 500;
+  --text-badge: 0.75rem;
+  --text-badge--line-height: 1rem;
+  --text-badge--font-weight: 500;
+  --text-figure: var(--figure-size);
+  --text-figure--line-height: var(--figure-leading);
+  --text-figure--font-weight: 600;
+
+  /* Deprecated size scale (px): 12 · 14 · 15 · 16 · 20 · 24 · 30 · 40. Kept as
+     aliases until every surface has moved to the roles above.
      2xs (10) is only for initials inside a 20 px person mark. */
   --text-2xs: 0.625rem;
   --text-2xs--line-height: 0.75rem;
@@ -273,6 +352,10 @@
   --color-capability-decide: var(--capability-decide);
   --color-capability-embed: var(--capability-embed);
   --color-overlay: var(--overlay);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-other: var(--chart-other);
 
   --radius-xs: 2px; /* uptime bar segments only */
   --radius-sm: calc(var(--radius) - 2px);
@@ -281,6 +364,7 @@
   --radius-xl: var(--radius-card);
   --radius-control: var(--radius);
   --radius-panel: var(--radius-card);
+  --radius-badge: var(--radius-badge);
   --radius-media: var(--radius-media);
   --shadow-lg: var(--shadow-overlay);
   --shadow-xl: var(--shadow-overlay);

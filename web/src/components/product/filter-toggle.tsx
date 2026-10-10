@@ -19,7 +19,7 @@ export function FilterToggle({
       variant="outline"
       aria-pressed={pressed}
       className={cn(
-        "aria-pressed:border-primary/30 aria-pressed:bg-accent aria-pressed:text-accent-foreground min-h-11 gap-2 shadow-none",
+        "aria-pressed:border-primary/30 aria-pressed:bg-accent aria-pressed:text-accent-foreground gap-2 shadow-none",
         className,
       )}
     >

@@ -10,6 +10,212 @@ from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
 
 
+_FACES = {"enabled": True, "name": "Face service", "config": {"lifecycle": {"driver": "systemd"}}}
+_COMFYUI = {"enabled": True, "name": "ComfyUI", "config": {"base_url": "http://comfyui"}}
+_FACES_STOPPED = {"source": "lifecycle", "kind": "process", "status": "stopped", "available": None,
+                  "observed_at_s": 1_000, "last_attempt_at_s": 1_000}
+
+
+def _composed_registry():
+    from gateway.discovery import WorkflowRegistry
+
+    return WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
+
+
+def _composed_cap(registry, workflow_id):
+    from gateway.capabilities import capability_from_workflow_record
+
+    return capability_from_workflow_record(registry.get(workflow_id), backend="gateway")
+
+
+def test_composed_face_likeness_is_ready_to_start_when_its_sidecar_check_says_stopped():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  evidence={"faces": _FACES_STOPPED}, workflow_records=registry.records())
+    availability = result[0].availability
+    assert availability["status"] == "idle"
+    assert result[0].available is True
+    assert availability["reason"] == "Face service starts when you make a request."
+    # The web shows "Ready to start" only for a timed check (batch 1 rule).
+    assert availability["evidence"]["observed_at_s"] == 1_000
+
+
+def test_composed_face_likeness_is_unknown_without_a_sidecar_check():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "unknown"
+    assert result[0].availability["reason"] == "Face service has not been checked yet."
+    assert "observed_at_s" not in result[0].availability["evidence"]
+
+
+def test_composed_face_likeness_reports_failed_sidecar_by_name():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    failed = {**_FACES_STOPPED, "status": "down", "available": False}
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  evidence={"faces": failed}, workflow_records=registry.records())
+    assert result[0].available is False
+    assert result[0].availability["reason"] == "Face service is down."
+
+
+def test_composed_identity_reports_down_comfyui_dependency():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.edit.image-identity")
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    result = project_capabilities([cap], service_records=services,
+                                  evidence={"faces": _FACES_STOPPED,
+                                            "comfyui": {"status": "down", "available": False, "observed_at_s": 900}},
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "unavailable"
+    assert result[0].availability["reason"] == "ComfyUI is down."
+    assert result[0].availability["evidence"]["observed_at_s"] == 900
+
+
+def test_real_composed_workflows_have_derived_catalog_states_offline():
+    from gateway.workflows_catalog import build_workflows_catalog
+    from gateway.models_catalog import build_models_catalog
+
+    registry = _composed_registry()
+    composed = [record for record in registry.records() if "gateway" in record.supported_backends]
+    assert {record.id for record in composed} == {
+        "image.analyze.face-likeness", "image.edit.image-identity",
+        "image.generate.flux2-klein-4b-seamless-tile",
+    }
+    caps = [_composed_cap(registry, record.id) for record in composed]
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    projected = project_capabilities(caps, service_records=services,
+                                     evidence={"faces": _FACES_STOPPED,
+                                               "comfyui": {"status": "ready", "available": True}},
+                                     workflow_records=registry.records())
+    catalog = build_workflows_catalog(records=registry.records(), capabilities=projected)
+    states = {row["id"]: row["availability"]["status"] for row in catalog["workflows"]}
+    assert states == {
+        "image.analyze.face-likeness": "idle", "image.edit.image-identity": "idle",
+        "image.generate.flux2-klein-4b-seamless-tile": "ready",
+    }
+    models = build_models_catalog(
+        capabilities=projected,
+        model_entries=[{"id": record.manifest["bindings"]["gateway"]["model_id"],
+                        "azizam_workflow_id": record.id} for record in composed],
+        service_records=services,
+    )
+    model_states = {row["id"]: row["availability"]["status"] for row in models["models"]}
+    assert model_states == {
+        "face-likeness": "idle", "image-identity": "idle",
+        "flux2-klein-4b-seamless-tile": "ready",
+    }
+
+
+def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
+    from gateway.capabilities import capability_from_workflow_record
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    composed = _composed_cap(registry, "image.edit.image-identity")
+    plain = capability_from_workflow_record(registry.get("image.generate.flux2-klein-4b"), backend="comfyui")
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    projected = project_capabilities([composed, plain], service_records=services,
+                                     evidence={"faces": _FACES_STOPPED,
+                                               "comfyui": {"status": "down", "available": False, "observed_at_s": 900}},
+                                     workflow_records=registry.records())
+    rows = {row["id"]: row["availability"]
+            for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    identity = rows["image.edit.image-identity"]
+    assert (identity["status"], identity["reason"], identity["engine"]) == ("unavailable", "ComfyUI is down.", "comfyui")
+    assert "reason" not in rows["image.generate.flux2-klein-4b"]
+    assert "engine" not in rows["image.generate.flux2-klein-4b"]
+
+
+def test_home_rows_project_composed_workflows_from_their_engines():
+    from gateway.home_api import _capability_rows
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    evidence = {"faces": _FACES_STOPPED,
+                "comfyui": {"status": "down", "available": False, "observed_at_s": 900}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, evidence, services, {}, registry.records())}
+    likeness = rows["image.analyze.face-likeness"]
+    assert (likeness["status"], likeness["available"]) == ("idle", True)
+    # Home's capability state needs the check time to say "Ready to start".
+    assert likeness["availability"]["evidence"]["observed_at_s"] == 1_000
+    assert "engine" not in likeness["availability"] and "reason" not in likeness["availability"]
+    assert (rows["image.edit.image-identity"]["status"], rows["image.edit.image-identity"]["available"]) == (
+        "unavailable", False)
+
+
+def test_composed_workflow_with_an_engine_off_or_not_set_up_is_off_not_down():
+    from gateway.home_api import _capability_rows
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    # No face sidecar configured; ComfyUI turned off by the owner.
+    services = {"services": {"comfyui": {**_COMFYUI, "enabled": False}}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, {}, services, {}, registry.records())}
+    assert rows["image.analyze.face-likeness"]["reason_code"] == "unavailable_unconfigured"
+    # The first engine that is off or missing names the state and the reason.
+    assert rows["image.edit.image-identity"]["reason_code"] == "unavailable_unconfigured"
+    services = {"services": {"faces": _FACES, "comfyui": {**_COMFYUI, "enabled": False}}}
+    projected = project_capabilities(caps, service_records=services, evidence={"faces": _FACES_STOPPED},
+                                     workflow_records=registry.records())
+    catalog = {row["id"]: row["availability"]
+               for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    assert catalog["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
+    assert catalog["image.edit.image-identity"]["reason"] == "ComfyUI is turned off."
+    assert catalog["image.analyze.face-likeness"]["status"] == "idle"
+
+
+def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):
+    """The face sidecar is checked by lifecycle status, never started, even with a warm status cache."""
+    import asyncio
+    import proxy
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "stopped"
+        async def ensure_ready(self, svc, timeout_s):
+            raise AssertionError("an availability check must not start the sidecar")
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service",
+                        lambda service_id, config_backends=None: FakeDriver())
+    probed: list[str] = []
+
+    async def refused(client, key, name, url, role, note, service=None):
+        # A stopped sidecar refuses the health GET; a GET never starts it.
+        probed.append(url)
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role, "note": note,
+                "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused", "kind": "no_response"}
+
+    monkeypatch.setattr(status_endpoint, "_probe", refused)
+    face_config = {"host": "127.0.0.1", "port": 9, "health_endpoint": "/health",
+                   "lifecycle": {"driver": "systemd", "driver_config": {"unit": "face-service.service"}}}
+    monkeypatch.setitem(proxy.config, "identity", {"face_service": face_config})
+    services = proxy._workflow_availability_services({"services": {}})
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability",
+                        lambda: {"backends": [], "generated_at": int(time.time())})
+    monkeypatch.setattr(proxy, "_runtime_availability_evidence",
+                        lambda records, status_payload=None, health_evidence=None:
+                        evidence_from_status_rows(status_payload["backends"]))
+    registry = _composed_registry()
+    likeness = _composed_cap(registry, "image.analyze.face-likeness")
+    evidence = asyncio.run(proxy._capabilities_availability_evidence([likeness], services))
+    assert evidence["faces"]["status"] == "stopped"
+    assert evidence["faces"]["source"] == "lifecycle"
+    assert probed == ["http://127.0.0.1:9/health"]
+    result = project_capabilities([likeness], service_records=services, evidence=evidence,
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "idle"
+    assert result[0].availability["reason"] == "Face service starts when you make a request."
+
+
 @pytest.mark.parametrize("observed,expected", [
     ("active", "running"),
     ("activating", "starting"),
@@ -708,6 +914,52 @@ def test_declared_health_success_path_does_not_mask_readiness(payload, expected)
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://fixture/stats", "required", None,
                                              service={"health_success_path": "system"}))
     assert row["live_status"] == expected
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}, "up"),
+    ({"object": "list", "data": []}, "unknown"),
+    ({"object": "list", "data": [{"object": "model"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "file-fixture", "object": "file"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "batch-fixture", "object": "batch"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "untyped-fixture"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "ready": False}, "down"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "status": "degraded"}, "degraded"),
+])
+def test_openai_model_list_health_probe_requires_a_usable_model(payload, expected):
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(
+        Client(), "svc", "Service", "http://fixture/v1/models", "required", None,
+        service={"health_endpoint": "/v1/models"},
+    ))
+    assert row["live_status"] == expected
+
+
+def test_openai_model_list_is_fresh_catalog_evidence_after_restart():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+
+    async def get_json(url):
+        return {"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}
+
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {
+        "base_url": "http://fixture/v1", "health_endpoint": "/v1/models",
+    }}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "ready"
+    assert evidence["svc"]["source"] == "health"
+    assert isinstance(evidence["svc"]["observed_at_s"], int)
 
 
 def test_catalog_configured_health_success_has_observation_time():

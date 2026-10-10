@@ -84,7 +84,7 @@ test.each([false, true])(
     await screen.findByRole("button", { name: "Record" });
     if (withKey) {
       fireEvent.click(screen.getByRole("button", { name: "Run" }));
-      await screen.findByText(/Using a Try key/);
+      await screen.findByText(/Try uses a temporary key/);
     }
     const minted = mocks.mintKey.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Record" }));

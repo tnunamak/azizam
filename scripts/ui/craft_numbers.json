@@ -1,0 +1,56 @@
+{
+  "_doc": "Thresholds for scripts/ui/craft_numbers.py (docs/design/DESIGN.md, 'Gates for these numbers'). 'enforce' lists, per route, the checks --fail enforces; every check is reported for every measured route. A surface PR turns its route's checks on here (docs/design/craft-system/PLAN.md, PRs 2-9).",
+  "routes": {
+    "home": "/ui/home/",
+    "status": "/ui/status/",
+    "library": "/ui/library/",
+    "try": "/ui/try/",
+    "people": "/ui/people/",
+    "usage": "/ui/usage/",
+    "workflows": "/ui/workflows/",
+    "settings": "/ui/settings/"
+  },
+  "enforce": {
+    "home": ["controls"],
+    "status": ["controls"],
+    "library": ["controls"]
+  },
+  "desktop_width": 1440,
+  "phone_width": 390,
+  "controls": {
+    "desktop_heights": [32, 40],
+    "tolerance": 0.5,
+    "_exempt": "Buttons taller than tile_min are media tiles or whole-card buttons; textareas grow with their text; switches and checkboxes have their own sizes; link-styled buttons are text. A tab or segment is measured by its group (32 group, 28 segments).",
+    "tile_min": 64,
+    "exempt_types": ["textarea", "switch", "checkbox"],
+    "exempt_variants": ["link"]
+  },
+  "type": {
+    "sizes": [12, 13, 14, 15, 16, 20, 24],
+    "mark_size": 10,
+    "badge_size": 12,
+    "max_sizes_per_page": 4
+  },
+  "rows": {
+    "desktop": [36, 40, 60],
+    "phone": [48, 64],
+    "setting_min": 64,
+    "tolerance": 1
+  },
+  "geometry": {
+    "page_pad": { "1440": 32, "390": 20 },
+    "section_gap": 32,
+    "tolerance": 1
+  },
+  "cards": {
+    "radius": 8,
+    "min_width": 120,
+    "min_height": 60,
+    "exempt_classes": ["rounded-media", "rounded-full"]
+  },
+  "colour": {
+    "_doc": "Coloured pixels outside media and charts, measured like docs/design/craft-system/tools/colorshare.py at 1440 x 900.",
+    "screen_max": 0.02,
+    "ink_max": 0.1
+  }
+}

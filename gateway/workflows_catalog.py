@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway.model_metadata import asset_media_type
 from gateway.model_presentation import CAPABILITY_DESCRIPTIONS
 from gateway.workflow_openapi import (
     _execution,
@@ -257,6 +258,7 @@ def _is_technical_workflow_note(value: str) -> bool:
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:
     schema = workflow_inputs_schema(record)
     props = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
+    manifest_inputs = record.manifest.get("inputs") if isinstance(record.manifest.get("inputs"), Mapping) else {}
     required = set(schema.get("required") or [])
     preferred = routes.get(str(routes.get("recommended") or "sync")) or routes.get("sync") or routes.get("async") or {}
     mode = "async" if preferred == routes.get("async") else "sync"
@@ -279,6 +281,16 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         for optional in ("default", "minimum", "maximum", "enum", "description"):
             if optional in spec:
                 row[optional] = spec[optional]
+        declared = manifest_inputs.get(name) if isinstance(manifest_inputs.get(name), Mapping) else {}
+        # The JSON schema calls an asset "string" (and flags it x-azizam-asset);
+        # keep what it really is, so a page can tell a picture input from a text one.
+        if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
+            row["asset"] = True
+            media_type = asset_media_type(record.intent, declared)
+            if media_type:
+                row["media_type"] = media_type
+        if isinstance(declared.get("label"), str) and declared["label"].strip():
+            row["label"] = declared["label"].strip()
         rows.append(row)
     for extra in route_inputs(record):
         row = {
@@ -447,7 +459,7 @@ def _example_value(item: Mapping[str, Any]) -> Any:
         return float(item["minimum"] if item.get("minimum") is not None else 1)
     if item.get("type") == "boolean":
         return False
-    if item.get("type") == "asset":
+    if item.get("type") == "asset" or item.get("asset"):
         return "data:image/png;base64,..."
     if item.get("name") == "prompt":
         return "A small teal fish mark on a clean white card."
@@ -682,11 +694,19 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
         result = dict(selected.availability)
         status = str(result.get("status") or "unknown")
         evidence = result.get("evidence") or {}
-        result.pop("reason", None)
+        # Only a gateway-composed workflow's reason is product copy: it names
+        # the engine it waits on in plain language. Other reasons are raw.
+        if evidence.get("source") != "dependencies":
+            result.pop("reason", None)
+            result.pop("engine", None)
         result["reason_code"] = {
             ("unavailable", "disabled"): "unavailable_disabled",
             ("unavailable", "unconfigured"): "unavailable_unconfigured",
         }.get((status, evidence.get("kind")), status)
+        if evidence.get("source") == "dependencies":
+            # A composed workflow carries its own code: an engine it needs
+            # that is turned off or not set up is Off, not Down.
+            result["reason_code"] = str(selected.availability.get("reason_code") or status)
         return result
     measured_caps = [cap for cap in capabilities if cap.health != "unknown" or cap.lifecycle != "unknown"]
     ready_caps = [

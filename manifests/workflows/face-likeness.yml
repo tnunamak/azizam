@@ -19,22 +19,30 @@ inputs:
   reference:
     type: asset
     required: true
+    label: a face photo
     description: Reference photo of the real people. Repeat the field for several photos.
   candidate:
     type: asset
     required: true
+    label: a photo to check
     description: The image to check.
   people:
     type: string
+    label: a list of people
     description: JSON array of {label, image, box [x1,y1,x2,y2], infant}. Omit to auto-detect.
   thresholds:
     type: string
+    label: custom thresholds
     description: JSON object overriding match, uncertain and min_margin.
 outputs:
   report:
     media_type: application/json
+    label: a likeness score
 bindings:
   gateway:
     model_id: face-likeness
     compose: face_likeness
     route: /gateway/v1/faces/likeness
+requires:
+  services:
+    - faces

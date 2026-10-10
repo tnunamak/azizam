@@ -32,15 +32,22 @@ export default function InvitePage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMismatch, setPasswordMismatch] = useState(false);
   useEffect(() => {
     const capturedToken =
       new URLSearchParams(window.location.hash.slice(1)).get("token") ||
-        sessionStorage.getItem("gateway-invitation") ||
-        "";
-    if (capturedToken) sessionStorage.setItem("gateway-invitation", capturedToken);
+      sessionStorage.getItem("gateway-invitation") ||
+      "";
+    if (capturedToken)
+      sessionStorage.setItem("gateway-invitation", capturedToken);
     setToken(capturedToken);
     if (window.location.hash) {
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
     }
   }, []);
   const {
@@ -61,10 +68,7 @@ export default function InvitePage() {
   } = useQuery({
     queryKey: ["auth", "invite", token],
     queryFn: () =>
-      authFetch<Invitation>(
-        "/auth/api/invite",
-        { token: token || "" },
-      ),
+      authFetch<Invitation>("/auth/api/invite", { token: token || "" }),
     enabled: !!token,
     retry: false,
   });
@@ -81,13 +85,13 @@ export default function InvitePage() {
           : { token, name, email: inviteData?.email || email, password },
         oidc
           ? {
-              "x-azizam-csrf":
-                optionsData?.signed_in_oidc?.csrf_token || "",
+              "x-azizam-csrf": optionsData?.signed_in_oidc?.csrf_token || "",
             }
           : undefined,
       ),
     onSuccess: () => {
       setPassword("");
+      setConfirmPassword("");
       sessionStorage.removeItem("gateway-invitation");
       window.history.replaceState(null, "", window.location.pathname);
     },
@@ -102,7 +106,13 @@ export default function InvitePage() {
         {accept.data ? (
           <div className="mt-6 space-y-6">
             <p className="text-muted-foreground text-sm">
-              Save this key, then connect an app from Home.
+              This API key is for apps that connect to the gateway. Save it now;
+              it will only be shown once.
+            </p>
+            <p className="text-muted-foreground text-sm">
+              {accept.variables
+                ? `Next time, sign in with ${optionsData?.oidc_label || "your identity provider"}.`
+                : "Next time, sign in with your email and password. The API key is not a sign-in password."}
             </p>
             <SecretReveal
               secret={accept.data.credential.api_key}
@@ -194,6 +204,10 @@ export default function InvitePage() {
                       className="space-y-4"
                       onSubmit={(e) => {
                         e.preventDefault();
+                        if (password !== confirmPassword) {
+                          setPasswordMismatch(true);
+                          return;
+                        }
                         accept.mutate(false);
                       }}
                     >
@@ -230,12 +244,40 @@ export default function InvitePage() {
                           required
                           minLength={12}
                           value={password}
-                          onChange={(e) => setPassword(e.target.value)}
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            setPasswordMismatch(false);
+                          }}
                           disabled={accept.isPending}
                         />
                         <p className="text-muted-foreground text-xs">
                           Use at least 12 characters.
                         </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="confirm-password">
+                          Confirm password
+                        </Label>
+                        <Input
+                          id="confirm-password"
+                          type="password"
+                          autoComplete="new-password"
+                          required
+                          minLength={12}
+                          value={confirmPassword}
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            setPasswordMismatch(false);
+                          }}
+                          aria-invalid={passwordMismatch}
+                          disabled={accept.isPending}
+                        />
+                        {passwordMismatch && (
+                          <p role="alert" className="text-destructive text-sm">
+                            Passwords do not match. Enter the same password in
+                            both fields.
+                          </p>
+                        )}
                       </div>
                       {accept.isError && (
                         <p role="alert" className="text-destructive text-sm">

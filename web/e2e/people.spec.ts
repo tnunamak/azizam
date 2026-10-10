@@ -430,6 +430,14 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
   await page
     .getByLabel("Password", { exact: true })
     .fill("Browser acceptance password");
+  await page.getByLabel("Confirm password").fill("Different password");
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Passwords do not match" }),
+  ).toBeVisible();
+  await page.getByLabel("Confirm password").fill("Browser acceptance password");
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click();
@@ -439,15 +447,42 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
   await expect(page.getByLabel("Your key", { exact: true })).toHaveValue(
     "test-key-display-once",
   );
+  await expect(page.getByText(/API key is for apps/)).toBeVisible();
+  await expect(
+    page.getByText(/sign in with your email and password/),
+  ).toBeVisible();
   expect(new URL(page.url()).hash).toBe("");
   await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(page).toHaveURL(/\/ui\/$/);
+});
+
+test("people lane unbound invitation requires an explicit choice", async ({
+  page,
+}) => {
+  await open(page, "people", "seeded");
+  await page
+    .getByRole("button", { name: "Invite someone", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "Access plan", exact: true })
+    .click();
+  await page.getByRole("option", { name: plan.name }).click();
+  await expect(
+    page.getByRole("button", { name: "Create invite link" }),
+  ).toBeDisabled();
+  await page.getByLabel("Allow anyone with the link").check();
+  await expect(
+    page.getByRole("button", { name: "Create invite link" }),
+  ).toBeEnabled();
 });
 
 test("people lane sign-in handles denial, retries successfully, and resets password", async ({
   page,
 }) => {
   await open(page, "sign-in", "seeded");
+  await expect(
+    page.getByText(/An App API key cannot sign you in/),
+  ).toBeVisible();
   let failed = true;
   await page.route("**/auth/api/login", (route) => {
     expect(route.request().postDataJSON()).toEqual({
@@ -695,6 +730,9 @@ test("people lane real invitation creates an account, app and working key, then 
     await memberPage.getByLabel("Your name").fill("Real browser member");
     await memberPage
       .getByLabel("Password", { exact: true })
+      .fill("Real browser acceptance password");
+    await memberPage
+      .getByLabel("Confirm password")
       .fill("Real browser acceptance password");
     const acceptedResponse = memberPage.waitForResponse((r) =>
       r.url().endsWith("/auth/api/invite/accept"),

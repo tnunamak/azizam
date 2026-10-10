@@ -57,7 +57,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("generic result retry reloads catalogs without repeating generation", async () => {
+it("a failed result offers Edit and run again, which repeats nothing", async () => {
   const user = userEvent.setup();
   render(<TryPage />);
   await waitFor(() =>
@@ -65,21 +65,16 @@ it("generic result retry reloads catalogs without repeating generation", async (
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Request failed")).toBeVisible();
-  const reads = fetchMock.mock.calls.filter(
-    ([, init]) => init?.method !== "POST",
-  ).length;
-  await user.click(screen.getByRole("button", { name: "Try again" }));
+  // The old "Try again" reloaded the model list and left the failure in
+  // place, which read as a retry that failed.
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  const calls = fetchMock.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "Edit and run again" }));
+  expect(fetchMock.mock.calls.length).toBe(calls);
   expect(
     fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
   ).toHaveLength(1);
-  await waitFor(() =>
-    expect(
-      fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST"),
-    ).toHaveLength(reads + 2),
-  );
-  expect(
-    fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
-  ).toHaveLength(1);
+  expect(screen.getByRole("textbox", { name: "Prompt" })).toHaveFocus();
   expect(screen.getByText("Request failed")).toBeVisible();
   expect(account.mintKey).toHaveBeenCalledTimes(1);
   expect(account.revokeKey).not.toHaveBeenCalled();
@@ -165,12 +160,10 @@ it.each([
     const reads = fetchMock.mock.calls.filter(
       ([, init]) => init?.method !== "POST",
     ).length;
-    await user.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST"),
-      ).toHaveLength(reads + 2),
-    );
+    await user.click(screen.getByRole("button", { name: "Edit and run again" }));
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST"),
+    ).toHaveLength(reads);
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(1);
@@ -182,7 +175,8 @@ it.each([
 });
 
 it.each([false, true, undefined])("honors workflow availability %s in the picker and Run action", async (available) => {
-  const reason = "Unavailable. Ask the owner to enable this capability.";
+  // The same member wording as the Workflows page (lib/workflow-availability).
+  const reason = "Not available right now. The person who manages Azizam can set it up.";
   fetchMock.mockImplementation(async (url: string) => json(url.includes("workflows") ? {
     workflows: [{
       ...workflows.workflows[0],

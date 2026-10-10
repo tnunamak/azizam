@@ -47,6 +47,7 @@ it("opens on the person named in ?person= and leaves other rows unmarked", async
     const zoe = (await screen.findByText("Zoë")).closest("[aria-current]");
     expect(zoe).not.toBeNull();
     expect(zoe).toHaveFocus();
+    expect(zoe).toHaveClass("grid");
     expect(screen.getByText("Robin").closest("[aria-current]")).toBeNull();
   } finally {
     window.history.replaceState(null, "", "/");

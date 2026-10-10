@@ -17,11 +17,18 @@ vi.mock("recharts", () => ({
 function renderUsage(
   summary: Record<string, unknown>,
   fetchSummary?: () => Promise<Response>,
+  lookups: Record<string, unknown> = {},
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Only the usage summary follows the test's script; the name lookups
+  // (model catalog, home) answer with an empty payload.
   vi.stubGlobal(
     "fetch",
-    vi.fn(fetchSummary ?? (async () => Response.json({ requests: 4, ...summary }))),
+    vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/usage/summary")
+        ? (fetchSummary ?? (async () => Response.json({ requests: 4, ...summary })))()
+        : Promise.resolve(Response.json(lookups)),
+    ),
   );
   const view = render(
     <ViewerContext.Provider
@@ -112,7 +119,7 @@ test("USAGE-02 chart table includes each active capability and daily total", asy
     within(table)
       .getAllByRole("columnheader")
       .map((cell) => cell.textContent),
-  ).toEqual(["Date", "Chat", "Images", "Total"]);
+  ).toEqual(["Date", "Chat", "Make a picture", "Total"]);
   const rows = within(table).getAllByRole("row").slice(1);
   expect(
     rows.map((row) =>
@@ -209,13 +216,15 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
   const unknown = screen.getByRole("button", { name: "Receipt details for Chat request" });
   expect(within(unknown).getByText("Cost unknown")).toBeInTheDocument();
-  const zero = screen.getByRole("button", { name: "Receipt details for Images request" });
+  const zero = screen.getByRole("button", { name: "Receipt details for Image request" });
   expect(within(zero).queryByText("Cost unknown")).not.toBeInTheDocument();
   expect(within(zero).getByText("$0.00")).toBeInTheDocument();
   const local = screen.getByRole("button", { name: "Receipt details for Video request" });
   expect(within(local).getByText("No provider charge")).toBeInTheDocument();
-  // Model rows carry no locality, so an unmeasured one stays blank.
+  // A model row with no locality evidence says Unavailable, never blank.
   expect(screen.getAllByText("Cost unknown")).toHaveLength(1);
+  const modelRow = screen.getByRole("row", { name: /unmeasured-model|Unmeasured Model/ });
+  expect(within(modelRow).getByText("Unavailable")).toBeVisible();
   await user.click(unknown);
   const sheet = screen.getByRole("dialog");
   expect(within(sheet).getByText("Cost")).toBeVisible();
@@ -304,4 +313,128 @@ test("Usage uses shared empty panels for missing daily and model breakdowns", as
   ]) {
     expect((await screen.findByText(title)).closest(".border-dashed")).toBeInTheDocument();
   }
+});
+
+const GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
+
+function modelRow(label: RegExp | string) {
+  return screen
+    .getAllByRole("row")
+    .find((row) =>
+      typeof label === "string"
+        ? row.textContent?.includes(label)
+        : label.test(row.textContent ?? ""),
+    )!;
+}
+
+test("Usage model rows read as names, never as a path on the gateway host", async () => {
+  renderUsage(
+    {
+      by_model: [
+        { model: GGUF, capability: "chat", requests: 3402, paid_requests: 0, unknown_paid_requests: 0 },
+        { model: "decide-quality", capability: "decide", requests: 377, paid_requests: 0, unknown_paid_requests: 0 },
+        { model: "tts-1", capability: "voice", requests: 9, paid_requests: 0, unknown_paid_requests: 0 },
+      ],
+    },
+    undefined,
+    { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] },
+  );
+  await screen.findByText("Top models by requests");
+  expect(document.body.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\//);
+  const chat = modelRow("Qwen3.8 27B Uncensored Q4 K M");
+  expect(chat).toBeTruthy();
+  // The raw identifier is on demand, as the file name only.
+  expect(within(chat).getByTitle("Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBeVisible();
+  await waitFor(() => expect(modelRow("Careful choices")).toBeTruthy());
+  expect(within(modelRow("Careful choices")).getByText("Choose an option")).toBeVisible();
+  expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
+});
+
+test("Usage model Cost cell is Local, an amount or Unavailable, and the legend explains it", async () => {
+  renderUsage({
+    by_model: [
+      { model: "local-chat", capability: "chat", requests: 50, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "zero-chat", capability: "chat", requests: 40, remote_spend: 0, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "paid-image", capability: "image", requests: 30, remote_spend: 0.25, paid_requests: 3, unknown_paid_requests: 0 },
+      { model: "mystery", capability: "image", requests: 20, remote_spend: null, paid_requests: 0, unknown_paid_requests: 2 },
+      { model: "partial", capability: "video", requests: 10, remote_spend: 0.5, paid_requests: 2, unknown_paid_requests: 1 },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  expect(within(modelRow("Local Chat")).getByText("Local")).toBeVisible();
+  expect(within(modelRow("Zero Chat")).getByText("Local")).toBeVisible();
+  expect(within(modelRow("Paid Image")).getByText("$0.25")).toBeVisible();
+  expect(within(modelRow("Mystery")).getByText("Unavailable")).toBeVisible();
+  const partial = modelRow("Partial");
+  expect(within(partial).getByText("$0.50")).toBeVisible();
+  expect(within(partial).getByText("partial")).toBeVisible();
+  expect(screen.getByText(/Local: no provider charge\./)).toBeVisible();
+  expect(screen.getByText(/Unavailable: the provider cost was not recorded\./)).toBeVisible();
+  // No row is blank in the Cost column.
+  for (const row of screen.getAllByRole("row").slice(1)) {
+    expect(within(row).getAllByRole("cell").at(-1)).not.toBeEmptyDOMElement();
+  }
+});
+
+test("Usage chart legend names capabilities as Home and Try do", async () => {
+  renderUsage({
+    by_day: [
+      { date: "2026-10-01", chat: 1, image: 1, transcribe: 1, decide: 1, embeddings: 1 },
+    ],
+  });
+  await screen.findByText("Requests by day and capability");
+  const legend = screen.getAllByText("Make a picture").map((node) => node.parentElement);
+  expect(legend.length).toBeGreaterThan(0);
+  for (const name of [
+    "Turn a recording into text",
+    "Choose an option",
+    "Turn text into numbers",
+  ]) {
+    expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+  }
+  expect(screen.queryByText("Decisions")).not.toBeInTheDocument();
+  expect(screen.queryByText("Embeddings")).not.toBeInTheDocument();
+});
+
+test("Usage receipts and the Source list never show a host path", async () => {
+  renderUsage({
+    receipts: [
+      { request_id: "r1", capability: "chat", requested_model: "default", resolved_model: GGUF },
+    ],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  expect(document.body.textContent).not.toMatch(/\/media\/|AI Models/);
+  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = screen.getByRole("dialog");
+  expect(sheet.textContent).toContain("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
+  expect(sheet.textContent).not.toMatch(/\/media\/|AI Models/);
+});
+
+test("Usage Source list ranks busy apps first and tells same-named apps apart", async () => {
+  renderUsage({
+    sources: [
+      { id: "app:old1", label: "Temp triage", requests: 5, disabled: true, created_at: 100 },
+      { id: "app:idle", label: "Idle app", requests: 0, disabled: false, created_at: 50 },
+      { id: "app:old2", label: "Temp triage", requests: 5, disabled: true, created_at: 200 },
+      { id: "app:small", label: "Small app", requests: 2, disabled: false, created_at: 10 },
+      { id: "local-network", label: "Local network · no key", requests: 700, disabled: false, created_at: null },
+      { id: "app:big", label: "Big app", requests: 90, disabled: false, created_at: 20 },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  const user = userEvent.setup();
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(labels).toEqual([
+    "All sources",
+    "Local network · no key",
+    "Big app",
+    "Small app",
+    "Temp triage (1)",
+    "Temp triage (2)",
+    "Idle app",
+  ]);
+  expect(screen.getByText("Turned off or no requests")).toBeVisible();
 });

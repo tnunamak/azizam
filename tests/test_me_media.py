@@ -918,6 +918,59 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(assets[0]["unavailable_reason"], "Asset file is missing or expired.")
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
 
+    def test_usage_model_rows_hide_host_paths_and_count_paid_requests(self) -> None:
+        gguf = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+        self._receipt(self.app_a["id"], "req_local_path", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="default", resolved_model=gguf)
+        self._receipt(self.app_a["id"], "req_paid_unknown", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="remote-chat",
+                      resolved_model="remote-chat", cost_class="paid-remote")
+        usage = self.client.get("/me/api/usage/summary")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        body = usage.json()
+        rows = {row["model"]: row for row in body["by_model"]}
+        self.assertIn("Qwen3.8-27B-Uncensored-Q4_K_M.gguf", rows)
+        self.assertNotIn(gguf, rows)
+        self.assertNotIn("/media/", json.dumps(body))
+        self.assertEqual(rows["Qwen3.8-27B-Uncensored-Q4_K_M.gguf"]["paid_requests"], 0)
+        self.assertEqual(rows["remote-chat"]["unknown_paid_requests"], 1)
+
+    def test_usage_counts_speech_as_voice_apart_from_music_and_sounds(self) -> None:
+        # Usage names rows by task: speech is "Read text aloud", not "Make music or sounds".
+        self._receipt(self.app_a["id"], "req_speech", intent="audio.speech",
+                      route_path="/v1/audio/speech", requested_model="voice", resolved_model="voice")
+        self._receipt(self.app_a["id"], "req_speech_path", intent="",
+                      route_path="/v1/audio/speech", requested_model="tts-1", resolved_model="tts-1")
+        self._receipt(self.app_a["id"], "req_music", intent="audio.music",
+                      route_path="/v1/audio/music", requested_model="music", resolved_model="music")
+        usage = self.client.get("/me/api/usage/summary")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        rows = {row["model"]: row["capability"] for row in usage.json()["by_model"]}
+        self.assertEqual(rows["voice"], "voice")
+        self.assertEqual(rows["tts-1"], "voice")
+        self.assertEqual(rows["music"], "audio")
+        day = usage.json()["by_day"][-1]
+        self.assertEqual(day.get("voice"), 2)
+        self.assertEqual(day.get("audio"), 1)
+
+    def test_usage_sources_carry_request_counts_and_disabled_state(self) -> None:
+        old = admin_store.create_app(
+            "Alice", kind="personal", owner_user_id=self.alice["id"], path=self.admin_db
+        )
+        admin_store.disable_app(old["id"], path=self.admin_db)
+        self._receipt(self.app_a["id"], "req_src_1")
+        self._receipt(self.app_a["id"], "req_src_2")
+        self.current_user = self.owner
+        usage = self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        sources = {row["id"]: row for row in usage.json()["sources"]}
+        # Counts cover the whole scope, not just the selected source.
+        self.assertEqual(sources[f"app:{self.app_a['id']}"]["requests"], 2)
+        self.assertEqual(sources[f"app:{self.app_b['id']}"]["requests"], 0)
+        self.assertTrue(sources[f"app:{old['id']}"]["disabled"])
+        self.assertFalse(sources[f"app:{self.app_a['id']}"]["disabled"])
+        self.assertIsNotNone(sources[f"app:{old['id']}"]["created_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

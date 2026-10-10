@@ -28,7 +28,16 @@ import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
-import { capabilityLabels as sharedCapabilityLabels } from "@/lib/terms";
+import { taskNames } from "@/lib/terms";
+import { productApi } from "@/lib/product-api";
+import {
+  modelDisplayName,
+  safeModelId,
+  scrubModelPaths,
+  type CapabilityNameRow,
+} from "@/lib/model-name";
+import { sourceGroups, type UsageSource } from "./source-options";
+import { normalizeCapability, type UsageCapability } from "./usage-capability";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -42,7 +51,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -62,10 +73,8 @@ import {
   Money,
   PageHeader,
   RelativeTime,
-  type Capability,
 } from "@/components/product";
 
-type UsageCapability = Capability | "audio" | "embeddings" | "rerank" | "other";
 
 interface UsageDay {
   date: string;
@@ -80,6 +89,10 @@ interface UsageModel {
   capability: UsageCapability;
   requests: number;
   costUsd: number | null;
+  /** Requests known to have cost money; null when the gateway did not say. */
+  paidRequests: number | null;
+  /** Paid requests whose cost was not recorded; null when not reported. */
+  unknownPaidRequests: number | null;
 }
 
 interface UsageReceipt {
@@ -113,7 +126,7 @@ interface UsageSummary {
   byModel: UsageModel[];
   receipts: UsageReceipt[];
   people: UsagePerson[];
-  sources: UsagePerson[];
+  sources: UsageSource[];
   retentionDays: number | null;
   coverageStart: string | null;
   coverageNote: string | null;
@@ -137,17 +150,33 @@ const capabilities: UsageCapability[] = [
   "other",
 ];
 
+// The names Home and Try use for the same things.
 const capabilityLabels: Record<UsageCapability, string> = {
-  chat: sharedCapabilityLabels.chat,
-  image: sharedCapabilityLabels.image,
-  video: sharedCapabilityLabels.video,
-  audio: sharedCapabilityLabels.audio,
-  voice: sharedCapabilityLabels.speech,
-  transcribe: sharedCapabilityLabels.transcribe,
-  decide: sharedCapabilityLabels.decisions,
-  embed: sharedCapabilityLabels.embeddings,
-  embeddings: sharedCapabilityLabels.embeddings,
-  rerank: sharedCapabilityLabels.reranking,
+  chat: taskNames.chat,
+  image: taskNames.image,
+  video: taskNames.video,
+  audio: taskNames.audio,
+  voice: taskNames.speech,
+  transcribe: taskNames.transcribe,
+  decide: taskNames.decisions,
+  embed: taskNames.embeddings,
+  embeddings: taskNames.embeddings,
+  rerank: taskNames.reranking,
+  other: "Other",
+};
+
+// The noun in a receipt's title: "Image request", as Home and Activity say it.
+const requestNouns: Record<UsageCapability, string> = {
+  chat: "Chat",
+  image: "Image",
+  video: "Video",
+  audio: "Audio",
+  voice: "Voice",
+  transcribe: "Transcription",
+  decide: "Decision",
+  embed: "Embedding",
+  embeddings: "Embedding",
+  rerank: "Rerank",
   other: "Other",
 };
 
@@ -181,10 +210,27 @@ export default function UsagePage() {
       fetchUsageSummary(owner ? effectivePerson : "default", source),
     retry: false,
   });
+  // Display names: the catalog, else a capability's recommended name.
+  const { data: catalog } = useQuery({
+    queryKey: ["models", "catalog"],
+    queryFn: productApi.models,
+    retry: false,
+  });
+  const { data: home } = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: productApi.home,
+    retry: false,
+  });
+  const nameCapabilities: CapabilityNameRow[] = Array.isArray(home?.capabilities)
+    ? home.capabilities
+    : [];
+  const nameModel = (id: string) =>
+    modelDisplayName(id, catalog, nameCapabilities);
   const selected = data?.receipts.find((receipt) => receipt.selectionKey === selectedReceiptKey) ?? null;
   useEffect(() => {
     if (selectedReceiptKey !== null && selected === null) setSelectedReceiptKey(null);
   }, [selectedReceiptKey, selected]);
+  const sources = sourceGroups(data?.sources ?? []);
   const hasUsage = Boolean(
     data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
   );
@@ -234,17 +280,33 @@ export default function UsagePage() {
                 >
                   <SelectTrigger
                     id="usage-source"
+                    size="sm"
                     className="w-[210px] max-w-full"
                   >
                     <SelectValue placeholder="All sources" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    align="start"
+                    collisionPadding={8}
+                    className="max-w-[calc(100vw-1rem)]"
+                  >
                     <SelectItem value="all">All sources</SelectItem>
-                    {(data?.sources ?? []).map((item) => (
+                    {sources.active.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
                         {item.label}
                       </SelectItem>
                     ))}
+                    {sources.inactive.length ? (
+                      <SelectGroup>
+                        <SelectLabel>Turned off or no requests</SelectLabel>
+                        {sources.inactive.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
                   </SelectContent>
                 </Select>
               </div>
@@ -333,6 +395,7 @@ export default function UsagePage() {
           {showReceipts ? (
             <ReceiptsList
               receipts={data.receipts}
+              nameModel={nameModel}
               loading={isFetching}
               onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
@@ -341,6 +404,7 @@ export default function UsagePage() {
           <DailyChart days={data.byDay} />
           <ModelTable
             rows={data.byModel}
+            nameModel={nameModel}
             showAll={showAllModels}
             onToggle={() => setShowAllModels((value) => !value)}
           />
@@ -376,7 +440,11 @@ function PersonFilter({
         Person
       </label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id="usage-person" className="w-[180px] max-w-full">
+        <SelectTrigger
+          id="usage-person"
+          size="sm"
+          className="w-[180px] max-w-full"
+        >
           <SelectValue placeholder="Your usage" />
         </SelectTrigger>
         <SelectContent>
@@ -562,35 +630,39 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <table className="sr-only">
-              <caption>Requests by day and capability</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Date</th>
-                  {active.map((capability) => (
-                    <th key={capability} scope="col">
-                      {capabilityLabels[capability]}
-                    </th>
-                  ))}
-                  <th scope="col">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {days.map((day) => (
-                  <tr key={day.date}>
-                    <th scope="row">{day.date}</th>
+            {/* The wrapper clips the table: a table ignores sr-only's 1px size and
+                would otherwise widen the page. */}
+            <div className="sr-only">
+              <table>
+                <caption>Requests by day and capability</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
                     {active.map((capability) => (
-                      <td key={capability}>{day.byCapability[capability] ?? 0}</td>
+                      <th key={capability} scope="col">
+                        {capabilityLabels[capability]}
+                      </th>
                     ))}
-                    <td>
-                      {day.total}
-                      {day.countsExceedTotal !== null &&
-                        ` (capability counts add to ${day.countsExceedTotal})`}
-                    </td>
+                    <th scope="col">Total</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {days.map((day) => (
+                    <tr key={day.date}>
+                      <th scope="row">{day.date}</th>
+                      {active.map((capability) => (
+                        <td key={capability}>{day.byCapability[capability] ?? 0}</td>
+                      ))}
+                      <td>
+                        {day.total}
+                        {day.countsExceedTotal !== null &&
+                          ` (capability counts add to ${day.countsExceedTotal})`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <div className="mt-4 flex flex-wrap gap-3 text-xs">
               {active.map((capability) => (
                 <span
@@ -614,10 +686,12 @@ function DailyChart({ days }: { days: UsageDay[] }) {
 
 function ModelTable({
   rows,
+  nameModel,
   showAll,
   onToggle,
 }: {
   rows: UsageModel[];
+  nameModel: (id: string) => string;
   showAll: boolean;
   onToggle: () => void;
 }) {
@@ -625,22 +699,23 @@ function ModelTable({
     b.requests - a.requests || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
   );
   const visibleRows = showAll ? sortedRows : sortedRows.slice(0, 5);
+  const kinds = new Set(visibleRows.map(modelCostKind));
   return (
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Models</CardTitle>
         <CardDescription>Top models by requests</CardDescription>
       </CardHeader>
-      <CardContent className="overflow-x-auto" tabIndex={0}>
+      <CardContent>
         {rows.length ? (
           <div className="space-y-4">
-            <table className="w-full min-w-[420px] text-sm">
+            <table className="w-full text-sm">
               <thead className="text-muted-foreground border-b text-left">
                 <tr>
-                  <th scope="col" className="py-3 pr-4 font-medium">
+                  <th scope="col" className="py-3 pr-3 font-medium">
                     Capability and model
                   </th>
-                  <th scope="col" className="py-3 pr-4 text-right font-medium">
+                  <th scope="col" className="py-3 pr-3 text-right font-medium">
                     Requests
                   </th>
                   <th scope="col" className="py-3 text-right font-medium">
@@ -649,28 +724,45 @@ function ModelTable({
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {visibleRows.map((row) => (
-                  <tr key={`${row.model}-${row.capability}`}>
-                    <td className="max-w-[260px] py-3 pr-4">
-                      <div className="font-medium">
-                        <CapabilityLabel capability={row.capability} />
-                      </div>
-                      {row.model && (
-                        <code className="text-muted-foreground mt-1 block truncate text-xs">
-                          {row.model}
-                        </code>
-                      )}
-                    </td>
-                    <td className="py-3 pr-4 text-right tabular-nums">
-                      {formatNumber(row.requests)}
-                    </td>
-                    <td className="py-3 text-right">
-                      <SummaryCost amount={row.costUsd} />
-                    </td>
-                  </tr>
-                ))}
+                {visibleRows.map((row) => {
+                  const name = row.model ? nameModel(row.model) : "";
+                  return (
+                    <tr key={`${row.model}-${row.capability}`}>
+                      {/* max-w-0 lets a long name truncate instead of widening the page. */}
+                      <td className="w-full max-w-0 py-3 pr-3">
+                        <div className="font-medium">
+                          <CapabilityLabel capability={row.capability} />
+                        </div>
+                        {name && name !== capabilityLabels[row.capability] && (
+                          <p
+                            className="text-muted-foreground mt-1 truncate text-xs"
+                            title={row.model}
+                          >
+                            {name}
+                          </p>
+                        )}
+                      </td>
+                      <td className="py-3 pr-3 text-right tabular-nums">
+                        {formatNumber(row.requests)}
+                      </td>
+                      <td className="py-3 text-right whitespace-nowrap">
+                        <ModelCost row={row} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+            <p className="text-muted-foreground text-xs">
+              {[
+                kinds.has("local") ? "Local: no provider charge." : null,
+                kinds.has("unavailable")
+                  ? "Unavailable: the provider cost was not recorded."
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            </p>
             {rows.length > 5 ? (
               <Button variant="ghost" onClick={onToggle}>
                 {showAll ? "Show top 5" : `View all ${rows.length} models`}
@@ -685,12 +777,45 @@ function ModelTable({
   );
 }
 
+type ModelCostKind = "amount" | "partial" | "local" | "unavailable";
+
+/**
+ * What the Cost cell of a model row says. A recorded charge shows the amount.
+ * No charge shows "Local" only when the gateway counted no paid requests;
+ * anything else without an amount is Unavailable, never a blank or a guess.
+ */
+function modelCostKind(row: UsageModel): ModelCostKind {
+  const unknownPaid = (row.unknownPaidRequests ?? 0) > 0;
+  if (row.costUsd != null && row.costUsd > 0) return unknownPaid ? "partial" : "amount";
+  if (unknownPaid) return "unavailable";
+  if (row.paidRequests === 0) return "local";
+  if (row.costUsd != null) return "amount";
+  return "unavailable";
+}
+
+function ModelCost({ row }: { row: UsageModel }) {
+  const kind = modelCostKind(row);
+  if (kind === "local") return <span className="text-muted-foreground">Local</span>;
+  if (kind === "unavailable")
+    return <span className="text-muted-foreground">Unavailable</span>;
+  return (
+    <>
+      <Money amount={row.costUsd} summary />
+      {kind === "partial" ? (
+        <span className="text-muted-foreground block text-xs">partial</span>
+      ) : null}
+    </>
+  );
+}
+
 function ReceiptsList({
   receipts,
+  nameModel,
   onSelect,
   loading,
 }: {
   receipts: UsageReceipt[];
+  nameModel: (id: string) => string;
   onSelect: (receipt: UsageReceipt) => void;
   loading: boolean;
 }) {
@@ -728,9 +853,12 @@ function ReceiptsList({
                     {receipt.summary}
                   </p>
                   {receipt.model && (
-                    <code className="text-muted-foreground mt-1 block truncate text-xs">
-                      {receipt.model}
-                    </code>
+                    <p
+                      className="text-muted-foreground mt-1 truncate text-xs"
+                      title={receipt.model}
+                    >
+                      {nameModel(receipt.model)}
+                    </p>
                   )}
                   {receipt.sourceLabel ? (
                     <p className="text-muted-foreground mt-1 text-xs">
@@ -1095,7 +1223,13 @@ function normalizeSummary(raw: unknown): UsageSummary {
     sources: array(data.sources)
       .map((item) => {
         const row = object(item);
-        return { id: string(row.id, ""), label: string(row.label, "Source") };
+        return {
+          id: string(row.id, ""),
+          label: string(row.label, "Source"),
+          requests: requestCount(row.requests),
+          disabled: row.disabled === true,
+          createdAt: nullableNumber(row.created_at),
+        };
       })
       .filter((item) => item.id),
     people: normalizePeople(data.people),
@@ -1175,16 +1309,16 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
   const capability = normalizeCapability(
     data.capability ?? data.intent ?? metadata.capability ?? data.protocol,
   );
-  const model = nullableString(
+  const model = modelId(
     data.resolved_model ?? data.requested_model ?? data.model ?? metadata.model,
   );
-  const requestedModel = nullableString(
+  const requestedModel = modelId(
     data.requested_model ?? metadata.requested_model,
   );
-  const servedModel = nullableString(
+  const servedModel = modelId(
     data.resolved_model ?? data.served_model ?? metadata.resolved_model,
   );
-  const fallbackModel = nullableString(
+  const fallbackModel = modelId(
     data.fallback_model ?? data.declared_fallback ?? metadata.fallback_model,
   );
   const requestId = nullableString(data.request_id) ?? nullableString(data.id);
@@ -1212,9 +1346,9 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     status,
     durationMs,
     costUsd,
-    summary: `${capabilityLabels[capability]} request`,
+    summary: `${requestNouns[capability]} request`,
     sourceLabel: nullableString(object(data.source).label ?? data.source_label),
-    raw,
+    raw: scrubModelPaths(raw),
   };
 }
 
@@ -1243,15 +1377,23 @@ function requestCount(value: unknown): number | null {
   return Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
+/** A model id as a screen may show it: never a directory on the gateway. */
+function modelId(value: unknown): string | null {
+  const id = nullableString(value);
+  return id === null ? null : safeModelId(id);
+}
+
 function normalizeModel(raw: unknown): UsageModel {
   const data = object(raw);
   return {
-    model: nullableString(data.model ?? data.name) ?? "",
+    model: safeModelId(nullableString(data.model ?? data.name) ?? ""),
     capability: normalizeCapability(data.capability ?? data.intent),
     requests: number(data.requests ?? data.count, 0),
     costUsd: nullableNumber(
       data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd,
     ),
+    paidRequests: requestCount(data.paid_requests),
+    unknownPaidRequests: requestCount(data.unknown_paid_requests),
   };
 }
 
@@ -1273,27 +1415,6 @@ function normalizeCapabilityCounts(
     counts[capability] += requestCount(value) ?? 0;
   }
   return counts;
-}
-
-function normalizeCapability(value: unknown): UsageCapability {
-  const text = String(value ?? "").toLowerCase();
-  if (text === "default") return "chat";
-  if (text === "stt" || text.includes("transcri")) return "transcribe";
-  if (text.includes("image")) return "image";
-  if (text.includes("video")) return "video";
-  if (text.includes("rerank")) return "rerank";
-  if (text.includes("embedding") || text.includes("embed")) return "embeddings";
-  if (text.includes("speech") || text.includes("audio")) return "audio";
-  if (text.includes("voice")) return "voice";
-  if (text.includes("transcrib")) return "transcribe";
-  if (text.includes("decision") || text.includes("decide")) return "decide";
-  if (
-    text.includes("chat") ||
-    text.includes("completion") ||
-    text.includes("openai")
-  )
-    return "chat";
-  return "other";
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -1382,11 +1503,6 @@ function ReceiptCost({
     return <Money amount={receipt.costUsd} summary={summary} />;
   if (object(receipt.raw).remote === false) return <>No provider charge</>;
   return <>Cost unknown</>;
-}
-
-function SummaryCost({ amount }: { amount: number | null }) {
-  if (amount == null) return null;
-  return <Money amount={amount} summary />;
 }
 
 function shortDate(value: string) {

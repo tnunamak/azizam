@@ -1,5 +1,7 @@
+import { networkFetch } from "./network-error";
 import { accountApi, type AccountSnapshot } from "./account-api";
 import { ApiError, adminFetch } from "./api";
+import { scrubModelPaths } from "./model-name";
 import type {
   MemberStatus,
   HomeProjection,
@@ -13,7 +15,7 @@ export type * from "./product-api-types";
 export type HomeSnapshot = AccountSnapshot & HomeProjection;
 
 async function memberGet<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin" });
+  const response = await networkFetch(path, { credentials: "same-origin" });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(
@@ -22,7 +24,8 @@ async function memberGet<T>(path: string): Promise<T> {
       response.status,
     );
   }
-  return payload as T;
+  // A model can be registered by file path; screens show its file name only.
+  return scrubModelPaths(payload) as T;
 }
 
 export const productApi = {
@@ -34,7 +37,7 @@ export const productApi = {
     event: SetupEvidenceRequest,
   ): Promise<SetupEvidenceResponse> => {
     const session = await accountApi.session();
-    const response = await fetch("/admin/api/setup-evidence", {
+    const response = await networkFetch("/admin/api/setup-evidence", {
       method: "POST",
       credentials: "same-origin",
       headers: {

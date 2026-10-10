@@ -113,6 +113,9 @@ bindings:
     prompt_node: "7"
     seed_node: "8"
 requires:
+  services:
+    - faces
+    - comfyui
   models:
     - role: diffusion_model
       path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors

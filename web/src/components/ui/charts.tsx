@@ -44,11 +44,78 @@ function toneVar(tone: ChartTone | undefined): string {
       return "var(--vf-bad)";
     case "info":
       return "var(--vf-info)";
-    case "accent":
-      return "var(--vf-accent)";
+    case "muted":
+      return CHART_OTHER;
     default:
-      return "var(--vf-text-subtle)";
+      // DESIGN "Colour budget": one series takes one hue, --chart-1.
+      return CHART_SERIES[0];
   }
+}
+
+/** Series hues in order; a breakdown shows at most three plus Other. */
+export const CHART_SERIES = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+] as const;
+export const CHART_OTHER = "var(--chart-other)";
+export const CHART_OTHER_KEY = "Other";
+
+/**
+ * Colours for a breakdown: the first three keys (callers order them by
+ * size) take the series hues, and every later key folds into Other, so a
+ * chart never shows more than four colours. Capability hues never fill bars.
+ */
+export function chartColors(keys: readonly string[]): {
+  colors: Record<string, string>;
+  /** The keys drawn in their own hue; the rest are Other. */
+  shown: string[];
+  folded: string[];
+} {
+  const named = keys.filter((key) => key !== CHART_OTHER_KEY);
+  const shown = named.slice(0, CHART_SERIES.length);
+  const folded = named.slice(CHART_SERIES.length);
+  const colors: Record<string, string> = {};
+  shown.forEach((key, index) => {
+    colors[key] = CHART_SERIES[index];
+  });
+  for (const key of folded) colors[key] = CHART_OTHER;
+  if (keys.includes(CHART_OTHER_KEY)) colors[CHART_OTHER_KEY] = CHART_OTHER;
+  return { colors, shown, folded };
+}
+
+/** Axis labels: `text-badge` (12) in subtle ink. */
+const AXIS_TICK = { className: "fill-subtle-foreground text-badge" };
+
+/** A chart legend: an 8 px dot and the word for each series. */
+export function ChartLegend({
+  items,
+  className,
+}: {
+  items: Array<{ label: string; color: string }>;
+  className?: string;
+}) {
+  return (
+    <ul
+      aria-label="Chart legend"
+      className={cn(
+        "text-muted-foreground text-meta flex flex-wrap items-center gap-x-4 gap-y-1",
+        className,
+      )}
+    >
+      {items.map((item) => (
+        <li key={item.label} className="inline-flex items-center gap-1.5">
+          <span
+            aria-hidden="true"
+            data-slot="chart-legend-dot"
+            className="size-2 shrink-0 rounded-full"
+            style={{ background: item.color }}
+          />
+          {item.label}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function compactNumber(value: unknown): string {
@@ -100,23 +167,26 @@ function ChartAccessibleEquivalent({
   }
 
   return (
-    <table className="sr-only">
-      <caption>{accessibility.label}</caption>
-      <thead>
-        <tr>
-          <th scope="col">Sample</th>
-          <th scope="col">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((point, index) => (
-          <tr key={`${String(point.x)}-${index}`}>
-            <th scope="row">{point.label ?? String(point.x)}</th>
-            <td>{String(point.y)}</td>
+    // The wrapper clips the table; a table alone ignores sr-only and widens the page.
+    <div className="sr-only">
+      <table>
+        <caption>{accessibility.label}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Sample</th>
+            <th scope="col">Value</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {data.map((point, index) => (
+            <tr key={`${String(point.x)}-${index}`}>
+              <th scope="row">{point.label ?? String(point.x)}</th>
+              <td>{String(point.y)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -195,7 +265,7 @@ export function TrendLineChart({
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: "var(--vf-text-subtle)", fontSize: 10 }}
+                tick={AXIS_TICK}
               />
               <YAxis hide />
             </>
@@ -241,7 +311,7 @@ export interface TrendBarChartProps {
 
 export function TrendBarChart({
   series,
-  tone = "ok",
+  tone = "accent",
   height = 108,
   showAxes = false,
   accessibility,
@@ -274,7 +344,7 @@ export function TrendBarChart({
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fill: "var(--vf-text-subtle)", fontSize: 10 }}
+                tick={AXIS_TICK}
               />
               <YAxis hide />
             </>

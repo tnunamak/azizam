@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
+from gateway.model_ids import display_model_id
 from gateway.user_runtime import UserPortalError
 
 SessionProvider = Callable[[Request], AdminSession | None]
@@ -46,7 +47,8 @@ _CAPABILITY_BY_INTENT_PREFIX = {
     "image": "image",
     "video": "video",
     "audio": "audio",
-    "speech": "audio",
+    # Text read aloud is its own task ("Read text aloud"), not music or sounds.
+    "speech": "voice",
     "stt": "transcribe",
     "transcription": "transcribe",
     "embedding": "embeddings",
@@ -1154,6 +1156,9 @@ def _usage_summary(
             + " ORDER BY created_at DESC, request_id DESC", params,
         ).fetchall()
     receipts = []
+    # Requests per source across the whole scope, so the Source picker can rank
+    # sources by activity whichever source is currently selected.
+    source_requests: dict[str, int] = {}
     for raw, stored_at in rows:
         value = json.loads(raw)
         if isinstance(value, dict):
@@ -1161,8 +1166,13 @@ def _usage_summary(
                 continue
             value["_stored_at"] = stored_at
             _annotate_receipt_source(value, sources, admin_db_path)
+            tallied = _source_id(value.get("source"))
+            if tallied:
+                source_requests[tallied] = source_requests.get(tallied, 0) + 1
             if _source_matches_filter(value.get("source"), source_filter):
                 receipts.append(value)
+    for source_row in sources:
+        source_row["requests"] = source_requests.get(str(source_row.get("id")), 0)
     by_day: dict[str, dict[str, Any]] = {}
     by_model: dict[tuple[str, str], dict[str, Any]] = {}
     spend = 0.0
@@ -1176,7 +1186,8 @@ def _usage_summary(
         daily[capability] = daily.get(capability, 0) + 1
         model = _usage_model(receipt)
         row = by_model.setdefault((model, capability), {"model": model, "requests": 0, "remote_spend": None,
-                                          "capability": capability})
+                                          "capability": capability, "paid_requests": 0,
+                                          "unknown_paid_requests": 0})
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
@@ -1185,8 +1196,10 @@ def _usage_summary(
             row["remote_spend"] = (row["remote_spend"] or 0) + cost
             if _receipt_is_paid_remote(receipt) or cost > 0:
                 paid_requests += 1
+                row["paid_requests"] += 1
         elif _receipt_is_paid_remote(receipt):
             unknown_paid_requests += 1
+            row["unknown_paid_requests"] += 1
     hashes = owner_keys
     made: set[str] = set()
     receipt_ids = {str(r["request_id"]) for r in receipts}
@@ -1310,6 +1323,8 @@ def _usage_sources(admin_db_path: Path, *, app_ids: list[str] | None) -> list[di
                 "app_id": app_id,
                 "owner_user_id": app.get("owner_user_id"),
                 "owner_service_account_id": app.get("owner_service_account_id"),
+                "created_at": app.get("created_at"),
+                "disabled": app.get("disabled_at") is not None,
             })
     return sources
 
@@ -1368,6 +1383,8 @@ def _capability(receipt: Mapping[str, Any]) -> str:
     path = str(receipt.get("path") or "")
     if intent.startswith("audio.transcri") or path.startswith(("/v1/audio/transcriptions", "/v1/audio/translations")):
         return "transcribe"
+    if intent.startswith("audio.speech") or path.startswith("/v1/audio/speech"):
+        return "voice"
     prefix = intent.split(".", 1)[0]
     if prefix in _CAPABILITY_BY_INTENT_PREFIX:
         return _CAPABILITY_BY_INTENT_PREFIX[prefix]
@@ -1389,7 +1406,7 @@ def _usage_model(receipt: Mapping[str, Any]) -> str:
         receipt.get("model"),
         _nested(receipt, "metadata", "model"),
     )
-    return model or ""
+    return display_model_id(model) if model else ""
 
 
 def _capability_label(capability: str) -> str:
@@ -1398,6 +1415,7 @@ def _capability_label(capability: str) -> str:
         "image": "Image",
         "video": "Video",
         "audio": "Audio",
+        "voice": "Voice",
         "transcribe": "Transcription",
         "embeddings": "Embeddings",
         "rerank": "Rerank",

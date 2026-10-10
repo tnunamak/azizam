@@ -58,6 +58,7 @@ import {
   type CapabilityView,
 } from "@/lib/capability-state";
 import { useCapabilityViews } from "@/lib/use-capability-views";
+import { taskNames } from "@/lib/terms";
 import {
   Sheet,
   SheetContent,
@@ -167,13 +168,13 @@ interface Task {
 }
 /* The person's own tasks, most-asked first (brief D1.1 item 4). */
 const TASKS: Task[] = [
-  { key: "image", title: "Make a picture", tab: "image" },
-  { key: "speech", title: "Read text aloud", tab: "speech" },
-  { key: "chat", title: "Chat", tab: "chat" },
-  { key: "music", title: "Make music", tab: "audio" },
-  { key: "sfx", title: "Make a sound effect", tab: "audio" },
-  { key: "video", title: "Make a video", tab: "video" },
-  { key: "transcribe", title: "Turn a recording into text", tab: "transcribe" },
+  { key: "image", title: taskNames.image, tab: "image" },
+  { key: "speech", title: taskNames.speech, tab: "speech" },
+  { key: "chat", title: taskNames.chat, tab: "chat" },
+  { key: "music", title: taskNames.music, tab: "audio" },
+  { key: "sfx", title: taskNames.sound_effects, tab: "audio" },
+  { key: "video", title: taskNames.video, tab: "video" },
+  { key: "transcribe", title: taskNames.transcribe, tab: "transcribe" },
 ];
 const USABLE = new Set(["ready", "busy", "degraded", "unknown"]);
 
@@ -203,9 +204,15 @@ function taskUse(receipts: HomeReceipt[]) {
   return uses;
 }
 
-/** A task's state word, only when it is not Ready. */
+/** Show faults, or explain when a Ready task must start its engine first. */
 function TaskState({ view }: { view: CapabilityView }) {
-  if (view.state === "ready") return null;
+  if (view.state === "ready") {
+    return view.detail ? (
+      <span className="text-muted-foreground truncate text-sm">
+        {view.detail}
+      </span>
+    ) : null;
+  }
   return (
     <span className="flex min-w-0 items-center gap-2">
       <StateWord tone={view.tone} word={view.word} className="shrink-0" />
@@ -248,7 +255,7 @@ function Favourite({
         {task.title}
       </span>
       <span className="text-muted-foreground min-h-5 text-sm">
-        {view.state !== "ready" ? (
+        {view.state !== "ready" || view.detail ? (
           <TaskState view={view} />
         ) : usedAt ? (
           <>
