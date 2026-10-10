@@ -113,10 +113,11 @@ it("names an uncatalogued model readably and keeps the raw id only in Details", 
     /^Vendor Retired Model V1$/,
   );
   fireEvent.click(screen.getByText("Details", { selector: "summary" }));
-  const modelDetail = Array.from(dialog.querySelectorAll("dl")).find(
-    (detail) => detail.querySelector("dt")?.textContent === "Model name",
-  );
-  expect(modelDetail?.querySelector("dd")).toHaveTextContent("vendor/retired-model:v1");
+  // Details is a key-value list too: the raw id is the value of "Model name".
+  const modelDetail = Array.from(dialog.querySelectorAll("dt")).find(
+    (term) => term.textContent === "Model name",
+  )?.nextElementSibling;
+  expect(modelDetail).toHaveTextContent("vendor/retired-model:v1");
   expect(
     within(modelDetail as HTMLElement).getByText("vendor/retired-model:v1"),
   ).toHaveClass("font-mono");

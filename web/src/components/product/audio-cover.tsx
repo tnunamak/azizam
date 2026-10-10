@@ -83,7 +83,7 @@ const scrim = "bg-media-badge text-media-badge-foreground";
 /**
  * The type and length of a playable tile, bottom left: a video or sound
  * glyph and "0:04" (Apple Photos' duration badge, with the type it lacks).
- * Without a length it is the glyph alone.
+ * Without a length it is the glyph alone. Badge text and radius (12, 4).
  */
 export function MediaBadge({
   icon: Icon,
@@ -98,7 +98,7 @@ export function MediaBadge({
     <span
       className={cn(
         scrim,
-        "pointer-events-none flex h-6 shrink-0 items-center gap-1 rounded-full text-xs font-medium [&_svg]:size-3.5",
+        "rounded-badge text-badge pointer-events-none flex h-6 shrink-0 items-center gap-1 [&_svg]:size-3.5",
         children == null ? "w-6 justify-center" : "pr-2 pl-1.5",
         className,
       )}
@@ -128,7 +128,10 @@ export const playDiscButton = cn(
   "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto relative z-30 cursor-pointer transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
 );
 
-/** A short day label ("Today", "Oct 20") on the first tile of each day. */
+/**
+ * A short day label ("Today", "Oct 20") on the first tile of each day, in
+ * badge text with the badge radius.
+ */
 export function DayChip({
   children,
   className,
@@ -140,7 +143,7 @@ export function DayChip({
     <span
       className={cn(
         scrim,
-        "pointer-events-none flex h-6 items-center rounded-full px-2 text-xs font-medium",
+        "rounded-badge text-badge pointer-events-none flex h-6 items-center px-2",
         className,
       )}
     >
@@ -185,7 +188,7 @@ export function AudioFace({
         <AudioLines aria-hidden="true" className="size-8" />
       )}
       {status ? (
-        <span className="text-foreground absolute inset-x-2 top-2 z-30 text-xs font-medium">
+        <span className="text-foreground text-badge absolute inset-x-2 top-2 z-30">
           {status}
         </span>
       ) : null}

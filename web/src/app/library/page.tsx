@@ -25,6 +25,7 @@ import {
   Download,
   ImageIcon,
   ListFilter,
+  MoreHorizontal,
   Pause,
   Play,
   ReceiptText,
@@ -45,6 +46,10 @@ import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { PersonMark } from "@/components/product/person-mark";
 import {
+  KeyValueList,
+  type KeyValueItem,
+} from "@/components/product/key-value";
+import {
   AudioFace,
   audioKind,
   DayChip,
@@ -60,10 +65,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
-  OverflowMenu,
-  OverflowMenuItem,
-  OverflowMenuSeparator,
-} from "@/components/ui/overflow-menu";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Popover,
   PopoverContent,
@@ -312,7 +318,7 @@ function UnavailablePreview({
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
         <Icon aria-hidden="true" className="mx-auto size-5" />
       </div>
-      <p className="text-xs">{copy}</p>
+      <p className="text-badge font-normal">{copy}</p>
       {onRetry ? (
         <Button
           type="button"
@@ -574,7 +580,7 @@ function LargeAudioPlayer({
         />
       ) : null}
       <div className="flex w-full items-center gap-3">
-        <span className="figures text-muted-foreground w-10 text-right text-xs">
+        <span className="figures text-muted-foreground text-badge w-10 text-right">
           {formatDuration(time)}
         </span>
         <input
@@ -591,14 +597,14 @@ function LargeAudioPlayer({
             audio.currentTime = Number(event.target.value);
             setTime(audio.currentTime);
           }}
-          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
+          className="accent-primary h-10 min-w-0 flex-1 cursor-pointer max-sm:h-11"
         />
-        <span className="figures text-muted-foreground w-10 text-xs">
+        <span className="figures text-muted-foreground text-badge w-10">
           {length != null ? formatDuration(length) : "–:––"}
         </span>
       </div>
       {blocked ? (
-        <p role="status" className="text-sm">
+        <p role="status" className="text-meta">
           Playback didn&apos;t start. Try again.
         </p>
       ) : null}
@@ -691,13 +697,13 @@ function LargeVideoPlayer({
         <Button
           type="button"
           size="icon"
-          className="size-11 rounded-full"
+          className="size-10 rounded-full max-sm:size-11"
           aria-label={`${playing ? "Pause" : "Play"} ${title}`}
           onClick={() => void toggle()}
         >
           {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
         </Button>
-        <span className="figures w-10 text-right text-xs">
+        <span className="figures text-badge w-10 text-right">
           {formatDuration(time)}
         </span>
         <input
@@ -714,9 +720,9 @@ function LargeVideoPlayer({
             video.currentTime = Number(event.target.value);
             setTime(video.currentTime);
           }}
-          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
+          className="accent-primary h-10 min-w-0 flex-1 cursor-pointer max-sm:h-11"
         />
-        <span className="figures w-10 text-xs">
+        <span className="figures text-badge w-10">
           {length != null ? formatDuration(length) : "–:––"}
         </span>
         <Button
@@ -736,7 +742,7 @@ function LargeVideoPlayer({
         </Button>
       </div>
       {blocked ? (
-        <p role="status" className="text-chrome-foreground px-3 pb-2 text-sm">
+        <p role="status" className="text-chrome-foreground text-meta px-3 pb-2">
           Playback didn&apos;t start. Try again.
         </p>
       ) : null}
@@ -997,11 +1003,11 @@ function InProgressTile({ item }: { item: InProgressItem }) {
   return (
     <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
       <Icon aria-hidden="true" className="size-5" />
-      <p className="text-foreground text-sm font-medium max-sm:sr-only">
+      <p className="text-foreground text-meta font-medium max-sm:sr-only">
         {MAKING_COPY[item.kind]}
       </p>
       {item.startedAt != null ? (
-        <p className="text-xs max-sm:sr-only">
+        <p className="text-badge font-normal max-sm:sr-only">
           Started <RelativeTime ts={item.startedAt} fallback="" />
         </p>
       ) : null}
@@ -1061,9 +1067,16 @@ function AssetTile({
             visible={visible}
           />
         )}
+        {/* At most two cues always on a tile (craft PR 5; Apple Photos shows
+            only a video's length): the type and length badge and, with
+            Everyone shown, the maker's 16 px mark. The day chip on the first
+            tile of each day is the one exception (round 6, "no dates"). A
+            video's play disc joins the title on hover or focus, since its
+            badge already says video; audio keeps its disc (it has no
+            picture). */}
         {asset.kind === "video" && asset.available !== false ? (
           <>
-            <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+            <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100">
               <PlayDisc />
             </span>
             <MediaBadge icon={Video} className="absolute bottom-2 left-2 z-20">
@@ -1081,7 +1094,7 @@ function AssetTile({
         {everyone && person ? (
           <PersonMark
             name={person}
-            size="xs"
+            size="2xs"
             label={person}
             className="ring-media-badge absolute top-2 right-2 z-20 ring-2"
           />
@@ -1095,10 +1108,10 @@ function AssetTile({
           aria-hidden="true"
           className="dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden"
         >
-          <p className="line-clamp-2 text-xs leading-snug font-medium">
+          <p className="text-badge line-clamp-2">
             {captionTitle(asset.prompt, untitledName(asset), 56)}
           </p>
-          <p className="text-foreground/80 mt-0.5 text-xs">
+          <p className="text-foreground/80 text-badge mt-0.5 font-normal">
             {[
               everyone ? person : null,
               tileDate(toDateValue(asset.created_at), new Date()),
@@ -1156,7 +1169,7 @@ function MoreFilters({
     count ? (
       <span
         className={cn(
-          "bg-primary text-primary-foreground figures size-5 items-center justify-center rounded-full text-xs",
+          "bg-primary text-primary-foreground figures rounded-badge text-badge size-5 items-center justify-center",
           className,
         )}
       >
@@ -1185,12 +1198,12 @@ function MoreFilters({
         {phoneExtras ? (
           // Labelled like the filters under it (D1.5).
           <div className="space-y-1.5 sm:hidden">
-            <p className="text-sm font-medium">Person</p>
+            <p className="text-label">Person</p>
             {phoneExtras}
           </div>
         ) : null}
         <div className="space-y-1.5">
-          <p className="text-sm font-medium">Model</p>
+          <p className="text-label">Model</p>
           <Select value={model} onValueChange={setModel}>
             <SelectTrigger aria-label="Model" className="w-full">
               <SelectValue />
@@ -1206,7 +1219,7 @@ function MoreFilters({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <p className="text-sm font-medium">Date</p>
+          <p className="text-label">Date</p>
           <Select
             value={date}
             onValueChange={(value) => setDate(value as DateFilter)}
@@ -1224,7 +1237,7 @@ function MoreFilters({
         </div>
         {instanceView ? (
           <div className="space-y-1.5">
-            <p className="text-sm font-medium">App</p>
+            <p className="text-label">App</p>
             <Select value={source} onValueChange={setSource}>
               <SelectTrigger aria-label="Source" className="w-full">
                 <SelectValue placeholder="All apps" />
@@ -1272,16 +1285,11 @@ function costText(receipt: ReceiptCost): string {
   return "Cost not recorded";
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  if (children == null || children === "") return null;
-  return (
-    <div className="flex min-w-0 items-baseline justify-between gap-4 py-2">
-      <dt className="text-muted-foreground shrink-0 text-sm">{label}</dt>
-      <dd className="figures min-w-0 text-right text-sm break-words">
-        {children}
-      </dd>
-    </div>
-  );
+/** The facts that have a value, for a KeyValueList. */
+function presentFacts(
+  facts: [key: string, value: ReactNode][],
+): KeyValueItem[] {
+  return facts.filter(([, value]) => value != null && value !== "");
 }
 
 function CreationViewer({
@@ -1395,7 +1403,7 @@ function CreationViewer({
                     {/* The clip on one neutral card (D1.5): its kind and the
                         player. Its words are in the details beside it, once,
                         as a picture's are (D1.5b: the prompt showed twice). */}
-                    <p className="text-muted-foreground relative flex w-full items-center gap-1.5 text-xs font-medium">
+                    <p className="text-muted-foreground text-badge relative flex w-full items-center gap-1.5">
                       <AudioLines aria-hidden="true" className="size-3.5" />
                       {audioKind(asset.model).label}
                     </p>
@@ -1443,28 +1451,42 @@ function CreationViewer({
           <aside className="flex min-h-0 min-w-0 flex-col md:overflow-y-auto md:border-l">
             <div className="flex-1 space-y-5 p-5">
               <div className="flex items-start justify-between gap-3">
-                <DialogPrimitive.Title className="min-w-0 text-xl leading-snug font-semibold text-balance break-words">
+                <DialogPrimitive.Title className="text-verdict min-w-0 text-balance break-words">
                   {title}
                 </DialogPrimitive.Title>
-                <div className="-mt-1.5 -mr-1.5 flex shrink-0 items-center gap-1">
+                <div className="-mt-1 -mr-1.5 flex shrink-0 items-center gap-1">
                   {onDelete ? (
-                    <OverflowMenu label={`Actions for ${title}`}>
-                      <OverflowMenuSeparator />
-                      <OverflowMenuItem danger onSelect={() => onDelete(asset)}>
-                        <Trash2 className="size-4" aria-hidden />
-                        Delete
-                      </OverflowMenuItem>
-                    </OverflowMenu>
+                    // The row menu of the list template: a 32 icon button.
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Actions for ${title}`}
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => onDelete(asset)}
+                        >
+                          <Trash2 aria-hidden />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   ) : null}
                   <DialogPrimitive.Close
-                    className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-control hidden size-9 items-center justify-center md:flex"
+                    className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-control hidden size-8 items-center justify-center md:flex"
                     aria-label="Close"
                   >
                     <X aria-hidden="true" className="size-4" />
                   </DialogPrimitive.Close>
                 </div>
               </div>
-              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+              <p className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1">
                 {person ? (
                   <>
                     <PersonMark name={person} size="sm" />
@@ -1480,18 +1502,20 @@ function CreationViewer({
                 ) : null}
               </p>
               {asset.available === false ? (
-                <p className="bg-muted rounded-control p-3 text-sm">
+                <p className="bg-muted rounded-control text-meta p-3">
                   {confirmedGone(asset.unavailable_reason)
                     ? "The gateway no longer stores this file."
                     : "This file is unavailable."}
                   {remains ? ` ${remains}` : ""}
                 </p>
               ) : null}
-              <div className="flex flex-wrap gap-2">
+              {/* Share (the file itself) is the primary at 40 where the
+                  browser has a share sheet; every other action is 32. */}
+              <div className="flex flex-wrap items-center gap-2">
                 {asset.available !== false && canShare ? (
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     onClick={() =>
                       void shareCreation(asset, everyone).catch((error) => {
                         // Closing the share sheet is not a failure.
@@ -1549,52 +1573,61 @@ function CreationViewer({
                   </Button>
                 ) : null}
               </div>
-              <dl className="divide-y border-y">
-                <Fact label="Model">{model}</Fact>
-                <Fact label="Created">
-                  {created
-                    ? created.toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })
-                    : ""}
-                </Fact>
-                <Fact label="Size">
-                  {asset.width && asset.height
-                    ? `${asset.width} × ${asset.height}`
-                    : ""}
-                </Fact>
-                <Fact label="Length">
-                  {asset.duration_s != null && Number.isFinite(asset.duration_s)
-                    ? formatDuration(asset.duration_s)
-                    : ""}
-                </Fact>
-                <Fact label="Made in">
-                  {asset.generation_ms == null
-                    ? ""
-                    : `${(asset.generation_ms / 1000).toFixed(1)} s`}
-                </Fact>
-                {charge ? <Fact label="Charge">{charge}</Fact> : null}
-              </dl>
+              <KeyValueList
+                className="figures"
+                items={presentFacts([
+                  ["Model", model],
+                  [
+                    "Created",
+                    created
+                      ? created.toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "",
+                  ],
+                  [
+                    "Size",
+                    asset.width && asset.height
+                      ? `${asset.width} × ${asset.height}`
+                      : "",
+                  ],
+                  [
+                    "Length",
+                    asset.duration_s != null &&
+                    Number.isFinite(asset.duration_s)
+                      ? formatDuration(asset.duration_s)
+                      : "",
+                  ],
+                  [
+                    "Made in",
+                    asset.generation_ms == null
+                      ? ""
+                      : `${(asset.generation_ms / 1000).toFixed(1)} s`,
+                  ],
+                  ["Charge", charge],
+                ])}
+              />
               {prompt && prompt.replace(/[.!?]$/, "") !== title ? (
                 <section>
-                  <h3 className="text-muted-foreground mb-1 text-sm font-medium">
+                  <h3 className="text-muted-foreground text-meta mb-1">
                     Prompt
                   </h3>
-                  <p className="text-sm break-words">{prompt}</p>
+                  <p className="text-body break-words">{prompt}</p>
                 </section>
               ) : null}
               <details className="group">
-                <summary className="text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                <summary className="text-muted-foreground hover:text-foreground text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
                   Details
                 </summary>
-                <div className="mt-2 grid gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
-                  <Detail
-                    label="Request receipt"
-                    value={
+                <KeyValueList
+                  className="mt-2"
+                  items={presentFacts([
+                    [
+                      "Request receipt",
                       asset.request_id ? (
                         <a
-                          className="text-link font-mono text-xs break-all underline-offset-4 hover:underline"
+                          className="text-link text-meta font-mono break-all underline-offset-4 hover:underline"
                           href={`/r/${encodeURIComponent(asset.request_id)}`}
                           aria-label={`View receipt ${asset.request_id}`}
                         >
@@ -1602,37 +1635,33 @@ function CreationViewer({
                         </a>
                       ) : (
                         "Not recorded"
-                      )
-                    }
-                    title={asset.request_id ?? undefined}
-                  />
-                  <Detail
-                    label="Model name"
-                    value={
+                      ),
+                    ],
+                    [
+                      "Model name",
                       asset.model ? (
-                        <span className="font-mono text-xs">
+                        <span className="text-meta font-mono break-all">
                           {safeModelId(asset.model)}
                         </span>
                       ) : (
                         ""
-                      )
-                    }
-                    title={asset.model ? safeModelId(asset.model) : undefined}
-                  />
-                  <Detail label="Seed" value={asset.seed ?? ""} />
-                  {asset.source ? (
-                    <Detail label="App" value={asset.source.label} />
-                  ) : null}
-                  <Detail
-                    label="Created (UTC)"
-                    value={absolute(asset.created_at) ?? ""}
-                  />
-                  {asset.available === false && asset.unavailable_reason ? (
-                    <Detail label="File" value={asset.unavailable_reason} />
-                  ) : null}
-                </div>
+                      ),
+                    ],
+                    ["Seed", asset.seed ?? ""],
+                    ["App", asset.source?.label ?? ""],
+                    ["Created (UTC)", absolute(asset.created_at) ?? ""],
+                    [
+                      "File",
+                      asset.available === false
+                        ? (asset.unavailable_reason ?? "")
+                        : "",
+                    ],
+                  ])}
+                />
                 <section className="mt-3">
-                  <h3 className="mb-1 text-sm font-medium">Workflow</h3>
+                  <h3 className="text-muted-foreground text-meta mb-1">
+                    Workflow
+                  </h3>
                   <pre className="bg-muted rounded-control max-h-40 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap">
                     {asset.workflow
                       ? typeof asset.workflow === "string"
@@ -1678,26 +1707,6 @@ function CreationViewer({
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
-  );
-}
-
-function Detail({
-  label,
-  value,
-  title,
-}: {
-  label: string;
-  value: React.ReactNode;
-  title?: string;
-}) {
-  if (value == null || value === "") return null;
-  return (
-    <dl className="min-w-0">
-      <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm" title={title}>
-        {value}
-      </dd>
-    </dl>
   );
 }
 
@@ -2143,17 +2152,13 @@ export default function LibraryPage() {
           switch, a search button and Filters, so the controls stay under a
           fifth of the screen (D1.5); the search field opens below it. The
           heading keeps a ref so the viewer can return focus to it. */}
-      <header className="mb-4 flex min-h-10 items-center">
-        <h1
-          ref={headingRef}
-          tabIndex={-1}
-          className="text-2xl font-semibold tracking-tight"
-        >
+      <header className="mb-(--space-title) flex min-h-8 items-center">
+        <h1 ref={headingRef} tabIndex={-1} className="text-title">
           Library
           {hasLoadedAssets && !hasNextPage && !activeFilters ? (
             // The count is what the grid shows; files no longer stored are
             // counted beside it, not inside it (red team round 2).
-            <span className="text-subtle-foreground figures ml-2.5 text-lg font-normal">
+            <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
               {storedAssets.length}
             </span>
           ) : null}
@@ -2167,7 +2172,7 @@ export default function LibraryPage() {
                 .getElementById("gone-files")
                 ?.scrollIntoView({ block: "start" });
             }}
-            className="text-link ml-3 min-h-11 text-sm font-medium underline-offset-4 hover:underline sm:min-h-0"
+            className="text-link text-meta ml-3 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
           >
             {goneAssets.length === 1
               ? goneConfirmed
@@ -2179,187 +2184,190 @@ export default function LibraryPage() {
           </button>
         ) : null}
       </header>
-      <section
-        aria-label="Library filters"
-        className="mb-6 flex flex-wrap items-center gap-2"
-      >
-        <label
-          className={cn(
-            "relative block min-w-0 sm:w-64",
-            phoneSearch || search
-              ? "max-sm:order-last max-sm:w-full"
-              : "max-sm:hidden",
-          )}
+      {/* The toolbar and the grid it filters are one block, 24 apart. */}
+      <div>
+        <section
+          aria-label="Library filters"
+          className="mb-6 flex flex-wrap items-center gap-2"
         >
-          <span className="sr-only">Search your creations</span>
-          <Search
-            className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-            aria-hidden
-          />
-          <Input
-            ref={searchRef}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search your creations"
-            size="sm"
-            className="pl-9"
-          />
-        </label>
-        {/* The kind switch stays one tap away on a phone too (D1.4: audio
-            was buried behind Filters). */}
-        <Segmented
-          label="Kind"
-          className="max-sm:min-w-0 max-sm:flex-1"
-          value={kind}
-          onChange={setKind}
-          options={[
-            { value: "all", label: "All" },
-            { value: "image", label: "Images", icon: ImageIcon },
-            { value: "video", label: "Video", icon: Video },
-            { value: "audio", label: "Audio", icon: AudioLines },
-          ]}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon-lg"
-          aria-label="Search"
-          aria-expanded={phoneSearch || Boolean(search)}
-          onClick={() => {
-            const open = !phoneSearch;
-            setPhoneSearch(open);
-            if (open) requestAnimationFrame(() => searchRef.current?.focus());
-          }}
-          className="sm:hidden"
-        >
-          <Search aria-hidden="true" />
-        </Button>
-        <div className="contents max-sm:hidden">{personPicker("row")}</div>
-        <MoreFilters
-          model={model}
-          setModel={setModel}
-          models={models}
-          date={date}
-          setDate={setDate}
-          source={source}
-          setSource={setSource}
-          sources={sources}
-          instanceView={instanceView}
-          nameModel={nameModel}
-          phoneExtras={canChooseOwner ? personPicker("sheet") : undefined}
-          phoneActive={owner !== "default" ? 1 : 0}
-          onClear={activeFilters ? clearFilters : undefined}
-        />
-        {activeFilters ? (
-          <Button
-            variant="ghost"
-            onClick={clearFilters}
-            className="max-sm:hidden"
+          <label
+            className={cn(
+              "relative block min-w-0 sm:w-64",
+              phoneSearch || search
+                ? "max-sm:order-last max-sm:w-full"
+                : "max-sm:hidden",
+            )}
           >
-            Clear filters
-          </Button>
-        ) : null}
-      </section>
-      {deepLinkedAssetError ? (
-        <div className="mb-4">
-          <ErrorState
-            heading="Couldn’t open that creation"
-            message="That library item could not be loaded. Try again."
-            onRetry={() => void refetchDeepLinkedAsset()}
-            retrying={deepLinkedAssetFetching}
+            <span className="sr-only">Search your creations</span>
+            <Search
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+              aria-hidden
+            />
+            <Input
+              ref={searchRef}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search your creations"
+              size="sm"
+              className="pl-9"
+            />
+          </label>
+          {/* The kind switch stays one tap away on a phone too (D1.4: audio
+            was buried behind Filters). */}
+          <Segmented
+            label="Kind"
+            className="max-sm:min-w-0 max-sm:flex-1"
+            value={kind}
+            onChange={setKind}
+            options={[
+              { value: "all", label: "All" },
+              { value: "image", label: "Images", icon: ImageIcon },
+              { value: "video", label: "Video", icon: Video },
+              { value: "audio", label: "Audio", icon: AudioLines },
+            ]}
           />
-        </div>
-      ) : null}
-      {isLoading ? (
-        <div
-          role="status"
-          aria-label="Loading library"
-          aria-busy="true"
-          className="space-y-3"
-        >
-          {/* The grid's own shape: three to six columns (D1.5: two big
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-lg"
+            aria-label="Search"
+            aria-expanded={phoneSearch || Boolean(search)}
+            onClick={() => {
+              const open = !phoneSearch;
+              setPhoneSearch(open);
+              if (open) requestAnimationFrame(() => searchRef.current?.focus());
+            }}
+            className="sm:hidden"
+          >
+            <Search aria-hidden="true" />
+          </Button>
+          <div className="contents max-sm:hidden">{personPicker("row")}</div>
+          <MoreFilters
+            model={model}
+            setModel={setModel}
+            models={models}
+            date={date}
+            setDate={setDate}
+            source={source}
+            setSource={setSource}
+            sources={sources}
+            instanceView={instanceView}
+            nameModel={nameModel}
+            phoneExtras={canChooseOwner ? personPicker("sheet") : undefined}
+            phoneActive={owner !== "default" ? 1 : 0}
+            onClear={activeFilters ? clearFilters : undefined}
+          />
+          {activeFilters ? (
+            <Button
+              variant="ghost"
+              onClick={clearFilters}
+              className="max-sm:hidden"
+            >
+              Clear filters
+            </Button>
+          ) : null}
+        </section>
+        {deepLinkedAssetError ? (
+          <div className="mb-4">
+            <ErrorState
+              heading="Couldn’t open that creation"
+              message="That library item could not be loaded. Try again."
+              onRetry={() => void refetchDeepLinkedAsset()}
+              retrying={deepLinkedAssetFetching}
+            />
+          </div>
+        ) : null}
+        {isLoading ? (
+          <div
+            role="status"
+            aria-label="Loading library"
+            aria-busy="true"
+            className="space-y-3"
+          >
+            {/* The grid's own shape: three to six columns (D1.5: two big
               phone squares jumped to three). */}
-          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {Array.from({ length: 12 }).map((_, index) => (
-              <Skeleton key={index} className="rounded-media aspect-square" />
-            ))}
+            <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {Array.from({ length: 12 }).map((_, index) => (
+                <Skeleton key={index} className="rounded-media aspect-square" />
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
-      {showInitialError ? (
-        <ErrorState
-          heading="Couldn’t load your library"
-          message={null}
-          onRetry={() => void refetch()}
-          retrying={isFetching}
-        />
-      ) : null}
-      {!isLoading &&
-      !showInitialError &&
-      assets.length === 0 &&
-      inProgress.length === 0 ? (
-        <EmptyState
-          icon={activeFilters ? Search : ImageIcon}
-          title={activeFilters ? "No matching creations" : "No creations yet"}
-          description={
-            activeFilters
-              ? "Clear filters to see more."
-              : "Images, video and audio made through the gateway appear here."
-          }
-          action={
-            activeFilters ? (
-              <Button variant="outline" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            ) : (
-              <Button asChild>
-                <a href="/ui/try/?capability=image">Make an image</a>
-              </Button>
-            )
-          }
-        />
-      ) : null}
-      {!isLoading && !showInitialError && expiringImages > 0 ? (
-        <p className="mb-4 text-sm">
-          {expiringImages === 1
-            ? "1 picture will be removed within 3 days. Download it to keep it."
-            : `${expiringImages} pictures will be removed within 3 days. Download the ones to keep.`}
-        </p>
-      ) : null}
-      {!isLoading &&
-      !showInitialError &&
-      (storedAssets.length > 0 || inProgress.length > 0) ? (
-        <div aria-busy={updating}>
-          {/* One continuous grid, newest first (D1.6: date groups left
+        ) : null}
+        {showInitialError ? (
+          <ErrorState
+            heading="Couldn’t load your library"
+            message={null}
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
+        ) : null}
+        {!isLoading &&
+        !showInitialError &&
+        assets.length === 0 &&
+        inProgress.length === 0 ? (
+          <EmptyState
+            icon={activeFilters ? Search : ImageIcon}
+            title={activeFilters ? "No matching creations" : "No creations yet"}
+            description={
+              activeFilters
+                ? "Clear filters to see more."
+                : "Images, video and audio made through the gateway appear here."
+            }
+            action={
+              activeFilters ? (
+                <Button variant="outline" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              ) : (
+                <Button asChild>
+                  <a href="/ui/try/?capability=image">Make an image</a>
+                </Button>
+              )
+            }
+          />
+        ) : null}
+        {!isLoading && !showInitialError && expiringImages > 0 ? (
+          <p className="text-meta mb-4">
+            {expiringImages === 1
+              ? "1 picture will be removed within 3 days. Download it to keep it."
+              : `${expiringImages} pictures will be removed within 3 days. Download the ones to keep.`}
+          </p>
+        ) : null}
+        {!isLoading &&
+        !showInitialError &&
+        (storedAssets.length > 0 || inProgress.length > 0) ? (
+          <div aria-busy={updating}>
+            {/* One continuous grid, newest first (D1.6: date groups left
               part-filled rows); the day rides on its first tile. */}
-          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {inProgress.map((item) => (
-              <InProgressTile key={item.id} item={item} />
-            ))}
-            {storedAssets.map((asset, index) => (
-              <AssetTile
-                key={asset.asset_id}
-                asset={asset}
-                onOpen={openAsset}
-                everyone={instanceView}
-                person={instanceView ? personFor(asset) : null}
-                selected={selected?.asset_id === asset.asset_id}
-                day={days[index]}
-              />
-            ))}
+            <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {inProgress.map((item) => (
+                <InProgressTile key={item.id} item={item} />
+              ))}
+              {storedAssets.map((asset, index) => (
+                <AssetTile
+                  key={asset.asset_id}
+                  asset={asset}
+                  onOpen={openAsset}
+                  everyone={instanceView}
+                  person={instanceView ? personFor(asset) : null}
+                  selected={selected?.asset_id === asset.asset_id}
+                  day={days[index]}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (
         <section
           id="gone-files"
           aria-label={
             goneConfirmed ? "Files no longer stored" : "Unavailable files"
           }
-          className={cn(storedAssets.length > 0 && "mt-10 border-t pt-6")}
+          className={cn(storedAssets.length > 0 && "mt-8 border-t pt-6")}
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-            <p className="text-sm" role="status">
+            <p className="text-meta" role="status">
               {goneAssets.length === 1
                 ? goneConfirmed
                   ? "1 file is no longer stored."
@@ -2385,7 +2393,7 @@ export default function LibraryPage() {
             open={goneOpen}
             onToggle={(event) => setGoneOpen(event.currentTarget.open)}
           >
-            <summary className="text-link flex min-h-11 w-fit cursor-pointer items-center text-sm font-medium sm:min-h-8">
+            <summary className="text-link text-meta flex min-h-8 w-fit cursor-pointer items-center font-medium max-sm:min-h-11">
               Show them
             </summary>
             <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
@@ -2404,14 +2412,14 @@ export default function LibraryPage() {
         </section>
       ) : null}
       {updating ? (
-        <p role="status" className="text-muted-foreground mt-3 text-sm">
+        <p role="status" className="text-muted-foreground text-meta mt-3">
           Updating
         </p>
       ) : null}
       {showRetainedError ? (
         <div
           role="alert"
-          className="border-destructive/30 bg-danger-tint text-destructive rounded-panel mt-6 flex flex-wrap items-center justify-center gap-3 border p-3 text-sm"
+          className="border-destructive/30 bg-danger-tint text-destructive rounded-panel text-meta mt-6 flex flex-wrap items-center justify-center gap-3 border p-3"
         >
           <span>
             {isFetchNextPageError

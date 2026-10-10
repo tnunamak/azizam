@@ -98,6 +98,10 @@ SYSTEM_FILES = [
     "components/product/secret-reveal.tsx",
     # PR 4: Home
     "app/home/page.tsx",
+    # PR 5: Library
+    "app/library/page.tsx",
+    "app/library/library-format.ts",
+    "components/product/audio-cover.tsx",
 ]
 # Overlays may lift with a shadow (menus, popovers, dialogs, sheets, toasts).
 OVERLAY_FILES = {

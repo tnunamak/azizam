@@ -29,6 +29,8 @@ export function personInitial(name: string): string {
 }
 
 const sizes = {
+  /** 16: the maker's mark on a media tile (craft PR 5). */
+  "2xs": "size-4 text-2xs",
   xs: "size-5 text-2xs",
   sm: "size-6 text-xs",
   md: "size-8 text-sm",

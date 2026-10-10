@@ -24,7 +24,12 @@
       "controls"
     ],
     "library": [
-      "controls"
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
     ],
     "settings": [
       "controls",
