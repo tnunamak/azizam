@@ -351,6 +351,20 @@ test("Usage model rows read as names, never as a path on the gateway host", asyn
   expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
 });
 
+test("Usage reads text to speech as Read text aloud, music as Make music or sounds", async () => {
+  renderUsage({
+    by_model: [
+      { model: "kokoro", capability: "speech.synthesis", requests: 9, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "tts-1", capability: "audio.speech", requests: 8, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "song-maker", capability: "audio", requests: 7, paid_requests: 0, unknown_paid_requests: 0 },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  expect(within(modelRow("Kokoro")).getByText("Read text aloud")).toBeVisible();
+  expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
+  expect(within(modelRow("Song Maker")).getByText("Make music or sounds")).toBeVisible();
+});
+
 test("Usage model Cost cell is Local, an amount or Unavailable, and the legend explains it", async () => {
   renderUsage({
     by_model: [

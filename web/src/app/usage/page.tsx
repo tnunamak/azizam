@@ -1404,8 +1404,11 @@ function normalizeCapability(value: unknown): UsageCapability {
   if (text.includes("video")) return "video";
   if (text.includes("rerank")) return "rerank";
   if (text.includes("embedding") || text.includes("embed")) return "embeddings";
-  if (text.includes("speech") || text.includes("audio")) return "audio";
-  if (text.includes("voice")) return "voice";
+  // Text to speech ("speech.synthesis", "audio.speech") is Read text aloud,
+  // not music or sounds.
+  if (text.includes("speech") || text.includes("voice") || text === "tts")
+    return "voice";
+  if (text.includes("audio")) return "audio";
   if (text.includes("transcrib")) return "transcribe";
   if (text.includes("decision") || text.includes("decide")) return "decide";
   if (

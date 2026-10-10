@@ -99,7 +99,10 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByRole("row", { name: /Audio voice 1/ })).toBeVisible();
+  // The keyless LAN speech request reads as the task Home and Try name.
+  await expect(
+    page.getByRole("row", { name: /Read text aloud Voice 1\b/ }),
+  ).toBeVisible();
 });
 
 test("member cannot see local/service media or mint signed URLs for them", async ({

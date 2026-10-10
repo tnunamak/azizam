@@ -801,6 +801,11 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["by_model"][0]["capability"], "image")
         self.assertEqual(me_media._capability({"intent": "audio.transcribe"}), "transcribe")
         self.assertEqual(me_media._capability({"path": "/v1/audio/translations"}), "transcribe")
+        # Text to speech reads as its own task, never as music or sounds.
+        self.assertEqual(me_media._capability({"intent": "audio.speech"}), "voice")
+        self.assertEqual(me_media._capability({"intent": "speech.synthesis"}), "voice")
+        self.assertEqual(me_media._capability({"path": "/v1/audio/speech"}), "voice")
+        self.assertEqual(me_media._capability({"intent": "audio.music"}), "audio")
         self.assertIsNone(usage["receipts"][0]["remote_spend"])
         for invalid in ("NaN", "Infinity", "-1", "bad", True):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
