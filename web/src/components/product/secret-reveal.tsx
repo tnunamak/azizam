@@ -8,12 +8,16 @@ export interface SecretRevealProps {
   secret: string | null;
   label?: string;
   onSaved?: () => void;
+  /** One line about what the key carries, e.g. whether its prompts are
+   * remembered (`keyPromptNote`). */
+  note?: string | null;
 }
 /** For newly issued secrets only: confirmation permanently removes the value from this view. */
 export function SecretReveal({
   secret,
   label = "Your key",
   onSaved,
+  note,
 }: SecretRevealProps) {
   const [saved, setSaved] = useState(false);
   if (saved || !secret)
@@ -34,6 +38,7 @@ export function SecretReveal({
         Copy this key now. You can’t view it again after closing this step.
       </p>
       <CopyField value={secret} label={label} />
+      {note ? <p className="text-muted-foreground text-meta">{note}</p> : null}
       <Button
         type="button"
         onClick={() => {
