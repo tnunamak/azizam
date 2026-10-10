@@ -1,167 +1,215 @@
-# Categories and access plans (design v2, draft)
+# Categories and access plans (design v3)
 
-Status: draft for validation, 2026-10-10. Not implemented.
-Evidence: divan `local-ai-gateway/owner-defined-dimensions-…` (nine reports) and
-`local-ai-gateway/red-team-keeps-azizams-owner-authored-…` (two red-teams). This v2
-applies the red-team: keep the core, cut owner chores, add preview and rollback.
+Status: validated design, not implemented. 2026-10-10.
+
+Evidence, all in divan `local-ai-gateway/`:
+- `owner-defined-dimensions-…`: nine prior-art reports, 1,082 claims.
+- `red-team-keeps-azizams-owner-authored-…`: two red-teams of v1, with
+  corrections appended to the entry above.
+- Round-2 red-team of v2, a resolution report (rules A1–A25, R1–R4) and
+  claim verification (`categories-validation-…`, filed with this version).
+
+The executable reference model in `categories_model/` encodes these rules
+as scenarios. It checks internal consistency, not product behaviour.
 
 ## Problem
 
-An owner wants to say things like "kids get general-audience image models only",
-"nothing non-commercial in the team plan", "no route that trains on our data".
-Today a plan can restrict capabilities, models, workflows, providers and a fixed
-set of four tags. A tag allow list matches if any tag matches, and there is no
-tag deny. The gateway must not learn what "adult" or "non-commercial" means:
-that knowledge is data the owner (or a bundled default) supplies
-(`ENGINE_KNOWLEDGE_BOUNDARY.md`).
+An owner wants rules like "kids get general-audience services only", "the team
+plan uses nothing non-commercial", "no route that may train on our data".
+Today a plan restricts capabilities, models, workflows, providers and four
+fixed tags. A tag allow list passes if any tag matches. There is no tag deny.
+15 of 24 policy-request call sites pass no tag data, so the tag check is
+skipped there. The gateway must not learn what "adult" or "non-commercial"
+means (`ENGINE_KNOWLEDGE_BOUNDARY.md`): the owner, or a bundled default the
+owner can edit, supplies that meaning as data.
 
 ## Principles
 
-1. Meanings are data; semantics are code. The owner defines categories and
-   values. The engine owns types, applicability and rule evaluation.
-2. Deny by default. A request runs only if a rule grants it and no rule denies it.
-3. Unknown is not a match. An item without a value for a category a rule reads
-   does not match that rule. This is engine behaviour, not an owner setting.
-4. Outside metadata is evidence, never authority by itself.
-5. Nothing widens access without an owner action or a standing owner rule that
-   names the source. Every change records which rule allowed it.
-6. The owner can always see effective access, preview a change and undo it.
+1. Meanings are data; semantics are code.
+2. Deny by default. A request runs only if every attached plan grants it and
+   nothing blocks it.
+3. A deny that cannot be shown false blocks (R1). Unknown never lets a request
+   through.
+4. Outside metadata is evidence. It never grants by itself.
+5. Nothing widens access without an owner action that was previewed.
+6. One evaluator serves runtime, preview and "why denied".
 
-## Data model
+## Vocabulary
 
-### Category (dimension)
-```yaml
-id: maturity
-label: Audience
-applies_to: [service, output]      # see "Subjects"
-type: ordered                      # ordered | set | boolean | number
-values: [general, teen, adult]     # ordered: later is more restricted
-```
-Bundled categories (defaults, editable): audience, licence use, data handling,
-cost class, runs where (local / cloud). Owners add their own.
+- **Category**: an owner-defined dimension with a finite set of values,
+  immutable IDs, a label, and the subject kinds it applies to. The first slice
+  supports set categories only. Ordered, number and boolean types are
+  deferred (A14).
+- **Subject kinds**: model release (digest or `repo@revision`), provider
+  route, workflow revision. Request and output subjects are deferred.
+- **Service revision**: what people pick (an alias or a workflow), pinned to
+  one immutable, reviewed dependency closure. The closure is the root plus
+  every route and helper it may call, with exact revisions (R2). A change to
+  the closure is a new service revision.
+- **Assertion**: an accepted value on a subject revision, with provenance:
+  source reference or owner origin, observed_at, accepted_at, accepting owner,
+  mapping version (A11).
 
-### Subjects
-Internally the engine identifies five kinds of subject exactly: model release
-(by digest or `repo@revision`), provider route, workflow revision, request,
-output. The owner sees one card per **service** (what people pick: a model
-alias or a workflow). A service card resolves to its release, route(s),
-workflow and dependencies; its category values are the values of that
-resolved bundle. Per-file and per-request labelling is not an owner task.
+## Evidence
 
-### Values and evidence
-Each value on a subject is an assertion: `{category, value, source, rule}`.
-- `source`: owner, bundled default, import (Hugging Face, Civitai, manifest),
-  classifier, request attribute.
-- Owner edits apply at once.
-- Other sources apply only through a **standing rule** the owner set once,
-  e.g. "accept licence ids from manifests", "accept classifier output for
-  audience on outputs". The applied assertion records that rule.
-- Unaccepted evidence is shown on the card ("Civitai says PG-13") and never
-  affects access.
-- A request may carry attributes (e.g. app-declared purpose) but can never set
-  a value that grants access.
+- Only an owner edit, or the owner accepting identified evidence, creates an
+  accepted assertion. There is no automatic acceptance in the first slice.
+- Imported values (manifest `license`, Hugging Face, Civitai, provider pages)
+  are shown on the card as evidence with their source and date. A raw value
+  maps to a category value only through an explicit owner mapping.
+- A subject holds a deduplicated set of accepted value IDs per category.
+  Contradictory accepted values stay visible until the owner retracts one in a
+  versioned correction. A new assertion never silently replaces an old one (A2).
+- Malformed evidence that was never accepted is inert. A policy that references
+  an unknown category or value is a configuration error and cannot activate.
+- Licence facts keep the exact licence version and text reference. Commercial
+  rights are separate values (weights use, output use, redistribution), not one
+  switch. Mapping a licence is the owner's decision, not legal advice.
+- Ratings keep separate fields for a classification derived from content, a
+  creator or owner override, unrated, and enforcement state.
 
-### Plans
+## Plans
+
 ```yaml
 plan: kids
-grant:  [{capability: image.generate}, {capability: chat}]
-require:                                # all must hold (AND across categories)
-  - {category: audience, at_most: general}
-  - {category: runs_where, in: [local]}
+grants:
+  - {capability: image.generate, service: svc-sdxl@r7}
+require:
+  - {id: kids-audience, category: audience, in: [general]}
+  - {id: kids-data, category: data_handling, in: [reviewed-no-training]}
 deny:
-  - {category: data_handling, in: [may-train]}
+  - {id: kids-cloud, category: runs_where, in: [cloud]}
 ```
-- `grant` lists what the plan can do (today's intents, models, workflows).
-- `require` rows are AND across categories; values within one row are OR.
-- `deny` wins over everything.
-- Person plan and app plan both apply (intersection).
-- Operators: `in`, `at_most` (ordered only), `exists`, `missing`.
-- Evaluation error (unknown category, type mismatch, broken data) denies with
-  reason "policy could not be evaluated", never "forbidden content".
 
-### Missing values
-A `require` row on an item with no accepted value does not match, so the
-request is denied with "not reviewed for Audience". Exceptions are explicit
-and rare, set on the plan per category: `missing: allow` (e.g. adults allow
-unreviewed audience) or `missing: hold` (only for outputs, see below). The
-owner never has to answer a missing-value question to get a working plan:
-bundled presets carry sensible exceptions.
+- **Grants**: each selector names an exact capability and an exact root
+  service revision, optionally a release or workflow revision. Fields AND,
+  selectors OR. A selector never matches because a helper inside the closure
+  has a matching ID. A new service revision needs a new grant (A9).
+- **Require**: `in`, `exists`, `missing`. Rows AND. Values in one row OR. An
+  `in` passes only when the accepted set is non-empty and every accepted value
+  is in the row's candidates (A2).
+- **Deny**: `in`, `missing`. Any matching value blocks.
+- **Missing values** (A3): no accepted value on an applicable subject.
+  `missing` is true, `exists` is false, `in` is unknown. A requirement that is
+  unknown fails. A deny that is unknown blocks with `DENY_INPUT_UNKNOWN`.
+- **Waiver** (A4): `missing: allow` names one requirement row and waives only
+  that row's missing value. It never waives a known mismatch, a deny, an
+  unknown deny input, a missing grant or an error. Each use is shown in the
+  explanation. The default is no waiver.
+- **Bundles** (A1): every applicable member of the selected closure must pass
+  every applicable requirement; a deny blocks if any member matches or is
+  unknown. Alternative routes are evaluated as separate bundles and never
+  borrow each other's facts.
+- **Identity** (A10): every protected request resolves one authenticated
+  person and one authenticated app. Every plan attached to either must grant
+  and pass. A missing identity, an empty plan list or a failed lookup denies.
+  There is no implicitly unrestricted app.
+- **Errors**: evaluation or configuration errors deny with
+  `POLICY_UNAVAILABLE`, never with a content reason.
 
-## Outputs and classifiers
+Prior-art note from verification: composition rules differ between systems
+(Plex combines rating and label allows additively; AWS unions identity
+grants within an account and intersects boundaries; Cedar skips policies that
+error). Azizam's intersection, deny-wins and deny-on-error are deliberate
+choices, not an industry standard, and are covered by tests.
 
-A classifier is a configured service with a coverage record: version,
-modalities, languages evaluated, unit checked (whole image, text chunk),
-threshold, timeout behaviour, where it sends data. Its output becomes
-evidence on the output subject through a standing rule.
+## Enforcement (R4, A17)
 
-A plan may set `outputs: check_before_release` for a capability. Then:
-- the checked unit is released only after a pass;
-- if the classifier does not cover the modality or language, or times out,
-  the output is held with a visible status, not released;
-- a route that cannot be checked before release (e.g. unbuffered streaming)
-  is not offered under that plan;
-- held items expire after a set time and can be released by the owner;
-- the reviewer sees the minimum needed; who can see what is stated.
+Policy is checked on the complete selected execution graph before every
+external action:
+- after alias, wrapper and fallback resolution, and again on any route,
+  helper or revision change, and on every retry;
+- at job dispatch and at output release, retrieval, download and share, using
+  the bundle recorded with the output and the current policy;
+- before sending anything to a helper or classifier (sending is itself an
+  action).
 
-## Derived models
+Unresolved aliases, dynamic dependencies and cycles deny. A route whose
+enforcement cannot happen before its effect is not offered. Every request
+path is listed in a path inventory with its enforcing boundary and a denial
+test, or is disabled with a visible reason. The inventory includes every
+call site that passes no capability metadata today.
 
-Restrictions that are legal or administrative (licence conditions, an owner
-deny) carry from a parent release to derived releases (quantized, merged,
-fine-tuned) as "needs review". Factual judgements (audience, quality,
-privacy) do not carry. A derived item's grant never cancels a parent's deny.
-Wrong lineage can be corrected by the owner.
+Request-side and response-side inspection are separate. A request check
+never forces the response to be buffered. Cached responses are keyed to the
+policy snapshot, so a policy change invalidates them.
 
-## Enforcement points
+## Preview, versions and undo (A22, A23, A25)
 
-Policy is checked on the request **as dispatched**, not on the menu:
-- after alias, wrapper and fallback resolution, including helper calls
-  (e.g. a workflow that calls a cloud prompt expander);
-- at job dispatch and at output release (plan or membership may have changed);
-- on output retrieval and sharing URLs.
-Startup self-check warns when engine ports are reachable without the gateway.
+- **Preview as**: pick a person and an app; see each service and route they
+  can use and, for each denied one, the first failing rule and member.
+- **Change preview**: every security-relevant edit, default reset, undelete or
+  restore produces a candidate snapshot and a diff against the active
+  revision: who gains, who loses, and which reasons changed, over the known
+  people, apps, capabilities, service revisions, routes and retained outputs.
+  It never claims to cover unknown future requests.
+- **Activation**: the candidate activates atomically only if its base
+  revision is still active (compare-and-swap). Caches are invalidated before
+  activation is acknowledged. A failed or interrupted activation leaves the
+  last committed version live. With no valid committed snapshot, protected
+  access denies.
+- **Undo**: restore copies an old snapshot into a new candidate, previews it
+  and activates it as a new version. It cannot undo disclosures that already
+  happened. Restored snapshots are revalidated, so an unsafe legacy gate
+  cannot come back through restore.
+- **Defaults**: effective configuration = bundled read-only base + owner
+  overlays − tombstones. Reset removes an overlay; undelete is a separate
+  previewed action; a defaults update never removes a tombstone.
+- **Time** (A24): evidence age is shown, never acted on. No timer changes
+  access in the first slice.
 
-## Effective access, change and undo
+## Migration (R3)
 
-- **Preview as**: pick a person or app; see every service they can use and,
-  for each denied one, the first failing rule in plain words.
-- **Change preview**: before saving a plan, category value or registry
-  update, show who gains and who loses access to what.
-- **History**: every policy change is a version; one click restores the
-  previous version.
-- **Why denied**: every denial carries the rule and category that failed.
+Existing plans run in an explicitly named legacy mode that keeps any-tag OR
+semantics. Two changes are disclosed, not described as preservation:
+1. A metadata-completeness gate on protected paths. Paths that reach policy
+   without metadata are blocked until they carry it. This closes the
+   missing-tag bypass.
+2. Conversion of a legacy plan to category rules is a per-plan, previewed
+   owner action.
 
-## Bundled defaults (registry)
+The migration report compares three results over live plans and adversarial
+fixtures: legacy exact, legacy with the completeness gate, and v3. Fixtures
+cover missing, None and empty tags; allowed and disallowed tags together;
+unknown categories; multiple assertions; person and app mismatch; empty
+grants; route changes; helpers; retries; cache, output and share paths.
 
-- Shipped with each release as read-only data: categories, presets, a licence
-  table (licence id → conditions, with source link), and a small set of facts
-  about common models keyed by exact identity, each with source URL and date.
-- Owner overrides sit on top; "reset to default" removes an override; deleted
-  defaults stay deleted.
-- Updates arrive with releases. An optional update check only *discovers* a
-  newer signed snapshot and shows its effect (change preview); activation is
-  one owner action, atomic, with rollback to the last good snapshot.
-- Facts carry `checked_on`; old facts show as possibly stale. A timer never
-  removes a deny.
-- Presets are starting points the owner copies: kids, teens, adults, guest,
-  team member, client. They are composable choices about audience, cloud use,
-  spend and output checking, not organisation types.
+## Bundled defaults
 
-## Out of scope for the first slice
+Shipped with each release as read-only base data: a few categories (audience,
+licence use, data handling, runs where), copyable starting plans (kids,
+teens, adults, guest, team member, client), and a licence table (licence id
+and version → conditions, with source link and observed date). No remote
+discovery or auto-update in the first slice. A future remote bundle must
+verify against an out-of-band trusted key before it can even be proposed;
+a valid signature authenticates bytes, not truth, and never activates or
+grants.
 
-Lineage automation, classifier integration, registry update checks, request
-attributes, delegated admins. Each waits for a concrete owner task.
+## First slice (all items are release gates)
 
-## First slice
+1. Authorization kernel: immutable IDs, set categories, accepted-value sets,
+   release/route/workflow applicability (A7, A14).
+2. Owner edits and owner acceptance with provenance; read-only defaults,
+   overlays, tombstones, reset and undelete.
+3. Exact grants; person and app intersection; require/deny/waiver rules above.
+4. Pinned bundles, separate route evaluation, re-authorization at each
+   boundary; unsupported graphs deny.
+5. One evaluator for runtime, preview-as and "why denied", with stable reason
+   codes.
+6. Durable snapshots, change preview, compare-and-swap activation, cache
+   invalidation, crash-safe commit, restore as new version.
+7. Path inventory with a denial test per path, including today's
+   metadata-less call sites.
+8. Legacy mode, completeness gate and the three-way migration report on live
+   plans.
 
-1. Tag deny list and `missing` semantics on today's tags (existing plans keep
-   their behaviour; verified by an evaluation diff over live plans).
-2. Owner-defined categories replacing the fixed tag tuple, on services.
-3. Preview-as and why-denied.
-4. Licence as the first bundled category, fed from manifest `license`.
+Deferred until a concrete owner task needs them: output categories and
+classifiers, holds, lineage and derived-model restrictions, request
+attributes, ordered and number categories, remote registry updates, delegated
+admins.
 
-## Open questions
+## Open questions for the owner
 
-- Which existing request paths reach policy without service metadata (today
-  `capability_tags=None` skips the tag check)? Needs an audit before slice 1.
-- Ordered categories vs sets: is `at_most` worth its complexity?
-- Presets: which 4–6 starting points do real owners pick? Needs user testing.
+- Which starting plans to ship (needs real owners to try them).
+- Whether any current client relies on a path that the completeness gate will
+  block (the migration report will list them before activation).
