@@ -21,7 +21,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { accountApi } from "@/lib/account-api";
-import { ApiError } from "@/lib/api";
 import { useOwnerName } from "@/lib/use-owner-name";
 import {
   RETENTIONS,

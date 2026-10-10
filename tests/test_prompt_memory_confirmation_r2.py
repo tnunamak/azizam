@@ -16,7 +16,7 @@ from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
 from tests.test_settings_api import settings, OWNER
-from tests.test_video_workflow_execution import VideoWorkflowExecutionTests as _VideoWorkflowExecutionTests, _Request, _Form
+from tests.test_media_provenance import NativeWorkflowRunTests as _NativeWorkflowRunTests
 
 FORGET = {prompt_memory.NAMESPACE: {"mode": "forget"}}
 
@@ -34,15 +34,10 @@ def test_identity_rejects_malformed_extensions_clearly(route, extensions):
 
 
 def test_video_edit_accepts_json_extensions_field(household):
-    class Form(_Form):
-        def keys(self):
-            return (*super().keys(), "extensions")
-        def get(self, name, default=None):
-            return json.dumps(FORGET) if name == "extensions" else super().get(name, default)
-    async def form(self):
-        return Form()
-    with patch.object(_Request, "form", form):
-        asyncio.run(_VideoWorkflowExecutionTests("test_manifest_video_workflow_runs_against_fake_comfyui").test_manifest_video_workflow_runs_against_fake_comfyui())
+    response, raw = asyncio.run(_NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
+    assert response.status_code == 200, response.body
+    assert response.media_type == "video/mp4"
+    assert not proxy.media_metadata.read_media_tags(response.body, ".mp4")
 
 
 @pytest.mark.parametrize("intent,extract", [

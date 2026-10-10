@@ -20378,7 +20378,13 @@ def _maintain_household_prompt_memory() -> None:
     with prompt_memory.retention_guard(ADMIN_STORE.path) as household:
         cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path)
         pending = prompt_memory.erasure_pending("*", admin_path=ADMIN_STORE.path)
-    if cutoff is not None and (pending or cutoff > _prompt_purge_covered("*")):
+        needs_cleanup = cutoff is not None and (pending or cutoff > _prompt_purge_covered("*"))
+        if needs_cleanup and household["never_keep"]:
+            # Legacy rows may postdate the recorded switch. Erase them while
+            # off, before a concurrent re-enable can allow fresh prompt writes.
+            prompt_memory.delete_all()
+            responses_store.delete_all(path=responses_store.DB_PATH)
+    if needs_cleanup:
         media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
         prompt_memory.prune_all_before(cutoff)
         responses_store.delete_all_before(cutoff, path=responses_store.DB_PATH)
