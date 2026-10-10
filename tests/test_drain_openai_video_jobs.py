@@ -31,14 +31,14 @@ class UnfinishedOpenAIVideoJobsTests(unittest.TestCase):
         }
         with patch.object(proxy, "_video_job_records", records), patch.object(
             proxy, "_video_progress", progress
-        ), patch.object(proxy.media_jobs, "recent", return_value=[]):
+        ), patch.object(proxy.media_jobs, "get", return_value=None):
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 2)
 
     def test_counter_is_registered_with_the_drain(self) -> None:
         now = int(time.time())
         with patch.object(
             proxy, "_video_job_records", {"p": {"created_at": now, "completed_at": None}}
-        ), patch.object(proxy, "_video_progress", {}), patch.object(proxy.media_jobs, "recent", return_value=[]):
+        ), patch.object(proxy, "_video_progress", {}), patch.object(proxy.media_jobs, "get", return_value=None):
             snapshot = proxy.DRAIN_STATE.snapshot()
         self.assertEqual(snapshot["active"]["async_media_jobs"].get("openai_video"), 1)
         self.assertFalse(snapshot["idle"])
@@ -48,7 +48,7 @@ class UnfinishedOpenAIVideoJobsTests(unittest.TestCase):
         records = {"finished": {"created_at": now - 60, "completed_at": None, "seconds": "5"}}
         progress = {"finished": {"status": "succeeded", "updated_at": now - 1}}
         with patch.object(proxy, "_video_job_records", records), patch.object(proxy, "_video_progress", progress), patch.object(
-            proxy.media_jobs, "recent", return_value=[]
+            proxy.media_jobs, "get", return_value=None
         ):
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 0)
 
@@ -57,18 +57,17 @@ class UnfinishedOpenAIVideoJobsTests(unittest.TestCase):
         records = {"stalled": {"created_at": now - 3600, "completed_at": None, "seconds": "5"}}
         progress = {"stalled": {"status": "running", "updated_at": now - 3600}}
         with patch.object(proxy, "_video_job_records", records), patch.object(proxy, "_video_progress", progress), patch.object(
-            proxy.media_jobs, "recent", return_value=[]
+            proxy.media_jobs, "get", return_value=None
         ):
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 0)
 
     def test_terminal_gateway_media_job_does_not_block_drain(self) -> None:
         now = int(time.time())
-        records = {"done": {"created_at": now - 60, "completed_at": None, "seconds": "5"}}
+        records = {"done": {"created_at": now - 60, "completed_at": None, "seconds": "5", "media_job_id": "mj_done"}}
         progress = {"done": {"status": "running", "updated_at": now - 1}}
-        terminal = {"job_id": "mj_done", "intent": "video.generate", "status": proxy.media_jobs.STATUS_SUCCEEDED,
-                    "metadata": {"upstream_video_id": "video_done"}}
+        terminal = {"job_id": "mj_done", "intent": "video.generate", "status": proxy.media_jobs.STATUS_SUCCEEDED}
         with patch.object(proxy, "_video_job_records", records), patch.object(proxy, "_video_progress", progress), patch.object(
-            proxy.media_jobs, "recent", return_value=[terminal]
+            proxy.media_jobs, "get", return_value=terminal
         ):
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 0)
 
@@ -77,7 +76,7 @@ class UnfinishedOpenAIVideoJobsTests(unittest.TestCase):
         records = {"running": {"created_at": now - 60, "completed_at": None, "seconds": "5"}}
         progress = {"running": {"status": "running", "updated_at": now - 60}}
         with patch.object(proxy, "_video_job_records", records), patch.object(proxy, "_video_progress", progress), patch.object(
-            proxy.media_jobs, "recent", return_value=[]
+            proxy.media_jobs, "get", return_value=None
         ):
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 1)
 

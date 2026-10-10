@@ -33,6 +33,7 @@ def stores(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=admin)
     app = admin_store.create_app("Try", kind="personal", owner_user_id=user["id"], path=admin)
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:maker", prefix="test", app_id=app["id"], created_by=user["id"], path=admin)
@@ -242,6 +243,11 @@ def test_forget_payload_byte_cap_refuses_without_disk_fallback(stores, monkeypat
     assert proxy._load_image_media_job_payload("mj_too_large") is None
     assert not proxy._image_media_job_payload_path("mj_too_large").exists()
     assert not list(root.rglob("mj_too_large.json"))
+
+    response = proxy._ephemeral_media_payload_busy_response()
+    assert response.status_code == 503
+    assert json.loads(response.body)["error"]["code"] == "media_payload_capacity"
+    assert "busy" in json.loads(response.body)["error"]["message"].lower()
 
 
 def test_stale_ephemeral_payload_releases_capacity(stores, monkeypatch):

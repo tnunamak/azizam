@@ -17710,16 +17710,11 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
     """
     now = int(time.time())
     count = 0
-    gateway_jobs = media_jobs.recent(limit=1000, audience="internal", path=media_jobs.DB_PATH)
-    gateway_jobs_by_video = {
-        (job.get("metadata") or {}).get("upstream_video_id"): job
-        for job in gateway_jobs
-        if job.get("intent") == INTENT_VIDEO_GENERATE
-    }
     for prompt_id, record in list(_video_job_records.items()):
         if record.get("completed_at") is not None or record.get("deleted_at") is not None:
             continue
-        video_job = gateway_jobs_by_video.get(f"video_{prompt_id}")
+        media_job_id = record.get("media_job_id")
+        video_job = media_jobs.get(media_job_id, audience="internal", path=media_jobs.DB_PATH) if media_job_id else None
         if video_job and video_job.get("status") in media_jobs.TERMINAL_STATUSES:
             continue
         created = record.get("created_at") or now
@@ -20292,7 +20287,15 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                 job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
                 if job and job.get("status") not in media_jobs.TERMINAL_STATUSES and payload is not None and isinstance(payload.get("body"), dict):
                     payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
-                    _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                    try:
+                        _store_ephemeral_media_job_payload(job_id, payload)
+                    except EphemeralMediaPayloadCapacityError:
+                        media_jobs.update_status(
+                            job_id,
+                            media_jobs.STATUS_FAILED,
+                            error="Privacy cleanup exceeded temporary payload capacity",
+                            path=media_jobs.DB_PATH,
+                        )
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
@@ -20499,6 +20502,7 @@ async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
+_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES: dict[str, int] = {}
 _MEDIA_PAYLOAD_LOCK = threading.RLock()
 _EPHEMERAL_MEDIA_JOB_MAX_COUNT = 256
 _EPHEMERAL_MEDIA_JOB_MAX_BYTES = 64 * 1024 * 1024
@@ -20524,6 +20528,25 @@ def _ephemeral_media_payload_busy_response() -> Response:
         status_code=503,
         media_type="application/json",
     )
+
+
+def _release_ephemeral_media_job_payload(job_id: str) -> None:
+    _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+    _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.pop(job_id, None)
+
+
+def _store_ephemeral_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
+    payload_size = _ephemeral_media_payload_size(payload)
+    current_size = sum(_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.values())
+    replacing_size = _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.get(job_id, 0)
+    projected_count = len(_EPHEMERAL_MEDIA_JOB_PAYLOADS) + (
+        0 if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS else 1
+    )
+    if (projected_count > _EPHEMERAL_MEDIA_JOB_MAX_COUNT
+            or current_size - replacing_size + payload_size > _EPHEMERAL_MEDIA_JOB_MAX_BYTES):
+        raise EphemeralMediaPayloadCapacityError("ephemeral media payload capacity reached")
+    _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+    _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES[job_id] = payload_size
 
 
 def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) -> dict[str, Any] | None:
@@ -20572,23 +20595,9 @@ def _persist_image_media_job_payload(
             if not durable:
                 extensions = payload["body"].setdefault("extensions", {})
                 extensions[prompt_memory.NAMESPACE] = {"mode": "forget"}
-                payload_size = _ephemeral_media_payload_size(payload)
-                current_size = sum(
-                    _ephemeral_media_payload_size(existing)
-                    for existing in _EPHEMERAL_MEDIA_JOB_PAYLOADS.values()
-                )
-                replacing_size = (
-                    _ephemeral_media_payload_size(_EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id])
-                    if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS else 0
-                )
-                projected_count = len(_EPHEMERAL_MEDIA_JOB_PAYLOADS) + (
-                    0 if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS else 1
-                )
-                if (projected_count > _EPHEMERAL_MEDIA_JOB_MAX_COUNT
-                        or current_size - replacing_size + payload_size > _EPHEMERAL_MEDIA_JOB_MAX_BYTES):
-                    raise EphemeralMediaPayloadCapacityError("ephemeral media payload capacity reached")
-                _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                _store_ephemeral_media_job_payload(job_id, payload)
                 return
+            _release_ephemeral_media_job_payload(job_id)
             IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
             path = _image_media_job_payload_path(job_id)
             tmp = path.with_suffix(".json.tmp")
@@ -20618,7 +20627,7 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
 
 def _delete_image_media_job_payload(job_id: str) -> None:
     with _MEDIA_PAYLOAD_LOCK:
-        _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+        _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
                      _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
             try:
@@ -20638,7 +20647,7 @@ def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
             if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
                     or job.get("status") == "stale"
                     or int(payload.get("created_at") or 0) < cutoff):
-                _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+                _release_ephemeral_media_job_payload(job_id)
                 removed += 1
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             return removed
@@ -22066,6 +22075,11 @@ async def _run_video_media_job(job_id: str) -> None:
                 http_status=submit_status,
             )
             return
+
+        prompt_id = _prompt_id_from_video_id(video_id)
+        if prompt_id and prompt_id in _video_job_records:
+            _video_job_records[prompt_id]["media_job_id"] = job_id
+            _persist_video_record(prompt_id)
 
         media_jobs.update_status(
             job_id,
