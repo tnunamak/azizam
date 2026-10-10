@@ -6,6 +6,7 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -100,6 +101,72 @@ async function openViewer(page: Page, id: string) {
   await expect(dialog.getByText("Model", { exact: true })).toBeVisible();
   return dialog;
 }
+
+test.describe("Accessibility of the prompt screens", () => {
+  // Axe (serious and critical), no sideways scroll, and 44 px targets on a
+  // phone, in both themes: Your settings, the Try row, the maker's viewer.
+  for (const width of [390, 1440]) {
+    for (const theme of ["light", "dark"] as const) {
+      test(`${width} ${theme}`, async ({ browser, baseURL }) => {
+        const { ctx, page } = await as(browser, seed.member_email, baseURL!);
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 844 : 900,
+        });
+        await page.emulateMedia({
+          colorScheme: theme,
+          reducedMotion: "reduce",
+        });
+        await page.addInitScript(
+          (value) => localStorage.setItem("theme", value),
+          theme,
+        );
+        for (const route of [
+          "/ui/account/",
+          "/ui/try/?capability=speech",
+          `/ui/library/?asset=${robinsKept().asset_id}`,
+        ]) {
+          await page.goto(route);
+          await expect(
+            page
+              .locator(
+                "[data-slot=setting-row], [data-slot=prompt-keep], [role=dialog]",
+              )
+              .first(),
+          ).toBeVisible();
+          const violations = (
+            await new AxeBuilder({ page }).analyze()
+          ).violations
+            .filter((v) => ["serious", "critical"].includes(v.impact ?? ""))
+            .map((v) => `${route}: ${v.id}`);
+          expect(violations).toEqual([]);
+          expect(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= window.innerWidth,
+            ),
+          ).toBe(true);
+          if (width === 390) {
+            const small = await page
+              .locator(
+                "[data-slot=setting-row] button, [data-slot=setting-row] [role=switch], [data-slot=setting-row] [role=combobox], [data-slot=prompt-keep] [role=switch]",
+              )
+              .evaluateAll(
+                (nodes) =>
+                  nodes
+                    .map((node) => node.getBoundingClientRect())
+                    .filter(
+                      (box) =>
+                        box.width > 0 && (box.width < 44 || box.height < 44),
+                    ).length,
+              );
+            expect(small).toBe(0);
+          }
+        }
+        await ctx.close();
+      });
+    }
+  }
+});
 
 test.describe("Library: the prompt is the maker's alone", () => {
   test("the maker sees their prompt, Copy prompt and Download with details", async ({
@@ -204,6 +271,17 @@ test.describe("Try: Don't keep this prompt", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.member_email, baseURL!);
+    const audioIds = async () =>
+      new Set<string>(
+        (
+          await (
+            await page.request.get(
+              "/me/api/media?scope=me&kind=audio&limit=100",
+            )
+          ).json()
+        ).assets.map((a: { asset_id: string }) => a.asset_id),
+      );
+    const before = await audioIds();
     await page.goto("/ui/try/?capability=speech");
     const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
     await expect(toggle).not.toBeChecked();
@@ -254,8 +332,14 @@ test.describe("Try: Don't keep this prompt", () => {
     );
     expect(keptItem).toBeTruthy();
     expect(JSON.stringify(mine)).not.toContain(forgotten);
-    const newest = mine.assets[0];
-    expect(newest.asset_id).not.toBe(keptItem.asset_id);
+    // Two new clips: the kept one, and the forgotten one with no prompt.
+    const added = mine.assets.filter(
+      (a: { asset_id: string }) => !before.has(a.asset_id),
+    );
+    expect(added).toHaveLength(2);
+    const newest = added.find(
+      (a: { asset_id: string }) => a.asset_id !== keptItem.asset_id,
+    );
     expect(newest.prompt).toBeNull();
     const dialog = await openViewer(page, newest.asset_id);
     await expect(dialog.getByText("Prompt not saved")).toBeVisible();
@@ -400,9 +484,7 @@ test.describe("Settings: the household's rules", () => {
     const section = owner.page.locator("section", {
       has: owner.page.getByRole("heading", { name: "Prompts" }),
     });
-    await section
-      .getByRole("combobox", { name: "Keep prompts for" })
-      .click();
+    await section.getByRole("combobox", { name: "Keep prompts for" }).click();
     await owner.page.getByRole("option", { name: "3 months" }).click();
     await owner.page
       .getByRole("dialog")
