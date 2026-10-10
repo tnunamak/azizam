@@ -8,37 +8,80 @@
     "people": "/ui/people/",
     "usage": "/ui/usage/",
     "workflows": "/ui/workflows/",
-    "settings": "/ui/settings/"
+    "settings": "/ui/settings/",
+    "apps": "/ui/apps/"
   },
   "enforce": {
-    "home": ["controls"],
-    "status": ["controls"],
-    "library": ["controls"]
+    "home": [
+      "controls"
+    ],
+    "status": [
+      "controls"
+    ],
+    "library": [
+      "controls"
+    ],
+    "settings": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ]
   },
   "desktop_width": 1440,
   "phone_width": 390,
   "controls": {
-    "desktop_heights": [32, 40],
+    "desktop_heights": [
+      32,
+      40
+    ],
     "tolerance": 0.5,
     "_exempt": "Buttons taller than tile_min are media tiles or whole-card buttons; textareas grow with their text; switches and checkboxes have their own sizes; link-styled buttons are text. A tab or segment is measured by its group (32 group, 28 segments).",
     "tile_min": 64,
-    "exempt_types": ["textarea", "switch", "checkbox"],
-    "exempt_variants": ["link"]
+    "exempt_types": [
+      "textarea",
+      "switch",
+      "checkbox"
+    ],
+    "exempt_variants": [
+      "link"
+    ]
   },
   "type": {
-    "sizes": [12, 13, 14, 15, 16, 20, 24],
+    "sizes": [
+      12,
+      13,
+      14,
+      15,
+      16,
+      20,
+      24
+    ],
     "mark_size": 10,
     "badge_size": 12,
     "max_sizes_per_page": 4
   },
   "rows": {
-    "desktop": [36, 40, 60],
-    "phone": [48, 64],
+    "desktop": [
+      36,
+      40,
+      60
+    ],
+    "phone": [
+      48,
+      64
+    ],
     "setting_min": 64,
-    "tolerance": 1
+    "tolerance": 1,
+    "setting_phone_max": 64
   },
   "geometry": {
-    "page_pad": { "1440": 32, "390": 20 },
+    "page_pad": {
+      "1440": 32,
+      "390": 20
+    },
     "section_gap": 32,
     "tolerance": 1
   },
@@ -46,7 +89,10 @@
     "radius": 8,
     "min_width": 120,
     "min_height": 60,
-    "exempt_classes": ["rounded-media", "rounded-full"]
+    "exempt_classes": [
+      "rounded-media",
+      "rounded-full"
+    ]
   },
   "colour": {
     "_doc": "Coloured pixels outside media and charts, measured like docs/design/craft-system/tools/colorshare.py at 1440 x 900.",
