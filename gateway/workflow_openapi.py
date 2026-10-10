@@ -117,9 +117,12 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     for key in ("minimum", "maximum", "enum", "default"):
         if key in spec:
             out[key] = copy.deepcopy(spec[key])
-    if spec.get("description"):
+    # The plain `help` line describes the input for people and API clients
+    # alike; research provenance lives in docs/workflows/<id>.md, never here.
+    note = spec.get("help") or spec.get("description")
+    if note:
         base = out.get("description")
-        out["description"] = f"{base} {spec['description']}" if base else spec["description"]
+        out["description"] = f"{base} {note}" if base else note
     return out
 
 

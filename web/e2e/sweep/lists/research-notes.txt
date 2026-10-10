@@ -18,3 +18,11 @@ re:\bper (?:the )?(?:forum|thread|discord)\b
 re:\bin my testing\b
 re:\bcommunity (?:sweet spot|consensus|favou?rite|reports?)\b
 re:\b(?:users|people) (?:on|in) (?:the )?(?:forums?|threads?|discord|subreddit)\b
+# Also read by tests/test_manifest_copy.py: no manifest string a person reads
+# (display name, purpose, input label, help or description) may carry these.
+sweet spot
+consensus
+re:\bnot reproduced\b
+re:\b(?:our|my) test(?:s|ing)?\b
+re:\bwe tested\b
+re:\bcommenter\b

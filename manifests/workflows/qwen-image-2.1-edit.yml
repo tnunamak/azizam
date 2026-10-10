@@ -20,28 +20,34 @@ inputs:
     type: string
     required: true
   source_image:
+    label: a picture to change
+    help: The picture you want to change.
     type: asset
     required: true
   negative_prompt:
     type: string
     default: ""
   reference_resolution:
+    label: reference size
+    help: Lower is faster. Large pictures can be much slower above 1024.
     type: integer
     minimum: 256
     maximum: 2048
     default: 1024
-    description: Reference image is resized to ~resolution x resolution before encoding. Lower values are the documented fix for Qwen 2.1's reference-resolution speed footgun (10-20x slower with multi-megapixel references).
   steps:
+    label: steps
+    help: More steps add detail but take longer.
     type: integer
     minimum: 1
     maximum: 60
     default: 25
   cfg:
+    label: prompt strength
+    help: Higher follows your words more closely. Try 3 to 5 if colours look too warm.
     type: number
     minimum: 0
     maximum: 10
     default: 1.0
-    description: Official template default. One Reddit commenter reports CFG 1 can show a warm color-cast ("piss filter") and recommends CFG 3-5 with a negative prompt instead; not reproduced in our test image, but worth trying if output looks off.
   seed:
     type: integer
     minimum: 0

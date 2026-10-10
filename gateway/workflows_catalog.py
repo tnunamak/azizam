@@ -282,6 +282,9 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
             if optional in spec:
                 row[optional] = spec[optional]
         declared = manifest_inputs.get(name) if isinstance(manifest_inputs.get(name), Mapping) else {}
+        # Plain words for people: the manifest's one-sentence `help` line.
+        if isinstance(declared.get("help"), str) and declared["help"].strip():
+            row["help"] = " ".join(declared["help"].split())
         # The JSON schema calls an asset "string" (and flags it x-azizam-asset);
         # keep what it really is, so a page can tell a picture input from a text one.
         if declared.get("type") == "asset" or spec.get("x-azizam-asset"):

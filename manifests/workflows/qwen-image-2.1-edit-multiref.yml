@@ -25,9 +25,13 @@ inputs:
     required: true
     description: Reference each image explicitly, e.g. "<image1> ... <image2> ...".
   source_image:
+    label: a main picture
+    help: The picture you want to change.
     type: asset
     required: true
   reference_image_2:
+    label: a second picture
+    help: Another picture to take people, things or style from.
     type: asset
     required: true
   negative_prompt:

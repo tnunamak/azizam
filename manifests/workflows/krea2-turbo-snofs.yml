@@ -14,31 +14,39 @@ inputs:
     type: string
     required: true
   width:
+    label: width
+    help: Picture width in pixels.
     type: integer
     minimum: 64
     maximum: 2048
     default: 1024
   height:
+    label: height
+    help: Picture height in pixels.
     type: integer
     minimum: 64
     maximum: 2048
     default: 1024
   steps:
+    label: steps
+    help: More steps add detail but take longer. 8 to 12 works well for this model.
     type: integer
     minimum: 1
     maximum: 20
     default: 8
-    description: Turbo model; 8-12 steps is the community sweet spot. Values above ~16 show diminishing returns.
   seed:
     type: integer
     minimum: 0
   lora_strength:
+    label: style strength
+    help: How strongly the added style applies. 1.0 is the usual setting.
     type: number
     minimum: 0
     maximum: 1.5
     default: 1.0
-    description: SNOFS LoKr strength. 1.0 is the author-recommended value; 0.6 was less reliable in the bake-off.
   batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
     type: integer
     minimum: 1
     maximum: 8
