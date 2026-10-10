@@ -5,6 +5,13 @@ import { AudioLines, Music2, Play, Waves } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAudioPeaks } from "@/lib/audio-peaks";
 
+/**
+ * The gutter between media tiles: 4 on a phone, 6 above (DESIGN.md, "Media
+ * grid"). Library's grid and Home's Recent strip both use it, so a tile sits
+ * the same distance from its neighbours on every page.
+ */
+export const mediaGridGap = "gap-1 sm:gap-1.5";
+
 /** What kind of sound a model makes, in the glossary's words. */
 export function audioKind(model?: string | null): {
   label: "Voice" | "Music" | "Sound effect" | "Audio";
@@ -129,6 +136,32 @@ export const playDiscButton = cn(
 );
 
 /**
+ * The one always-visible control on a video or audio tile: play or pause, then
+ * the type and length. It is its own class set, not playDiscButton plus
+ * overrides, because cn does not merge conflicting utilities.
+ */
+export const tilePlayButton = cn(
+  scrim,
+  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto absolute bottom-2 left-2 z-30 flex h-10 cursor-pointer items-center gap-1.5 rounded-badge px-2.5 transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11",
+);
+
+/** The type glyph and length inside a tilePlayButton. */
+export function TileMeta({
+  icon: Icon,
+  children,
+}: {
+  icon: typeof AudioLines;
+  children?: ReactNode;
+}) {
+  return (
+    <span className="text-badge flex items-center gap-1 [&_svg]:size-3.5">
+      <Icon aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/**
  * A short day label ("Today", "Oct 20") on the first tile of each day, in
  * badge text with the badge radius.
  */
@@ -160,6 +193,8 @@ export function DayChip({
  */
 export function AudioFace({
   peaksKey,
+  coverSeed,
+  title,
   src,
   visible,
   center,
@@ -167,6 +202,9 @@ export function AudioFace({
   className,
 }: {
   peaksKey: string;
+  /** Decorative identity only; never presented as measured audio peaks. */
+  coverSeed?: string;
+  title?: string;
   src?: string | null;
   visible: boolean;
   center?: ReactNode;
@@ -175,15 +213,34 @@ export function AudioFace({
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
+  let seed = 2166136261;
+  for (const character of coverSeed ?? "") {
+    seed = Math.imul(seed ^ character.charCodeAt(0), 16777619) >>> 0;
+  }
+  const cover = coverSeed === undefined
+    ? null
+    : Array.from({ length: 24 }, () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return 0.2 + (seed / 4294967296) * 0.8;
+      });
   return (
     <div
       className={cn(
         "bg-muted text-muted-foreground relative flex size-full items-center justify-center",
+        title && "px-3 pt-8 pb-12",
         className,
       )}
     >
-      {peaks ? (
-        <Waveform peaks={peaks} className="h-1/4 w-3/4 flex-none" />
+      {title ? (
+        <p className="text-foreground text-body pointer-events-none relative z-10 line-clamp-2 w-full">
+          {title}
+        </p>
+      ) : null}
+      {peaks || cover ? (
+        <Waveform
+          peaks={cover ?? peaks}
+          className={cn("w-3/4 flex-none", title ? "absolute h-1/2 opacity-20" : "h-1/4")}
+        />
       ) : (
         <AudioLines aria-hidden="true" className="size-8" />
       )}

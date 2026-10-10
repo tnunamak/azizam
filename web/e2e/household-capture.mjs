@@ -147,7 +147,8 @@ async function login(context, account, base) {
 }
 
 async function prepareLibraryMedia(page, entry) {
-  const play = page.getByRole("button", { name: /^Play / }).first();
+  // Video tiles carry a play control too, so pick the audio tile's own.
+  const play = page.locator("article:has(audio)").getByRole("button", { name: /^Play / }).first();
   if (await play.count()) {
     await play.scrollIntoViewIfNeeded();
     await play.click();
@@ -165,6 +166,8 @@ async function prepareLibraryMedia(page, entry) {
   const video = page.locator("article video").first();
   if (await video.count()) {
     await video.scrollIntoViewIfNeeded();
+    // A tile with a poster holds no source until played; play it once to decode a frame.
+    if (!(await video.getAttribute("src"))) await page.locator("article:has(video)").getByRole("button", { name: /^Play / }).first().click();
     const handle = await video.elementHandle();
     await page.waitForFunction(item => item.readyState >= 2 && Number.isFinite(item.duration) && item.duration > 0, handle, { timeout: 20_000 });
     // Wait for the browser to present the first frame, not a fixed delay.

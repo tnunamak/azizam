@@ -287,9 +287,9 @@ describe("Home and Library polish", () => {
     expect(audio?.closest("button")).toBeNull();
     expect(container.querySelector("video")).not.toBeNull();
     expect(screen.getByText("0:06")).toBeVisible();
-    // D1.6: the length sits in the type badge; the play disc is the button.
+    // Craft round 9: one persistent control carries play, type and length.
     expect(screen.getByText("0:12")).toBeVisible();
-    expect(play).not.toHaveTextContent("0:12");
+    expect(play).toHaveTextContent("0:12");
     const playAudio = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockImplementation(function (this: HTMLMediaElement) {

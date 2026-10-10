@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import HomePage from "../page";
 import { ViewerContext } from "@/components/shell/session";
+import { mediaGridGap } from "@/components/product/audio-cover";
 
 const app = {
   id: "app-browser",
@@ -162,6 +163,137 @@ beforeAll(() => {
 });
 
 describe("Home audit component behavior", () => {
+  function mockCraftHome(
+    media: Promise<Response> = Promise.resolve(
+      Response.json({
+        assets: [
+          {
+            asset_id: "craft-image",
+            kind: "image",
+            prompt: "A garden",
+            download_url: "https://media.example/garden.png",
+          },
+        ],
+      }),
+    ),
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/me/api/home")
+          return Response.json({
+            ...home,
+            capabilities: [
+              {
+                capability: "music",
+                icon_key: "music",
+                model: "music",
+                use_name: "song",
+                available: true,
+                status: "ready",
+                reason_code: "ready",
+              },
+              {
+                capability: "sfx",
+                icon_key: "sfx",
+                model: "sfx",
+                use_name: "sfx",
+                available: true,
+                status: "busy",
+                reason_code: "busy",
+              },
+              {
+                capability: "video",
+                icon_key: "video",
+                model: "video",
+                available: false,
+                status: "unavailable",
+                reason_code: "unavailable",
+              },
+            ].map((capability) => ({
+              ...capability,
+              availability: {
+                evidence: { source: "status", observed_at_s: Date.now() / 1000 },
+              },
+            })),
+            receipts: [],
+          });
+        if (path === "/me/api/media?limit=50") return media;
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), complete: true });
+        return Response.json({});
+      }),
+    );
+  }
+
+  it("stacks Recent and Make something with only the section gap", async () => {
+    mockCraftHome();
+    renderHome();
+    const tasks = (
+      await screen.findByRole("heading", { name: "Make something" })
+    ).closest("section")!;
+    const recent = (
+      await screen.findByRole("heading", { name: "Recent" })
+    ).closest("section")!;
+    expect(recent.nextElementSibling).toBe(tasks);
+    expect(tasks.parentElement).toHaveClass(
+      "flex",
+      "flex-col",
+      "gap-(--space-section)",
+    );
+    expect(tasks.parentElement).not.toHaveClass("page-stack");
+    expect(tasks).not.toHaveAttribute("style");
+    expect(recent).not.toHaveAttribute("style");
+  });
+
+  it("spaces the Recent strip with the Library grid gutter", async () => {
+    mockCraftHome();
+    renderHome();
+    const recent = (
+      await screen.findByRole("heading", { name: "Recent" })
+    ).closest("section")!;
+    const strip = await waitFor(() => {
+      const list = recent.querySelector("ul");
+      expect(list).not.toBeNull();
+      return list!;
+    });
+    expect(strip).toHaveClass(...mediaGridGap.split(" "));
+    expect(mediaGridGap).toBe("gap-1 sm:gap-1.5");
+  });
+
+  it("uses one ListCard for favourite and other tasks with ink names and row tap targets", async () => {
+    mockCraftHome();
+    renderHome();
+    const tasks = (
+      await screen.findByRole("heading", { name: "Make something" })
+    ).closest("section")!;
+    expect(tasks.querySelectorAll('[data-slot="list-card"]')).toHaveLength(1);
+    const list = within(tasks).getByRole("list", { name: "Make something" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    for (const row of rows) {
+      expect(row).toHaveAttribute("data-slot", "list-row");
+      expect(row).toHaveClass("min-h-(--row-1)", "max-sm:min-h-(--row-phone-1)");
+      expect(row).not.toHaveClass("text-muted-foreground");
+      expect(row.querySelector("p")).toHaveClass("text-body", "font-medium");
+      expect(row.querySelector('[data-slot="list-row-leading"] svg')).toHaveClass(
+        "text-foreground",
+        "size-4",
+      );
+    }
+    const music = within(tasks).getByRole("link", { name: "Make music" });
+    expect(music).toHaveAttribute("href", "/try?capability=audio&model=song");
+    expect(music).toHaveClass("after:absolute", "after:inset-0");
+    expect(within(music.closest("li")!).queryByText("Ready")).toBeNull();
+    const sfx = within(tasks).getByRole("link", { name: "Make a sound effect" });
+    expect(sfx).toHaveAttribute("href", "/try?capability=audio&model=sfx");
+    expect(within(sfx.closest("li")!).getByText("Busy")).toBeVisible();
+    const video = within(tasks).getByText("Make a video").closest("li")!;
+    expect(within(video).queryByRole("link")).toBeNull();
+    expect(within(video).getByText("Down")).toBeVisible();
+  });
+
   it("renders audio playback and video frames in Recent", async () => {
     vi.stubGlobal(
       "fetch",

@@ -49,6 +49,7 @@ import { CapNotice } from "@/components/product/cap-notice";
 import {
   AudioFace,
   MediaBadge,
+  mediaGridGap,
   playDiscButton,
 } from "@/components/product/audio-cover";
 import { PageHeader } from "@/components/product/page-header";
@@ -132,9 +133,8 @@ function firstWords(value?: string | null): string | null {
 
 /**
  * Home's skeleton is the page it becomes (DESIGN.md: skeletons in the final
- * layout): under the real header and a verdict placeholder, the two 88 px
- * favourite tiles and the task rows at 40, and the Connect card beside them
- * on desktop.
+ * layout): under the real header and a verdict placeholder, task rows at
+ * 40 and the Connect card beside them on desktop.
  */
 function HomeLoading() {
   return (
@@ -142,12 +142,8 @@ function HomeLoading() {
       <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
         <div className="min-w-0">
           <Skeleton className="mb-3 h-6 w-36" />
-          <div className="grid grid-cols-2 gap-3">
-            <Skeleton className="rounded-panel h-22" />
-            <Skeleton className="rounded-panel h-22" />
-          </div>
-          <div className="bg-card rounded-panel mt-3 overflow-hidden border">
-            <SkeletonRows count={TASKS.length - 2} />
+          <div className="bg-card rounded-panel overflow-hidden border">
+            <SkeletonRows count={TASKS.length} />
           </div>
         </div>
         <Skeleton className="rounded-panel h-64 w-full lg:mt-11" />
@@ -224,8 +220,8 @@ function taskReason(view: CapabilityView): string | null {
  * rows never showed the next step; Apple Home puts favourites before the
  * rest). Picked from their own successful requests; someone new gets
  * pictures and chat, the household's most common asks. Only usable tasks
- * are favourites. An 88 px tile (Apple Home's accessory tile): the icon in
- * ink, the name, and "Last used" or the state under it.
+ * are favourites. They lead the same ListCard as the other tasks and keep
+ * their "Last used" fact.
  */
 function Favourite({
   task,
@@ -251,24 +247,14 @@ function Favourite({
       </>
     ) : null;
   return (
-    <li className="min-w-0">
-      <Link
-        href={href}
-        className="bg-card rounded-panel hover:border-input flex h-22 min-w-0 items-center gap-3 border p-4 transition-colors duration-(--motion-fast) max-sm:gap-2 max-sm:pr-2 max-sm:pl-3"
-      >
-        {/* 20 in ink; 16 on a phone, where two tiles share 350 px and
-            "Last used 15m ago" needs 121 of them. */}
-        <Icon aria-hidden="true" className="size-5 shrink-0 max-sm:size-4" />
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-body truncate font-medium">{task.title}</span>
-          {note ? (
-            <span className="text-muted-foreground text-meta truncate">
-              {note}
-            </span>
-          ) : null}
-        </span>
-      </Link>
-    </li>
+    <ListRow
+      leading={<Icon aria-hidden="true" className="text-foreground size-4" />}
+      title={task.title}
+      href={href}
+      badge={view.state === "ready" ? undefined : <TaskBadge view={view} />}
+      facts={view.state === "ready" && note ? [note] : undefined}
+      factClassName="max-w-60 max-sm:max-w-32"
+    />
   );
 }
 
@@ -291,7 +277,7 @@ function TaskRow({
   const reason = taskReason(view);
   return (
     <ListRow
-      leading={<Icon aria-hidden="true" />}
+      leading={<Icon aria-hidden="true" className="text-foreground size-4" />}
       title={task.title}
       href={usable ? href : undefined}
       badge={view.state === "ready" ? undefined : <TaskBadge view={view} />}
@@ -305,7 +291,6 @@ function TaskRow({
           : undefined
       }
       factClassName="max-w-60 max-sm:max-w-32"
-      className={usable ? undefined : "text-muted-foreground"}
     />
   );
 }
@@ -338,35 +323,29 @@ function Tasks({
     .map(({ task }) => task);
   const rest = tasks.filter((task) => !favourites.includes(task));
   // Two heading levels only (craft PR 4): the section heading names the
-  // group, the favourites lead it and the other tasks follow in one card.
+  // group; favourites and other tasks share one row vocabulary and card.
   return (
     <section aria-labelledby="tasks-heading">
       <SectionHeading id="tasks-heading" title="Make something" />
-      {favourites.length ? (
-        <ul className="grid grid-cols-2 gap-2 sm:gap-3">
-          {favourites.map((task) => (
-            <Favourite
-              key={task.key}
-              task={task}
-              view={byKey.get(task.key)!}
-              href={taskHref(task, models)}
-              usedAt={uses.get(task.key)?.last || null}
-            />
-          ))}
-        </ul>
-      ) : null}
-      {rest.length ? (
-        <ListCard className={favourites.length ? "mt-2 sm:mt-3" : undefined}>
-          {rest.map((task) => (
-            <TaskRow
-              key={task.key}
-              task={task}
-              view={byKey.get(task.key)!}
-              href={taskHref(task, models)}
-            />
-          ))}
-        </ListCard>
-      ) : null}
+      <ListCard labelledBy="tasks-heading">
+        {favourites.map((task) => (
+          <Favourite
+            key={task.key}
+            task={task}
+            view={byKey.get(task.key)!}
+            href={taskHref(task, models)}
+            usedAt={uses.get(task.key)?.last || null}
+          />
+        ))}
+        {rest.map((task) => (
+          <TaskRow
+            key={task.key}
+            task={task}
+            view={byKey.get(task.key)!}
+            href={taskHref(task, models)}
+          />
+        ))}
+      </ListCard>
     </section>
   );
 }
@@ -1230,7 +1209,7 @@ function Recent({
           role="status"
           aria-label="Loading recent creations"
           aria-busy="true"
-          className="grid grid-cols-4 gap-1.5 sm:gap-2"
+          className={cn("grid grid-cols-4", mediaGridGap)}
         >
           {[0, 1, 2, 3].map((item) => (
             <Skeleton
@@ -1255,7 +1234,7 @@ function Recent({
           {/* Four across at every width: on a phone, a strip of the
               household's latest work right under the tasks (Apple Home's
               cameras sit on the first screen). */}
-          <ul className="grid grid-cols-4 gap-1.5 sm:gap-2">
+          <ul className={cn("grid grid-cols-4", mediaGridGap)}>
             {making.slice(0, 2).map((receipt) => {
               const kind = inFlightKind(receipt);
               const Icon =
@@ -1435,7 +1414,7 @@ export default function HomePage() {
           {/* Sections 32 apart (--space-section), the Connect card 32 to the
               side on desktop and 32 below on phones and tablets. */}
           <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
-            <div className="page-stack min-w-0 lg:col-start-1 lg:row-start-1">
+            <div className="flex min-w-0 flex-col gap-(--space-section) lg:col-start-1 lg:row-start-1">
               {refusal ? (
                 <CapNotice
                   warning={

@@ -281,7 +281,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(document.querySelectorAll("main")).toHaveLength(0);
   });
 
-  test("gives the audio tile the same short hover title as a picture and names the model only in the viewer", async () => {
+  test("gives the audio tile a visible short title and names the model only in the viewer", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({
         assets: [audioAsset],
@@ -291,8 +291,7 @@ describe("LibraryPage batch J provenance", () => {
     );
     renderLibrary();
 
-    // D1.5: no words on the audio face; the hover title is the short
-    // whole-word title every tile has.
+    // The audio face now keeps the same short whole-word title visible.
     expect(
       await screen.findByText(/^Warm synth loop with brushed percussion .*…$/),
     ).toHaveClass("line-clamp-2");
@@ -360,11 +359,8 @@ describe("LibraryPage batch J provenance", () => {
     const playButton = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
     });
-    // D1.6: the length is in the type badge bottom left; the play disc is
-    // the button.
-    expect(
-      playButton.closest("article")!.querySelector("span.pointer-events-none.flex.h-6"),
-    ).toHaveTextContent("2:05");
+    // Play and the type/length badge share one persistent control.
+    expect(playButton).toHaveTextContent("2:05");
     expect(
       screen.queryByLabelText(`Play ${audioAsset.prompt}`, {
         selector: "audio",
@@ -1010,5 +1006,156 @@ describe("Library honesty and access", () => {
     // The filter button names itself at every width.
     const filters = screen.getByRole("button", { name: "Filters" });
     expect(within(filters).getByText("Filters")).not.toHaveClass("sr-only");
+  });
+});
+
+describe("Library media identity and tile playback", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test("shows real audio titles and lengths with stable per-item cover variation", async () => {
+    const assets = [
+      { ...audioAsset, asset_id: "cover-a", prompt: "Morning birds", duration_s: 12 },
+      { ...audioAsset, asset_id: "cover-b", prompt: "Evening rain", duration_s: 73 },
+    ];
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
+    const rendered = renderLibrary();
+    const first = (await screen.findByRole("button", { name: "Open Morning birds" })).closest("article")!;
+    const second = screen.getByRole("button", { name: "Open Evening rain" }).closest("article")!;
+    expect(within(first).getByText("Morning birds")).toHaveClass("text-body", "line-clamp-2");
+    expect(within(second).getByText("Evening rain")).toHaveClass("text-body");
+    expect(within(first).getByRole("button", { name: "Play Morning birds" })).toHaveTextContent("0:12");
+    expect(within(second).getByRole("button", { name: "Play Evening rain" })).toHaveTextContent("1:13");
+    const shape = (tile: Element) => Array.from(tile.querySelectorAll("svg rect"), (bar) => bar.getAttribute("height"));
+    const firstShape = shape(first);
+    expect(firstShape).toHaveLength(24);
+    expect(shape(second)).not.toEqual(firstShape);
+    rendered.unmount();
+    assets[0].prompt = "Renamed birds";
+    renderLibrary();
+    const again = (await screen.findByRole("button", { name: "Open Renamed birds" })).closest("article")!;
+    expect(shape(again)).toEqual(firstShape);
+  });
+
+  test("keeps play and type-duration visible at rest within the two-cue budget including day", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    const assets = [
+      { ...audioAsset, prompt: "Morning birds", owner_name: "Sam" },
+      { ...picture("film", "Short film"), kind: "video", download_url: "/film.mp4", duration_s: 9, owner_name: "Sam", created_at: 1_750_000_000 },
+      picture("still", "Still picture", { owner_name: "Sam", created_at: 1_740_000_000 }),
+    ];
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
+    renderLibrary();
+    await screen.findByRole("button", { name: "Open Morning birds" });
+    for (const [title, duration, icon] of [["Morning birds", "2:05", "lucide-audio-lines"], ["Short film", "0:09", "lucide-video"]] as const) {
+      const button = screen.getByRole("button", { name: `Play ${title}` });
+      expect(button).toBeVisible();
+      expect(button).not.toHaveClass("opacity-0", "max-sm:hidden");
+      // Anchored to the tile corner; a stray "relative" would drop it below the face.
+      expect(button).toHaveClass("absolute", "bottom-2", "left-2");
+      expect(button).not.toHaveClass("relative");
+      expect(button.querySelector(".lucide-play")).toBeTruthy();
+      expect(button.querySelector(`.${icon}`)).toBeTruthy();
+      expect(button).toHaveTextContent(duration);
+      const tile = button.closest("article")!;
+      expect(tile.querySelectorAll("[data-tile-cue]")).toHaveLength(2);
+      expect(tile.querySelector('[data-tile-cue="day"]')).toBeTruthy();
+      expect(tile.querySelector('[data-tile-cue="playback"]')).toBe(button);
+      expect(within(tile).getByLabelText("Sam")).toHaveClass("opacity-0", "group-focus-within:opacity-100");
+    }
+    const still = screen.getByRole("button", { name: "Open Still picture" }).closest("article")!;
+    expect(within(still).queryByRole("button", { name: /^Play / })).toBeNull();
+    expect(still.querySelector(".lucide-play")).toBeNull();
+    expect(still.querySelectorAll("[data-tile-cue]")).toHaveLength(1);
+  });
+
+  test.each(["audio", "video", "video with poster"])("keyboard plays and pauses %s without opening or navigating", async (kind) => {
+    const title = "Keyboard clip";
+    const asset = kind === "audio"
+      ? { ...audioAsset, prompt: title }
+      : { ...picture("video-keyboard", title), kind: "video", download_url: "/clip.mp4", duration_s: 9, poster_asset_id: kind === "video with poster" ? "poster-keyboard" : null };
+    routeFetch((path) => path.includes("/poster-keyboard/download")
+      ? Response.json({ download_url: "/poster.png" })
+      : path.startsWith("/me/api/media?") ? list([asset]) : undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    renderLibrary();
+    const open = await screen.findByRole("button", { name: `Open ${title}` });
+    const button = await screen.findByRole("button", { name: `Play ${title}` });
+    const href = window.location.href;
+    open.focus();
+    await userEvent.tab();
+    expect(button).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(play).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: `Pause ${title}` })).toHaveFocus();
+    await userEvent.keyboard(" ");
+    expect(pause).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: `Play ${title}` })).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(window.location.href).toBe(href);
+    fireEvent.click(open);
+    expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
+  test("poster video tile sets its source once, so a reload cannot abort the first play", async () => {
+    routeFetch((path) => path.includes("/poster-once/download")
+      ? Response.json({ download_url: "/poster.png" })
+      : path.startsWith("/me/api/media?")
+        ? list([{ ...picture("video-once", "Once film"), kind: "video", download_url: "/once.mp4", duration_s: 9, poster_asset_id: "poster-once" }])
+        : undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    renderLibrary();
+    const button = await screen.findByRole("button", { name: "Play Once film" });
+    const video = button.closest("article")!.querySelector("video")!;
+    expect(video).not.toHaveAttribute("src");
+    // Setting src again, even to the same value, restarts the media load and aborts play().
+    let writes = 0;
+    const observer = new MutationObserver((records) => {
+      writes += records.filter((record) => record.attributeName === "src").length;
+    });
+    observer.observe(video, { attributes: true });
+    await userEvent.click(button);
+    await screen.findByRole("button", { name: "Pause Once film" });
+    observer.takeRecords().forEach((record) => {
+      if (record.attributeName === "src") writes += 1;
+    });
+    observer.disconnect();
+    expect(video).toHaveAttribute("src", expect.stringContaining("/once.mp4"));
+    expect(writes).toBe(1);
+  });
+
+  test("video tile retries rejected playback and updates its measured length", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([{ ...picture("retry-video", "Retry film"), kind: "video", download_url: "/retry.mp4" }])
+      : undefined);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValueOnce(new Error("blocked"))
+      .mockResolvedValue(undefined);
+    renderLibrary();
+    const button = await screen.findByRole("button", { name: "Play Retry film" });
+    const video = button.closest("article")!.querySelector("video")!;
+    Object.defineProperty(video, "duration", { configurable: true, value: 64 });
+    fireEvent.loadedMetadata(video);
+    expect(button).toHaveTextContent("1:04");
+    await userEvent.click(button);
+    expect(await screen.findByText("Playback didn't start. Try again.")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(button);
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Playback didn't start. Try again.")).toBeNull();
+    fireEvent.ended(video);
+    expect(screen.getByRole("button", { name: "Play Retry film" })).toBeVisible();
   });
 });
