@@ -100,7 +100,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
-                           on_prompt_memory_kill: Callable[[], Any] | None = None) -> APIRouter:
+                           on_prompt_memory_kill: Callable[[], Any] | None = None,
+                           purge_status_provider: Callable[[], Mapping[str, Any]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
 
     def guard(request: Request) -> AdminContext | JSONResponse:
@@ -134,9 +135,11 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         value = dict(PROMPT_MEMORY_DEFAULT)
         if record:
             value.update(_validate_prompt_memory(record["value"]))
+        purge = purge_status_provider() if purge_status_provider else {}
         return JSONResponse(
             {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record),
-             "source": "admin.db", "apply_mode": "live", **(extra or {})},
+             "source": "admin.db", "apply_mode": "live",
+             **({"prompt_purge": purge} if purge.get("pending") else {}), **(extra or {})},
             status_code=status_code,
             headers={"Cache-Control": "no-store"},
         )

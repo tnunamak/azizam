@@ -119,7 +119,7 @@ def test_async_member_off_stays_forgotten_if_enabled_before_worker_starts(tmp_pa
             assert payload and payload["body"]["extensions"][prompt_memory.NAMESPACE] == {"mode": "forget"}
             assert not payload_dir.exists()
             admin_store.put_prompt_memory_preference(person["id"], remember=True, retention="never", path=admin_db)
-            decision = prompt_memory.decide_for_app(app["id"], payload["body"], admin_path=admin_db)
+            decision = prompt_memory.decide_for_person(person["id"], payload["body"], admin_path=admin_db)
             assert decision.reason == "request_forget" and not decision.keep
         finally:
             proxy._delete_image_media_job_payload(job_id)

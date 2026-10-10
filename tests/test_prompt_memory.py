@@ -178,19 +178,18 @@ def test_household_default_flip_does_not_change_existing_member_choice(tmp_path)
         path=admin_db,
     )
     user = admin_store.upsert_oidc_user("iss", "sam", email="sam@example.test", path=admin_db)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=user["id"], path=admin_db)
     # Simulate an upgraded database with a member who has no preference row.
     with admin_store._conn(admin_db) as conn:
         conn.execute("DELETE FROM prompt_memory_preferences WHERE user_id=?", (user["id"],))
         conn.commit()
     admin_store.init_db(admin_db)
-    assert prompt_memory.decide_for_app(app["id"], {"prompt": "x"}, admin_path=admin_db).reason == "member_disabled"
+    assert prompt_memory.decide_for_person(user["id"], {"prompt": "x"}, admin_path=admin_db).reason == "member_disabled"
 
     admin_store.put_operator_setting(
         "prompt_memory", {"default_remember": True, "never_keep": False, "retention_cap": "never"},
         path=admin_db,
     )
-    result = prompt_memory.decide_for_app(app["id"], {"prompt": "x"}, admin_path=admin_db)
+    result = prompt_memory.decide_for_person(user["id"], {"prompt": "x"}, admin_path=admin_db)
     assert not result.keep and result.reason == "member_disabled"
 
 

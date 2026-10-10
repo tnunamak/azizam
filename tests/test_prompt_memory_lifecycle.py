@@ -95,9 +95,11 @@ def test_person_delete_strips_legacy_cache_and_clears_chats_and_spools(stores):
     media_jobs.create(media_jobs.MediaJob(job_id="mj_active", intent="image.generate", workflow="test"), path=jobs)
     proxy._persist_image_media_job_payload("mj_active", body={"prompt": sentinel}, request=request(), auth_context=auth)
     result = proxy._purge_person_prompt_memory(user["id"])
-    assert result["pending"] is False
-    assert path.exists() and sentinel.encode() not in path.read_bytes()
+    # Rows go at once; file stripping is queued off the request path.
+    assert result["pending"] is True
     assert prompt_memory.get(asset, user["id"], path=jobs) is None
+    proxy._drain_prompt_purges()
+    assert path.exists() and sentinel.encode() not in path.read_bytes()
     assert proxy.responses_store.get("resp_private", path=proxy.responses_store.DB_PATH) is None
     assert not proxy._image_media_job_payload_path("mj_active").exists()
     assert proxy._load_image_media_job_payload("mj_active")["body"]["extensions"][prompt_memory.NAMESPACE] == {"mode": "forget"}

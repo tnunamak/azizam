@@ -16,6 +16,7 @@ SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 HouseholdProvider = Callable[[], Mapping[str, Any]]
 PersonPromptPurger = Callable[[str], Any]
+PurgeStatusProvider = Callable[[str], Mapping[str, Any] | None]
 
 MEMBER_DEFAULT = {"remember": True, "retention": "never"}
 HOUSEHOLD_DEFAULT = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
@@ -30,6 +31,7 @@ def create_me_prompt_memory_router(
     admin_db_path: Path = admin_store.DB_PATH,
     prompt_memory_path: Path | None = None,
     on_person_prompt_purge: PersonPromptPurger | None = None,
+    purge_status_provider: PurgeStatusProvider | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api", tags=["me"])
 
@@ -67,7 +69,14 @@ def create_me_prompt_memory_router(
     @router.get("/prompt-memory", include_in_schema=False)
     def get_prompt_memory(request: Request) -> JSONResponse:
         session = _session(request)
-        return session if isinstance(session, JSONResponse) else _settings_response(str(session.subject), request)
+        if isinstance(session, JSONResponse):
+            return session
+        person_id = str(session.subject)
+        # Queued file cleanup stays visible until it finishes.
+        status = purge_status_provider(person_id) if purge_status_provider is not None else None
+        if isinstance(status, Mapping) and _has_pending_purge(status):
+            return _settings_response(person_id, request, extra={"prompt_purge": dict(status)})
+        return _settings_response(person_id, request)
 
     @router.put("/prompt-memory", include_in_schema=False)
     async def put_prompt_memory(request: Request) -> JSONResponse:

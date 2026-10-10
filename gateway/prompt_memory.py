@@ -229,30 +229,6 @@ def household_settings(*, admin_path: Path | None = None) -> dict[str, Any]:
     return {**HOUSEHOLD_DEFAULTS, **(row.get("value") or {} if row else {})}
 
 
-def person_for_app(app_id: str | None, *, admin_path: Path | None = None) -> str | None:
-    if not app_id:
-        return None
-    app = admin_store.get_app(app_id, path=admin_path or admin_store.DB_PATH)
-    if not app:
-        return None
-    person_id = app.get("owner_user_id")
-    return str(person_id) if isinstance(person_id, str) and person_id else None
-
-
-def decide_for_app(
-    app_id: str | None, body: Mapping[str, Any] | None, *,
-    admin_path: Path | None = None,
-    responses_store: bool | None = None,
-) -> Decision:
-    path = admin_path or admin_store.DB_PATH
-    person_id = person_for_app(app_id, admin_path=path)
-    member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
-    return decide(
-        person_id=person_id, member=member, household=household_settings(admin_path=path),
-        request_body=body, responses_store=responses_store,
-    )
-
-
 def decide_for_person(
     person_id: str | None, body: Mapping[str, Any] | None, *,
     admin_path: Path | None = None,
@@ -487,6 +463,71 @@ def mark_person_erasure(
         raise
     finally:
         conn.close()
+
+
+def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> int:
+    """Return the person's cutoff after raising it to when memory went off.
+
+    The setting is read and the cutoff written in one transaction, so a member
+    who turned memory back on is never erased by an earlier "off" reading. The
+    cutoff is the time of the recorded change, never "now": prompts saved
+    after a later switch back on stay outside it.
+    """
+    if not person_id:
+        raise ValueError("person_id is required")
+    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+                           timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_erasure_cutoff_table(conn)
+        row = conn.execute(
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+        ).fetchone()
+        current = int(row[0]) if row else 0
+        changes = []
+        # A missing row means no prompt was ever written: put() creates it first.
+        preference = conn.execute(
+            "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
+        ).fetchone()
+        if preference is not None and not preference[0]:
+            changes.append(int(preference[1] or 0))
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
+        ).fetchone() is not None:
+            access = conn.execute(
+                "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
+            ).fetchone()
+            changes.extend(int(value) for value in (access or ()) if value is not None)
+        cutoff = max([current, *changes])
+        if cutoff > current:
+            conn.execute(
+                f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,cutoff_at) VALUES(?,?) "
+                "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+                (person_id, cutoff),
+            )
+        conn.commit()
+        return cutoff
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
+    """Return when the kill switch setting was last saved, or None when it is off."""
+    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+                           timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        row = conn.execute(
+            "SELECT value_json, updated_at FROM operator_settings WHERE key='prompt_memory'"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not json.loads(row[0]).get("never_keep"):
+        return None
+    return int(row[1])
 
 
 def prune_person_before(

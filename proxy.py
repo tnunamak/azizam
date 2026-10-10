@@ -14287,6 +14287,7 @@ app.include_router(
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         household_provider=lambda: prompt_memory_settings(ADMIN_DB_PATH),
         on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
+        purge_status_provider=lambda person_id: _prompt_purge_status(person_id),
         admin_db_path=ADMIN_STORE.path,
         prompt_memory_path=media_jobs.DB_PATH,
     )
@@ -15134,6 +15135,7 @@ app.include_router(create_settings_router(
     overrides_provider=ADMIN_STORE.operator_overrides,
     prompt_memory_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
+    purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 app.include_router(build_setup_api_router(lambda request: {
@@ -20023,29 +20025,112 @@ def _prompt_migration_state_path() -> Path:
     return Path(media_jobs.DB_PATH).with_name("prompt_metadata_migration.db")
 
 
-def _queue_prompt_purge(person_id: str) -> None:
+_PROMPT_PURGE_COLUMNS = {
+    "generation": "INTEGER NOT NULL DEFAULT 1",
+    "queued_at": "INTEGER",
+    "attempts": "INTEGER NOT NULL DEFAULT 0",
+    "last_attempt_at": "INTEGER",
+    "files_pending": "INTEGER",
+    "last_error": "TEXT",
+    "cutoff": "INTEGER NOT NULL DEFAULT 0",
+}
+# Set while the maintenance loop runs, so an erasure can start its file
+# cleanup at once instead of at the next minute.
+_PROMPT_PURGE_WAKE: tuple[asyncio.AbstractEventLoop, asyncio.Event] | None = None
+_PROMPT_PURGE_DRAIN_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _prompt_purge_queue() -> Iterable[Any]:
     import sqlite3
     path = _prompt_migration_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
+        # The write lock serializes the schema upgrade across threads and processes.
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute("CREATE TABLE IF NOT EXISTS prompt_purge_queue (person_id TEXT PRIMARY KEY)")
-        conn.execute("INSERT OR IGNORE INTO prompt_purge_queue VALUES (?)", (person_id,))
+        conn.execute("CREATE TABLE IF NOT EXISTS prompt_purge_done (person_id TEXT PRIMARY KEY, cutoff INTEGER NOT NULL)")
+        present = {row[1] for row in conn.execute("PRAGMA table_info(prompt_purge_queue)")}
+        for name, ddl in _PROMPT_PURGE_COLUMNS.items():
+            if name not in present:
+                conn.execute(f"ALTER TABLE prompt_purge_queue ADD COLUMN {name} {ddl}")
+        yield conn
+
+
+def _queue_prompt_purge(person_id: str, cutoff: int) -> None:
+    # A new request bumps the generation, so a drain that started earlier
+    # cannot mark the newer request done. ``cutoff`` is the erasure time
+    # the stripping covers; "*" is the household kill switch.
+    with _prompt_purge_queue() as conn:
+        conn.execute(
+            "INSERT INTO prompt_purge_queue(person_id, generation, queued_at, cutoff) VALUES (?, 1, ?, ?) "
+            "ON CONFLICT(person_id) DO UPDATE SET generation=generation+1, "
+            "cutoff=MAX(cutoff, excluded.cutoff)",
+            (person_id, int(time.time()), int(cutoff)),
+        )
+
+
+def _prompt_purge_covered(person_id: str) -> int:
+    """Return the latest erasure cutoff already queued or stripped."""
+    if not _prompt_migration_state_path().exists():
+        return 0
+    with _prompt_purge_queue() as conn:
+        row = conn.execute(
+            "SELECT MAX(COALESCE((SELECT cutoff FROM prompt_purge_queue WHERE person_id=?), 0), "
+            "COALESCE((SELECT cutoff FROM prompt_purge_done WHERE person_id=?), 0))",
+            (person_id, person_id),
+        ).fetchone()
+    return int(row[0] or 0)
 
 
 def _pending_prompt_purges() -> list[str]:
-    import sqlite3
-    path = _prompt_migration_state_path()
-    if not path.exists():
+    if not _prompt_migration_state_path().exists():
         return []
-    with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS prompt_purge_queue (person_id TEXT PRIMARY KEY)")
-        return [row[0] for row in conn.execute("SELECT person_id FROM prompt_purge_queue")]
+    with _prompt_purge_queue() as conn:
+        return [row[0] for row in conn.execute("SELECT person_id FROM prompt_purge_queue ORDER BY queued_at, person_id")]
 
 
-def _finish_prompt_purge(person_id: str) -> None:
-    import sqlite3
-    with contextlib.closing(sqlite3.connect(_prompt_migration_state_path(), timeout=5)) as conn, conn:
-        conn.execute("DELETE FROM prompt_purge_queue WHERE person_id=?", (person_id,))
+def _finish_prompt_purge(person_id: str, generation: int, cutoff: int, *, complete: bool,
+                         files_pending: int | None, error: str | None) -> None:
+    with _prompt_purge_queue() as conn:
+        if complete:
+            conn.execute(
+                "INSERT INTO prompt_purge_done(person_id, cutoff) VALUES (?, ?) "
+                "ON CONFLICT(person_id) DO UPDATE SET cutoff=MAX(cutoff, excluded.cutoff)",
+                (person_id, int(cutoff)),
+            )
+            conn.execute("DELETE FROM prompt_purge_queue WHERE person_id=? AND generation=?", (person_id, generation))
+        else:
+            conn.execute(
+                "UPDATE prompt_purge_queue SET attempts=attempts+1, last_attempt_at=?, files_pending=?, last_error=? "
+                "WHERE person_id=?", (int(time.time()), files_pending, error, person_id),
+            )
+
+
+def _prompt_purge_status(person_id: str) -> dict[str, Any]:
+    """Report queued cached-file cleanup for one person, household cleanup included.
+
+    Rows carry error codes and counts only, never file names or prompt text.
+    """
+    rows = []
+    if _prompt_migration_state_path().exists():
+        with _prompt_purge_queue() as conn:
+            rows = conn.execute(
+                "SELECT queued_at, attempts, last_attempt_at, files_pending, last_error "
+                "FROM prompt_purge_queue WHERE person_id IN (?, '*')", (person_id,),
+            ).fetchall()
+    if not rows:
+        return {"pending": False, "metadata_stripping": {"status": "complete"}}
+    attempts = max(row[1] for row in rows)
+    counts = [row[3] for row in rows if row[3] is not None]
+    return {"pending": True, "metadata_stripping": {
+        "status": "retrying" if attempts else "queued",
+        "queued_at": min((row[0] for row in rows if row[0] is not None), default=None),
+        "attempts": attempts,
+        "last_attempt_at": max((row[2] for row in rows if row[2] is not None), default=None),
+        "files_pending": sum(counts) if counts else None,
+        "last_error": next((row[4] for row in rows if row[4]), None),
+    }}
 
 
 def _person_cached_asset_ids(person_id: str) -> set[str]:
@@ -20068,7 +20153,12 @@ def _person_cached_asset_ids(person_id: str) -> set[str]:
     return assets
 
 
-def _purge_prompt_payload_files(person_id: str | None = None) -> None:
+def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | None = None) -> None:
+    # ``before`` spares spools made after an erasure cutoff, such as jobs
+    # started after a member turned memory back on.
+    def spared(payload: Mapping[str, Any] | None) -> bool:
+        return before is not None and int((payload or {}).get("created_at") or 0) > before
+
     with _MEDIA_PAYLOAD_LOCK:
         # Move active jobs to memory so they can finish without a durable prompt.
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -20077,6 +20167,8 @@ def _purge_prompt_payload_files(person_id: str | None = None) -> None:
                 payload = _load_image_media_job_payload(job_id)
                 if person_id is not None and (payload or {}).get("auth", {}).get("person_id") != person_id:
                     continue
+                if spared(payload):
+                    continue
                 job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
                 if job and job.get("status") not in media_jobs.TERMINAL_STATUSES and payload is not None and isinstance(payload.get("body"), dict):
                     payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
@@ -20084,71 +20176,130 @@ def _purge_prompt_payload_files(person_id: str | None = None) -> None:
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
-                if person_id is None:
+                if person_id is None and before is None:
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
-            if not isinstance(payload.get("body"), dict):
+            if not isinstance(payload.get("body"), dict) or spared(payload):
                 continue
             if person_id is None or payload.get("auth", {}).get("person_id") == person_id:
                 payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
 
 
-def _purge_person_prompt_memory(person_id: str, *, mark_erasure: bool = True) -> dict[str, Any]:
-    if mark_erasure:
-        prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path)
-    _queue_prompt_purge(person_id)
-    with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-        cutoff = policy.get("forgot_before", 0)
+def _wake_prompt_purge_drain() -> None:
+    wake = _PROMPT_PURGE_WAKE
+    if wake is None:
+        return
+    loop, event = wake
+    try:
+        loop.call_soon_threadsafe(event.set)
+    except RuntimeError:
+        pass  # The loop closed; the next start drains the durable queue.
+
+
+def _purge_person_prompt_memory(person_id: str) -> dict[str, Any]:
+    """Erase a person's saved prompts and chats now; queue their cached files.
+
+    Stripping files can wait behind the migration's scan lock, so it runs in
+    the background and stays visible through ``_prompt_purge_status``.
+    """
+    cutoff = prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path)
+    _erase_person_prompts_before(person_id, cutoff)
+    _wake_prompt_purge_drain()
+    return _prompt_purge_status(person_id)
+
+
+def _erase_person_prompts_before(person_id: str, cutoff: int) -> None:
     prompt_memory.prune_person_before(person_id, cutoff)
     responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
-    _purge_prompt_payload_files(person_id)
-    result = prompt_metadata_migration.strip_cached_assets(
-        IMAGE_CACHE_DIR, _prompt_migration_state_path(), asset_ids=_person_cached_asset_ids(person_id), legacy_workdir=Path(__file__).resolve().parent / "cache" / "media_metadata",
-    )
-    if result.complete:
-        _finish_prompt_purge(person_id)
-    return {"metadata_stripping": {"pending": result.pending, "stripped": result.stripped},
-            "pending": not result.complete}
+    _purge_prompt_payload_files(person_id, before=cutoff)
+    # Queue last: a queued cutoff means only cached files remain.
+    _queue_prompt_purge(person_id, cutoff)
 
 
 def _purge_prompt_memory_on_kill() -> dict[str, Any]:
-    _queue_prompt_purge("*")
     prompt_memory.delete_all()
     _purge_prompt_payload_files()
     responses_store.delete_all(path=responses_store.DB_PATH)
-    result = prompt_metadata_migration.strip_cached_assets(IMAGE_CACHE_DIR, _prompt_migration_state_path(), legacy_workdir=Path(__file__).resolve().parent / "cache" / "media_metadata")
-    if result.complete:
-        _finish_prompt_purge("*")
-    return {"metadata_stripping": {"pending": result.pending, "stripped": result.stripped},
-            "pending": not result.complete}
+    _queue_prompt_purge("*", prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or int(time.time()))
+    _wake_prompt_purge_drain()
+    return _prompt_purge_status("*")
+
+
+def _strip_queued_prompt_files(person_id: str) -> None:
+    with _prompt_purge_queue() as conn:
+        row = conn.execute("SELECT generation, cutoff FROM prompt_purge_queue WHERE person_id=?", (person_id,)).fetchone()
+    if row is None:
+        return
+    generation, cutoff = row
+    try:
+        result = prompt_metadata_migration.strip_cached_assets(
+            IMAGE_CACHE_DIR, _prompt_migration_state_path(),
+            asset_ids=None if person_id == "*" else _person_cached_asset_ids(person_id),
+            legacy_workdir=Path(__file__).resolve().parent / "cache" / "media_metadata",
+        )
+    except Exception as exc:
+        _finish_prompt_purge(person_id, generation, cutoff, complete=False, files_pending=None, error=type(exc).__name__)
+        raise
+    _finish_prompt_purge(person_id, generation, cutoff, complete=result.complete, files_pending=result.pending,
+                         error=min(result.errors.values(), default=None))
+
+
+def _drain_prompt_purges() -> None:
+    """Strip cached files for every queued erasure; failures stay queued."""
+    # Only one drain at a time; the caller that loses leaves the work to it.
+    if not _PROMPT_PURGE_DRAIN_LOCK.acquire(blocking=False):
+        return
+    try:
+        for person_id in _pending_prompt_purges():
+            try:
+                _strip_queued_prompt_files(person_id)
+            except Exception as exc:
+                print(f"[proxy] prompt file cleanup pending: {type(exc).__name__}", flush=True)
+    finally:
+        _PROMPT_PURGE_DRAIN_LOCK.release()
+
+
+def _maintain_household_prompt_memory() -> None:
+    # Decide and delete under the settings lock: a kill switch turned off
+    # since an earlier read must not erase prompts saved after it.
+    with prompt_memory.retention_guard(ADMIN_STORE.path) as household:
+        cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) if household["never_keep"] else None
+        if cutoff is not None:
+            prompt_memory.delete_all()
+            responses_store.delete_all(path=responses_store.DB_PATH)
+    if cutoff is not None:
+        # Settings are retry intent if the request's cleanup failed. Spools
+        # and files are queued once per switch-on, not on every pass.
+        if cutoff > _prompt_purge_covered("*"):
+            _purge_prompt_payload_files(before=cutoff)
+            _queue_prompt_purge("*", cutoff)
+    else:
+        prompt_memory.tighten_retention(household["retention_cap"])
+
+
+def _maintain_person_prompt_memory(person_id: str) -> None:
+    # The cutoff only rises to when memory went off, read in the same
+    # transaction, so prompts saved after switching back on survive.
+    cutoff = prompt_memory.settle_erasure_cutoff(person_id, admin_path=ADMIN_STORE.path)
+    if cutoff:
+        if cutoff > _prompt_purge_covered(person_id):
+            # Retry a request whose cleanup stopped before it was queued.
+            _erase_person_prompts_before(person_id, cutoff)
+        else:
+            prompt_memory.prune_person_before(person_id, cutoff)
+            responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
+    with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
+        retention = policy["retention"]
+    prompt_memory.tighten_retention(retention, person_id=person_id)
 
 
 def _maintain_prompt_memory() -> None:
-    # Persisted settings are retry intent even if a previous queue write failed.
-    household = prompt_memory.household_settings(admin_path=ADMIN_STORE.path)
-    operations = []
-    if household["never_keep"]:
-        operations.append(_purge_prompt_memory_on_kill)
-    operations.append(lambda: prompt_memory.tighten_retention(household["retention_cap"]))
+    # Each step reads its own setting when it runs. A decision read at the
+    # start of the pass can be stale by the time a slow step reaches it.
+    operations = [_maintain_household_prompt_memory]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
-        person_id = user["id"]
-        with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-            remember = policy["remember"]
-            retention = policy["retention"]
-            cutoff = policy.get("forgot_before", 0)
-        if not remember:
-            operations.append(lambda person_id=person_id: _purge_person_prompt_memory(person_id))
-        else:
-            operations.append(lambda person_id=person_id, retention=retention:
-                              prompt_memory.tighten_retention(retention, person_id=person_id))
-            if cutoff:
-                operations.append(lambda person_id=person_id, cutoff=cutoff:
-                                  prompt_memory.prune_person_before(person_id, cutoff))
-                operations.append(lambda person_id=person_id, cutoff=cutoff:
-                                  responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH))
-    for person_id in _pending_prompt_purges():
-        operations.append(_purge_prompt_memory_on_kill if person_id == "*" else
-                          lambda person_id=person_id: _purge_person_prompt_memory(person_id, mark_erasure=False))
+        operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
+    operations.append(_drain_prompt_purges)
     for operation in operations:
         try:
             operation()
@@ -20159,16 +20310,37 @@ def _maintain_prompt_memory() -> None:
     _prune_orphaned_media_job_payloads()
 
 
+async def _drain_prompt_purges_on_wake(stop_event: asyncio.Event, wake: asyncio.Event, seconds: float) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while not stop_event.is_set() and (remaining := deadline - loop.time()) > 0:
+        waiters = {asyncio.ensure_future(stop_event.wait()), asyncio.ensure_future(wake.wait())}
+        try:
+            await asyncio.wait(waiters, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+        if wake.is_set() and not stop_event.is_set():
+            wake.clear()  # An erasure during this drain sets it again.
+            try:
+                await asyncio.to_thread(_drain_prompt_purges)
+            except Exception as exc:
+                print(f"[proxy] prompt file cleanup pending: {type(exc).__name__}", flush=True)
+
+
 async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
-    while not stop_event.is_set():
-        try:
-            await asyncio.to_thread(_maintain_prompt_memory)
-        except Exception as exc:
-            print(f"[proxy] prompt privacy maintenance pending: {type(exc).__name__}", flush=True)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=60)
-        except asyncio.TimeoutError:
-            pass
+    global _PROMPT_PURGE_WAKE
+    wake = asyncio.Event()
+    _PROMPT_PURGE_WAKE = (asyncio.get_running_loop(), wake)
+    try:
+        while not stop_event.is_set():
+            try:
+                await asyncio.to_thread(_maintain_prompt_memory)
+            except Exception as exc:
+                print(f"[proxy] prompt privacy maintenance pending: {type(exc).__name__}", flush=True)
+            await _drain_prompt_purges_on_wake(stop_event, wake, 60)
+    finally:
+        _PROMPT_PURGE_WAKE = None
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
