@@ -14818,7 +14818,7 @@ async def _run_identity_job(
             _identity_job_failed(job_id, "The gateway stopped before the job finished.")
             raise
         except Exception as exc:  # noqa: BLE001
-            _identity_job_failed(job_id, f"identity workflow failed: {str(exc) or type(exc).__name__}")
+            _identity_job_failed(job_id, f"identity workflow failed: {type(exc).__name__}")
 
 
 def _identity_job_failed(job_id: str, message: str) -> None:
@@ -20724,6 +20724,11 @@ def _image_response_error(response: Response) -> tuple[str, str | None]:
     return f"image generation failed with HTTP {response.status_code}", None
 
 
+def _media_job_failure_message(response: Response) -> str:
+    """Keep transport evidence, never backend error text that may echo a prompt."""
+    return f"Media generation failed (upstream HTTP {int(response.status_code)})."
+
+
 def _retry_after_seconds(response: Response) -> float | None:
     raw = response.headers.get("retry-after") if hasattr(response, "headers") else None
     if not raw:
@@ -21155,7 +21160,7 @@ async def _run_image_media_job(job_id: str) -> None:
                 await asyncio.sleep(delay)
                 continue
 
-            message, _code = _image_response_error(response)
+            message = _media_job_failure_message(response)
             _mark_image_media_job_failed(
                 job_id,
                 message,
@@ -21524,7 +21529,7 @@ async def _run_audio_media_job(job_id: str) -> None:
 
         status_code = int(getattr(response, "status_code", 0) or 0)
         if not 200 <= status_code < 300:
-            message, _code = _image_response_error(response)
+            message = _media_job_failure_message(response)
             _mark_audio_media_job_failed(job_id, message, http_status=status_code)
             return
 
@@ -21982,7 +21987,7 @@ async def _run_video_media_job(job_id: str) -> None:
 
         submit_status = int(getattr(submit_response, "status_code", 0) or 0)
         if not 200 <= submit_status < 300:
-            message, _code = _image_response_error(submit_response)
+            message = _media_job_failure_message(submit_response)
             _mark_video_media_job_failed(job_id, message, http_status=submit_status)
             return
 
@@ -22028,7 +22033,7 @@ async def _run_video_media_job(job_id: str) -> None:
             status_response = await proxy_comfy_video_status(video_id, auth_context)
             status_code = int(getattr(status_response, "status_code", 0) or 0)
             if status_code >= 500:
-                message, _code = _image_response_error(status_response)
+                message = _media_job_failure_message(status_response)
                 _mark_video_media_job_failed(job_id, message, http_status=status_code)
                 return
             status_value, progress = _video_response_status(status_response)
@@ -22054,10 +22059,7 @@ async def _run_video_media_job(job_id: str) -> None:
                     )
                 continue
             if status_value == "failed":
-                message, _code = _image_response_error(status_response)
-                if message.startswith("image generation failed"):
-                    parsed = _image_response_json(status_response)
-                    message = str(parsed.get("error") or "Video generation failed")
+                message = _media_job_failure_message(status_response)
                 _mark_video_media_job_failed(job_id, message, http_status=status_code)
                 return
             if status_value != "succeeded":
@@ -22066,7 +22068,7 @@ async def _run_video_media_job(job_id: str) -> None:
             content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
-                message, _code = _image_response_error(content_response)
+                message = _media_job_failure_message(content_response)
                 _mark_video_media_job_failed(job_id, message, http_status=content_status)
                 return
 
