@@ -1309,8 +1309,11 @@ def get_session_app_for_user(user_id: str, *, path: Path = DB_PATH) -> dict[str,
     return _row_to_dict(row)
 
 
-def is_session_app(app_id: str, *, path: Path = DB_PATH) -> bool:
-    with _conn(path) as conn:
+def is_session_app(
+    app_id: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> bool:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
         return conn.execute(
             "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
         ).fetchone() is not None

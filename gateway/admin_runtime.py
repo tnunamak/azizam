@@ -1621,7 +1621,7 @@ def runtime_identity_for_app_credential_hash(
         if not app_id:
             return None
         # A session App acts only through its person's browser session.
-        if connection.execute("SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)).fetchone():
+        if admin_store.is_session_app(app_id, path=path, connection=connection):
             return None
         app = admin_store.get_app(app_id, path=path, connection=connection)
         profile = _runtime_app_profile(

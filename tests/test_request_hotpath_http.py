@@ -62,8 +62,9 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
 
     assert before.status_code == after.status_code == 200
     assert before.json()["choices"] == after.json()["choices"]
-    # Both the handler and firehose resolve this four-lookup identity: 8 -> 2.
-    assert before_count - after_count == 6
+    # Both the handler and firehose resolve this five-lookup identity
+    # (credential, session-App check, App, owner, profile): 10 -> 2.
+    assert before_count - after_count == 8
     assert len(forwarded) == 2
     admin_store.revoke_credential(credential["id"], path=db)
     denied = client.post("/v1/chat/completions", json=body, headers=headers)
