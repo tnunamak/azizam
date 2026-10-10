@@ -26,9 +26,10 @@ export interface MemberPromptMemory {
   household: HouseholdPromptMemory;
 }
 
-/** Background file cleanup after a delete or a switch-off. Counts only. */
+/** Pending database erasure or file cleanup. No prompt text. */
 export interface PromptPurge {
   pending?: boolean;
+  database_pending?: boolean;
   retry_scheduled?: boolean;
   retry_required?: boolean;
   metadata_stripping?: {
@@ -181,14 +182,15 @@ export function withForget<T extends Record<string, unknown>>(
 }
 
 /**
- * One line on the progress of file cleanup, or null when there is none.
- * Saved prompts leave the database at once; copies inside older files are
- * removed in the background, and the gateway retries until they are gone.
+ * One line on pending deletion, or null when it has finished. Database
+ * failures and copies inside older files are retried in the background.
  */
 export function purgeStatus(
   purge: PromptPurge | null | undefined,
 ): string | null {
   if (!purge?.pending) return null;
+  if (purge.database_pending)
+    return "Deletion pending. Azizam keeps retrying saved prompt deletion in the background.";
   const stripping = purge.metadata_stripping;
   const left = stripping?.files_pending;
   const count =
@@ -202,12 +204,16 @@ export function purgeStatus(
 
 /** The note shown with a new key: whether prompts sent with it are kept. */
 export function keyPromptNote(
-  promptMemory: { person_id?: string | null } | null | undefined,
+  promptMemory:
+    | { person_id?: string | null; description?: string }
+    | null
+    | undefined,
 ): string | null {
   if (!promptMemory) return null;
+  if (promptMemory.description) return promptMemory.description;
   return promptMemory.person_id
     ? "This key acts as you. Anyone who has it can see the prompts you saved."
-    : "Prompts sent with this key are not remembered.";
+    : "Media prompts sent with this key are not remembered. Chat requests with store:true can save the conversation for up to seven days.";
 }
 
 export const householdPromptMemoryApi = {

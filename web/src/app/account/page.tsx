@@ -43,7 +43,7 @@ type Pending =
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof ApiError && error.status === 503
-    ? "The gateway couldn’t finish deleting. Try again."
+    ? "The gateway couldn’t finish this change. Try again."
     : error instanceof Error && error.message
       ? error.message
       : fallback;
@@ -104,9 +104,11 @@ function PromptsSection() {
     onSuccess: (result) => {
       const count = result.deleted_prompts;
       toast.success(
-        count === 0
-          ? "You had no saved prompts."
-          : `Deleted ${count} saved ${count === 1 ? "prompt" : "prompts"}.`,
+        result.prompt_purge?.pending
+          ? "Deletion pending. Azizam will keep retrying."
+          : count === 0
+            ? "You had no saved prompts."
+            : `Deleted ${count} saved ${count === 1 ? "prompt" : "prompts"}.`,
       );
       void queryClient.invalidateQueries({ queryKey: promptMemoryKey });
     },
@@ -266,7 +268,7 @@ function PromptsSection() {
               className="text-muted-foreground mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none"
             />
             <div className="min-w-0">
-              <p className="text-body font-medium">Saved prompts are deleted</p>
+              <p className="text-body font-medium">Deletion pending</p>
               <p className="text-muted-foreground text-meta">{status}</p>
             </div>
           </div>
@@ -276,6 +278,10 @@ function PromptsSection() {
         {owner
           ? `No Azizam screen shows your prompts to anyone else, ${owner} included. ${owner} runs this gateway, so they could still read its files or sign in as you with a reset link.`
           : "No Azizam screen shows your prompts to anyone else. Pictures, audio and video stay in Library whatever you choose here."}
+      </p>
+      <p className="text-muted-foreground text-meta mt-3">
+        Azizam cannot erase an engine’s own history, external output folders,
+        backups, or downloaded copies.
       </p>
       <ConfirmDialog
         open={pending !== null}
@@ -289,7 +295,7 @@ function PromptsSection() {
         }
         description={
           pending?.kind === "off"
-            ? "Your saved prompts are deleted now and new ones aren’t kept. Your pictures, audio and videos stay in Library."
+            ? "New prompts won’t be saved. Deletion of saved prompts may continue in the background. Your pictures, audio and videos stay in Library."
             : pending?.kind === "retention"
               ? `Prompts older than ${memberRetentionLabel[pending.value].toLowerCase()} are deleted now. Your pictures, audio and videos stay in Library.`
               : "Every prompt saved for you is deleted. Your pictures, audio and videos stay in Library. This can’t be undone."

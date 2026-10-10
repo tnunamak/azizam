@@ -137,7 +137,7 @@ export function HouseholdPromptsSection() {
           description={
             pending?.kind === "cap"
               ? `Everyone’s prompts older than ${capLabel[pending.value].toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
-              : "Every saved prompt is deleted now, for everyone, and nothing new is kept. Turning this off later can’t bring them back. Pictures, audio and video stay in Library."
+              : "Nothing new will be kept. Deletion of everyone’s saved prompts may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library."
           }
           confirmLabel={
             pending?.kind === "cap"
@@ -246,7 +246,7 @@ function Rows({
             className="text-muted-foreground mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none"
           />
           <div className="min-w-0">
-            <p className="text-body font-medium">Saved prompts are deleted</p>
+            <p className="text-body font-medium">Deletion pending</p>
             <p className="text-muted-foreground text-meta">{status}</p>
           </div>
         </div>

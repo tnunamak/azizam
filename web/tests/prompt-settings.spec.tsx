@@ -121,7 +121,9 @@ describe("Your settings: prompts", () => {
     ).toBeVisible();
     await user.click(toggle);
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Your saved prompts are deleted now");
+    expect(dialog).toHaveTextContent(
+      "Deletion of saved prompts may continue in the background.",
+    );
     expect(dialog).toHaveTextContent(
       "Your pictures, audio and videos stay in Library.",
     );
@@ -171,9 +173,9 @@ describe("Your settings: prompts", () => {
       ),
     );
     wrap(<AccountPage />);
-    const status = (
-      await screen.findByText("Saved prompts are deleted")
-    ).closest("[role=status]");
+    const status = (await screen.findByText("Deletion pending")).closest(
+      "[role=status]",
+    );
     expect(status).not.toBeNull();
     expect(status).toHaveTextContent(
       "Removing copies from older files in the background. 4 files left.",
@@ -303,3 +305,76 @@ describe("Settings: the household's prompt rules", () => {
     );
   });
 });
+
+it.each(["member", "household"])(
+  "shows %s database deletion as pending",
+  async (kind) => {
+    const purge = {
+      pending: true,
+      database_pending: true,
+      retry_scheduled: true,
+    };
+    if (kind === "member") {
+      mocks.promptMemory.mockResolvedValue(
+        member({}, {}, { prompt_purge: purge }),
+      );
+      wrap(<AccountPage />);
+    } else {
+      mocks.householdGet.mockResolvedValue({
+        prompt_memory: household,
+        revision: "r1",
+        prompt_purge: purge,
+      });
+      wrap(<HouseholdPromptsSection />);
+    }
+    expect(await screen.findByText("Deletion pending")).toBeVisible();
+    expect(
+      screen.getByText(/Azizam keeps retrying saved prompt deletion/),
+    ).toBeVisible();
+    expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
+  },
+);
+
+it.each(["member", "household"])(
+  "keeps the %s confirmation open on failure for retry",
+  async (kind) => {
+    const user = userEvent.setup();
+    const { toast } = await import("sonner");
+    const { ApiError } = await import("@/lib/api");
+    if (kind === "member") {
+      mocks.promptMemory.mockResolvedValue(member());
+      mocks.savePromptMemory.mockRejectedValue(
+        new ApiError("prompt_erasure_unavailable", "Deletion failed. Try again.", 503),
+      );
+      wrap(<AccountPage />);
+      await user.click(
+        await screen.findByRole("switch", { name: "Remember what I type" }),
+      );
+    } else {
+      mocks.householdGet.mockResolvedValue({
+        prompt_memory: household,
+        revision: "r1",
+      });
+      mocks.householdPut.mockRejectedValue(
+        new ApiError("prompt_erasure_unavailable", "Deletion failed. Try again.", 503),
+      );
+      wrap(<HouseholdPromptsSection />);
+      await user.click(
+        await screen.findByRole("switch", { name: "Never keep prompts" }),
+      );
+    }
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: kind === "member" ? "Turn off" : "Never keep prompts",
+      }),
+    );
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/Try again/),
+      ),
+    );
+    expect(dialog).toBeVisible();
+    expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
+  },
+);

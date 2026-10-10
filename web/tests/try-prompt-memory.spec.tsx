@@ -188,10 +188,12 @@ describe("Try: Don't keep this prompt", () => {
       "/account",
     );
     expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.getByText("Jobs whose prompts aren’t kept cannot resume after a gateway restart.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 5000 });
-    // The gateway already keeps nothing; the result still says so.
-    expect(submittedBody().extensions).toBeUndefined();
+    expect(submittedBody().extensions).toEqual({
+      "com.azizam.prompts": { mode: "forget" },
+    });
     expect(screen.getByText("Prompt not saved")).toBeVisible();
   });
 
@@ -225,4 +227,34 @@ describe("Try: Don't keep this prompt", () => {
     expect(account.promptMemory).not.toHaveBeenCalled();
     expect(screen.queryByText("Don’t keep this prompt")).toBeNull();
   });
+});
+
+it("honors the displayed off snapshot when Run refresh finds memory on", async () => {
+  const user = userEvent.setup();
+  account.promptMemory
+    .mockResolvedValueOnce(
+      memory({ remember: false, effective_remember: false }),
+    )
+    .mockResolvedValue(memory());
+  renderTry();
+  await ready();
+  await screen.findByText("Prompts aren’t kept");
+  await user.click(screen.getByRole("button", { name: "Run" }));
+  await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+  expect(account.promptMemory).toHaveBeenCalledTimes(2);
+  expect(submittedBody().extensions).toEqual({
+    "com.azizam.prompts": { mode: "forget" },
+  });
+  expect(screen.getByText("Prompt not saved")).toBeVisible();
+});
+
+it("refreshes prompt settings on window focus", async () => {
+  renderTry();
+  await ready();
+  await screen.findByText("Kept with the picture. Only you can see it.");
+  account.promptMemory.mockResolvedValue(
+    memory({ effective_remember: false }, { never_keep: true }),
+  );
+  window.dispatchEvent(new Event("focus"));
+  expect(await screen.findByText("Prompts aren’t kept")).toBeVisible();
 });

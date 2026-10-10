@@ -1489,6 +1489,12 @@ function CreationViewer({
           </div>
           <aside className="flex min-h-0 min-w-0 flex-col md:overflow-y-auto md:border-l">
             <div className="flex-1 space-y-5 p-5">
+              {detailsDownload ? (
+                <p className="text-muted-foreground text-meta">
+                  Download with details includes prompt and workflow text.
+                  Downloaded copies can’t be recalled.
+                </p>
+              ) : null}
               <div className="flex items-start justify-between gap-3">
                 <DialogPrimitive.Title className="min-w-0 text-xl leading-snug font-semibold text-balance break-words">
                   {title}
@@ -2438,7 +2444,7 @@ export default function LibraryPage() {
                   : `${goneAssets.length} files are unavailable.`}{" "}
               {/* One explanation for owners and members alike. */}
               <span className="text-muted-foreground">
-                Their prompts and receipts remain.
+                Receipts remain.
               </span>
             </p>
             <Button

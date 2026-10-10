@@ -179,6 +179,11 @@ test.describe("Library: the prompt is the maker's alone", () => {
     expect(item.workflow_download_url).toBeTruthy();
     const dialog = await openViewer(page, robinsKept().asset_id);
     await expect(
+      dialog.getByText(
+        "Download with details includes prompt and workflow text. Downloaded copies can’t be recalled.",
+      ),
+    ).toBeVisible();
+    await expect(
       dialog.getByRole("button", { name: "Copy prompt" }),
     ).toBeVisible();
     await dialog.getByRole("button", { name: /^Actions for / }).click();
@@ -373,7 +378,7 @@ test.describe("Keys", () => {
     await page.getByRole("button", { name: "Create app and key" }).click();
     await expect(
       page.getByText(
-        "This key acts as you. Anyone who has it can see the prompts you saved.",
+        "Prompts sent with this key follow your prompt-memory settings. Anyone holding it can access your saved prompts.",
       ),
     ).toBeVisible();
     await ctx.close();
@@ -430,7 +435,11 @@ test.describe("Your settings", () => {
       "Your pictures, audio and videos stay in Library.",
     );
     await dialog.getByRole("button", { name: "Delete prompts" }).click();
-    await expect(page.getByText(/^Deleted \d+ saved prompts?\./)).toBeVisible();
+    await expect(
+      page.getByText(
+        /^Deleted \d+ saved prompts?\.|^Deletion pending\. Azizam will keep retrying\./,
+      ),
+    ).toBeVisible();
     const after = await (
       await page.request.get("/me/api/media?scope=me&limit=50")
     ).json();
@@ -537,4 +546,46 @@ test.describe("Settings: the household's rules", () => {
     await owner.ctx.close();
     await member.ctx.close();
   });
+});
+
+test("Try sends forget for a stale off snapshot even after the backend turns on", async ({
+  browser,
+  baseURL,
+}) => {
+  const { ctx, page } = await as(browser, seed.member_email, baseURL!);
+  const setMemory = async (remember: boolean) => {
+    const session = await (await page.request.get("/me/api/session")).json();
+    const saved = await page.request.put("/me/api/prompt-memory", {
+      data: { remember, retention: "never" },
+      headers: { "x-azizam-user-action": "1", "x-azizam-csrf": session.csrf_token },
+    });
+    expect(saved.ok()).toBe(true);
+  };
+  await setMemory(false);
+  await page.goto("/ui/try/?capability=speech");
+  await expect(page.getByText("Prompts aren’t kept")).toBeVisible();
+  await setMemory(true);
+  const text = "stale off snapshot sentinel " + Date.now();
+  await page.getByRole("textbox", { name: "Prompt" }).fill(text);
+  const submitted = page.waitForRequest(
+    (r) => r.url().endsWith("/openai/v1/audio/speech") && r.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Run" }).click();
+  expect((await submitted).postDataJSON().extensions).toEqual({
+    "com.azizam.prompts": { mode: "forget" },
+  });
+  await expect(page.getByText("Prompt not saved")).toBeVisible({
+    timeout: 60_000,
+  });
+  const media = await (
+    await page.request.get("/me/api/media?scope=me&limit=50")
+  ).json();
+  expect(JSON.stringify(media)).not.toContain(text);
+  await page.goto("/ui/account/");
+  await expect(
+    page.getByText(
+      "Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies.",
+    ),
+  ).toBeVisible();
+  await ctx.close();
 });

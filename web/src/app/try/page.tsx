@@ -307,7 +307,9 @@ class LostRequestError extends Error {
 
 const IMAGE_JOB_PATH = "/gateway/v1/media/jobs/image-generations";
 
-function lostCopy(tab: TryTab): Pick<TryError, "heading" | "message" | "library"> {
+function lostCopy(
+  tab: TryTab,
+): Pick<TryError, "heading" | "message" | "library"> {
   if (tab === "image")
     return {
       heading: "Your picture may still be finishing",
@@ -1124,14 +1126,17 @@ export default function TryPage() {
   useEffect(() => {
     if (!personViewer) return;
     let live = true;
-    Promise.resolve()
-      .then(() => accountApi.promptMemory())
-      .then(
+    const refresh = () => {
+      void accountApi.promptMemory().then(
         (response) => live && setPromptMemory(response.prompt_memory),
         () => live && setPromptMemory(null),
       );
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
     return () => {
       live = false;
+      window.removeEventListener("focus", refresh);
     };
   }, [personViewer]);
 
@@ -1189,7 +1194,9 @@ export default function TryPage() {
     if (activeTab !== "transcribe") stopRecording();
     // On a phone the strip scrolls; keep the chosen chip in view.
     document
-      .querySelector<HTMLElement>('[aria-label="Try capability"] [data-state="active"]')
+      .querySelector<HTMLElement>(
+        '[aria-label="Try capability"] [data-state="active"]',
+      )
       ?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
   }, [activeTab]);
 
@@ -1543,7 +1550,9 @@ export default function TryPage() {
         selectedWorkflow.inputMapping,
         workflowOutputKind,
       );
-      const first = selectedWorkflow.inputs.find((input) => problems[input.name]);
+      const first = selectedWorkflow.inputs.find(
+        (input) => problems[input.name],
+      );
       setWorkflowChecked(true);
       if (first) {
         setErrors((current) => ({ ...current, workflow: undefined }));
@@ -1569,11 +1578,27 @@ export default function TryPage() {
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
       const built = buildRequest(tab, selectedModel);
-      // "Don't keep this prompt": the gateway keeps nothing of the words.
+      // Preserve the promise shown when Run was pressed, even if a refresh
+      // finds that another tab has since enabled memory.
+      let refreshedState = keepState;
+      if (personViewer && MEMORY_TABS.has(tab)) {
+        try {
+          const latest = await accountApi.promptMemory();
+          setPromptMemory(latest.prompt_memory);
+          refreshedState = tryKeepState(latest.prompt_memory);
+        } catch {
+          setPromptMemory(null);
+          refreshedState = "unknown";
+        }
+      }
       const forgetRun =
         MEMORY_TABS.has(tab) &&
-        forget &&
-        (keepState === "choice" || keepState === "unknown");
+        (forget ||
+          keepState === "member-off" ||
+          keepState === "household-off" ||
+          refreshedState === "member-off" ||
+          refreshedState === "household-off" ||
+          (personViewer && refreshedState === "unknown"));
       const request: RequestInfo = forgetRun
         ? built.multipart
           ? { ...built, form: withForget(built.form ?? {}) }
@@ -1582,11 +1607,7 @@ export default function TryPage() {
               body: withForget((built.body ?? {}) as Record<string, unknown>),
             }
         : built;
-      const promptNotSaved =
-        MEMORY_TABS.has(tab) &&
-        (forgetRun ||
-          keepState === "member-off" ||
-          keepState === "household-off");
+      const promptNotSaved = forgetRun;
       let result: Awaited<ReturnType<typeof publicRequest>> & {
         requestId?: string;
       };
@@ -1679,7 +1700,9 @@ export default function TryPage() {
           ...(lost ? { ...lost, lost: true } : {}),
           message:
             lost?.message ??
-            (error instanceof ApiError && tab === "decide" && error.status === 404
+            (error instanceof ApiError &&
+            tab === "decide" &&
+            error.status === 404
               ? "Decisions not enabled on this gateway"
               : error instanceof Error
                 ? error.message
@@ -1779,7 +1802,9 @@ export default function TryPage() {
           response: new Response(null),
           payload: {
             data: [
-              { url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me` },
+              {
+                url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+              },
             ],
           } as unknown,
           elapsedMs: Math.round(performance.now() - clock),
@@ -2041,7 +2066,7 @@ export default function TryPage() {
           // On a phone the strip runs edge to edge and fades at both ends,
           // so a chip that is partly off screen reads as "more this way",
           // not as a label cut mid-word.
-          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)]"
+          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)] max-sm:px-5"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
@@ -2052,7 +2077,7 @@ export default function TryPage() {
                 value={tab.value}
                 // A chip keeps its full label; the strip scrolls instead of
                 // squeezing chips into each other.
-                className="max-sm:min-w-fit flex-none shrink-0"
+                className="flex-none shrink-0 max-sm:min-w-fit"
               >
                 <tab.icon aria-hidden="true" />
                 {tab.label}
@@ -2309,6 +2334,14 @@ export default function TryPage() {
                       }
                     />
                   ) : null}
+                  {MEMORY_TABS.has(tab.value) &&
+                  personViewer &&
+                  tab.value !== "speech" ? (
+                    <p className="text-muted-foreground text-meta">
+                      Jobs whose prompts aren’t kept cannot resume after a
+                      gateway restart.
+                    </p>
+                  ) : null}
                   {/* Run is the page's one primary action (D1.5b). */}
                   <Button
                     type="submit"
@@ -2391,12 +2424,20 @@ export default function TryPage() {
                       />
                       {currentError.status !== undefined && (
                         <dl className="grid gap-3 text-sm sm:grid-cols-3">
-                          <Fact label="Status" value={`HTTP ${currentError.status}`} />
-                          <Fact label="Time" value={`${currentError.elapsedMs} ms`} />
+                          <Fact
+                            label="Status"
+                            value={`HTTP ${currentError.status}`}
+                          />
+                          <Fact
+                            label="Time"
+                            value={`${currentError.elapsedMs} ms`}
+                          />
                           {currentError.receiptId && (
                             <Fact
                               label="Receipt"
-                              value={<ReceiptLink id={currentError.receiptId} />}
+                              value={
+                                <ReceiptLink id={currentError.receiptId} />
+                              }
                             />
                           )}
                         </dl>
