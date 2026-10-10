@@ -113,7 +113,7 @@ test("USAGE-02 chart table includes each active capability and daily total", asy
     ],
   });
   const table = await screen.findByRole("table", {
-    name: "Requests by day and capability",
+    name: "Requests by day and task",
   });
   expect(
     within(table)
@@ -383,7 +383,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
       { date: "2026-10-01", chat: 1, image: 1, transcribe: 1, decide: 1, embeddings: 1 },
     ],
   });
-  await screen.findByText("Requests by day and capability");
+  await screen.findByText("Requests by day and task");
   const legend = screen.getAllByText("Make a picture").map((node) => node.parentElement);
   expect(legend.length).toBeGreaterThan(0);
   for (const name of [

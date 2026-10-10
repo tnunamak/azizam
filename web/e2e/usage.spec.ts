@@ -364,7 +364,7 @@ for (const theme of ["dark", "light"] as const) {
     // Every row sits inside the viewport, with no clipped left edge.
     const rows = page
       .getByRole("table")
-      .filter({ hasText: "Capability and model" })
+      .filter({ hasText: "Task and model" })
       .getByRole("row");
     for (let index = 0; index < (await rows.count()); index += 1) {
       const rowBox = await rows.nth(index).boundingBox();
@@ -391,7 +391,7 @@ test("usage model table shows names, never a path, and a consistent Cost", async
     }),
   );
   await page.goto("/ui/usage/");
-  const table = page.getByRole("table").filter({ hasText: "Capability and model" });
+  const table = page.getByRole("table").filter({ hasText: "Task and model" });
   await expect(table).toBeVisible();
   const text = await table.innerText();
   expect(text).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);

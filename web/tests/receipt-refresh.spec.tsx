@@ -294,7 +294,7 @@ test("Usage sorts top models by requests and model name before slicing", async (
       { model: "alpha", requests: 10 },
     ],
   });
-  const heading = await screen.findByRole("columnheader", { name: "Capability and model" });
+  const heading = await screen.findByRole("columnheader", { name: "Task and model" });
   const table = heading.closest("table") as HTMLTableElement;
   const models = () => Array.from(table.querySelectorAll("tbody [title]"), (node) => node.getAttribute("title")?.toLowerCase());
   const top = ["highest", "alpha", "beta", "zeta", "middle"];
@@ -317,7 +317,7 @@ test.each([
     requests: 10,
     by_day: [{ date: "2026-10-07", total, capabilities: counts }],
   });
-  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const table = await screen.findByRole("table", { name: "Requests by day and task" });
   const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
   const values = within(row).getAllByRole("cell").map((cell) => Number(cell.textContent));
   expect(values).toEqual(expected);
@@ -332,13 +332,13 @@ test("Usage keeps recorded counts on an overfull day and says the counts disagre
     requests: 10,
     by_day: [{ date: "2026-10-07", total: 5, capabilities: { chat: 4, image: 3 } }],
   });
-  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const table = await screen.findByRole("table", { name: "Requests by day and task" });
   const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
   const cells = within(row).getAllByRole("cell").map((cell) => cell.textContent);
   expect(cells.slice(0, 2)).toEqual(["4", "3"]);
-  expect(cells[cells.length - 1]).toBe("5 (capability counts add to 7)");
+  expect(cells[cells.length - 1]).toBe("5 (task counts add to 7)");
   expect(
-    screen.getByText(/On 1 day the capability counts add to more than the recorded total/),
+    screen.getByText(/On 1 day the task counts add to more than the recorded total/),
   ).toBeVisible();
   client.clear();
 });
@@ -347,12 +347,12 @@ test.each([
   {
     name: "explicit Other over the total",
     day: { total: 10, capabilities: { chat: 8, other: 5 } },
-    cells: ["8", "5", "10 (capability counts add to 13)"],
+    cells: ["8", "5", "10 (task counts add to 13)"],
   },
   {
     name: "an unrecognised capability joins Other",
     day: { total: 2, capabilities: { chat: 2, future: 3 } },
-    cells: ["2", "3", "2 (capability counts add to 5)"],
+    cells: ["2", "3", "2 (task counts add to 5)"],
   },
   {
     name: "aliases on a flat day row, without its date or total",
@@ -369,7 +369,7 @@ test.each([
     requests: 10,
     by_day: [{ date: "2026-10-07", ...day }],
   });
-  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const table = await screen.findByRole("table", { name: "Requests by day and task" });
   const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
   expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(cells);
   client.clear();

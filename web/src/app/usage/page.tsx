@@ -28,7 +28,7 @@ import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
-import { taskNames } from "@/lib/terms";
+import { memberTerms, taskNames } from "@/lib/terms";
 import { safeModelId, scrubModelPaths } from "@/lib/model-name";
 import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
@@ -552,9 +552,9 @@ function DailyChart({ days }: { days: UsageDay[] }) {
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
-          Stacked by capability
+          Stacked by {memberTerms.task}
           {overfullDays > 0 &&
-            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the capability counts add to more than the recorded total; the bars show the recorded counts.`}
+            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded counts.`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -611,7 +611,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 would otherwise widen the page. */}
             <div className="sr-only">
               <table>
-                <caption>Requests by day and capability</caption>
+                <caption>Requests by day and {memberTerms.task}</caption>
                 <thead>
                   <tr>
                     <th scope="col">Date</th>
@@ -633,7 +633,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                       <td>
                         {day.total}
                         {day.countsExceedTotal !== null &&
-                          ` (capability counts add to ${day.countsExceedTotal})`}
+                          ` (${memberTerms.task} counts add to ${day.countsExceedTotal})`}
                       </td>
                     </tr>
                   ))}
@@ -690,7 +690,7 @@ function ModelTable({
               <thead className="text-muted-foreground border-b text-left">
                 <tr>
                   <th scope="col" className="py-3 pr-3 font-medium">
-                    Capability and model
+                    Task and model
                   </th>
                   <th scope="col" className="py-3 pr-3 text-right font-medium">
                     Requests
