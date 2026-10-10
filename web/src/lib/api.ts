@@ -199,6 +199,8 @@ export interface PolicyEditorChoice {
   label: string;
   description: string | null;
   available?: boolean;
+  /** Other saved spellings that mean this choice (capabilities only). */
+  aliases?: string[];
 }
 
 export interface PolicyEditorContract {
