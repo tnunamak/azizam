@@ -116,7 +116,7 @@ it("keeps browsing rows compact and leaves manifest facts in the detail view", a
 
   expect(card.queryByText("Needs: text")).toBeNull();
   expect(card.queryByText("Optional: a number")).toBeNull();
-  expect(card.getByText("Makes: a picture")).toBeVisible();
+  expect(card.getByText("From text → a picture")).toBeVisible();
   expect(card.queryByRole("img", { name: "Text input" })).toBeNull();
   expect(card.queryByText("prompt")).toBeNull();
   expect(card.queryByText("Create product renders.")).toBeNull();
@@ -264,7 +264,7 @@ it("updates an open details sheet when a refresh makes its workflow unavailable"
 it("opens workflow details from the list row and exposes named capability segments", async () => {
   const user = userEvent.setup();
   renderWorkflows();
-  const list = await screen.findByRole("list", { name: "Images workflows" });
+  const list = await screen.findByRole("list", { name: "Pictures workflows" });
   const row = within(list).getByRole("listitem", { name: "Product render" });
   expect(row).toHaveAttribute("data-lines", "2");
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows1");
@@ -272,6 +272,6 @@ it("opens workflow details from the list row and exposes named capability segmen
   expect(filters.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await user.click(filters.getByRole("button", { name: "Images" }));
   expect(filters.getByRole("button", { name: "Images" })).toHaveAttribute("aria-pressed", "true");
-  await user.click(within(row).getByText("Makes: a picture"));
+  await user.click(within(row).getByText("From text → a picture"));
   expect(screen.getByRole("dialog", { name: "Product render" })).toBeVisible();
 });

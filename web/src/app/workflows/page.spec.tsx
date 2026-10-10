@@ -132,15 +132,81 @@ describe("WorkflowsPage empathy copy", () => {
     vi.restoreAllMocks();
   });
 
+  test("rows expose required inputs and honest missing-input summaries before opening details", async () => {
+    serve([
+      { ...workflows[0], inputs: [{ name: "optional", type: "number", accepted: true, required: false }] },
+      { ...workflows[1], inputs: [] },
+    ]);
+    renderWorkflows();
+    const picture = await screen.findByRole("listitem", { name: "Upscale image" });
+    expect(within(picture).getByText("From no required inputs → a picture")).toBeVisible();
+    expect(within(picture).getByText("From no required inputs → a picture").closest("p"))
+      .toHaveAttribute("title", "From no required inputs → a picture");
+    expect(screen.getByText("From inputs not listed → text")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("whole rows open details while the compact quiet Try action remains independent", async () => {
+    renderWorkflows();
+    const row = await screen.findByRole("listitem", { name: "Upscale image" });
+    const actions = within(row).getAllByRole("link", { name: "Open in Try" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).not.toHaveClass("bg-primary");
+    expect(actions[0]).toHaveAttribute("href", "/try?workflow=workflow.image.upscale");
+    actions[0].addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(actions[0]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(row);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const trigger = within(row).getByRole("button", { name: "Details for Upscale image" });
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  test("groups once by declared outputs with counts that follow search and capability filters", async () => {
+    const catalog = [
+      { ...workflows[0], id: "picture.one", title: "Picture one", capability: "video" },
+      { ...workflows[0], id: "picture.two", title: "Picture two", capability: "audio" },
+      { ...workflows[0], id: "video.one", title: "Video one", outputs: [{ name: "clip", media_type: "video/mp4" }] },
+      { ...workflows[0], id: "audio.one", title: "Audio one", outputs: [{ name: "clip", media_type: "audio/wav" }] },
+      { ...workflows[0], id: "mixed.one", title: "Mixed one", outputs: [{ name: "picture", media_type: "image/png" }, { name: "clip", media_type: "video/mp4" }] },
+      { ...workflows[0], id: "other.one", title: "Other one", outputs: [{ name: "report", media_type: "application/json" }] },
+      { ...workflows[0], id: "missing.one", title: "Missing one", outputs: [] },
+      workflows[1],
+    ];
+    serve(catalog);
+    renderWorkflows();
+    await screen.findByText("Picture one");
+    for (const name of ["Pictures 2", "Video 1", "Audio 1", "Text 1", "Mixed outputs 1", "Other outputs 1", "Output not listed 1"]) {
+      expect(screen.getByRole("heading", { name })).toBeVisible();
+    }
+    for (const workflow of catalog) {
+      expect(screen.getAllByRole("listitem", { name: workflow.title })).toHaveLength(1);
+    }
+    expect(within(screen.getByRole("list", { name: "Pictures workflows" })).getAllByRole("listitem")).toHaveLength(2);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workflows" }), { target: { value: "Picture two" } });
+    expect(screen.getByRole("heading", { name: "Pictures 1" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Video 1" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workflows" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Video" }));
+    expect(screen.getByRole("heading", { name: "Pictures 1" })).toBeVisible();
+    expect(screen.queryByText("Picture two")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Video 1" })).toBeNull();
+  });
+
   test("cards describe needs and outputs, hide technical rows and filter by capability", async () => {
     renderWorkflows();
 
     expect(await screen.findByText("Upscale image")).toBeVisible();
-    // Rows name the workflow and what it makes; needs and purpose are in the sheet.
+    // Rows compare required inputs and outputs; purpose and optional inputs stay in the sheet.
     expect(screen.queryByText("Upscale and restore an image")).toBeNull();
     expect(screen.getByText("Clean text")).toBeVisible();
     expect(screen.queryByText("Needs: a picture")).toBeNull();
-    expect(screen.getByText("Makes: a picture")).toBeVisible();
+    expect(screen.getByText("From a picture → a picture")).toBeVisible();
     expect(screen.queryByText("Needs: text")).toBeNull();
     expect(screen.queryByText("image/png")).not.toBeInTheDocument();
     expect(screen.queryByText("2.0 s")).not.toBeInTheDocument();
@@ -150,7 +216,7 @@ describe("WorkflowsPage empathy copy", () => {
 
     expect(screen.getByText("Upscale image")).toBeVisible();
     expect(screen.queryByText("Clean text")).not.toBeInTheDocument();
-    expect(screen.getByText("Makes: a picture")).toBeVisible();
+    expect(screen.getByText("From a picture → a picture")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Details for Upscale image" }));
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.getByText("Upscale and restore an image")).toBeVisible();
@@ -201,7 +267,7 @@ describe("WorkflowsPage empathy copy", () => {
     for (const row of catalog) {
       expect(screen.getAllByText(row.title)).toHaveLength(1);
     }
-    expect(screen.getByRole("heading", { name: "Custom task" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Pictures 6" })).toBeVisible();
     fireEvent.change(
       screen.getByRole("textbox", { name: "Search workflows" }),
       {
@@ -229,7 +295,7 @@ describe("WorkflowsPage empathy copy", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: catalog })));
     renderWorkflows();
     const card = await screen.findByRole("listitem", { name: "Upscale image" });
-    expect(within(card).getByText("Makes: a video")).toBeVisible();
+    expect(within(card).getByText("From a picture and text → a video")).toBeVisible();
     expect(card).not.toHaveTextContent("opaque_");
     expect(card).not.toHaveTextContent("video/mp4");
     expect(card).not.toHaveTextContent("ignored_video");
@@ -249,7 +315,7 @@ describe("WorkflowsPage empathy copy", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: catalog })));
     renderWorkflows();
     const card = await screen.findByRole("listitem", { name: "Upscale image" });
-    expect(within(card).getByText("Makes: output not listed")).toBeVisible();
+    expect(within(card).getByText("From text → output not listed")).toBeVisible();
     fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.getByText("Needs: text")).toBeVisible();
@@ -303,7 +369,7 @@ describe("WorkflowsPage empathy copy", () => {
     renderWorkflows(owner);
     fireEvent.click(await screen.findByText("Not set up (1)"));
     const card = screen.getByRole("listitem", { name: "Face Likeness Check" });
-    expect(within(card).getByText("Makes: a likeness score")).toBeVisible();
+    expect(within(card).getByText("From a face photo and a photo to check → a likeness score")).toBeVisible();
     fireEvent.click(within(card).getByRole("button", { name: "Details for Face Likeness Check" }));
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.getByText("Needs: a face photo and a photo to check")).toBeVisible();
@@ -328,7 +394,7 @@ describe("WorkflowsPage empathy copy", () => {
     }]);
     renderWorkflows();
     const card = await screen.findByRole("listitem", { name: "Upscale image" });
-    expect(within(card).getByText("Makes: a report")).toBeVisible();
+    expect(within(card).getByText("From a picture for reference, a picture for candidate and a file → a report")).toBeVisible();
     fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.getByText("Needs: a picture for reference, a picture for candidate and a file")).toBeVisible();

@@ -259,6 +259,24 @@ function outputSummary(workflow: WorkflowRow) {
   return joinWords([...new Set((workflow.outputs ?? []).map(outputNoun))]) || "output not listed";
 }
 
+const outputGroups = ["Pictures", "Video", "Audio", "Text", "Mixed outputs", "Other outputs", "Output not listed"];
+
+function outputGroup(workflow: WorkflowRow) {
+  const outputs = workflow.outputs ?? [];
+  if (!outputs.length) return "Output not listed";
+  const groups = new Set(outputs.map((output) => {
+    const family = output.media_type ? mediaFamily(output.media_type) : "";
+    switch (family) {
+      case "image": return "Pictures";
+      case "video": return "Video";
+      case "audio": return "Audio";
+      case "text": return "Text";
+      default: return "Other outputs";
+    }
+  }));
+  return groups.size === 1 ? [...groups][0] : "Mixed outputs";
+}
+
 function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
   const required = inputSummary(workflow, true);
   const optional = inputSummary(workflow, false);
@@ -300,7 +318,7 @@ function WorkflowAction({
         {showStatus && (
           <StatusPill status={status} reason={view.text ?? undefined} summary />
         )}
-        <Button asChild size="sm">
+        <Button asChild size="sm" variant={hideReadyStatus ? "ghost" : "default"}>
           <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
             Open in Try
           </Link>
@@ -316,7 +334,7 @@ function WorkflowAction({
       )}
       <div className="flex flex-wrap items-center gap-2">
         {!ownerSetup && (
-          <Button size="sm" disabled>
+          <Button size="sm" variant={hideReadyStatus ? "ghost" : "default"} disabled>
             Open in Try
           </Button>
         )}
@@ -340,6 +358,9 @@ function WorkflowCard({
   owner: boolean;
   onDetail: (workflow: WorkflowRow) => void;
 }) {
+  const needs = inputSummary(workflow, true) ||
+    (workflow.inputs.length ? "no required inputs" : "inputs not listed");
+  const summary = `From ${needs} → ${outputSummary(workflow)}`;
   return (
     <ListRow
       lines={2}
@@ -358,8 +379,8 @@ function WorkflowCard({
           {workflow.title}
         </button>
       }
-      meta={`Makes: ${outputSummary(workflow)}`}
-      metaTitle={`Makes: ${outputSummary(workflow)}`}
+      meta={summary}
+      metaTitle={summary}
       trailing={<WorkflowAction workflow={workflow} owner={owner} hideReadyStatus />}
     />
   );
@@ -816,10 +837,10 @@ export default function WorkflowsPage() {
   const working = filtered.filter((row) => readiness(row) !== "setup");
   const notSetUp = filtered.filter((row) => readiness(row) === "setup");
   const groupsOf = (list: WorkflowRow[]) =>
-    allCapabilities
-      .map((cap) => ({
-        capability: cap,
-        rows: list.filter((row) => row.capability === cap),
+    outputGroups
+      .map((output) => ({
+        output,
+        rows: list.filter((row) => outputGroup(row) === output),
       }))
       .filter((group) => group.rows.length > 0);
   const grouped = groupsOf(working);
@@ -951,7 +972,7 @@ function WorkflowGroups({
   onDetail,
 }: {
   label: string;
-  groups: { capability: string; rows: WorkflowRow[] }[];
+  groups: { output: string; rows: WorkflowRow[] }[];
   owner: boolean;
   onDetail: (id: string) => void;
 }) {
@@ -959,14 +980,15 @@ function WorkflowGroups({
     <div aria-label={label} className="space-y-(--space-section)">
       {groups.map((group) => (
         <section
-          key={group.capability}
-          aria-label={`${capabilityLabel(group.capability)} workflows`}
+          key={group.output}
+          aria-label={`${group.output} workflows`}
           className="min-w-0"
         >
-          <h2 className="text-heading mb-(--space-heading)">
-            {capabilityLabel(group.capability)}
+          <h2 className="text-heading mb-(--space-heading) flex items-baseline gap-2">
+            {group.output}
+            <span className="text-subtle-foreground text-label figures">{group.rows.length}</span>
           </h2>
-          <ListCard label={`${capabilityLabel(group.capability)} workflows`}>
+          <ListCard label={`${group.output} workflows`}>
             {group.rows.map((workflow) => (
               <WorkflowCard
                 key={workflow.id}
