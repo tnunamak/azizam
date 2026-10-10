@@ -43,6 +43,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 import contextvars
+import io
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
@@ -52,7 +53,7 @@ import yaml
 from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import FormData
+from starlette.datastructures import FormData, Headers, UploadFile
 from starlette.requests import ClientDisconnect, HTTPConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -70,6 +71,7 @@ from gateway import (
     default_profiles,
     media_jobs,
     me_prompt_memory,
+    me_make,
     me_media,
     prompt_memory,
     receipt_store,
@@ -160,6 +162,7 @@ from gateway.admin_runtime import (
     create_admin_service_account_key,
     is_human_user_record,
     runtime_identity_for_app_credential_hash,
+    runtime_identity_for_session_app,
     service_account_session_subject,
     session_admin_role_subject,
 )
@@ -13106,6 +13109,10 @@ async def lifespan(app: FastAPI):
                     f"[proxy] Resumed {resumed_video} pending video media job(s)",
                     flush=True,
                 )
+        if IMAGE_MEDIA_JOB_RESUME_ON_START:
+            resumed_make = me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH)
+            if resumed_make:
+                print(f"[proxy] Resumed {resumed_make} pending make job(s)", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
@@ -14322,6 +14329,88 @@ app.include_router(
     )
 )
 
+class _SessionMakeRuntime:
+    """Runs session make jobs through the existing image routes.
+
+    Payloads use the image job spool, so prompt memory, forget, and erasure
+    apply to them exactly as to API-key image jobs.
+    """
+
+    def keep_payload(self, job_id: str, payload: Mapping[str, Any]) -> None:
+        _spool_media_job_payload(job_id, copy.deepcopy(dict(payload)))
+
+    def load_payload(self, job_id: str) -> dict[str, Any] | None:
+        return _load_image_media_job_payload(job_id)
+
+    def drop_payload(self, job_id: str) -> None:
+        _delete_image_media_job_payload(job_id)
+
+    def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
+        if job_id in _image_media_job_scheduled:
+            return
+        _image_media_job_scheduled.add(job_id)
+        task = asyncio.get_running_loop().create_task(run())
+        _image_media_job_tasks.add(task)
+
+        def _done(done_task: asyncio.Task) -> None:
+            _image_media_job_tasks.discard(done_task)
+            _image_media_job_scheduled.discard(job_id)
+            if not done_task.cancelled() and done_task.exception() is not None:
+                print(f"[proxy] make job task crashed for {job_id}: {done_task.exception()}", flush=True)
+
+        task.add_done_callback(_done)
+
+    async def execute(self, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        auth = payload.get("auth") or {}
+        identity = runtime_identity_for_session_app(
+            str(auth.get("app_id") or ""), str(auth.get("person_id") or ""),
+            inherited_profile_id_for_app=_inherited_profile_id_for_app, path=ADMIN_STORE.path,
+        )
+        if identity is None:
+            raise me_make.MakeBackendError("This account can no longer make things", http_status=403)
+        auth_context = AuthContext(identity=identity)
+        body = copy.deepcopy(dict(payload.get("body") or {}))
+        body["response_format"] = "url"
+        if payload.get("intent") == "image.edit":
+            source_asset_id = str(body.pop("source_asset_id", ""))
+            source = asset_cache_path(source_asset_id)
+            if source is None or not source.exists():
+                raise me_make.MakeBackendError("The source picture is no longer available", http_status=404)
+            fields: list[tuple[str, Any]] = [
+                (key, json.dumps(value) if isinstance(value, (dict, list)) else str(value))
+                for key, value in body.items()
+            ]
+            fields.append(("image", UploadFile(
+                io.BytesIO(source.read_bytes()), filename=source.name,
+                headers=Headers({"content-type": asset_media_type(source_asset_id, source)}),
+            )))
+            request: Any = _FormBodyRequestShim(form=FormData(fields), scheme="http", netloc="127.0.0.1")
+            route, call = "/v1/images/edits", proxy_comfy_edit_request
+        else:
+            request = _JsonBodyRequestShim(body=body, headers={}, scheme="http", netloc="127.0.0.1")
+            route, call = "/v1/images/generations", proxy_comfy_request
+        receipt = start_image_route_receipt(route, auth_context)
+        receipt.job_id = str(payload.get("job_id") or "") or None
+        decision = _apply_image_route_policy(receipt, auth_context)
+        if decision.denied:
+            response = _policy_denied_response(decision)
+        else:
+            # Erasure fences compare against when the person asked, not when it ran.
+            token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
+            try:
+                response = await call(request, auth_context, receipt=receipt)
+            finally:
+                _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
+        finish_image_route_receipt(receipt, response)
+        if not 200 <= int(response.status_code) < 300:
+            raise me_make.MakeBackendError(_media_job_failure_message(response),
+                                           http_status=int(response.status_code))
+        return _assets_from_image_response(response)
+
+
+_SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
+
+
 app.include_router(
     me_media.create_me_media_router(
         session_provider=lambda request: _oidc_session_from_request(request),
@@ -14341,6 +14430,7 @@ app.include_router(
         media_jobs_path=lambda: media_jobs.DB_PATH,
         receipts_path=lambda: receipt_store.DB_PATH,
         prompt_memory_path=lambda: media_jobs.DB_PATH,
+        make_runtime=_SESSION_MAKE_RUNTIME,
     )
 )
 
@@ -20089,6 +20179,17 @@ class _JsonBodyRequestShim:
         return copy.deepcopy(self._body)
 
 
+class _FormBodyRequestShim(_JsonBodyRequestShim):
+    """Request-shaped multipart form for replaying an edit off the HTTP path."""
+
+    def __init__(self, *, form: FormData, scheme: str, netloc: str) -> None:
+        super().__init__(body={}, headers={}, scheme=scheme, netloc=netloc)
+        self._form = form
+
+    async def form(self) -> FormData:
+        return self._form
+
+
 def _gateway_auth_context(request: Request, path: str) -> AuthContext | Response:
     auth_context = _auth_context_from_scope(request)
     if auth_context is not NO_AUTH_CONTEXT or not AUTH_ENABLED:
@@ -20502,20 +20603,25 @@ def _persist_image_media_job_payload(
     job_id: str, *, body: Mapping[str, Any], request: Request,
     auth_context: AuthContext,
 ) -> None:
+    identity = auth_context.identity
+    _spool_media_job_payload(job_id, {
+        "schema_version": 1,
+        "body": copy.deepcopy(dict(body)),
+        "headers": _safe_image_job_headers(request),
+        "url": {"scheme": request.url.scheme or "http",
+                "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
+        "auth": {"name": identity.name if identity else None,
+                 "key_hash": identity.key_hash if identity else None,
+                 "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(auth_context)},
+        "created_at": int(time.time()),
+    })
+
+
+def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
+    """Keep a job's execution payload; on disk only if prompt memory allows it."""
     with _MEDIA_PAYLOAD_LOCK:
-        identity = auth_context.identity
-        person_id = _auth_person_id(auth_context)
-        payload = {
-            "schema_version": 1,
-            "body": copy.deepcopy(dict(body)),
-            "headers": _safe_image_job_headers(request),
-            "url": {"scheme": request.url.scheme or "http",
-                    "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
-            "auth": {"name": identity.name if identity else None,
-                     "key_hash": identity.key_hash if identity else None,
-                     "app_id": getattr(identity, "app_id", None), "person_id": person_id},
-            "created_at": int(time.time()),
-        }
+        person_id = payload["auth"].get("person_id")
+        body = copy.deepcopy(payload["body"])
         memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
         with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
             # Service/LAN execution spools are temporary operational state. Their

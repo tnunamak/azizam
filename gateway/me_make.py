@@ -191,7 +191,10 @@ def run_job(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> Callable[[
         try:
             await _run(job_id, runtime=runtime, jobs_path=jobs_path)
         finally:
-            runtime.drop_payload(job_id)
+            # A job interrupted by shutdown keeps its payload so it can resume.
+            job = media_jobs.get(job_id, path=jobs_path)
+            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+                runtime.drop_payload(job_id)
 
     return run
 
