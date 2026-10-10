@@ -9436,13 +9436,19 @@ def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, A
     only moves forward, so keep a high-water mark per job. Terminal states
     report 100 and are left alone.
     """
-    if payload.get("azizam_status") not in ("queued", "running"):
+    status = payload.get("azizam_status")
+    entry = _video_progress.setdefault(prompt_id, {})
+    if status in ("succeeded", "failed"):
+        entry["status"] = status
+        entry["updated_at"] = payload.get("updated_at") or int(time.time())
         return payload
-    entry = _video_progress.get(prompt_id)
-    if entry is None:
+    if status not in ("queued", "running"):
         return payload
     high = max(int(entry.get("reported_progress", 0)), int(payload.get("progress") or 0))
+    if high > int(entry.get("reported_progress", 0)):
+        entry["updated_at"] = payload.get("updated_at") or int(time.time())
     entry["reported_progress"] = high
+    entry["status"] = status
     payload["progress"] = high
     return payload
 

@@ -46,10 +46,13 @@ class UnfinishedOpenAIVideoJobsTests(unittest.TestCase):
     def test_lost_completion_uses_cached_renderer_terminal_status(self) -> None:
         now = int(time.time())
         records = {"finished": {"created_at": now - 60, "completed_at": None, "seconds": "5"}}
-        progress = {"finished": {"status": "succeeded", "updated_at": now - 1}}
+        progress = {}
         with patch.object(proxy, "_video_job_records", records), patch.object(proxy, "_video_progress", progress), patch.object(
             proxy.media_jobs, "get", return_value=None
         ):
+            proxy._hold_video_progress("finished", {
+                "azizam_status": "succeeded", "progress": 100, "updated_at": now - 1,
+            })
             self.assertEqual(proxy._unfinished_openai_video_jobs(), 0)
 
     def test_stalled_job_past_expected_duration_does_not_block_drain(self) -> None:
