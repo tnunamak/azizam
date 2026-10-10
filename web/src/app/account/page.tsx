@@ -150,7 +150,7 @@ function PromptsSection() {
       <SettingsSection
         id="prompts"
         title="Prompts"
-        description="What you type is kept with what it makes. Only you can see it."
+        description="What you type is kept with what it makes, so you can find it again."
       >
         {household.never_keep ? (
           <SettingRow
