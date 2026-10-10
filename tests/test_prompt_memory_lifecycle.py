@@ -200,7 +200,9 @@ def test_completed_member_erasure_does_not_rescan_or_delete_new_prompts(stores, 
     proxy._maintain_person_prompt_memory(person_id)
 
     prompt_memory.put_member(person_id, remember=True, retention="1_year", path=admin)
-    prompt_memory.put("fresh_asset", person_id, "new prompt", kept_until=None, path=jobs, admin_path=admin)
+    cutoff = prompt_memory.recorded_erasure_cutoff(person_id, admin_path=admin)
+    prompt_memory.put("fresh_asset", person_id, "new prompt", kept_until=None, path=jobs,
+                      admin_path=admin, created_at=cutoff + 1)
     calls = []
     monkeypatch.setattr(proxy.media_jobs, "erase_prompt_derivatives", lambda *a, **kw: calls.append("media"))
     monkeypatch.setattr(prompt_memory, "prune_person_before", lambda *a, **kw: calls.append("prompts"))
@@ -224,6 +226,7 @@ def test_forget_payload_store_caps_count_and_releases_terminal_payload(stores, m
         proxy._persist_image_media_job_payload("mj_cap_refused", body=forget, request=request(), auth_context=auth)
     assert not proxy._image_media_job_payload_path("mj_cap_refused").exists()
 
+    media_jobs.update_status(active.job_id, media_jobs.STATUS_RUNNING, path=jobs)
     media_jobs.update_status(active.job_id, media_jobs.STATUS_SUCCEEDED, path=jobs)
     assert proxy._prune_orphaned_media_job_payloads() == 1
     proxy._persist_image_media_job_payload("mj_cap_replacement", body=forget, request=request(), auth_context=auth)
