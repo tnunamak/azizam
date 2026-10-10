@@ -6948,8 +6948,9 @@ class _MakePublishGate:
     Publication (``store_asset_bytes``, which also keeps the prompt) and
     cancel take the same lock, so a job never does both.
 
-    Cancel also stops the job's work on its event loop: the task, while it
-    still waits for a turn (``waiter``), or the route call once it runs.
+    Cancel also stops the job's work on its event loop: it ends the wait for
+    a turn (``stop_waiting``), or cancels the route call once it runs. It never
+    cancels the job's task, so only shutdown does that.
     """
 
     def __init__(self) -> None:
@@ -6957,7 +6958,7 @@ class _MakePublishGate:
         self.canceled = False
         self.published = False
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.waiter: asyncio.Task | None = None
+        self.stop_waiting: asyncio.Event | None = None
         self.call: asyncio.Future | None = None
 
     def cancel(self) -> bool:
@@ -6973,9 +6974,9 @@ class _MakePublishGate:
         return True
 
     def _stop(self) -> None:
-        # On the job's loop, which also clears ``waiter`` when the job starts.
-        if self.waiter is not None:
-            self.waiter.cancel()
+        # On the job's loop, which also clears ``stop_waiting`` when the wait ends.
+        if self.stop_waiting is not None:
+            self.stop_waiting.set()
         elif self.call is not None:
             self.call.cancel()
 
@@ -14442,26 +14443,40 @@ class _SessionMakeRuntime:
         gate = self._gates.setdefault(job_id, _MakePublishGate())
 
         async def bounded() -> None:
+            semaphore, stop_waiting = _image_media_job_semaphore, gate.stop_waiting
+            turn = asyncio.ensure_future(semaphore.acquire())
+            stopped = asyncio.ensure_future(stop_waiting.wait())
+            if gate.canceled:  # Canceled before its loop was known.
+                stop_waiting.set()
+
+            def end_wait() -> bool:
+                """Stop both waits; True when the job holds a turn."""
+                gate.stop_waiting = None
+                stopped.cancel()
+                return not turn.cancel()
+
             try:
-                async with _image_media_job_semaphore:
-                    gate.waiter = None
-                    await run()
-                    return
+                await asyncio.wait((turn, stopped), return_when=asyncio.FIRST_COMPLETED)
             except asyncio.CancelledError:
-                current = asyncio.current_task()
-                # Shutdown, or any cancel after the job's turn began, still stops it.
-                if gate.waiter is None or not gate.canceled or current is None or current.uncancel() > 0:
-                    raise
-            # Canceled while it waited for a turn: settle it now, without a
-            # turn. ``execute`` refuses a canceled job, so no backend runs.
-            gate.waiter = None
-            await run()
+                # Shutdown, the only thing that cancels this task: the job resumes later.
+                if end_wait():
+                    semaphore.release()
+                raise
+            if not end_wait():
+                # Canceled while it waited for a turn: settle it now, without a
+                # turn. ``execute`` refuses a canceled job, so no backend runs.
+                await run()
+                return
+            try:
+                await run()
+            finally:
+                semaphore.release()
 
         loop = asyncio.get_running_loop()
-        task = loop.create_task(bounded())
-        # A cancel while the job waits for a turn drops the task at once, so
+        # A cancel while the job waits for a turn ends the wait at once, so
         # only queued or running jobs hold a task and a gate.
-        gate.loop, gate.waiter = loop, task
+        gate.loop, gate.stop_waiting = loop, asyncio.Event()
+        task = loop.create_task(bounded())
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:
@@ -21524,15 +21539,12 @@ def _media_job_prompt_body(payload: Mapping[str, Any], body: Mapping[str, Any]) 
 
 
 _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
-_MEDIA_JOB_SUPPORTED_INTENTS = frozenset({
-    "image.generate",
-    "audio.generate",
-    "music.generate",
-    "sfx.generate",
-    INTENT_VIDEO_GENERATE,
-})
+# Every intent the gateway runs as a media job, and its admission resource
+# class. Jobs with these intents count toward the media queue depth.
 _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
     "image.generate": "image",
+    "image.edit": "image",
+    _IDENTITY_JOB_INTENT: "image",
     "audio.generate": "audio",
     "music.generate": "audio",
     "sfx.generate": "audio",
@@ -21590,7 +21602,7 @@ def _media_job_queue_depth(
         depth += sum(
             1
             for row in rows
-            if str(row.get("intent") or "") in _MEDIA_JOB_SUPPORTED_INTENTS
+            if str(row.get("intent") or "") in _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT
         )
     return depth
 
