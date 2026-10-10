@@ -127,6 +127,7 @@ test("usage omits the model line when only the capability is known", async ({
 
   await page.goto("/ui/usage/");
   const transcriptionRow = page
+    .getByRole("table", { name: "Models" })
     .getByRole("row")
     .filter({ hasText: "Turn a recording into text" });
   await expect(transcriptionRow).toBeVisible();

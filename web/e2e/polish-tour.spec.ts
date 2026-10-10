@@ -220,6 +220,7 @@ for (const theme of ["light", "dark"] as const) {
         await inspect(page, `${name}-seeded-${theme}-${width}`);
       }
       await page.goto("/ui/activity/");
+      await page.getByRole("tab", { name: "Changes", exact: true }).click();
       await inspect(page, `activity-audit-seeded-${theme}-${width}`);
       await page.getByRole("tab", { name: "Requests", exact: true }).click();
       await inspect(page, `activity-requests-seeded-${theme}-${width}`);

@@ -54,6 +54,7 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByLabel("Loading apps")).toHaveCount(0);
         }
         if (name === "activity") {
+          await page.getByRole("tab", { name: "Changes", exact: true }).click();
           await expect(
             page.getByRole("button", { name: /Details:/ }).first(),
           ).toBeVisible();

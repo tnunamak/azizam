@@ -244,9 +244,8 @@ test("workflow rows use the available width at phone, tablet and desktop sizes",
     await expect(
       page.getByRole("listitem", { name: "Product render" }),
     ).toBeVisible();
-    const cards = page
-      .getByRole("region", { name: "Images workflows" })
-      .getByRole("listitem");
+    // Groups follow declared outputs: two rows make pictures, one lists no output.
+    const cards = page.getByLabel("Available workflows").getByRole("listitem");
     await expect(cards).toHaveCount(3);
     const geometry = await cards.evaluateAll((elements) =>
       elements.map((element) => {
@@ -411,7 +410,7 @@ for (const theme of ["light", "dark"] as const) {
       await preparePage(page, theme, width, seededCatalog);
 
       await expect(
-        page.getByRole("heading", { name: "Images", exact: true }),
+        page.getByRole("heading", { name: /^Pictures\b/ }),
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Details for Product render", exact: true }),
@@ -419,7 +418,7 @@ for (const theme of ["light", "dark"] as const) {
       // The owner sees the workflow that is not set up, folded, with one reason and a next step.
       await openNotSetUp(page);
       await expect(
-        page.getByRole("heading", { name: "Audio", exact: true }),
+        page.getByRole("heading", { name: /^Output not listed\b/ }),
       ).toBeVisible();
       await expect(
         page.getByText("Setup is not finished. Finish it in Engines."),
@@ -561,7 +560,7 @@ test("owner sees Face Likeness Check in plain words with a reason and a link", a
   });
   await openNotSetUp(page);
   const card = page.getByRole("listitem", { name: "Face Likeness Check" });
-  await expect(card).toContainText("Makes: a likeness score");
+  await expect(card).toContainText("From a face photo and a photo to check → a likeness score");
   await expect(card).toContainText("No health check has reported on it yet. See Status.");
   await expect(card).not.toContainText(/Unavailable|Not available right now|text and text/);
   await expect(card.getByRole("link", { name: "Open Status" })).toHaveAttribute("href", /\/status/);

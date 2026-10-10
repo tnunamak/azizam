@@ -252,8 +252,13 @@ for (const theme of ["light", "dark"] as const) {
           }),
         );
         await page.goto("/ui/models/");
+        // Below 640 px a row is two lines: the task name, then the alias. The
+        // model's friendly title is a desktop column.
         await expect(
-          page.getByRole("heading", { name: "Fast", exact: true }),
+          page.getByRole("heading", {
+            name: width < 640 ? "Chat" : "Fast",
+            exact: true,
+          }),
         ).toBeVisible();
         const cards = page.locator(
           'table[aria-label="Available model aliases"] tbody tr',

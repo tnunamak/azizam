@@ -84,6 +84,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
   ).toBe(401);
 
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   const filterRequest = page.waitForResponse((response) =>
     response.url().includes("action_prefix=app."),
   );
@@ -145,6 +146,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
   page,
 }) => {
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   // OWNER-05: people are picked by name; raw IDs live under a technical disclosure.
   await page.getByText("Technical: filter by person ID", { exact: true }).click();
   await page
@@ -161,6 +163,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
     }),
   );
   await page.reload();
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(
     page.getByText("Couldn't load changes"),
   ).toBeVisible();

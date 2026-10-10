@@ -70,6 +70,7 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
   });
 
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(
     page.getByRole("button", { name: /Updated instance settings/ }),
   ).toBeVisible();
@@ -145,6 +146,7 @@ test("automated changes are grouped by default and use plain wording when shown"
   });
 
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(page.getByText("2 automated changes hidden")).toBeVisible();
   await expect(
     page.getByRole("button", { name: /Updated engine configuration/ }),
@@ -187,6 +189,7 @@ test("system change labels stay generic until event details are opened", async (
   );
 
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   const change = page.getByRole("button", {
     name: /Updated engine configuration by System/,
   });
@@ -314,6 +317,7 @@ test("request errors retry and audit details use readable timestamps", async ({
     fail ? route.fulfill({ status: 503, body: "{}" }) : route.continue(),
   );
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await page
     .getByRole("button", { name: /Details:/ })
     .first()
@@ -367,6 +371,7 @@ for (const theme of ["light", "dark"] as const) {
           );
         }
         await page.goto("/ui/activity/");
+        await page.getByRole("tab", { name: "Changes", exact: true }).click();
         if (state === "seeded")
           await expect(
             page.getByRole("button", { name: /Details:/ }).first(),

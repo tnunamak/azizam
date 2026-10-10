@@ -338,22 +338,27 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("button", { name: "Copy model name chat" }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Images", exact: true }),
+        page.getByRole("heading", { name: "Make a picture", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Choose an option", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Speech", exact: true }),
+        page.getByRole("heading", { name: "Read text aloud", exact: true }),
       ).toBeVisible();
       await expect(page.getByText(/Other options/)).toHaveCount(0);
       const chat = page.getByRole("rowgroup", { name: "Chat models" });
       const chatFacts = chat.getByRole("list", { name: "Model facts" });
-      await expect(chatFacts.getByText("Reasoning")).toBeVisible();
-      await expect(chatFacts.getByText("Vision")).toBeVisible();
-      await expect(chatFacts.getByRole("listitem").first()).toHaveText(
-        "text, image→totext",
-      );
+      if (width < 640) {
+        // A phone row is two lines (task, then alias); the facts are in Details.
+        await expect(chatFacts).toHaveCount(0);
+      } else {
+        await expect(chatFacts.getByText("Reasoning")).toBeVisible();
+        await expect(chatFacts.getByText("Vision")).toBeVisible();
+        await expect(chatFacts.getByRole("listitem").first()).toHaveText(
+          "text, image→totext",
+        );
+      }
       await expect(
         page.getByRole("button", { name: "Copy model name image" }),
       ).toBeVisible();
