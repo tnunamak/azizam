@@ -269,6 +269,11 @@ CREATE TABLE IF NOT EXISTS media_job_events (
 CREATE INDEX IF NOT EXISTS media_job_events_job_id ON media_job_events(job_id, id);
 CREATE INDEX IF NOT EXISTS media_job_events_created_at ON media_job_events(created_at);
 
+CREATE TABLE IF NOT EXISTS media_job_prompt_erasure_cutoffs (
+  owner_key TEXT PRIMARY KEY,
+  cutoff_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
 """
 
@@ -277,6 +282,7 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA temp_store=MEMORY;")
+    conn.execute("PRAGMA secure_delete=ON;")
     conn.execute("PRAGMA busy_timeout=5000;")
     conn.execute("PRAGMA foreign_keys=ON;")
 
@@ -421,6 +427,16 @@ def create(
 
 def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
     job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
+    # Serialize cutoff checking with erasure. A worker holding an old job
+    # object cannot put a forgotten prompt fingerprint back into the database.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    cutoff = conn.execute(
+        "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",
+        ("*", job.owner_key_hash),
+    ).fetchone()[0]
+    if cutoff is not None and job.created_at <= cutoff:
+        _clear_prompt_derivatives(job)
     conn.execute(
         "INSERT OR REPLACE INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "
@@ -443,6 +459,79 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
             _job_payload(job),
         ),
     )
+
+
+def _clear_prompt_derivatives(job: MediaJob) -> None:
+    job.metadata.pop("request_hash", None)
+    if job.request_id.startswith("imgjob_seeded_"):
+        job.request_id = ""
+    if (job.parent_request_id or "").startswith("imgjob_seeded_"):
+        job.parent_request_id = None
+
+
+def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = DB_PATH) -> int:
+    """Forget body hashes and seeded dedupe IDs, retaining the jobs and media.
+
+    Commit retry protection first, then rewrite matching rows in batches. All
+    later writes check the same cutoffs, including jobs not yet inserted when
+    deletion began. App ownership is stable; the scope includes legacy jobs
+    without a recorded maker. A household kill uses the wildcard owner key.
+    """
+    if not owner_keys:
+        return 0
+    count = 0
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        # Account removal can precede the first media-job store initialization.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS media_job_prompt_erasure_cutoffs ("
+            "owner_key TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)"
+        )
+        conn.executemany(
+            "INSERT INTO media_job_prompt_erasure_cutoffs(owner_key,cutoff_at) VALUES(?,?) "
+            "ON CONFLICT(owner_key) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+            [(key, int(before)) for key in owner_keys],
+        )
+        conn.commit()
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'").fetchone() is None:
+            return 0
+        cursor = ""
+        while True:
+            rows = conn.execute(
+                "SELECT job_id, job_json FROM media_jobs WHERE job_id>? AND created_at<=? "
+                "ORDER BY job_id LIMIT 100", (cursor, int(before)),
+            ).fetchall()
+            if not rows:
+                break
+            ids = []
+            for job_id, payload in rows:
+                data = _safe_loads(payload)
+                if not isinstance(data, Mapping):
+                    continue
+                if ("request_hash" not in (data.get("metadata") or {})
+                        and not str(data.get("request_id") or "").startswith("imgjob_seeded_")
+                        and not str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
+                    continue
+                owner = stored_owner_key(data.get("owner_key_hash"), app_id=data.get("app_id"))
+                if "*" in owner_keys or owner in owner_keys:
+                    ids.append(job_id)
+            if ids:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for job_id in ids:
+                        # Re-read under the lock to retain concurrent progress.
+                        row = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
+                        if row is None:
+                            continue
+                        job = _coerce_to_job(json.loads(row[0]))
+                        _write_job(conn, job)
+                        count += 1
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+            cursor = rows[-1][0]
+    return count
 
 
 def get(

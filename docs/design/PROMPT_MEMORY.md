@@ -67,9 +67,9 @@ Their media remains App-attributed in the Library and receipts, with no saved
 prompt or maker-only workflow export. Library visibility uses App access,
 independent of creator metadata.
 
-Legacy personal-App keys with NULL `credentials.created_by` use the App owner
-at read time; legacy service keys remain no-person. Newly minted non-human
-keys record an empty creator, so they cannot use that fallback. Sharing an
+After the audit backfill, unresolved personal-App keys with NULL
+`credentials.created_by` use the App owner at read time; legacy service keys
+remain no-person. Newly minted non-human keys record an empty creator, so they cannot use that fallback. Sharing an
 own personal-App key delegates the owner's identity and prompt access.
 The owner can read databases or issue a reset link to sign in as a member.
 Privacy in the UI/API does not protect against that server authority.
@@ -119,6 +119,10 @@ Member API: `GET/PUT /me/api/prompt-memory`, `DELETE
 member reads their effective settings but cannot override the owner kill
 switch or cap. Delete-all removes retained prompts and conversations and moves
 active execution payloads to memory; media and body-free receipts remain.
+Erasure also removes media-job body hashes and seeded dedupe IDs, with durable
+per-App cutoffs to prevent stale worker writes from restoring them. Legacy
+credential ownership is included. Unseeded image and new video job tokens are
+random rather than hashes of the body.
 A durable deletion cutoff also blocks late writes and image retries from
 requests that began before deletion. A same-second new request can be refused
 storage. A failed cutoff write returns 503 with retry_required.
@@ -134,8 +138,12 @@ firehose carry no prompt snippets. Default signed URLs carry `md=none`.
 
 A dedicated maintenance loop removes expired prompts, missing-asset rows and
 unfetched video placeholders after 14 days. Library/video deletion, failure,
-cache eviction and member removal remove associated prompt rows. Cancellation
-clears execution spools and the current video placeholder. An in-flight
+cache eviction and member removal remove associated prompt rows. Disabling
+an account suspends access and retains prompts and chats until their normal
+expiry or explicit deletion; re-enabling restores access. Only permanent
+member removal creates an account erasure cutoff. Orphan pruning skips and
+logs missing, unreadable or empty cache inventories; expiry pruning still runs.
+Cancellation clears execution spools and the current video placeholder. An in-flight
 backend generation can still finish and store its result.
 Database deletion uses SQLite secure_delete. Backups and earlier WAL snapshots
 can retain bytes; no forensic erasure guarantee is made.
@@ -169,3 +177,11 @@ move already queued payloads to memory so the current process can finish them.
 Enabling the kill switch deletes stored Responses conversations, so earlier
 conversation chains become unavailable. Disabling it cannot restore deleted
 prompts or conversations.
+
+Legacy App keys recover their creator from creation audit events at upgrade.
+The migration reads audit facts outside write transactions and commits no more
+than 100 key updates at a time. Unknown creators retain the personal-App-owner
+fallback. Startup reports the unresolved key count; see CORE_CONTRACTS for
+the counting query and the access consequence. Policy reads take no write lock
+when the member preference already exists. Contention during legacy preference
+initialization degrades to no prompt storage, while inference proceeds.

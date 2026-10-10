@@ -301,6 +301,54 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         "SELECT key, 1 FROM operator_settings"
     )
     conn.commit()
+    _backfill_credential_creators(conn)
+
+
+def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
+    """Recover legacy App-key makers with bounded, restart-safe commits.
+
+    Audit lookup runs outside the write transaction. Unknown makers stay NULL;
+    a recorded actor other than the App owner explicitly loses person scope.
+    """
+    cursor = ""
+    resolved = 0
+    while True:
+        rows = conn.execute(
+            "SELECT c.id, a.owner_user_id FROM credentials c LEFT JOIN apps a "
+            "ON a.id=COALESCE(c.app_id,c.subject_id) "
+            "WHERE c.subject_kind='app' AND c.created_by IS NULL AND c.id>? "
+            "ORDER BY c.id LIMIT 100", (cursor,),
+        ).fetchall()
+        if not rows:
+            break
+        updates = []
+        for credential_id, owner in rows:
+            events = conn.execute(
+                "SELECT actor_kind, actor_id FROM audit_events WHERE target_id=? "
+                "AND action IN ('credential.create','credential.self_create') "
+                "AND target_kind IN ('credential','account_link')", (credential_id,),
+            ).fetchall()
+            if events:
+                creator = owner if owner and all(kind == "user" and actor == owner
+                                                for kind, actor in events) else ""
+                updates.append((creator, credential_id))
+        if updates:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                changed = conn.executemany(
+                    "UPDATE credentials SET created_by=? WHERE id=? AND created_by IS NULL", updates,
+                ).rowcount
+                resolved += changed
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        cursor = rows[-1][0]
+    unresolved = conn.execute(
+        "SELECT COUNT(*) FROM credentials WHERE subject_kind='app' AND created_by IS NULL"
+    ).fetchone()[0]
+    if resolved or unresolved:
+        print(f"[admin_store] legacy App-key creators: resolved={resolved} unresolved={unresolved}", flush=True)
 
 
 def _prompt_memory_default(conn: sqlite3.Connection) -> bool:
@@ -2438,8 +2486,12 @@ def ensure_prompt_memory_preference(
     """Persist the household default for a person who has no saved choice."""
     if not user_id:
         raise ValueError("user_id is required")
+    existing = get_prompt_memory_preference(user_id, path=path)
+    if existing is not None:
+        return existing
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("PRAGMA busy_timeout=0")
         conn.execute("BEGIN IMMEDIATE")
         _insert_prompt_memory_preference(conn, user_id, ts)
         conn.commit()

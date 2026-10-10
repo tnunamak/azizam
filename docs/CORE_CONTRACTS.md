@@ -579,6 +579,27 @@ App, has no person: prompts are not remembered and maker-only metadata is
 unavailable. Generated items still belong to the App for Library visibility
 and receipts. Library item visibility does not depend on the key's creator.
 
+Upgrade backfills App-key creators from `credential.create` and
+`credential.self_create` audit events, including the older invitation event
+shape. A recorded minter other than the App owner becomes an empty creator
+and has no person scope. Audit lookup runs outside the write lock; updates
+commit in batches of at most 100 keys and only change NULL creators. Repeating
+or interrupting the migration is safe.
+
+Each startup reports `legacy App-key creators: resolved=N unresolved=M` when
+either count is nonzero. `M` is the exact number of App keys still without a
+creation record, including revoked keys; zero is silent when no keys changed.
+It can also be counted with:
+
+```sql
+SELECT COUNT(*) FROM credentials
+WHERE subject_kind = 'app' AND created_by IS NULL;
+```
+
+The count depends on the operator database. No live database was accessed for
+this cleanup; its unresolved count is not known before upgrade. The regression
+fixture leaves exactly one unresolved key and verifies `unresolved=1`.
+
 At read time, a pre-upgrade key with no recorded creator (`created_by IS NULL`)
 on a personal App is treated as created by that App's owner. This preserves
 existing keys and applies the owner's prompt-memory setting. Service App keys
@@ -614,18 +635,36 @@ prompt memory. Redacting it would make the job unable to resume. Explicit
 forget, member-off and the kill switch use a memory-only execution spool.
 Those jobs can finish in the current process but cannot resume after restart.
 Delete-all and the kill switch move active spools to memory and remove their
-durable copies. The submit-time forget decision stays in effect during retries.
+durable copies. They also remove job `metadata.request_hash` and prompt-derived
+`imgjob_seeded_*` request IDs (both the indexed SQL field and its JSON copy).
+A durable per-App cutoff prevents an old worker or late job insert from
+restoring those values. Legacy credential-scoped jobs are included. Other
+members' jobs and jobs created after the cutoff keep their deduplication.
+Caller-supplied idempotency IDs are retained because they do not hash the body.
+Unseeded image and new video request tokens are random; their former body
+hashes had no lookup consumer. Asset/cache handles hash stripped media bytes,
+URL signatures hash the handle and expiry, and migration fingerprints use filesystem stat
+fields. These values do not fingerprint prompt text; no separate prompt cache
+key or dedupe field is retained outside the stores erased here. The submit-time
+forget decision stays in effect during retries.
 Normal seeded no-person jobs also retain their existing prompt-derived body
 HMAC for automatic deduplication after the execution spool is deleted. Explicit
 forget, member-off and kill-switch jobs use random request hashes instead;
 caller-supplied Idempotency-Key semantics remain unchanged.
 
 Deleting media, evicting the cache, deleting a video, failing a video, and
-removing a member remove associated prompt rows. Cancellation removes the
-execution spool and current placeholder, but does not abort an in-flight
+removing a member remove associated prompt rows. Disabling a member only
+suspends access: saved prompts and chats remain subject to their existing
+retention deadlines and are available after re-enabling. Removal is permanent
+and erases them; disabling does not create an erasure cutoff. Cancellation
+removes the execution spool and current placeholder, but does not abort an in-flight
 backend generation; its output can still finish. Unfetched video rows expire
 after 14 days. A separate maintenance task removes expired and orphaned rows
-and retries pending erasure. Media asset prompt writes run off the event loop
+and retries pending erasure. A missing, unreadable or empty cache inventory
+skips orphan deletion and logs the skip; expiry still applies. Normal policy
+reads use existing member preferences without a write transaction. If a legacy
+preference needs initialization while SQLite is busy, the request proceeds
+without storing its prompt. Media asset prompt writes run off the event loop
 and fail closed: if a write fails, the finished generation still succeeds with
 clean cache bytes and no saved prompt.
 

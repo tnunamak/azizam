@@ -20142,14 +20142,19 @@ def _prompt_purge_status(person_id: str) -> dict[str, Any]:
     }}
 
 
-def _person_cached_asset_ids(person_id: str) -> set[str]:
-    # Legacy assets have App attribution only. Their metadata is stripped for
-    # that App's owner; new assets use explicit authenticated maker facts.
+def _person_prompt_owner_keys(person_id: str) -> set[str]:
     app_ids = {app["id"] for app in ADMIN_STORE.list_apps() if app.get("owner_user_id") == person_id}
     owner_keys = {f"app:{app_id}" for app_id in app_ids}
     for credential in admin_store.list_credentials(path=ADMIN_STORE.path):
         if credential.get("app_id") in app_ids:
             owner_keys.add(credential["hash"])
+    return owner_keys
+
+
+def _person_cached_asset_ids(person_id: str) -> set[str]:
+    # Legacy assets have App attribution only. Their metadata is stripped for
+    # that App's owner; new assets use explicit authenticated maker facts.
+    owner_keys = _person_prompt_owner_keys(person_id)
     assets: set[str] = set()
     for asset_id in me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)():
         metadata = _read_asset_metadata(asset_id)
@@ -20218,6 +20223,8 @@ def _purge_person_prompt_memory(person_id: str, *, cutoff: int | None = None) ->
 
 
 def _erase_person_prompts_before(person_id: str, cutoff: int) -> None:
+    owner_keys = _person_prompt_owner_keys(person_id)
+    media_jobs.erase_prompt_derivatives(owner_keys, before=cutoff, path=media_jobs.DB_PATH)
     prompt_memory.prune_person_before(person_id, cutoff)
     responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
     # Persist retry intent before spool cleanup, which can fail independently.
@@ -20226,6 +20233,7 @@ def _erase_person_prompts_before(person_id: str, cutoff: int) -> None:
 
 
 def _purge_prompt_memory_on_kill() -> dict[str, Any]:
+    media_jobs.erase_prompt_derivatives({"*"}, before=int(time.time()), path=media_jobs.DB_PATH)
     prompt_memory.delete_all()
     responses_store.delete_all(path=responses_store.DB_PATH)
     _queue_prompt_purge("*", prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or int(time.time()))
@@ -20287,6 +20295,7 @@ def _maintain_household_prompt_memory() -> None:
     with prompt_memory.retention_guard(ADMIN_STORE.path) as household:
         cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) if household["never_keep"] else None
         if cutoff is not None:
+            media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
             prompt_memory.delete_all()
             responses_store.delete_all(path=responses_store.DB_PATH)
     if cutoff is not None:
@@ -20308,6 +20317,8 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
             # Retry a request whose cleanup stopped before it was queued.
             _erase_person_prompts_before(person_id, cutoff)
         else:
+            owner_keys = _person_prompt_owner_keys(person_id)
+            media_jobs.erase_prompt_derivatives(owner_keys, before=cutoff, path=media_jobs.DB_PATH)
             prompt_memory.prune_person_before(person_id, cutoff)
             responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
@@ -20327,8 +20338,13 @@ def _maintain_prompt_memory() -> None:
             operation()
         except Exception as exc:
             print(f"[proxy] prompt privacy cleanup pending: {type(exc).__name__}", flush=True)
-    assets = set(me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)())
-    prompt_memory.prune(available_asset_ids=assets)
+    try:
+        assets = set(me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)()) if IMAGE_CACHE_DIR.is_dir() else set()
+    except OSError:
+        assets = set()
+    if not assets:
+        print("[proxy] orphan prompt pruning skipped: cache inventory missing or empty", flush=True)
+    prompt_memory.prune(available_asset_ids=assets or None)
     _prune_orphaned_media_job_payloads()
 
 
@@ -20524,8 +20540,7 @@ def _image_media_job_request_id(
     if _image_job_body_has_seed(body):
         digest = _image_job_request_digest(body, auth_context)
         return f"imgjob_seeded_{digest[:40]}", digest, "seeded_request"
-    digest = _image_job_request_digest(body, auth_context)
-    return fallback_request_id, digest, "request"
+    return fallback_request_id, uuid.uuid4().hex + uuid.uuid4().hex, "request"
 
 
 def _safe_image_media_job_metadata(
