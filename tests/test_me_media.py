@@ -1018,6 +1018,7 @@ class _GatedMakeRuntime:
         self.canceled: set[str] = set()
         self.autostart = True
         self.pending: list = []
+        self.refusal = None  # The operator's admission refusal, if any.
 
     def keep_payload(self, job_id: str, payload) -> None:
         self.payloads[job_id] = json.loads(json.dumps(payload))
@@ -1031,6 +1032,9 @@ class _GatedMakeRuntime:
     def request_cancel(self, job_id: str) -> bool:
         self.canceled.add(job_id)
         return True
+
+    def admission(self, intent: str):
+        return self.refusal
 
     def schedule(self, job_id: str, run) -> None:
         import asyncio
@@ -1328,6 +1332,25 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(error["code"], code)
         self.assertEqual(media_jobs.count(path=self.jobs_db), jobs_before, "nothing is stored")
         return error
+
+    def test_make_meets_operator_admission_before_storing_anything(self) -> None:
+        from fastapi import Response
+
+        refusal = {"error": {"code": "resource_admission_denied", "message": "intent disabled: image.generate"}}
+        self.runtime.refusal = Response(content=json.dumps(refusal), status_code=503,
+                                         media_type="application/json", headers={"Retry-After": "30"})
+        response = self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("refused"))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json(), refusal, "the same refusal regular media jobs get")
+        self.assertEqual(response.headers["retry-after"], "30")
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
+        self.assertFalse(any(app["name"] == "Azizam" for app in admin_store.list_apps(path=self.admin_db)))
+        self.assertEqual(self.runtime.payloads, {})
+        self.assertEqual(self.runtime.calls, [])
+        invalid = self.client.post(self.make_url, json=self._picture(prompt=""), headers=self._make_headers("bad"))
+        self.assertEqual(invalid.status_code, 400, "an invalid request is told what is wrong first")
+        self.runtime.refusal = None
+        self._submit_make("admitted")
 
     def test_make_refuses_oversize_requests_before_storing_anything(self) -> None:
         self.runtime.limits = me_make.MakeLimits(max_prompt_chars=100)

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
@@ -89,6 +89,14 @@ class MakeRuntime(Protocol):
 
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None: ...
 
+    def admission(self, intent: str) -> Response | None:
+        """Return the operator's refusal for new work of ``intent``, or None.
+
+        It is the same response regular media jobs get, and submit returns it
+        before storing anything.
+        """
+        ...
+
     def request_cancel(self, job_id: str) -> bool:
         """Stop a job's work. Return False only if its output is already published.
 
@@ -106,6 +114,11 @@ class _MakeError(Exception):
         self.message = message
         self.status_code = status_code
         self.retry_after = retry_after
+
+
+class _AdmissionRefused(Exception):
+    def __init__(self, response: Response) -> None:
+        self.response = response
 
 
 def add_make_routes(
@@ -157,6 +170,8 @@ def add_make_routes(
                 receipts_path=_resolve(receipts_path),
             )
             return _json({"job": job}, status_code)
+        except _AdmissionRefused as refused:
+            return refused.response
         except _MakeError as exc:
             return _error(exc)
 
@@ -283,6 +298,9 @@ def _submit(
 ) -> tuple[int, dict[str, Any]]:
     user_id = str(user["id"])
     intent, model, backend_body = _parse(body, runtime.limits)
+    refusal = runtime.admission(intent)
+    if refusal is not None:  # Before anything is stored, as for regular media jobs.
+        raise _AdmissionRefused(refusal)
     forget = backend_body.get("extensions", {}).get(prompt_memory.NAMESPACE) is not None
     app = admin_store.ensure_session_app_for_user(user_id, name=APP_NAME, path=admin_path)
     if app.get("disabled_at"):

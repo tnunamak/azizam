@@ -162,6 +162,46 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertNotIn("private make prompt", raised.exception.public_message)
         self.assertEqual(raised.exception.http_status, 500)
 
+    def _admission(self, **cfg) -> None:
+        patcher = patch.object(proxy, "_effective_media_job_admission_cfg", return_value=cfg)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_make_meets_the_same_operator_admission_as_media_jobs(self) -> None:
+        self._admission(disabled_intents=["image.generate"])
+        regular = proxy._media_job_admission_response("image.generate")
+        refused = self.runtime.admission("image.generate")
+        self.assertIsNotNone(regular)
+        self.assertIsNotNone(refused, "make must not bypass the operator's admission")
+        self.assertEqual((refused.status_code, refused.body, refused.headers.get("retry-after")),
+                         (regular.status_code, regular.body, regular.headers.get("retry-after")))
+        self.assertEqual(refused.status_code, 503)
+
+    def test_execution_rechecks_operator_admission(self) -> None:
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a refused make job never reaches the backend")
+
+        self._admission(disabled_intents=["image.generate"])
+        with patch.object(proxy, "proxy_comfy_request", never):
+            with self.assertRaises(me_make.MakeBackendError) as raised:
+                asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        self.assertEqual(raised.exception.http_status, 503)
+        self.assertIn("intent disabled", raised.exception.public_message)
+
+    def test_execution_does_not_count_its_own_job_against_the_queue_limit(self) -> None:
+        media_jobs.create(media_jobs.MediaJob(job_id="mj_runtime", intent="image.generate", request_id="req_self",
+                                              app_id=self.app["id"], status=media_jobs.STATUS_RUNNING),
+                          path=media_jobs.DB_PATH)
+        self._admission(max_queue_depth=1)
+        self.assertIsNotNone(proxy._media_job_admission_response("image.generate"), "the queue is full")
+
+        async def fake_generate(request, auth_context, receipt=None):
+            return self._ok()
+
+        with patch.object(proxy, "proxy_comfy_request", fake_generate):
+            assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        self.assertEqual(assets[0]["asset_id"], OUTPUT)
+
     def test_at_most_the_configured_number_of_make_jobs_run_at_once(self) -> None:
         running, peak = 0, 0
 

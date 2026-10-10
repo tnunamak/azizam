@@ -14445,6 +14445,10 @@ class _SessionMakeRuntime:
 
         task.add_done_callback(_done)
 
+    def admission(self, intent: str) -> Response | None:
+        # The same operator admission regular media jobs meet at submit.
+        return _media_job_admission_response(intent)
+
     def request_cancel(self, job_id: str) -> bool:
         gate = self._gates.get(job_id)
         # A job with no gate is not running here, so it cannot publish.
@@ -14489,8 +14493,14 @@ class _SessionMakeRuntime:
         receipt = start_image_route_receipt(route, auth_context)
         receipt.job_id = str(payload.get("job_id") or "") or None
         decision = _apply_image_route_policy(receipt, auth_context)
+        # The operator may have turned this work off since the job was admitted.
+        refusal = _media_job_admission_response(str(payload.get("intent") or ""), count_queue=False)
         if decision.denied:
             response = _policy_denied_response(decision)
+        elif refusal is not None:
+            finish_image_route_receipt(receipt, refusal)
+            raise me_make.MakeBackendError(_admission_refusal_message(refusal),
+                                           http_status=int(refusal.status_code))
         else:
             # Erasure fences compare against when the person asked, not when it ran.
             token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
@@ -14507,6 +14517,14 @@ class _SessionMakeRuntime:
             raise me_make.MakeBackendError(_media_job_failure_message(response),
                                            http_status=int(response.status_code))
         return _assets_from_image_response(response)
+
+
+def _admission_refusal_message(response: Response) -> str:
+    try:
+        message = json.loads(bytes(response.body))["error"]["message"]
+    except Exception:  # noqa: BLE001
+        message = ""
+    return str(message or "This gateway is not accepting this work right now")
 
 
 async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Response]) -> Response:
@@ -21549,7 +21567,12 @@ def _media_job_queue_depth(
     return depth
 
 
-def _media_job_admission_response(intent: str) -> Response | None:
+def _media_job_admission_response(intent: str, *, count_queue: bool = True) -> Response | None:
+    """Return the operator's refusal for new media work, or None to admit it.
+
+    ``count_queue=False`` skips the queue-depth limit, for a job that was
+    already admitted and would otherwise count itself.
+    """
     admission_cfg = _effective_media_job_admission_cfg()
     service_override = _operator_service_availability_overrides().get("comfyui", {})
     override_state = str(service_override.get("state") or "available")
@@ -21562,7 +21585,7 @@ def _media_job_admission_response(intent: str) -> Response | None:
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
         service_reasons_list.append(reason or f"ComfyUI operator mode: {override_state}")
-    max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth")
+    max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth") if count_queue else None
     service_retry_after = (
         _optional_int_config(service_override, "retry_after_seconds")
         if isinstance(service_override, Mapping)
@@ -21594,7 +21617,7 @@ def _media_job_admission_response(intent: str) -> Response | None:
                 max_queue_depth,
                 admission_cfg=admission_cfg,
             )
-        },
+        } if count_queue else {},
         load_retry_after=_optional_int_config(
             admission_cfg,
             "queue_retry_after_seconds",
