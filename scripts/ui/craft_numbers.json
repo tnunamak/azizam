@@ -9,7 +9,11 @@
     "usage": "/ui/usage/",
     "workflows": "/ui/workflows/",
     "settings": "/ui/settings/",
-    "apps": "/ui/apps/"
+    "apps": "/ui/apps/",
+    "activity": "/ui/activity/",
+    "models": "/ui/models/",
+    "engines": "/ui/engines/",
+    "providers": "/ui/providers/"
   },
   "enforce": {
     "home": [
@@ -21,7 +25,10 @@
       "colour"
     ],
     "status": [
-      "controls"
+      "controls",
+      "rows",
+      "geometry",
+      "cards"
     ],
     "library": [
       "controls",
@@ -54,6 +61,51 @@
       "geometry",
       "cards",
       "colour"
+    ],
+    "usage": [
+      "controls",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "activity": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "workflows": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "models": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "engines": [
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "providers": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards"
     ]
   },
   "desktop_width": 1440,

@@ -532,7 +532,7 @@ function EnginesContents() {
         data-state={service.id === selectedServiceId ? "selected" : undefined}
         aria-current={service.id === selectedServiceId ? "true" : undefined}
       >
-        <TableCell className="h-(--row-2) min-w-0 max-sm:h-(--row-phone-2)">
+        <TableCell className="h-(--row-2) min-w-0 max-sm:h-(--row-phone-2)!">
           <button
             type="button"
             className="min-h-8 max-sm:min-h-11 min-w-0 text-left"

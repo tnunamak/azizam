@@ -24,6 +24,10 @@ const allSurfaces = [
 // CONTACT_SURFACES=settings,people picks surfaces; the default is the eight in MEASUREMENTS.md.
 const only = (process.env.CONTACT_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
 const surfaces = only.length ? allSurfaces.filter(([name]) => only.includes(name)) : allSurfaces.slice(0, 8);
+// Activity opens on Changes; the craft PR 6 surface is the Requests tab.
+const prepare = {
+  activity: async page => { await page.getByRole("tab", { name: "Requests", exact: true }).click(); },
+};
 const NO_ANIM = `*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition:none!important;caret-color:transparent!important}`;
 
 async function settled(page) {
@@ -66,6 +70,7 @@ try {
         await page.goto(`${seed.base_url}${route}`);
         await page.addStyleTag({ content: NO_ANIM });
         await settled(page);
+        if (prepare[name]) { await prepare[name](page); await settled(page); }
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.screenshot({ path: path.join(outDir, `${name}-${width}-${theme}.jpg`), type: "jpeg", quality: 80, animations: "disabled" });
       }

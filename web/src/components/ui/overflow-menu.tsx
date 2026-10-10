@@ -28,7 +28,7 @@ export function OverflowMenu({
           aria-label={label}
           variant="ghost"
           size="sm"
-          className="vf-touch-target"
+          className="max-sm:min-h-11 max-sm:min-w-11"
         >
           <DotsIcon className="size-4" />
         </IconButton>

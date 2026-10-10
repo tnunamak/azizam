@@ -26,7 +26,17 @@ const allSurfaces = [
   ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"],
 ];
 // Measured only when named in MEASURE_SURFACES (not in MEASUREMENTS.md).
-const extraSurfaces = [["apps", "/ui/apps/"]];
+const extraSurfaces = [
+  ["apps", "/ui/apps/"], ["activity", "/ui/activity/"], ["models", "/ui/models/"],
+  ["engines", "/ui/engines/"], ["providers", "/ui/providers/"],
+];
+// Activity opens on Changes; the craft PR 6 surface is the Requests tab.
+const prepare = {
+  activity: async page => {
+    await page.getByRole("tab", { name: "Requests", exact: true }).click();
+    await settled(page);
+  },
+};
 const only = (process.env.MEASURE_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
 const surfaces = only.length ? [...allSurfaces, ...extraSurfaces].filter(([name]) => only.includes(name)) : allSurfaces;
 const widths = (process.env.MEASURE_WIDTHS ?? "1440,390").split(",").map(Number).filter(Boolean);
@@ -86,6 +96,8 @@ function measure(scope) {
     const t = e.tagName.toLowerCase();
     if (/^h[1-6]$/.test(t)) return t;
     const c = cls(e);
+    // A badge is a badge inside a row button or a table cell too.
+    if (e.closest("[data-slot=badge]") || /\bbadge\b|rounded-full.*text-xs|pill/i.test(c)) return "badge";
     const ctrl = e.closest("[role=tab], [role=radio]");
     if (ctrl) return "tab/segment";
     if (e.closest("button, a[data-slot=button], [role=button]")) return "button";
@@ -95,7 +107,6 @@ function measure(scope) {
     if (e.closest("td, [role=cell], [role=gridcell]")) return "table-cell";
     if (/\b(title|heading)\b|CardTitle|card-title/i.test(c) || e.getAttribute("data-slot")?.includes("title")) return "heading-class";
     if (e.getAttribute("data-slot")?.includes("description")) return "description";
-    if (e.closest("[data-slot=badge]") || /\bbadge\b|rounded-full.*text-xs|pill/i.test(c)) return "badge";
     if (t === "a" || e.closest("a")) return "link";
     if (t === "kbd" || t === "code" || e.closest("code, kbd, pre")) return "code";
     if (e.closest("dt")) return "dt";
@@ -344,6 +355,7 @@ try {
       await page.goto(`${base}${route}`);
       await page.addStyleTag({ content: NO_ANIM });
       await settled(page);
+      if (prepare[name]) await prepare[name](page);
       await page.evaluate(() => window.scrollTo(0, 0));
       const data = await page.evaluate(measure, "main");
       data.surface = name; data.width = width; data.actualRoute = new URL(page.url()).pathname;

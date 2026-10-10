@@ -361,11 +361,11 @@ export function Requests() {
               <TableBody>
                 {rows.map((row, index) => (
                   <TableRow key={keys[index]}>
-                    <TableCell className="p-0">
+                    <TableCell className="px-0! py-0!">
                       <button
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
-                        className="focus-visible:outline-ring flex min-h-(--row-1-dense) w-full min-w-0 items-center gap-3 px-3 text-left focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
+                        className="focus-visible:outline-ring flex min-h-(--row-1) w-full min-w-0 items-center gap-3 px-3 text-left focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
                         onClick={() => setSelectedReceiptKey(keys[index])}
                       >
                         <div className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">

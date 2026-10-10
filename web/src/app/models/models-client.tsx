@@ -563,22 +563,22 @@ function AliasOptionRow({
 }) {
   return (
     <TableRow onClick={() => onDetail(row)} className="cursor-pointer">
-      <TableCell className="h-(--row-2) py-1 max-sm:h-(--row-phone-2)" />
-      <TableCell className="h-(--row-2) py-1 max-sm:h-(--row-phone-2)">
+      <TableCell className="h-(--row-2) py-1! max-sm:h-(--row-phone-2)!" />
+      <TableCell className="h-(--row-2) py-1! max-sm:h-(--row-phone-2)!">
         <h3 className="text-body font-medium">{titleFor(row) ?? ""}</h3>
         <p className="text-muted-foreground text-meta mt-0.5 max-w-80 truncate" title={descriptionFor(row)}>
           {descriptionFor(row)}
         </p>
       </TableCell>
-      <TableCell className="py-1"><ModelFacts row={row} /></TableCell>
-      <TableCell className="py-1"><CopyModelName row={row} /></TableCell>
-      <TableCell numeric className="py-1">{costLabel(row) ?? ""}</TableCell>
-      <TableCell className="py-1">
+      <TableCell className="py-1!"><ModelFacts row={row} /></TableCell>
+      <TableCell className="py-1!"><CopyModelName row={row} /></TableCell>
+      <TableCell numeric className="py-1!">{costLabel(row) ?? ""}</TableCell>
+      <TableCell className="py-1!">
         {availabilityState(row) !== "ready" && (
           <Availability row={row} showReason={false} />
         )}
       </TableCell>
-      <TableCell className="py-1">
+      <TableCell className="py-1!">
         <Button
           variant="ghost"
           size="icon"
@@ -614,7 +614,7 @@ function CapabilityRow({
     <>
     <TableBody aria-label={`${primaryCapabilityLabel(primary)} models`}>
       <TableRow className="cursor-pointer" onClick={() => onDetail(primary)}>
-        <TableCell className="py-1">
+        <TableCell className="py-1! max-sm:h-(--row-phone-2)!">
           <div className="flex items-center gap-3">
             <CatalogIcon row={primary} />
             <h2 className="text-body font-medium">
@@ -622,18 +622,18 @@ function CapabilityRow({
             </h2>
           </div>
         </TableCell>
-        <TableCell className="py-1">
+        <TableCell className="py-1!">
           <h3 className="text-body font-medium">{titleFor(primary)}</h3>
         </TableCell>
-        <TableCell className="py-1"><ModelFacts row={primary} /></TableCell>
-        <TableCell className="py-1"><CopyModelName row={primary} /></TableCell>
-        <TableCell numeric className="py-1">{costLabel(primary)}</TableCell>
-        <TableCell className="py-1">
+        <TableCell className="py-1!"><ModelFacts row={primary} /></TableCell>
+        <TableCell className="py-1!"><CopyModelName row={primary} /></TableCell>
+        <TableCell numeric className="py-1!">{costLabel(primary)}</TableCell>
+        <TableCell className="py-1!">
           {availabilityState(primary) !== "ready" && (
             <Availability row={primary} showReason={false} />
           )}
         </TableCell>
-        <TableCell className="py-1">
+        <TableCell className="py-1!">
           <div className="flex items-center justify-end gap-2">
             {alternatives.length > 0 && (
               <Button
@@ -1143,22 +1143,22 @@ export default function ModelsClient() {
                         )}
                         onClick={() => selectDetail(row)}
                       >
-                        <TableCell className="text-body py-1 font-medium">
+                        <TableCell className="text-body py-1! font-medium">
                           <div className="flex items-center gap-3">
                             {titleFor(row) && <span>{titleFor(row)}</span>}
                             <CopyModelName row={row} />
                           </div>
                         </TableCell>
-                        <TableCell className="py-1">
+                        <TableCell className="py-1!">
                           {primaryCapabilityLabel(row)}
                           <ModelFacts row={row} className="mt-1" />
                         </TableCell>
-                        <TableCell className="py-1">{summaryEngineLabel(row)}</TableCell>
-                        <TableCell numeric className="py-1">{costLabel(row)}</TableCell>
-                        <TableCell className="py-1">
+                        <TableCell className="py-1!">{summaryEngineLabel(row)}</TableCell>
+                        <TableCell numeric className="py-1!">{costLabel(row)}</TableCell>
+                        <TableCell className="py-1!">
                           <Availability row={row} showReason={false} />
                         </TableCell>
-                        <TableCell className="py-1">
+                        <TableCell className="py-1!">
                           <Button
                             variant="outline"
                             size="sm"
