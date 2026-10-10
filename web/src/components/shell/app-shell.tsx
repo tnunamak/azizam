@@ -29,6 +29,7 @@ import {
   CornerDownRight,
   Settings,
   Sun,
+  UserRoundCog,
   Users,
   Zap,
   type LucideIcon,
@@ -231,6 +232,14 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
               <Link href="/apps">
                 <KeyRound />
                 Apps & keys
+              </Link>
+            </DropdownMenuItem>
+          )}
+          {viewer.authenticated && !viewer.serviceAdmin && (
+            <DropdownMenuItem asChild>
+              <Link href="/account">
+                <UserRoundCog />
+                Your settings
               </Link>
             </DropdownMenuItem>
           )}
@@ -769,6 +778,17 @@ function CommandPalette({
                     </CommandItem>
                   );
                 })}
+              {/* A person's own settings sit under the account menu, not
+                  in the sidebar; the palette finds them too. */}
+              {!viewer.serviceAdmin && (
+                <CommandItem
+                  keywords={["prompts", "privacy", "account"]}
+                  onSelect={() => go("/account")}
+                >
+                  <UserRoundCog />
+                  Your settings
+                </CommandItem>
+              )}
             </CommandGroup>
             {appData?.apps.length ? (
               <CommandGroup heading="Apps">
