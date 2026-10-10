@@ -2,7 +2,7 @@
 // the numbers in DESIGN "System numbers v2". jsdom has no layout, so these
 // pin the classes and tokens that produce the sizes; craft_numbers.py
 // measures the rendered pixels.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -226,6 +226,42 @@ describe("cards, badges and tables", () => {
       expect.arrayContaining(["h-10", "group-data-dense/table:h-9"]),
     );
     expect(classes(screen.getByText("12"))).toContain("text-right");
+  });
+});
+
+describe("a table that scrolls sideways", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function renderTable() {
+    render(
+      <Table>
+        <TableBody>
+          <TableRow>
+            <TableCell>Wide</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    return screen.getByRole("table").parentElement!;
+  }
+
+  it("can be focused to scroll it from the keyboard, and only then", () => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(600);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(350);
+    expect(renderTable()).toHaveAttribute("tabindex", "0");
+    cleanup();
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(350);
+    expect(renderTable()).not.toHaveAttribute("tabindex");
   });
 });
 

@@ -13,9 +13,27 @@ function Table({
   dense = false,
   ...props
 }: React.ComponentProps<"table"> & { dense?: boolean }) {
+  // A table wider than its container scrolls sideways; keyboard users can
+  // only scroll a region they can focus (WCAG 2.1.1, axe
+  // scrollable-region-focusable), so the container takes focus only then.
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [scrolls, setScrolls] = React.useState(false);
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const update = () =>
+      setScrolls(container.scrollWidth > container.clientWidth + 1);
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    if (container.firstElementChild) observer.observe(container.firstElementChild);
+    update();
+    return () => observer.disconnect();
+  }, []);
   return (
     <div
+      ref={containerRef}
       data-slot="table-container"
+      tabIndex={scrolls ? 0 : undefined}
       className="relative w-full overflow-x-auto"
     >
       <table
