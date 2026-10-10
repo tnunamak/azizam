@@ -232,6 +232,30 @@ for (const theme of ["light", "dark"] as const) {
 test("settings saves each section through its own API and keeps OIDC secret write-only", async ({
   page,
 }) => {
+  // The default access plan is shared server state: the owner inherits it, so
+  // a "Local chat" default left behind hides every workflow from later specs
+  // (try-media-inputs read an empty catalog). Put the original plan back.
+  const defaults = await page.request.get("/admin/api/settings/defaults");
+  expect(defaults.ok()).toBe(true);
+  const originalPlan = ((await defaults.json()) as {
+    defaults: { profile_id: string | null };
+  }).defaults.profile_id;
+  try {
+    await settingsJourney(page);
+  } finally {
+    const session = await (await page.request.get("/admin/api/session")).json();
+    const restored = await page.request.put("/admin/api/settings/defaults", {
+      headers: {
+        "x-azizam-admin-action": "1",
+        "x-azizam-csrf": session.actor.csrf_token,
+      },
+      data: { profile_id: originalPlan },
+    });
+    expect(restored.ok(), "restore the default access plan").toBe(true);
+  }
+});
+
+async function settingsJourney(page: Page) {
   await page.goto("/ui/settings/");
   await editSection(page, "Instance");
   await expect(page.getByLabel("Instance name")).toBeVisible();
@@ -380,7 +404,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   expect((await download).suggestedFilename()).toBe(
     "gateway-effective-config.json",
   );
-});
+}
 
 test("a provider draft saves after a real sign-in choice write", async ({
   page,
