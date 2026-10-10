@@ -82,7 +82,10 @@ test("Home refreshes capability evidence while it stays open", async ({
     });
   });
   await page.goto(homePath);
-  const chat = page.locator('a[href*="capability=chat"]');
+  // The state badge sits in the row beside its link, so read the whole row.
+  const chat = page.locator("li", {
+    has: page.locator('a[href*="capability=chat"]'),
+  });
   await expect(chat).toContainText("Unknown");
   ready = true;
   await page.clock.fastForward(61_000);

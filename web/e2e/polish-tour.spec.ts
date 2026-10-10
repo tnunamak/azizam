@@ -90,27 +90,20 @@ async function inspect(page: Page, name: string) {
     await expect(player).toBeAttached();
     await expect(player).toHaveAttribute("preload", "none");
     const controls = player.locator("..");
-    // D1.5: a phone opens a clip in the viewer; the in-place play badge is
-    // for wider screens.
-    if ((page.viewportSize()?.width ?? 1440) < 640) {
-      await expect(
-        controls.getByRole("button", { name: /^Play / }),
-      ).toBeHidden();
-    } else {
-      await controls.getByRole("button", { name: /^Play / }).click();
-      await expect
-        .poll(() =>
-          player.evaluate((audio) => (audio as HTMLAudioElement).duration),
-        )
-        .toBe(1);
-      await controls.getByRole("button", { name: /^Pause / }).click();
-      await expect(
-        controls.getByRole("button", { name: /^Play / }),
-      ).toBeVisible();
-      await player.evaluate((audio) => {
-        (audio as HTMLAudioElement).currentTime = 0;
-      });
-    }
+    // Craft round 9: play is on the tile at every width (a 44 px target on a phone).
+    await controls.getByRole("button", { name: /^Play / }).click();
+    await expect
+      .poll(() =>
+        player.evaluate((audio) => (audio as HTMLAudioElement).duration),
+      )
+      .toBe(1);
+    await controls.getByRole("button", { name: /^Pause / }).click();
+    await expect(
+      controls.getByRole("button", { name: /^Play / }),
+    ).toBeVisible();
+    await player.evaluate((audio) => {
+      (audio as HTMLAudioElement).currentTime = 0;
+    });
   }
   expect(
     await page.evaluate(
