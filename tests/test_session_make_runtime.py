@@ -370,9 +370,6 @@ class SessionMakeRuntimeTests(unittest.TestCase):
                 pass
             self.runtime.drop_payload(job_id)
 
-        def cancel_twice() -> None:  # Two cancel POSTs before the loop runs again.
-            cancel()
-            cancel()
 
         async def main() -> int:
             busy = asyncio.Semaphore(1)
@@ -381,7 +378,8 @@ class SessionMakeRuntimeTests(unittest.TestCase):
                 await busy.acquire()
                 self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
                 await asyncio.sleep(0)
-                await asyncio.to_thread(cancel_twice)
+                cancel()  # Two cancel POSTs land before the loop runs the first stop.
+                cancel()
                 for _ in range(5):
                     await asyncio.sleep(0)
                 return len(proxy._image_media_job_tasks)
