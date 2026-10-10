@@ -437,7 +437,8 @@ function DetailSheet({
                   Technical details
                 </summary>
                 <div className="mt-3 space-y-4">
-                  {workflow.technical_notes && (
+                  {/* Research and engine notes are for the owner, never a member. */}
+                  {owner && workflow.technical_notes && (
                     <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
                       {workflow.technical_notes}
                     </p>
