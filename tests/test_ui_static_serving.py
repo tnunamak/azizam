@@ -73,6 +73,30 @@ def test_hashed_chunk_is_brotli_compressed_and_immutable(tmp_path):
     )
     assert refused.status_code == 406
 
+    with client.stream(
+        "GET",
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers={"Accept-Encoding": "br ;q=1, gzip;q=0, identity;q=0"},
+    ) as response:
+        encoded_spaced_quality = b"".join(response.iter_raw())
+    assert response.headers["content-encoding"] == "br"
+    assert brotli.decompress(encoded_spaced_quality) == original
+
+    spaced_identity_refused = client.get(
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers={"Accept-Encoding": "br;q=0, gzip;q=0, identity ;q=0"},
+    )
+    assert spaced_identity_refused.status_code == 406
+
+    image = tmp_path / "image.png"
+    image.write_bytes(b"image bytes")
+    image_refused = client.get("/ui/image.png", headers={"Accept-Encoding": "*;q=0"})
+    assert image_refused.status_code == 406
+    range_refused = client.get("/ui/image.png", headers={
+        "Accept-Encoding": "identity;q=0", "Range": "bytes=0-4",
+    })
+    assert range_refused.status_code == 406
+
 
 def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
     page = tmp_path / "home/index.html"

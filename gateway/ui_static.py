@@ -39,7 +39,8 @@ def _compressed_file(path: str, mtime_ns: int, ctime_ns: int, size: int,
 def _accepted_quality(header: str, coding: str) -> float:
     wildcard: float | None = None
     for item in header.split(","):
-        name, *parameters = item.strip().lower().split(";")
+        parts = item.strip().lower().split(";")
+        name, parameters = parts[0].strip(), parts[1:]
         quality = 1.0
         for parameter in parameters:
             key, separator, value = parameter.strip().partition("=")
@@ -60,7 +61,8 @@ def _accepted_quality(header: str, coding: str) -> float:
 def _identity_quality(header: str) -> float:
     wildcard_quality: float | None = None
     for item in header.split(","):
-        name, *parameters = item.strip().lower().split(";")
+        parts = item.strip().lower().split(";")
+        name, parameters = parts[0].strip(), parts[1:]
         quality = 1.0
         for parameter in parameters:
             key, separator, value = parameter.strip().partition("=")
@@ -126,11 +128,11 @@ class UIStaticFiles(StaticFiles):
         range_request = "range" in request_headers
         compressible = file_path.suffix.lower() in _COMPRESSIBLE_TYPES
         encoding = None
+        response_headers["vary"] = self._merge_vary(
+            response_headers.get("vary"), "Accept-Encoding"
+        )
+        accept_encoding = request_headers.get("accept-encoding", "")
         if compressible:
-            response_headers["vary"] = self._merge_vary(
-                response_headers.get("vary"), "Accept-Encoding"
-            )
-            accept_encoding = request_headers.get("accept-encoding", "")
             encoding = (
                 ("identity" if _identity_quality(accept_encoding) > 0 else None)
                 if range_request else _choose_encoding(accept_encoding)
@@ -142,6 +144,11 @@ class UIStaticFiles(StaticFiles):
                 })
             if encoding == "identity":
                 encoding = None
+        elif _identity_quality(accept_encoding) == 0:
+            return Response(status_code=406, headers={
+                "cache-control": "no-store",
+                "vary": response_headers["vary"],
+            })
 
         etag = response_headers["etag"]
         if encoding:
