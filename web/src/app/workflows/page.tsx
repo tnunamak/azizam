@@ -11,6 +11,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
+import {
+  MEDIA_NOUN,
+  declaredMediaTypes,
+  isMediaInput,
+  mediaFamily,
+  mediaKindOf,
+  withArticle,
+  type MediaKind,
+} from "@/lib/workflow-media-input";
 import { safeModelId } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
@@ -45,6 +54,10 @@ import {
   StatusPill,
 } from "@/components/product";
 import { FilterToggle } from "@/components/product/filter-toggle";
+import {
+  workflowAvailabilityView,
+  type WorkflowReadiness,
+} from "@/lib/workflow-availability";
 
 import {
   readJson,
@@ -194,51 +207,37 @@ function joinWords(values: string[], conjunction = "and") {
   return `${values.slice(0, -1).join(", ")} ${conjunction} ${values.at(-1)}`;
 }
 
-function mediaFamily(value: string) {
-  return value.trim().toLowerCase().split("/")[0];
-}
-
 function mediaLabel(value: string, fallback: string) {
-  return (
-    { image: "a picture", audio: "an audio clip", video: "a video", text: "text" }[
-      mediaFamily(value) as "image" | "audio" | "video" | "text"
-    ] ?? fallback
-  );
+  const family = mediaFamily(value);
+  if (family === "text") return "text";
+  return family in MEDIA_NOUN
+    ? withArticle(MEDIA_NOUN[family as MediaKind])
+    : fallback;
 }
 
 function plainName(name: string) {
   return name.replace(/[_-]+/g, " ").trim().toLowerCase();
 }
 
-function withArticle(noun: string) {
-  return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
-}
-
 /** The best noun for one input: the manifest's label, its media kind, then its type. */
 function inputNoun(input: WorkflowInput) {
   const label = input.label?.trim();
   if (label) return label;
-  const media = [input.media_type, ...(input.accepted_media_types ?? [])].filter(
-    (value): value is string => !!value,
-  );
+  const media = declaredMediaTypes(input);
   if (media.length) {
     return joinWords([...new Set(media.map((value) => mediaLabel(value, "a file")))], "or");
   }
-  if (input.asset) return "a file";
+  if (isMediaInput(input)) {
+    const kind = mediaKindOf(input);
+    return kind ? withArticle(MEDIA_NOUN[kind]) : "a file";
+  }
   switch (input.type.toLowerCase()) {
     case "string": return "text";
-    case "image": return "a picture";
-    case "audio": return "an audio clip";
-    case "video": return "a video";
     case "number":
     case "integer": return "a number";
     case "boolean": return "a yes-or-no choice";
     case "array": return "a list";
     case "object": return "structured information";
-    case "file":
-    case "upload":
-    case "blob":
-    case "binary": return "a file";
     default: return "an input";
   }
 }
@@ -290,59 +289,12 @@ function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
   );
 }
 
-// Who can act on a workflow. "ready" runs. "wait" is busy, starting or degraded:
-// it fixes itself, so everyone sees it. "setup" needs the owner, so members do not.
-type Readiness = "ready" | "wait" | "setup";
-
-function readiness(workflow: WorkflowRow): Readiness {
-  if (workflow.availability.available !== false) return "ready";
-  return ["starting", "busy", "degraded"].includes(workflow.availability.status)
-    ? "wait"
-    : "setup";
-}
-
-const waitNote: Record<string, string> = {
-  starting: "Try again in a moment.",
-  busy: "Busy with other requests. Try again soon.",
-  degraded: "Requests may fail.",
-};
-
-const MEMBER_SETUP_NOTE =
-  "Not available right now. The person who manages Azizam can set it up.";
-
-function enginesHref(workflow: WorkflowRow) {
-  const binding = workflow.engine_binding?.trim();
-  // "gateway" is the gateway itself, not an engine the Engines page lists.
-  return binding && binding !== "gateway" && !binding.includes(",")
-    ? `/engines?service=${encodeURIComponent(binding)}`
-    : "/engines";
-}
-
-/** What is missing and where the owner fixes it, from the availability codes the catalog gives. */
-function ownerSetupHelp(workflow: WorkflowRow) {
-  const { status, reason_code: code } = workflow.availability;
-  const engines = { href: enginesHref(workflow), action: "Open Engines" };
-  const statusPage = { href: "/status", action: "Open Status" };
-  if (code === "unavailable_disabled") {
-    return { ...engines, text: "Turned off. Turn it on in Engines." };
-  }
-  if (code === "unavailable_unconfigured" || status === "not_configured") {
-    return { ...engines, text: "Setup is not finished. Finish it in Engines." };
-  }
-  if (code === "not_available" || status === "not_available") {
-    return { ...engines, text: "No engine is set up for it. Add one in Engines." };
-  }
-  if (code === "policy_denied") {
-    return {
-      href: "/people?tab=plans",
-      action: "Open access plans",
-      text: "An access plan blocks it. Review plans in People.",
-    };
-  }
-  if (status === "unknown" || code === "unknown") {
-    return { ...statusPage, text: "No health check has reported on it yet. See Status." };
-  }
-  return { ...statusPage, text: "Its engine is not answering. See Status." };
+// Who can act on a workflow comes from the shared mapping. "setup" needs the
+// owner, so members do not see it; everything else, including an engine the
+// gateway names as down, is shown to everyone.
+function readiness(workflow: WorkflowRow): WorkflowReadiness {
+  return workflowAvailabilityView(workflow.availability, { owner: false })
+    .readiness;
 }
 
 function WorkflowAction({
@@ -354,24 +306,18 @@ function WorkflowAction({
   owner: boolean;
   hideReadyStatus?: boolean;
 }) {
-  const state = readiness(workflow);
-  if (state === "setup" && owner) {
-    const help = ownerSetupHelp(workflow);
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-muted-foreground text-sm">{help.text}</p>
-        <Button asChild variant="outline" size="sm">
-          <Link href={help.href}>{help.action}</Link>
-        </Button>
-      </div>
-    );
-  }
-  if (state === "ready") {
-    const showStatus =
-      !hideReadyStatus || !["ready", "idle"].includes(workflow.availability.status);
+  const view = workflowAvailabilityView(workflow.availability, {
+    owner,
+    engineBinding: workflow.engine_binding,
+  });
+  const status = workflow.availability.status;
+  if (view.runnable) {
+    const showStatus = !hideReadyStatus || status !== "ready";
     return (
       <div className="space-y-3">
-        {showStatus && <StatusPill status={workflow.availability.status} summary />}
+        {showStatus && (
+          <StatusPill status={status} reason={view.text ?? undefined} summary />
+        )}
         <Button asChild size="sm">
           <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
             Open in Try
@@ -380,18 +326,24 @@ function WorkflowAction({
       </div>
     );
   }
+  const ownerSetup = owner && view.readiness === "setup";
   return (
     <div className="space-y-3">
-      {state === "wait" && <StatusPill status={workflow.availability.status} summary />}
+      {(view.readiness === "wait" || view.readiness === "down") && (
+        <StatusPill status={status} summary />
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled>
-          Open in Try
-        </Button>
-        <p className="text-muted-foreground text-sm">
-          {state === "wait"
-            ? (waitNote[workflow.availability.status] ?? "Try again in a moment.")
-            : MEMBER_SETUP_NOTE}
-        </p>
+        {!ownerSetup && (
+          <Button size="sm" disabled>
+            Open in Try
+          </Button>
+        )}
+        <p className="text-muted-foreground text-sm">{view.text}</p>
+        {view.fix && (
+          <Button asChild variant="outline" size="sm">
+            <Link href={view.fix.href}>{view.fix.action}</Link>
+          </Button>
+        )}
       </div>
     </div>
   );

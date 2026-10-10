@@ -42,7 +42,12 @@ import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { ReceiptLink } from "./receipt-link";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
-import { availabilityReason } from "@/lib/status-copy";
+import {
+  workflowAvailabilityView,
+  type WorkflowAvailability,
+} from "@/lib/workflow-availability";
+import { useViewer } from "@/components/shell/session";
+import Link from "next/link";
 import { taskNames } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -111,7 +116,7 @@ type WorkflowOption = {
   short_id?: string;
   title: string;
   description?: string;
-  availability?: { available?: boolean; status?: string; reason_code?: string };
+  availability?: WorkflowAvailability;
   inputs: WorkflowInput[];
   inputMapping?: WorkflowInputMapping;
   jobRoutes?: { poll?: { path?: string }; content?: { path?: string } };
@@ -179,7 +184,7 @@ const TAB_ITEMS: Array<{
 }> = [
   {
     value: "chat",
-    label: "Chat",
+    label: taskNames.chat,
     icon: MessageSquare,
     help: "Send a message and get a reply.",
   },
@@ -729,7 +734,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
     if (!workflow.id) continue;
     options.push({
       id: workflow.id,
-      label: `${workflow.title || workflow.id}${workflow.availability?.available === false ? " · Unavailable" : ""}`,
+      label: workflowPickerLabel(workflow),
       capability: "workflow" as const,
       price: "",
       locality: "Workflow manifest",
@@ -737,6 +742,15 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
     });
   }
   return options;
+}
+
+/** The picker names the state with the same words as the Workflows page. */
+function workflowPickerLabel(workflow: WorkflowOption) {
+  const title = workflow.title || workflow.id;
+  const note = workflowAvailabilityView(workflow.availability, {
+    owner: false,
+  }).pickerNote;
+  return note ? `${title} · ${note}` : title;
 }
 
 function workflowExecution(record: Record<string, unknown>) {
@@ -1027,6 +1041,13 @@ export default function TryPage() {
         ?.workflow,
     [catalog.workflow, model.workflow],
   );
+  const owner = useViewer().admin;
+  const workflowAvailability = selectedWorkflow
+    ? workflowAvailabilityView(selectedWorkflow.availability, {
+        owner,
+        engineBinding: selectedWorkflow.engine_binding,
+      })
+    : null;
   const workflowOutputKind = outputKindOf(selectedWorkflow?.outputs);
   const workflowProblems = useMemo(
     () =>
@@ -1442,8 +1463,7 @@ export default function TryPage() {
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
-    if (tab === "workflow" && selectedWorkflow?.availability?.available === false)
-      return;
+    if (tab === "workflow" && workflowAvailability?.runnable === false) return;
     if (tab === "workflow" && selectedWorkflow?.example_request?.path) {
       // Nothing doomed goes to the gateway: say what is missing, on the field.
       const problems = workflowInputProblems(
@@ -2184,8 +2204,8 @@ export default function TryPage() {
                       keyBusy ||
                       checkingJob ||
                       (tab.value === "workflow" &&
-                        (!selectedWorkflow ||
-                          selectedWorkflow.availability?.available === false))
+                        (!workflowAvailability ||
+                          !workflowAvailability.runnable))
                     }
                   >
                     {running === tab.value ? (
@@ -2195,15 +2215,25 @@ export default function TryPage() {
                     )}
                     Run
                   </Button>
-                  {tab.value === "workflow" &&
-                    selectedWorkflow?.availability?.available === false && (
-                      <p className="text-muted-foreground text-sm">
-                        {availabilityReason(
-                          selectedWorkflow.availability.status ?? "unavailable",
-                          selectedWorkflow.availability.reason_code,
-                        ) ?? "Unavailable."}
-                      </p>
-                    )}
+                  {tab.value === "workflow" && workflowAvailability?.text && (
+                    <p
+                      className="text-muted-foreground text-sm"
+                      data-testid="workflow-availability-note"
+                    >
+                      {workflowAvailability.text}
+                      {workflowAvailability.fix && (
+                        <>
+                          {" "}
+                          <Link
+                            className="underline underline-offset-4"
+                            href={workflowAvailability.fix.href}
+                          >
+                            {workflowAvailability.fix.action}
+                          </Link>
+                        </>
+                      )}
+                    </p>
+                  )}
                 </form>
                 <section
                   className="bg-card min-w-0 rounded-xl border p-5"

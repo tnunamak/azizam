@@ -18,12 +18,11 @@ import {
   inputLabel,
   inputPlaceholder,
   isPlausibleMediaReference,
-  mediaKindOfInput,
-  MEDIA_DESCRIPTION,
   missingMessage,
   type OutputKind,
 } from "./workflow-input-meta";
 import { MediaInput } from "./workflow-media-input";
+import { isMediaInput, mediaKindOf } from "@/lib/workflow-media-input";
 
 export type WorkflowInput = {
   name: string;
@@ -40,6 +39,9 @@ export type WorkflowInput = {
   ignored?: boolean;
   /** The gateway marks media inputs; their `type` is still "string". */
   asset?: boolean;
+  /** The media kind the catalog declares for an asset input, such as "image/*". */
+  media_type?: string;
+  accepted_media_types?: string[];
 };
 
 export type WorkflowInputsProps = {
@@ -340,7 +342,9 @@ function WorkflowInputControl({
         <MediaInput
           id={id}
           label={text}
-          kind={mediaKindOfInput(input)}
+          // A media input the catalog does not type is a picture: the
+          // only kind Try's workflows take without saying so.
+          kind={mediaKindOf(input) ?? "image"}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
           describedBy={errorId}
@@ -674,9 +678,9 @@ function isFileInput(input: WorkflowInput, mapping: WorkflowInputMapping = {}) {
 
 /**
  * A media input that travels inside the request (a data URI, a link or an
- * asset id) rather than as a multipart file. The gateway's catalog types it
- * "string", so the signal is its own flag or the description it writes for
- * every asset input, never the input's name.
+ * asset id) rather than as a multipart file. Whether it is media at all is
+ * the shared catalog rule (`isMediaInput`), the same one the Workflows
+ * summaries use, never the input's name.
  */
 export function isMediaBodyInput(
   input: WorkflowInput,
@@ -692,11 +696,7 @@ export function isMediaBodyInput(
   if (applies.includes("file upload") || applies.includes("multipart")) {
     return false;
   }
-  return (
-    input.asset === true ||
-    normalizedType(input) === "asset" ||
-    MEDIA_DESCRIPTION.test(input.description ?? "")
-  );
+  return isMediaInput(input);
 }
 
 function inputExplanation(

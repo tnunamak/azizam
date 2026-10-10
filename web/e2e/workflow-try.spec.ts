@@ -913,3 +913,91 @@ test("workflow media jobs use declared routes and load signed output after retry
   ).toHaveAttribute("href", "https://media.example.test/completed?sig=fixture");
   await expect(page.getByText("Not available for this session")).toBeVisible();
 });
+
+// Composed workflows: Try names the engine a workflow waits on, the same way
+// the Workflows page does (web/src/lib/workflow-availability.ts).
+const composedEvidence = { source: "dependencies", kind: "required" };
+const composedBase = {
+  description: "A workflow the gateway composes from engines.",
+  engine_binding: "gateway",
+  native_route: null,
+  inputs: [{ name: "prompt", type: "string", required: true, accepted: true }],
+};
+const composedCatalog = {
+  schema_version: 1,
+  object: "workflow.catalog",
+  discovery_url: "/gateway/v1/workflows",
+  workflows: [
+    {
+      ...composedBase,
+      id: "image.edit.image-identity",
+      title: "Identity Scene",
+      availability: { status: "ready", reason_code: "ready", available: true,
+                      reason: "Every engine it needs is ready.", engine: "comfyui", evidence: composedEvidence },
+    },
+    {
+      ...composedBase,
+      id: "image.analyze.face-likeness",
+      title: "Face Likeness Check",
+      availability: { status: "idle", reason_code: "idle", available: true,
+                      reason: "Face service starts when you make a request.", engine: "faces", evidence: composedEvidence },
+    },
+    {
+      ...composedBase,
+      id: "image.generate.flux2-klein-4b-seamless-tile",
+      title: "Seamless Tile",
+      availability: { status: "unavailable", reason_code: "unavailable", available: false,
+                      reason: "ComfyUI is down.", engine: "comfyui", evidence: composedEvidence },
+    },
+  ],
+};
+
+async function openComposed(page: Page, workflowId: string, member = false) {
+  if (member)
+    await page.route("**/me/api/session", (route) =>
+      route.fulfill({
+        json: {
+          authenticated: true,
+          csrf_token: "fixture",
+          apps: [],
+          user: { id: "member-try", name: "Member", role: "member", email: "member@example.test" },
+        },
+      }),
+    );
+  await page.route("**/me/api/models/catalog", (route) => route.fulfill({ json: emptyModelsCatalog }));
+  await page.route("**/me/api/workflows", (route) => route.fulfill({ json: composedCatalog }));
+  await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflowId)}`);
+  await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
+}
+
+test("Try runs a ready composed workflow without an availability note", async ({ page }) => {
+  await openComposed(page, "image.edit.image-identity");
+  await expect(page.getByRole("combobox").first()).toHaveText(/^Identity Scene$/);
+  await expect(page.getByTestId("workflow-availability-note")).toHaveCount(0);
+});
+
+test("Try reads a stopped on-demand engine as Ready to start and lets it run", async ({ page }) => {
+  await openComposed(page, "image.analyze.face-likeness");
+  await expect(page.getByRole("combobox").first()).toContainText("Face Likeness Check · Ready to start");
+  await expect(page.getByTestId("workflow-availability-note")).toHaveText(
+    "Face service starts when you make a request.",
+  );
+  await expect(page.getByText("Unavailable")).toHaveCount(0);
+});
+
+for (const viewer of ["owner", "member"] as const) {
+  test(`Try explains a down engine by name to the ${viewer}`, async ({ page }) => {
+    await openComposed(page, "image.generate.flux2-klein-4b-seamless-tile", viewer === "member");
+    await expect(page.getByRole("combobox").first()).toContainText("Seamless Tile · ComfyUI is down.");
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+    const note = page.getByTestId("workflow-availability-note");
+    await expect(note).toContainText("ComfyUI is down.");
+    if (viewer === "owner") {
+      await expect(note.getByRole("link", { name: "Open Engines" })).toHaveAttribute(
+        "href", /\/engines\/?\?service=comfyui$/,
+      );
+    } else {
+      await expect(note.getByRole("link")).toHaveCount(0);
+    }
+  });
+}

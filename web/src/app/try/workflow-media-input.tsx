@@ -14,17 +14,15 @@ import {
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
 import {
+  MEDIA_NOUN,
+  withArticle,
+  type MediaKind,
+} from "@/lib/workflow-media-input";
+import {
   MAX_MEDIA_BYTES,
   MAX_MEDIA_LABEL,
   assetIdFromPasted,
-  type MediaKind,
 } from "./workflow-input-meta";
-
-const NOUN: Record<MediaKind, string> = {
-  image: "picture",
-  video: "video",
-  audio: "recording",
-};
 const ASSET_ID = /^(?:asset:)?((?:img|vid|aud)_[0-9a-f]{64})$/;
 
 function previewSource(value: string): string | null {
@@ -71,7 +69,7 @@ export function MediaInput({
   describedBy?: string;
   onChange: (value: string | undefined) => void;
 }) {
-  const noun = NOUN[kind];
+  const noun = MEDIA_NOUN[kind];
   const fileInput = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -86,7 +84,9 @@ export function MediaInput({
     if (!file) return;
     setFileError(null);
     if (!file.type.startsWith(`${kind}/`)) {
-      setFileError(`That file is not a ${noun}. Choose a ${noun} file.`);
+      setFileError(
+        `That file is not ${withArticle(noun)}. Choose ${withArticle(noun)} file.`,
+      );
       return;
     }
     if (file.size > MAX_MEDIA_BYTES) {

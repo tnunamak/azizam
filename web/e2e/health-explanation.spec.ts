@@ -34,6 +34,26 @@ test("health popover explains a measured outage and links to Status", async ({
       },
     }),
   );
+  // The fixture gateway measures every capability it offers (its composed
+  // workflows read their own engines). Add one Images capability with no
+  // route evidence, as an engine fault leaves it.
+  await page.route("**/me/api/home", async (route) => {
+    const home = await (await route.fetch()).json();
+    home.capabilities = [
+      ...(home.capabilities ?? []),
+      {
+        capability: "image",
+        capability_title: "Images",
+        icon_key: "image",
+        intent: "image.generate",
+        model: "default",
+        available: false,
+        status: "unknown",
+        reason_code: "unknown",
+      },
+    ];
+    await route.fulfill({ json: home });
+  });
   await page.goto("/ui/models/");
   // The owner alert reports the engine fault, while the capability has no
   // measured route evidence: the health line says it is not checked yet.

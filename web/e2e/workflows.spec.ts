@@ -726,3 +726,75 @@ test("workflow sheet recent jobs handles media errors", async ({ page }) => {
   );
   await checkState(page, "workflows-sheet-error-dark-390.png");
 });
+
+// Workflows the gateway composes from engines: their availability names the
+// engine they wait on (gateway/availability.py _dependency_reason).
+const composedEvidence = { source: "dependencies", kind: "required" };
+const composedRows = [
+  {
+    ...faceLikenessRow,
+    id: "image.edit.image-identity",
+    title: "Identity Scene",
+    discovery_url: "/gateway/v1/workflows/image.edit.image-identity",
+    availability: { status: "ready", reason_code: "ready", available: true, measured: true,
+                    reason: "Every engine it needs is ready.", engine: "comfyui", evidence: composedEvidence },
+  },
+  {
+    ...faceLikenessRow,
+    availability: { status: "idle", reason_code: "idle", available: true, measured: false,
+                    reason: "Face service starts when you make a request.", engine: "faces", evidence: composedEvidence },
+  },
+  {
+    ...faceLikenessRow,
+    id: "image.generate.flux2-klein-4b-seamless-tile",
+    title: "Seamless Tile",
+    discovery_url: "/gateway/v1/workflows/image.generate.flux2-klein-4b-seamless-tile",
+    availability: { status: "unavailable", reason_code: "unavailable", available: false, measured: true,
+                    reason: "ComfyUI is down.", engine: "comfyui", evidence: composedEvidence },
+  },
+];
+
+async function routeMember(page: Page) {
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        csrf_token: "fixture",
+        apps: [],
+        user: { id: "member-wf", name: "Member", role: "member", email: "member@example.test" },
+      },
+    }),
+  );
+}
+
+for (const viewer of ["owner", "member"] as const) {
+  test(`${viewer} sees each composed workflow state with the engine it waits on`, async ({ page }) => {
+    if (viewer === "member") await routeMember(page);
+    await preparePage(page, "light", 1440, { schema_version: 1, workflows: composedRows });
+    // An engine that is down is not a setup task: nothing is folded away.
+    await expect(page.getByText(/Not set up/)).toHaveCount(0);
+
+    const ready = page.getByRole("article", { name: "Identity Scene" });
+    await expect(ready.getByRole("link", { name: "Open in Try" })).toBeVisible();
+    await expect(ready).not.toContainText(/Every engine|Unavailable|Ready to start/);
+
+    const startable = page.getByRole("article", { name: "Face Likeness Check" });
+    await expect(startable).toContainText("Ready to start");
+    await expect(startable).toContainText("Face service starts when you make a request.");
+    await expect(startable).not.toContainText(/Unavailable|Not available/);
+    await expect(startable.getByRole("link", { name: "Open in Try" })).toBeVisible();
+
+    const down = page.getByRole("article", { name: "Seamless Tile" });
+    await expect(down).toContainText("ComfyUI is down.");
+    await expect(down.getByRole("button", { name: "Open in Try" })).toBeDisabled();
+    await expect(down).not.toContainText(/Not available right now|See Status/);
+    if (viewer === "owner") {
+      await expect(down.getByRole("link", { name: "Open Engines" })).toHaveAttribute(
+        "href", /\/engines\/?\?service=comfyui$/,
+      );
+    } else {
+      await expect(down.getByRole("link", { name: "Open Engines" })).toHaveCount(0);
+    }
+    await assertNoSeriousAxe(page);
+  });
+}
