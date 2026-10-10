@@ -107,7 +107,7 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
 
 @pytest.mark.parametrize("mode", ["forget", "member-off"])
 @pytest.mark.parametrize("route", [identity_api.IDENTITY_PATH, identity_api.LIKENESS_PATH])
-@pytest.mark.parametrize("encoding", ["json", "bracket"])
+@pytest.mark.parametrize("encoding", ["json", "bracket", "mixed-json-first", "mixed-bracket-first", "array-upload"])
 def test_multipart_identity_privacy_succeeds_without_prompt_storage(household, mode, route, encoding):
     hh = household
     if mode == "member-off":
@@ -120,15 +120,26 @@ def test_multipart_identity_privacy_succeeds_without_prompt_storage(household, m
     def store(request, auth, content, fmt):
         asset = proxy.store_asset_bytes(content, kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
         return {"asset_id": asset}
+    def note(auth, body):
+        response = proxy._identity_note_delivery(auth, body)
+        if response is None:
+            assert not proxy.media_delivery.current().prompt_decision.keep
+        return response
     identity_api.register_identity_routes(app, identity_api.IdentityApiDeps(
         authenticate=lambda *_: hh.auth, enforce_policy=lambda *_: None,
         ensure_face_service=ready, face_client=FakeClient, run_workflow=render,
-        template=lambda: (TEMPLATE, BINDING), store_image=store, models=("buffalo_l",), note_delivery=proxy._identity_note_delivery,
+        template=lambda: (TEMPLATE, BINDING), store_image=store, models=("buffalo_l",), note_delivery=note,
     ))
     files = [("image", ("p.png", PHOTO, "image/png"))] if route == identity_api.IDENTITY_PATH else [
         ("reference", ("p.png", PHOTO, "image/png")), ("candidate", ("c.png", GOOD, "image/png"))]
+    if encoding == "array-upload" and route == identity_api.LIKENESS_PATH:
+        files[0] = ("reference[]", files[0][1])
     controls = {"extensions": json.dumps(FORGET)} if encoding == "json" else {
         f"extensions[{prompt_memory.NAMESPACE}][mode]": "forget"}
+    if encoding == "mixed-json-first":
+        controls = {"extensions": "{}", **controls}
+    elif encoding == "mixed-bracket-first":
+        controls["extensions"] = "{}"
     result = TestClient(app).post(route, files=files, data={"prompt": "multipart private sentinel",
                                 "mode": "sync", "attempts": "1", **controls})
     assert result.status_code == 200, result.text

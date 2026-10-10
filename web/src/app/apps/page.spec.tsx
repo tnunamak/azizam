@@ -72,12 +72,22 @@ it("shows one prompt memory notice for legacy keys without a creator", async () 
   } as Credential;
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
-    apps: [{ ...app, credentials: [oldKey, { ...oldKey, id: "second-key" }] }],
+    apps: [{ ...app, kind: "personal", credentials: [oldKey, { ...oldKey, id: "second-key" }] }],
   });
   renderApps();
   expect(
     await screen.findAllByText(/Older keys with no recorded creator/),
   ).toHaveLength(1);
+});
+
+it("does not advise household app owners to create a key for personal prompt settings", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [{ id: "old-key", created_by: null } as Credential] }],
+  });
+  renderApps();
+  await screen.findByRole("heading", { name: "My laptop" });
+  expect(screen.queryByText(/Older keys with no recorded creator/)).toBeNull();
 });
 
 it("refreshes a partially created app, clears the cancelled draft, and resumes key creation", async () => {
