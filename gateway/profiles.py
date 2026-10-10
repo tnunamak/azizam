@@ -38,6 +38,7 @@ from gateway.policy import (
     TargetPolicy,
     target_policy_from_model_access,
 )
+from gateway.plan_vocabulary import canonical_intent
 
 __all__ = [
     "ProfileLoadError",
@@ -190,8 +191,9 @@ def _load_capability_selector(value: object) -> CapabilitySelector:
             f"unknown allow keys: {sorted(unknown)}"
         )
 
+    intents = _coerce_str_set(data.get("intents"), where="allow.intents")
     return CapabilitySelector(
-        intents=_coerce_str_set(data.get("intents"), where="allow.intents"),
+        intents=None if intents is None else frozenset(canonical_intent(intent) for intent in intents),
         exposure=_coerce_str_set(data.get("exposure"), where="allow.exposure"),
         trust_tiers=_coerce_str_set(
             data.get("trust_tiers"), where="allow.trust_tiers"

@@ -21,6 +21,7 @@ from gateway.policy import (
     TARGET_VISIBILITY_MODES,
     VISIBILITY_LEVELS,
 )
+from gateway.plan_vocabulary import canonical_intent, intent_aliases_from_catalog
 from gateway.profiles import serialize_default_profile
 from gateway.admin_store import RUNTIME_PROFILE_MAPPING_SOURCE_SPECS
 
@@ -168,6 +169,10 @@ def _normalize_profile_policy_catalog(
             for option in options
             if isinstance(option, Mapping) and option.get("id")
         ]
+    try:
+        intent_aliases_from_catalog(catalog.get("intents") or [])
+    except ValueError as exc:
+        raise ValueError(f"{source}:intents {exc}") from exc
     return catalog
 
 
@@ -244,15 +249,16 @@ def _choice(option_id: str, *, available: bool | None, prose: Mapping[str, Any] 
 
 
 def _policy_values(record: Mapping[str, Any]) -> list[str]:
-    values: list[str] = []
-    for route in record.get("routes") or []:
-        if not isinstance(route, Mapping):
-            continue
-        for key in ("runtime_policy", "azizam_policy"):
-            policy = route.get(key)
-            if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str):
-                values.append(policy["intent"])
-    return values
+    """Intents the frontend's routes stamp at request time (the enforced ids)."""
+    policies: list[Any] = []
+    for key in ("routes", "registered_routes"):
+        for route in record.get(key) or []:
+            if isinstance(route, Mapping):
+                policies.extend(route.get(name) for name in ("runtime_policy", "azizam_policy"))
+    asset_policies = record.get("asset_content_policies")
+    if isinstance(asset_policies, Mapping):
+        policies.extend(asset_policies.values())
+    return [policy["intent"] for policy in policies if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str)]
 
 
 def policy_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
@@ -263,6 +269,8 @@ def policy_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
 
     def add(section: str, value: object, available: bool) -> None:
         option_id = str(value or "").strip()
+        if section == "intents":
+            option_id = canonical_intent(option_id)
         if option_id:
             dynamic[section][option_id] = dynamic[section].get(option_id, False) or available
 
@@ -309,7 +317,19 @@ def policy_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
     choices: dict[str, list[dict[str, Any]]] = {}
     for section in ("protocols", "intents", "workflows", "models"):
         prose = _catalog_option_map(catalog, section)
-        choices[section] = [_choice(option_id, available=available, prose=prose.get(option_id)) for option_id, available in sorted(dynamic[section].items())]
+        ids = sorted(dynamic[section])
+        if section == "intents":
+            # Catalog order puts member tasks first; extension ids follow by id.
+            rank = {option_id: index for index, option_id in enumerate(prose)}
+            ids.sort(key=lambda option_id: rank.get(option_id, len(rank)))
+        choices[section] = [_choice(option_id, available=dynamic[section][option_id], prose=prose.get(option_id)) for option_id in ids]
+    # Saved plans may hold a route spelling of an intent; the editor shows it
+    # checked under its plan id.
+    aliases_by_intent: dict[str, list[str]] = {}
+    for alias, intent in sorted(intent_aliases_from_catalog(catalog.get("intents") or []).items()):
+        aliases_by_intent.setdefault(intent, []).append(alias)
+    for choice in choices["intents"]:
+        choice["aliases"] = aliases_by_intent.get(choice["id"], [])
     for section in ("exposure", "trust_tiers", "resource_tiers", "tags"):
         prose = _catalog_option_map(catalog, section)
         ids = capability_values[section] | set(prose)

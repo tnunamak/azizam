@@ -24,47 +24,87 @@ protocols:
     simulator: false
 
 intents:
+  # Plan vocabulary: the intent ids runtime routes stamp on requests. A plan
+  # value matches an exact id or a dotted family ("chat" covers
+  # chat.completions, chat.responses and chat.messages). Protocol frontends
+  # describe the same work in route spellings; `aliases` maps each of those to
+  # its plan id, so a plan saved with either spelling allows the same requests.
+  # Labels for member tasks match taskNames in web/src/lib/terms.ts.
   - id: chat
     label: Chat
     summary_label: chat
-    description: chat completions and messages
+    description: chat completions, responses and messages
+    aliases: [chat.completions]
     default: true
   - id: text.completions
     label: Text completions
     summary_label: text completions
     description: legacy completion clients
   - id: text.embeddings
-    label: Embeddings
+    label: Turn text into numbers
     summary_label: embeddings
-    description: RAG, search, memory, indexes
+    description: embeddings and reranking for search, memory, indexes
+    aliases: [embeddings]
   - id: image.generate
-    label: Image generation
+    label: Make a picture
     summary_label: image generation
     description: text to image workflows
+    aliases: [images.generate, images.generations]
   - id: image.edit
-    label: Image editing
+    label: Edit a picture
     summary_label: image editing
     description: inpaint, mask, ControlNet-like workflows
+    aliases: [images.edit, images.edits]
   - id: speech.synthesis
-    label: Text to speech
+    label: Read text aloud
     summary_label: text to speech
-    description: voice output
+    description: voice output and the voice list
+    aliases: [audio.speech]
   - id: speech.transcription
-    label: Speech to text
+    label: Turn a recording into text
     summary_label: speech transcription
     description: transcription input
+    aliases: [audio.transcriptions]
+  - id: speech.translation
+    label: Translate a recording into English text
+    summary_label: speech translation
+    description: speech translation input
+    aliases: [audio.translations]
   - id: audio.generate
-    label: Music / sound
+    label: Make music or sounds
     summary_label: music/audio generation
     description: audio generation workflows
   - id: video.generate
-    label: Video
+    label: Make a video
     summary_label: video generation
     description: expensive queued video jobs
+    aliases: [videos.generate]
+  - id: video.remix
+    label: Remix a video
+    summary_label: video remix
+    description: change or replace parts of a finished video
+  - id: decision.systemone
+    label: Choose an option
+    summary_label: decisions
+    description: typed judgments for apps
   - id: models.list
-    label: Model list
+    label: List models
     summary_label: model list
     description: show compatible models to clients
+    aliases: [capabilities.list]
+  - id: jobs.create
+    label: Background jobs
+    summary_label: background jobs
+    description: no request checks this yet; each job checks the task it makes
+  - id: assets.read
+    label: Read creations
+    summary_label: creations
+    description: no request checks this yet; each creation checks the task that made it
+  - id: provider.native
+    label: Provider passthrough
+    summary_label: provider passthrough
+    description: raw provider APIs; also needs native passthrough
+    aliases: [providers.native]
 
 resource_tiers:
   - id: interactive
