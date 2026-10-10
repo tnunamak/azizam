@@ -248,6 +248,11 @@ def test_direct_image_job_rejects_malformed_prompt_controls_before_idempotency(h
     receipt_store.init_db(receipt_path)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipt_path)
     monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
+    finish = proxy.finish_image_route_receipt
+    def finish_with_context(receipt, response):
+        assert proxy.media_delivery.current().receipt is receipt
+        return finish(receipt, response)
+    monkeypatch.setattr(proxy, "finish_image_route_receipt", finish_with_context)
     response = asyncio.run(proxy.gateway_image_generations_media_job(_StubJsonRequest(
         {"prompt": "invalid private sentinel", "extensions": {prompt_memory.NAMESPACE: {"mode": "invalid"}}},
         headers={"idempotency-key": "invalid-mode"})))
