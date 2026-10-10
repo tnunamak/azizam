@@ -273,3 +273,26 @@ def test_direct_image_job_rejects_malformed_prompt_controls_before_idempotency(h
         headers={"idempotency-key": "invalid-mode"})))
     assert response.status_code == 400, response.body
     assert json.loads(response.body)["error"]["code"] == "invalid_prompt_mode"
+
+
+def test_async_identity_failure_does_not_save_backend_prompt_echo(household, monkeypatch):
+    from gateway import identity_scene
+    hh = household
+    secret_prompt = "identity private failure sentinel"
+    async def fail(auth, request):
+        raise RuntimeError(request.prompt)
+    monkeypatch.setattr(proxy.app.state, "identity_execute", fail, raising=False)
+    async def run():
+        proxy._begin_media_delivery(hh.auth)
+        assert proxy._note_media_metadata_body({"prompt": secret_prompt, "extensions": FORGET}) is None
+        result = await proxy._identity_submit_job(_StubJsonRequest({}), hh.auth,
+            identity_scene.SceneRequest(photos=[b"image"], prompt=secret_prompt), "b64_json")
+        await asyncio.gather(*list(proxy._identity_job_tasks))
+        return result
+    response = asyncio.run(run())
+    job_id = json.loads(response.body)["id"]
+    job = media_jobs.get(job_id, audience="internal", path=hh.jobs)
+    assert job["status"] == media_jobs.STATUS_FAILED
+    assert "RuntimeError" in job["error"]
+    assert secret_prompt not in json.dumps(job)
+    assert secret_prompt.encode() not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
