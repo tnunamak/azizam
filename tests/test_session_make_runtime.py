@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import time
 import sys
 import tempfile
 import unittest
@@ -15,9 +17,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import admin_store, me_make, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
+MADE_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 SOURCE = "img_" + "5e" * 32
 OUTPUT = "img_" + "0a" * 32
 
@@ -202,6 +207,87 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         for thread in threads:
             thread.join(10)
         self.assertEqual(sorted(outcomes), ["created"] + ["refused"] * 7)
+
+    def _published(self) -> list[str]:
+        return sorted(path.name for path in (self.root / "cache").iterdir() if not path.name.startswith("5e5e"))
+
+    def _publishing_route(self, entered: asyncio.Event, release: asyncio.Event, *, stoppable: bool):
+        user_id = self.user["id"]
+
+        async def route(request, auth_context, receipt=None):
+            # What the image route does: a remembered prompt, then the picture.
+            context = media_delivery.begin(profile_default=None)
+            context.person_id = user_id
+            context.prompt_decision = prompt_memory.Decision(user_id, True, "test", None, int(time.time()))
+            context.prompt_text = "private make prompt"
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                if stoppable:
+                    raise
+                # A backend that cannot be stopped finishes its work anyway.
+            asset_id = proxy.store_image_bytes(MADE_PNG)
+            return Response(content=json.dumps({"data": [{"asset_id": asset_id, "url": "http://x/y"}]}),
+                            status_code=200, media_type="application/json")
+
+        return route
+
+    def _run_job(self, *, cancel: bool, stoppable: bool = True) -> tuple[bool | None, dict]:
+        job_id = "mj_cancel_me"
+        media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id="req_cancel_me",
+                                              app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                          path=media_jobs.DB_PATH)
+        self.runtime.keep_payload(job_id, {**self._payload("image.generate"), "job_id": job_id})
+
+        async def main() -> bool | None:
+            entered, release = asyncio.Event(), asyncio.Event()
+            route = self._publishing_route(entered, release, stoppable=stoppable)
+            with patch.object(proxy, "proxy_comfy_request", route), \
+                    patch.object(proxy, "_image_media_job_semaphore", asyncio.Semaphore(1)):
+                self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime,
+                                                              jobs_path=media_jobs.DB_PATH))
+                await entered.wait()
+                accepted = await asyncio.to_thread(self.runtime.request_cancel, job_id) if cancel else None
+                release.set()
+                await asyncio.gather(*list(proxy._image_media_job_tasks))
+            return accepted
+
+        accepted = asyncio.run(main())
+        return accepted, media_jobs.get(job_id, path=media_jobs.DB_PATH)
+
+    def test_uncanceled_job_publishes_its_picture_and_keeps_the_prompt(self) -> None:
+        # Control for the cancel tests below: this route does publish and remember.
+        _, job = self._run_job(cancel=False)
+        self.assertEqual(job["status"], media_jobs.STATUS_SUCCEEDED, job)
+        self.assertEqual(len(self._published()), 2, "the picture and its metadata sidecar")
+        self.assertEqual(len(prompt_memory.get_person_prompts(self.user["id"])), 1)
+
+    def test_cancel_stops_a_running_job_before_it_publishes(self) -> None:
+        accepted, job = self._run_job(cancel=True, stoppable=True)
+        self.assertTrue(accepted)
+        self.assertEqual(job["status"], media_jobs.STATUS_CANCELED, job)
+        self.assertEqual(job["assets"], [])
+        self.assertEqual(self._published(), [])
+        self.assertEqual(prompt_memory.get_person_prompts(self.user["id"]), {})
+        self.assertIsNone(self.runtime.load_payload("mj_cancel_me"))
+
+    def test_cancel_never_publishes_when_the_backend_cannot_be_stopped(self) -> None:
+        accepted, job = self._run_job(cancel=True, stoppable=False)
+        self.assertTrue(accepted)
+        self.assertEqual(job["status"], media_jobs.STATUS_CANCELED, job)
+        self.assertEqual(job["assets"], [])
+        self.assertEqual(self._published(), [], "the late picture is never stored")
+        self.assertEqual(prompt_memory.get_person_prompts(self.user["id"]), {}, "nor its prompt")
+
+    def test_cancel_after_publication_is_refused(self) -> None:
+        gate = proxy._MakePublishGate()
+        token = proxy._MAKE_PUBLISH_GATE.set(gate)
+        try:
+            proxy.store_image_bytes(MADE_PNG)
+        finally:
+            proxy._MAKE_PUBLISH_GATE.reset(token)
+        self.assertFalse(gate.cancel(), "a published picture cannot be un-published by cancel")
 
     def test_forget_payload_never_reaches_disk(self) -> None:
         payload = self._payload(prompt="forget spool sentinel",

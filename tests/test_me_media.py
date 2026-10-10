@@ -1015,6 +1015,9 @@ class _GatedMakeRuntime:
         self.fail_with: BaseException | None = None
         self.threads: list = []
         self.limits = me_make.MakeLimits()
+        self.canceled: set[str] = set()
+        self.autostart = True
+        self.pending: list = []
 
     def keep_payload(self, job_id: str, payload) -> None:
         self.payloads[job_id] = json.loads(json.dumps(payload))
@@ -1025,10 +1028,17 @@ class _GatedMakeRuntime:
     def drop_payload(self, job_id: str) -> None:
         self.payloads.pop(job_id, None)
 
+    def request_cancel(self, job_id: str) -> bool:
+        self.canceled.add(job_id)
+        return True
+
     def schedule(self, job_id: str, run) -> None:
         import asyncio
         import threading
 
+        if not self.autostart:  # Stays queued until the test runs it.
+            self.pending.append(run)
+            return
         thread = threading.Thread(target=lambda: asyncio.run(run()), daemon=True)
         self.threads.append(thread)
         thread.start()
@@ -1040,6 +1050,8 @@ class _GatedMakeRuntime:
         self.calls.append(json.loads(json.dumps(payload)))
         self.started.set()
         await asyncio.to_thread(self.release.wait, 10)
+        if payload["job_id"] in self.canceled:
+            raise me_make.MakeCanceled()
         if self.fail_with is not None:
             raise self.fail_with
         output = "img_" + hashlib.sha256(payload["job_id"].encode()).hexdigest()
@@ -1262,19 +1274,50 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(self._finished(foreign["job_id"])["status"], media_jobs.STATUS_SUCCEEDED)
 
     def test_make_owner_can_cancel_own_running_job(self) -> None:
-        # Cancel is honoured for the whole lifecycle: a late backend result is dropped.
+        # A running job's work may not stop at once, so the job says
+        # cancel_requested until it settles, then canceled with no output.
         self.runtime.release.clear()
         _, job = self._submit_make("cancel-mine")
         self.assertTrue(self.runtime.started.wait(5))
-        response = self.client.post(f"{self.make_url}/{job['job_id']}/cancel",
-                                    headers=self._make_headers("cancel-mine"))
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["job"]["status"], media_jobs.STATUS_CANCELED)
+        url = f"{self.make_url}/{job['job_id']}"
+        response = self.client.post(f"{url}/cancel", headers=self._make_headers("cancel-mine"))
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["job"]["status"], me_make.CANCEL_REQUESTED)
+        self.assertEqual(self.runtime.payloads, {}, "the prompt is not kept for a canceled job")
+        self.assertEqual(self.client.get(url).json()["job"]["status"], me_make.CANCEL_REQUESTED)
+        self.assertEqual([item["status"] for item in self._make_list()], [me_make.CANCEL_REQUESTED])
         self.runtime.release.set()
         stored = self._finished(job["job_id"])
         self.assertEqual(stored["status"], media_jobs.STATUS_CANCELED)
         self.assertEqual(stored["assets"], [])
-        self.assertEqual(self.runtime.payloads, {})
+        self.assertEqual(self.client.get(url).json()["job"]["status"], media_jobs.STATUS_CANCELED)
+        library = self.client.get("/me/api/media").json()
+        self.assertNotIn(job["job_id"], json.dumps(library))
+        finished = self.client.post(f"{url}/cancel", headers=self._make_headers("cancel-mine"))
+        self.assertEqual(finished.status_code, 409, finished.text)
+
+    def test_make_restart_settles_a_pending_cancel_as_canceled(self) -> None:
+        self.runtime.release.clear()
+        _, job = self._submit_make("cancel-then-restart")
+        self.assertTrue(self.runtime.started.wait(5))
+        self.client.post(f"{self.make_url}/{job['job_id']}/cancel", headers=self._make_headers("cancel-then-restart"))
+        resumed = me_make.resume_jobs(runtime=self.runtime, jobs_path=self.jobs_db)
+        self.assertEqual(resumed, 0)
+        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_CANCELED)
+
+    def test_make_cancel_of_a_queued_job_is_immediate(self) -> None:
+        import asyncio
+
+        self.runtime.autostart = False
+        _, job = self._submit_make("cancel-queued")
+        response = self.client.post(f"{self.make_url}/{job['job_id']}/cancel",
+                                    headers=self._make_headers("cancel-queued"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["job"]["status"], media_jobs.STATUS_CANCELED)
+        for run in self.runtime.pending:
+            asyncio.run(run())
+        self.assertEqual(self.runtime.calls, [], "a canceled job never reaches the backend")
+        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_CANCELED)
 
     def _refused(self, key: str, status: int, code: str, **overrides) -> dict:
         jobs_before = media_jobs.count(path=self.jobs_db)

@@ -28,6 +28,9 @@ from gateway.receipts import RouteReceipt, new_request_id
 
 APP_NAME = "Azizam"
 JOB_MODE = "session_make"
+# Shown while a canceled job's work settles; it then becomes ``canceled``.
+CANCEL_REQUESTED = "cancel_requested"
+_CANCELED = "Canceled by requester"
 ROUTE_PATH = "/me/api/make/jobs"
 SUPPORTED_INTENTS = frozenset({"image.generate", "image.edit"})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
@@ -44,6 +47,10 @@ SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 # (request, person id, asset id) -> the person's Library item, or None.
 OwnedAssetFinder = Callable[[Request, str, str], Mapping[str, Any] | None]
+
+
+class MakeCanceled(Exception):
+    """The runtime stopped a job because its person canceled it."""
 
 
 class MakeBackendError(Exception):
@@ -81,6 +88,14 @@ class MakeRuntime(Protocol):
     def drop_payload(self, job_id: str) -> None: ...
 
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None: ...
+
+    def request_cancel(self, job_id: str) -> bool:
+        """Stop a job's work. Return False only if its output is already published.
+
+        After True, the job publishes nothing and keeps no prompt, and
+        ``execute`` for it ends with ``MakeCanceled``.
+        """
+        ...
 
     async def execute(self, payload: Mapping[str, Any]) -> list[Mapping[str, Any]]: ...
 
@@ -158,10 +173,9 @@ def add_make_routes(
             limit = _bounded_limit(request.query_params.get("limit"))
             app = admin_store.get_session_app_for_user(str(user["id"]), path=admin_path)
             jobs = [] if app is None else media_jobs.recent(
-                limit, audience="client", app_ids=[str(app["id"])], status=status,
-                path=_resolve(media_jobs_path),
+                limit, app_ids=[str(app["id"])], status=status, path=_resolve(media_jobs_path),
             )
-            return _json({"jobs": jobs})
+            return _json({"jobs": [_client_view(job) for job in jobs]})
         except _MakeError as exc:
             return _error(exc)
 
@@ -173,8 +187,8 @@ def add_make_routes(
                 return resolved
             user, admin_path = resolved
             jobs_path = _resolve(media_jobs_path)
-            _own_make_job(job_id, str(user["id"]), admin_path=admin_path, jobs_path=jobs_path)
-            return _json({"job": media_jobs.get(job_id, audience="client", path=jobs_path)})
+            return _json({"job": _client_view(_own_make_job(job_id, str(user["id"]),
+                                                            admin_path=admin_path, jobs_path=jobs_path))})
         except _MakeError as exc:
             return _error(exc)
 
@@ -187,17 +201,35 @@ def add_make_routes(
             user, admin_path = resolved
             jobs_path = _resolve(media_jobs_path)
             job = _own_make_job(job_id, str(user["id"]), admin_path=admin_path, jobs_path=jobs_path)
+            finished = _MakeError("job_finished", "This job has already finished", 409)
             if job.get("status") in media_jobs.TERMINAL_STATUSES:
-                raise _MakeError("job_finished", "This job has already finished", 409)
-            try:
-                media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED,
-                                         error="Canceled by requester", path=jobs_path)
+                raise finished
+            if runtime is not None and not runtime.request_cancel(job_id):
+                raise _MakeError("job_finishing", "This job has already made its picture", 409)
+            try:  # A job that has not started stops here.
+                media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error=_CANCELED,
+                                         expected_status=media_jobs.STATUS_QUEUED, path=jobs_path)
+                _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path)
             except ValueError:
-                raise _MakeError("job_finished", "This job has already finished", 409) from None
-            _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path)
+                try:  # A running job stops in the background and then settles as canceled.
+                    media_jobs.update_status(
+                        job_id, media_jobs.STATUS_RUNNING,
+                        metadata_patch={"cancel_requested_at": int(time.time())},
+                        expected_status=media_jobs.STATUS_RUNNING, path=jobs_path,
+                    )
+                    _event(job_id, "cancel_requested", media_jobs.STATUS_RUNNING, jobs_path)
+                except ValueError:
+                    pass
+            # Only after the status moves: a runner that is just starting must
+            # see the cancel, not a missing payload.
             if runtime is not None:
                 runtime.drop_payload(job_id)
-            return _json({"job": media_jobs.get(job_id, audience="client", path=jobs_path)})
+            current = _client_job(job_id, jobs_path)
+            if current.get("status") == media_jobs.STATUS_CANCELED:
+                return _json({"job": current})
+            if current.get("status") != CANCEL_REQUESTED:
+                raise finished
+            return _json({"job": current}, 202)
         except _MakeError as exc:
             return _error(exc)
 
@@ -225,6 +257,9 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path) -> int:
             if (job.get("metadata") or {}).get("mode") != JOB_MODE:
                 continue
             job_id = str(job["job_id"])
+            if (job.get("metadata") or {}).get("cancel_requested_at"):
+                _settle_canceled(job_id, jobs_path)
+                continue
             if runtime.load_payload(job_id) is None:
                 # A forgotten prompt lived only in memory; it cannot be resumed.
                 _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
@@ -411,6 +446,9 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     prompt = str((payload.get("body") or {}).get("prompt") or "")
     try:
         produced = await runtime.execute(payload)
+    except MakeCanceled:
+        _settle_canceled(job_id, jobs_path)
+        return
     except MakeBackendError as exc:
         # Even a public backend message must not carry the prompt into storage.
         message = exc.public_message.replace(prompt, "[prompt]") if prompt else exc.public_message
@@ -434,6 +472,14 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     except ValueError:  # Canceled while running: the late result is dropped.
         return
     _event(job_id, "succeeded", media_jobs.STATUS_SUCCEEDED, jobs_path, progress=100)
+
+
+def _settle_canceled(job_id: str, jobs_path: Path) -> None:
+    try:
+        media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error=_CANCELED, path=jobs_path)
+    except ValueError:  # Already terminal.
+        return
+    _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path, progress=100)
 
 
 def _fail(job_id: str, message: str, jobs_path: Path, *, http_status: int | None = None) -> None:
@@ -475,7 +521,19 @@ def _replay_status(job: Mapping[str, Any]) -> int:
 
 
 def _client_job(job_id: str, jobs_path: Path) -> dict[str, Any]:
-    return media_jobs.get(job_id, audience="client", path=jobs_path) or {}
+    job = media_jobs.get(job_id, path=jobs_path)
+    return _client_view(job) if job is not None else {}
+
+
+def _client_view(job: Mapping[str, Any]) -> dict[str, Any]:
+    """The client's view of a job. A running job whose cancel has not settled
+    shows ``cancel_requested``: its work may still be running, but it will
+    publish nothing."""
+    view = media_jobs.for_audience(job, "client")
+    if (job.get("status") == media_jobs.STATUS_RUNNING
+            and (job.get("metadata") or {}).get("cancel_requested_at")):
+        view["status"] = CANCEL_REQUESTED
+    return view
 
 
 def _bounded_limit(raw: str | None) -> int:

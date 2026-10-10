@@ -6938,7 +6938,59 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
 _CURRENT_MAKER = object()
 
 
-def store_asset_bytes(
+class MediaPublishCanceled(Exception):
+    """A canceled make job tried to publish output."""
+
+
+class _MakePublishGate:
+    """Decides once, under one lock, whether a make job publishes or is canceled.
+
+    Publication (``store_asset_bytes``, which also keeps the prompt) and
+    cancel take the same lock, so a job never does both.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.canceled = False
+        self.published = False
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.call: asyncio.Future | None = None
+
+    def cancel(self) -> bool:
+        """Cancel unless output is already published. Safe from any thread."""
+        with self.lock:
+            if self.published:
+                return False
+            self.canceled = True
+            loop, call = self.loop, self.call
+        if loop is not None and call is not None:
+            loop.call_soon_threadsafe(call.cancel)
+        return True
+
+
+_MAKE_PUBLISH_GATE: contextvars.ContextVar[_MakePublishGate | None] = contextvars.ContextVar(
+    "make_publish_gate", default=None,
+)
+
+
+def store_asset_bytes(content: bytes, **options: Any) -> str:
+    """Store clean media; any retained prompt lives only in asset_prompts.
+
+    Inside a canceled make job this publishes nothing and raises
+    ``MediaPublishCanceled``.
+    """
+    gate = _MAKE_PUBLISH_GATE.get()
+    if gate is None:
+        return _store_asset_bytes(content, **options)
+    with gate.lock:
+        if gate.canceled:
+            raise MediaPublishCanceled("the make job was canceled")
+        asset_id = _store_asset_bytes(content, **options)
+        gate.published = True
+    return asset_id
+
+
+def _store_asset_bytes(
     content: bytes,
     *,
     kind: str = "img",
@@ -14359,6 +14411,9 @@ class _SessionMakeRuntime:
 
     limits = SESSION_MAKE_LIMITS
 
+    def __init__(self) -> None:
+        self._gates: dict[str, _MakePublishGate] = {}
+
     def keep_payload(self, job_id: str, payload: Mapping[str, Any]) -> None:
         _spool_media_job_payload(job_id, copy.deepcopy(dict(payload)))
 
@@ -14372,6 +14427,7 @@ class _SessionMakeRuntime:
         if job_id in _image_media_job_scheduled:
             return
         _image_media_job_scheduled.add(job_id)
+        self._gates.setdefault(job_id, _MakePublishGate())
 
         async def bounded() -> None:
             async with _image_media_job_semaphore:
@@ -14383,12 +14439,21 @@ class _SessionMakeRuntime:
         def _done(done_task: asyncio.Task) -> None:
             _image_media_job_tasks.discard(done_task)
             _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
             if not done_task.cancelled() and done_task.exception() is not None:
                 print(f"[proxy] make job task crashed for {job_id}: {done_task.exception()}", flush=True)
 
         task.add_done_callback(_done)
 
+    def request_cancel(self, job_id: str) -> bool:
+        gate = self._gates.get(job_id)
+        # A job with no gate is not running here, so it cannot publish.
+        return True if gate is None else gate.cancel()
+
     async def execute(self, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        gate = self._gates.get(str(payload.get("job_id") or "")) or _MakePublishGate()
+        if gate.canceled:
+            raise me_make.MakeCanceled()
         auth = payload.get("auth") or {}
         identity = runtime_identity_for_session_app(
             str(auth.get("app_id") or ""), str(auth.get("person_id") or ""),
@@ -14429,15 +14494,44 @@ class _SessionMakeRuntime:
         else:
             # Erasure fences compare against when the person asked, not when it ran.
             token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
+            gate_token = _MAKE_PUBLISH_GATE.set(gate)
             try:
-                response = await call(request, auth_context, receipt=receipt)
+                response = await _cancellable_make_call(gate, call(request, auth_context, receipt=receipt))
             finally:
+                _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
         finish_image_route_receipt(receipt, response)
+        if gate.canceled:
+            raise me_make.MakeCanceled()
         if not 200 <= int(response.status_code) < 300:
             raise me_make.MakeBackendError(_media_job_failure_message(response),
                                            http_status=int(response.status_code))
         return _assets_from_image_response(response)
+
+
+async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Response]) -> Response:
+    """Run a make job's route call so that ``gate.cancel`` stops it.
+
+    The backend may finish its own work, but the gate keeps the output from
+    being published. Shutdown cancels the whole task instead, and that still
+    raises ``CancelledError`` so the job can resume.
+    """
+    call = asyncio.ensure_future(work)
+    with gate.lock:
+        gate.loop, gate.call = asyncio.get_running_loop(), call
+        if gate.canceled:
+            call.cancel()
+    try:
+        return await call
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if gate.canceled and (current is None or not current.cancelling()):
+            raise me_make.MakeCanceled() from None
+        raise
+    except Exception:
+        if gate.canceled:
+            raise me_make.MakeCanceled() from None
+        raise
 
 
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
