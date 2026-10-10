@@ -93,7 +93,7 @@ export function HouseholdPromptsSection() {
           <p role="alert" className="text-muted-foreground text-meta p-4">
             Only the owner can change this.
           </p>
-        ) : isError || !data ? (
+        ) : isError || !data?.prompt_memory ? (
           <div className="p-4">
             <ErrorState
               heading="Couldn’t load prompt settings"
@@ -125,7 +125,7 @@ export function HouseholdPromptsSection() {
         </Link>
         .
       </p>
-      {data ? (
+      {data?.prompt_memory ? (
         <ConfirmDialog
           open={pending !== null}
           onOpenChange={(open) => !open && setPending(null)}

@@ -119,7 +119,7 @@ function PromptsSection() {
         <Skeleton className="h-48 w-full" />
       </div>
     );
-  if (isError || !data)
+  if (isError || !data?.prompt_memory)
     return (
       <ErrorState
         heading="Couldn’t load your prompt settings"
