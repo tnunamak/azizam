@@ -65,7 +65,7 @@ export function OverflowMenuItem({
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         danger
           ? "text-danger data-[highlighted]:bg-danger/15"
-          : "text-foreground",
+          : "text-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground",
         className,
       )}
       {...props}
