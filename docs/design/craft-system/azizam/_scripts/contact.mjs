@@ -19,6 +19,7 @@ const allSurfaces = [
   ["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"],
   ["try", "/ui/try/"], ["people", "/ui/people/"], ["usage", "/ui/usage/"],
   ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"], ["apps", "/ui/apps/"],
+  ["activity", "/ui/activity/"], ["models", "/ui/models/"], ["engines", "/ui/engines/"], ["providers", "/ui/providers/"],
 ];
 // CONTACT_SURFACES=settings,people picks surfaces; the default is the eight in MEASUREMENTS.md.
 const only = (process.env.CONTACT_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
