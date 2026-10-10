@@ -66,7 +66,7 @@ def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys
     admin_store.init_db(hh.admin)
     unknown = admin_store.find_credential_by_hash('sha256:unknown', path=hh.admin)
     assert unknown['created_by'] is None
-    assert person_for_app_credential(hh.app, unknown) == hh.robin['id']
+    assert person_for_app_credential(hh.app, unknown) is None
     assert admin_store.find_credential_by_hash('sha256:known', path=hh.admin)['created_by'] == hh.robin['id']
     assert 'unresolved=1' in capsys.readouterr().out
 

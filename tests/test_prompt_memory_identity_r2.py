@@ -104,9 +104,9 @@ def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     assert auth is not None and auth.person_id is None
 
 
-def test_legacy_personal_key_remembers_prompt_and_keeps_library_item(hh):
+def test_resolved_legacy_personal_key_remembers_prompt_and_keeps_library_item(hh):
     legacy = admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"], app_id=hh.robin_app["id"],
-                                                hash=hash_api_key("legacy-robin-key"), prefix="legacy", path=hh.admin)
+                                                hash=hash_api_key("legacy-robin-key"), prefix="legacy", created_by=hh.robin["id"], path=hh.admin)
     auth = _ctx_for("legacy-robin-key", hh.admin)
     assert auth.identity.person_id == hh.robin["id"]
     ctx = proxy._begin_media_delivery(auth)
@@ -237,7 +237,7 @@ def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
     assert SENTINEL.encode() not in proxy.asset_cache_path(asset_id).read_bytes()
 
 
-def test_legacy_personal_key_honors_its_app_owners_off_setting(hh):
+def test_unresolved_legacy_personal_key_has_no_prompt_access(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"],
         hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin)
@@ -248,8 +248,8 @@ def test_legacy_personal_key_honors_its_app_owners_off_setting(hh):
         asset_id = proxy.store_asset_bytes(_png(SENTINEL), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
     finally:
         proxy.media_delivery._CONTEXT.set(None)
-    assert ctx.prompt_decision.person_id == hh.robin["id"]
-    assert ctx.prompt_decision.reason == "member_disabled"
+    assert ctx.prompt_decision.person_id is None
+    assert ctx.prompt_decision.reason == "no_person"
     item = next(item for item in _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin)) if item["asset_id"] == asset_id)
     assert item["prompt"] is None
     assert SENTINEL.encode() not in proxy.asset_cache_path(asset_id).read_bytes()

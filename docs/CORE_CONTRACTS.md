@@ -601,10 +601,9 @@ this cleanup; its unresolved count is not known before upgrade. The regression
 fixture leaves exactly one unresolved key and verifies `unresolved=1`.
 
 At read time, a pre-upgrade key with no recorded creator (`created_by IS NULL`)
-on a personal App is treated as created by that App's owner. This preserves
-existing keys and applies the owner's prompt-memory setting. Service App keys
-remain no-person. New keys minted by non-human administrators record an empty
-creator, which explicitly excludes them from the legacy fallback. Sharing your
+has no person. It keeps App access, but cannot read the App owner’s saved
+prompts or full workflow downloads. Service App keys also have no person.
+New keys minted by non-human administrators record an empty creator. Sharing your
 own personal App key delegates your person identity, including access to your
 saved prompts and full workflow downloads.
 

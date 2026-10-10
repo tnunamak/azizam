@@ -99,7 +99,7 @@ def test_personal_key_must_be_minted_by_its_own_app_owner(tmp_path):
         assert credential["created_by"] == creator
     legacy = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
         hash=hash_api_key("legacy-key"), prefix="legacy", path=path)
-    assert runtime_identity_for_app_credential_hash(legacy["hash"], path=path).person_id == member["id"]
+    assert runtime_identity_for_app_credential_hash(legacy["hash"], path=path).person_id is None
 
 
 def test_new_output_from_owner_key_is_not_saved_as_the_app_owner(tmp_path, monkeypatch):
@@ -317,4 +317,4 @@ def test_home_identity_uses_session_person_or_personal_app_owner_key(tmp_path):
     assert other_creator.person_id is None
     unknown_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"hash": "sha256:old"},
                                 None, path, person_id="native-person")
-    assert unknown_creator.person_id == "native-person"
+    assert unknown_creator.person_id is None

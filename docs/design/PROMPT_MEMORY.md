@@ -68,9 +68,10 @@ prompt or maker-only workflow export. Library visibility uses App access,
 independent of creator metadata.
 
 After the audit backfill, unresolved personal-App keys with NULL
-`credentials.created_by` use the App owner at read time; legacy service keys
-remain no-person. Newly minted non-human keys record an empty creator, so they cannot use that fallback. Sharing an
-own personal-App key delegates the owner's identity and prompt access.
+`credentials.created_by` have no person. They retain App access, but cannot
+read the owner’s saved prompts or full workflow downloads. Legacy service keys
+also have no person. Sharing a key whose recorded creator is its personal-App
+owner delegates that owner’s identity and prompt access.
 The owner can read databases or issue a reset link to sign in as a member.
 Privacy in the UI/API does not protect against that server authority.
 
@@ -159,13 +160,19 @@ legacy crash scratch files are removed. Lossless JPEG/WebP metadata insertion
 preserves compressed image data, and clean WAV/MP3/FLAC stripping requires no
 ffmpeg. Input-reference resolution and MCP reads strip metadata on delivery.
 
-Delete-all and the kill switch remove database rows immediately and queue
+Switching memory off records a durable erasure intent and late-write cutoff
+in the same transaction as the preference. A later re-enable cannot cancel
+that intent. Failed database deletion stays pending and maintenance retries
+until it succeeds, preserving rows created after the cutoff. If recording
+intent fails, the API returns 503 and leaves the preference unchanged.
+Delete-all and the kill switch normally remove database rows immediately and queue
 file stripping for background work. HTTP 202 reports queued cleanup; the
 settings GET keeps queued/retrying status visible until the persisted queue
 is drained. Startup and periodic maintenance retry unfinished work. Cleanup
 uses recorded setting-change cutoffs, preserving prompts and chats saved after
 a member re-enables memory. The kill switch takes effect before cleanup and blocks
-new prompt writes. Recent video prompts with unknown creators are removed at
+new prompt writes. Settings report database deletion as pending until it has
+completed; queued file cleanup remains visible separately. Recent video prompts with unknown creators are removed at
 upgrade rather than assigned to an App's owner.
 
 Normal async jobs survive restarts. No-person service/LAN jobs keep the original
@@ -180,8 +187,7 @@ prompts or conversations.
 
 Legacy App keys recover their creator from creation audit events at upgrade.
 The migration reads audit facts outside write transactions and commits no more
-than 100 key updates at a time. Unknown creators retain the personal-App-owner
-fallback. Startup reports the unresolved key count; see CORE_CONTRACTS for
+than 100 key updates at a time. Unknown creators have no person and cannot access the App owner’s prompts. Startup reports the unresolved key count; see CORE_CONTRACTS for
 the counting query and the access consequence. Policy reads take no write lock
 when the member preference already exists. Contention during legacy preference
 initialization degrades to no prompt storage, while inference proceeds.

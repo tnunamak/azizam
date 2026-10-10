@@ -7,9 +7,9 @@ checkout changes, deployments, service restarts or pushes.
 
 | Finding | Result | Evidence or remaining limit |
 | --- | --- | --- |
-| P0-1: App keys inherit another person’s identity | Fixed | Session/OIDC person or own personal-App owner key is the maker. Owner-created member-App keys have no person and cannot read member prompts or full workflows. Legacy personal-App keys use the App owner at read time; item visibility remains App-based. |
+| P0-1: App keys inherit another person’s identity | Fixed | Session/OIDC person or own personal-App owner key is the maker. Owner-created member-App keys have no person and cannot read member prompts or full workflows. Legacy personal-App keys with unresolved creators have no person; item visibility remains App-based. |
 | P1-1: Deleted/orphan prompts survive | Fixed | Library/video deletion, cache eviction, member removal and video failure remove rows. Independent maintenance deletes expired, missing-asset and 14-day unfetched-video rows. |
-| P1-2: Legacy embedded prompts survive | Fixed | Resumable throttled migration strips cached image/audio/video metadata. Delete and kill paths remove rows immediately and queue stripping; unfinished files return 202 with visible durable retries. Corrupt/unsupported files stay honestly pending. |
+| P1-2: Legacy embedded prompts survive | Fixed | Resumable throttled migration strips cached image/audio/video metadata. Delete and kill paths remove rows or record pending erasure and queue stripping; unfinished files return 202 with visible durable retries. Corrupt/unsupported files stay honestly pending. |
 | P1-3: Responses scoped by App name | Fixed | Person plus immutable App ID, or credential hash fallback. Old unscoped rows are inaccessible. Same-name Try Apps cannot share chats. |
 | P1-4: Default flip silently enables members | Fixed | Preferences materialize at rollout and user creation, and missing rows freeze before a default change. The kill switch still overrides them. |
 | P1-5: Normal service/LAN jobs lose restart durability | Fixed | Normal jobs retain private execution spools. No-person prompts remain there only because inference cannot resume with redacted input; terminal cleanup removes them. Explicit privacy controls use memory only. |
@@ -105,7 +105,7 @@ The frontend key form remains deferred.
 P2-19 and P2-20 use the setting change's timestamp for erasure and separate
 row deletion from queued file stripping. A stale maintenance pass cannot
 advance an erasure cutoff to include prompts or chats saved after re-enabling
-memory. Delete-all removes database rows immediately and returns HTTP 202 with
+memory. Delete-all normally removes database rows immediately and returns HTTP 202 with
 queued cleanup status. The authenticated settings GET reports queued/retrying
 file work until it completes. Cleanup intent survives restarts, including a
 spool failure before file stripping. Delayed memory-off callbacks use the
