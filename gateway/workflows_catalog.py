@@ -163,8 +163,10 @@ def _workflow_row(
     capability = _capability_from_intent(record.intent, record.manifest.get("capability"))
     manifest_purpose = summary.get("purpose")
     purpose = manifest_purpose.strip() if isinstance(manifest_purpose, str) else ""
-    description = purpose or _workflow_description(summary.get("description"), capability)
-    technical_notes = _workflow_technical_notes(summary.get("description"), description)
+    member_summary = record.manifest.get("summary")
+    member_summary = " ".join(member_summary.split()) if isinstance(member_summary, str) else ""
+    description = member_summary or purpose or _workflow_description(summary.get("description"), capability)
+    technical_notes = None if member_summary else _workflow_technical_notes(summary.get("description"), description)
 
     row = {
         "id": record.id,

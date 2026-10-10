@@ -10,6 +10,8 @@ source: local
 trusted: true
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
   source_image:
@@ -23,22 +25,31 @@ inputs:
     type: asset
     description: Optional OpenAI image-edit mask. Transparent alpha edits and opaque alpha preserves; grayscale white edits and black preserves. The current Flux2 edit workflow has no native inpaint node, so the gateway applies this as a post-composite preservation mask unless a mask-bound workflow is selected.
   width:
+    label: width
+    help: Picture width in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   height:
+    label: height
+    help: Picture height in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   steps:
+    label: steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 100
   guidance:
+    label: prompt guidance
     type: number
     minimum: 0
     maximum: 20
   denoise:
+    label: change strength
+    help: Lower values preserve more of the original.
     type: number
     minimum: 0
     maximum: 1

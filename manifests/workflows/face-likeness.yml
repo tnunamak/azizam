@@ -29,10 +29,12 @@ inputs:
     label: a photo to check
     description: The image to check.
   people:
+    help: Optional details identifying the people in your reference photos.
     type: string
     label: a list of people
     description: JSON array of {label, image, box [x1,y1,x2,y2], infant}. Omit to auto-detect.
   thresholds:
+    help: Optional settings for how closely faces must match.
     type: string
     label: custom thresholds
     description: JSON object overriding match, uncertain and min_margin.

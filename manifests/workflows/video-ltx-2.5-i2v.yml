@@ -5,25 +5,30 @@ id: video.generate.ltx-2.5-i2v
 intent: video.generate
 display_name: LTX 2.5 Distilled I2V
 purpose: Animate an image, with sound
-description: 'LTX-2.5 22B distilled image-to-video with synchronized audio. Selected automatically when
-  /v1/videos gets input_reference with model ltx-2.5, or by model id. Same size and length rules as ltx-2.5
-  (multiples of 64, max 1280x704, 1-10 s). About 85 s for 5 s at 960x512. image_strength default 0.7.
-  License: LTX-2.x Community License.'
+description: Make a video with sound from a starting picture and a description.
 source: local
 trusted: true
 typical_seconds: 56
 inputs:
   prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
     type: string
     required: true
   negative_prompt:
+    label: What to avoid
+    help: Describe anything you want left out.
     type: string
   frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
     type: number
     minimum: 1
     maximum: 50
     default: 24
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
   image:
@@ -32,6 +37,8 @@ inputs:
     type: asset
     required: true
   image_strength:
+    label: Picture influence
+    help: Adjust how strongly the starting picture shapes the video.
     type: number
     minimum: 0
     maximum: 1

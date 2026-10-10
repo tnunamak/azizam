@@ -11,67 +11,90 @@ source: local
 trusted: true
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
   width:
+    label: width
+    help: Picture width in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   height:
+    label: height
+    help: Picture height in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   steps:
+    label: steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 100
     description: Base Flux2 generation step count before seam repair.
   guidance:
+    label: prompt guidance
     type: number
     minimum: 0
     maximum: 20
     description: Base Flux2 generation guidance before seam repair.
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
     description: Base seed. Each returned image increments by two; the seam inpaint pass uses base seed plus one.
   seam_mask_width:
+    label: seam repair width
+    help: Width in pixels of the area repaired to make the texture repeat.
     type: integer
     minimum: 1
     maximum: 512
     default: 96
     description: Width in pixels of the centered vertical and horizontal seam-repair mask after the 50% offset.
   seam_mask_expand:
+    label: seam mask expansion
+    help: Grow or shrink the seam repair area by this many pixels.
     type: integer
     minimum: -256
     maximum: 256
     default: 0
     description: Pixels to grow or shrink the seam mask inside the inpaint workflow.
   seam_mask_feather:
+    label: seam edge softness
+    help: Soften the seam repair edges by this many pixels.
     type: integer
     minimum: 0
     maximum: 256
     default: 32
     description: Pixels to feather each edge of the seam mask inside the inpaint workflow.
   seam_steps:
+    label: seam repair steps
     type: integer
     minimum: 1
     maximum: 100
     default: 8
     description: Flux2 inpaint step count for the seam repair pass.
   seam_guidance:
+    label: seam prompt guidance
     type: number
     minimum: 0
     maximum: 20
     default: 4.0
     description: Flux2 inpaint guidance for the seam repair pass.
   seam_denoise:
+    label: seam change strength
+    help: Lower values preserve more of the texture.
     type: number
     minimum: 0
     maximum: 1
     default: 0.58
     description: Flux2 inpaint denoise for the seam repair pass. Lower values preserve more of the generated texture.
   seam_prompt:
+    label: seam repair description
+    help: Optional instructions for repairing where the texture repeats.
     type: string
     description: Optional override prompt for the seam repair pass. Defaults to a preservation-oriented prompt derived from prompt.
 outputs:

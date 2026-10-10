@@ -145,8 +145,9 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
     }
     if required:
         schema["required"] = required
-    if record.manifest.get("description"):
-        schema["description"] = " ".join(str(record.manifest["description"]).split())
+    description = record.manifest.get("summary") or record.manifest.get("description")
+    if description:
+        schema["description"] = " ".join(str(description).split())
     return schema
 
 
@@ -428,7 +429,7 @@ def workflow_catalog(
             "short_id": short_id(record),
             "intent": record.intent,
             "display_name": record.manifest.get("display_name"),
-            "description": " ".join(str(record.manifest.get("description") or "").split()),
+            "description": " ".join(str(record.manifest.get("summary") or record.manifest.get("description") or "").split()),
             "aliases": alias_map.get(record.id, []),
             "typical_seconds": typical,
             "inputs_schema": _ref(_schema_name(record)),
@@ -738,7 +739,7 @@ def augment_openapi(
             "tags": ["gateway-workflows"],
             "operationId": f"run_{short_id(record).replace('.', '_').replace('-', '_')}",
             "summary": f"Run {record.manifest.get('display_name') or record.id}",
-            "description": " ".join(str(record.manifest.get("description") or "").split()),
+            "description": " ".join(str(record.manifest.get("summary") or record.manifest.get("description") or "").split()),
             "x-azizam-workflow-id": record.id,
             "requestBody": {"required": True, "content": {
                 _MULTIPART: {"schema": _ref(_schema_name(record, FORM_PREFIX))}}},

@@ -5,8 +5,7 @@ id: video.edit.scail-2-replace
 intent: video.edit
 display_name: SCAIL-2 Character Replace
 purpose: Put a reference character into a video
-description: >-
-  Reference character image + driving video -> the reference character performs the driving video's motion in the driving scene (SAM3.1 tracking, replacement mode, first 81-frame segment). source_subject and reference_subject are the SAM3 text prompts that find the person to replace in the video and the character in the image. Only one person is replaced: the largest tracked one (subject_index 0), another by subject_index, or the person under source_point_x/source_point_y (a point in the first frame, 0 to 1). The reference character is rescaled and placed to match the replaced person (reference_fit, default true). The job reports a warning when several people were tracked. SCAIL-2 Q4_K_M GGUF, 6 steps. ~300 s warm at 832x448. MIT.
+description: Replace a person in a video with a character from a picture, keeping the original motion and scene.
 source: local
 trusted: true
 typical_seconds: 231
@@ -24,44 +23,66 @@ inputs:
     media_type: video/*
     required: true
   source_subject:
+    label: Person to replace
+    help: Describe the person to replace in the video.
     type: string
     default: person
   reference_subject:
+    label: Character to use
+    help: Describe the character to use from the picture.
     type: string
     default: person
   subject_index:
+    label: Person number
+    help: Choose a tracked person, counting from zero; zero selects the largest person.
     type: string
     default: "0"
   reference_fit:
+    label: Match original size
+    help: Resize and position the new character to match the person being replaced.
     type: boolean
     default: true
   source_point_x:
+    label: Horizontal selection point
+    help: Select a person in the first frame using a horizontal position from 0 to 1.
     type: number
     minimum: 0
     maximum: 1
   source_point_y:
+    label: Vertical selection point
+    help: Select a person in the first frame using a vertical position from 0 to 1.
     type: number
     minimum: 0
     maximum: 1
   prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
     type: string
     required: true
   width:
+    label: Width
+    help: Video width in pixels.
     type: integer
     minimum: 256
     maximum: 1024
     default: 832
   height:
+    label: Height
+    help: Video height in pixels.
     type: integer
     minimum: 256
     maximum: 1024
     default: 448
   length:
+    label: Frame count
+    help: Number of frames in the video.
     type: integer
     minimum: 5
     maximum: 81
     default: 81
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
 outputs:

@@ -11,6 +11,8 @@ trusted: true
 typical_seconds: 4
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
   width:
@@ -35,6 +37,8 @@ inputs:
     maximum: 20
     default: 10
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
   batch_size:

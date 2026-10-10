@@ -11,61 +11,87 @@ source: local
 trusted: true
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
   tags:
+    label: music style
+    help: Describe the genre, mood and instruments.
     type: string
   lyrics:
+    label: lyrics
+    help: Enter the words to sing.
     type: string
   duration:
+    label: length
+    help: Length in seconds.
     type: number
     minimum: 1
     maximum: 300
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
   bpm:
+    label: beats per minute
+    help: Set the tempo.
     type: integer
     minimum: 0
     maximum: 300
   timesignature:
+    label: time signature
     type: string
   language:
+    label: language
     type: string
   keyscale:
+    label: musical key
     type: string
   cfg_scale:
+    label: planning guidance
     type: number
     minimum: 0
     maximum: 20
   temperature:
+    label: variety
     type: number
     minimum: 0
     maximum: 2
   top_p:
+    label: choice range
     type: number
     minimum: 0
     maximum: 1
   top_k:
+    label: choice limit
     type: integer
     minimum: 0
     maximum: 1000
   min_p:
+    label: minimum choice likelihood
     type: number
     minimum: 0
     maximum: 1
   steps:
+    label: steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 200
   cfg:
+    label: prompt guidance
     type: number
     minimum: 0
     maximum: 20
   sampler:
+    label: generation method
     type: string
   scheduler:
+    label: step timing
     type: string
   denoise:
+    label: change strength
     type: number
     minimum: 0
     maximum: 1

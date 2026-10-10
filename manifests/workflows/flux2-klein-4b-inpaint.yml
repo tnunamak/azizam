@@ -10,6 +10,8 @@ source: local
 trusted: true
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
   source_image:
@@ -24,40 +26,55 @@ inputs:
     required: true
     description: OpenAI image-edit mask. Transparent alpha or white pixels are regenerated; opaque alpha or black pixels are preserved.
   width:
+    label: width
+    help: Picture width in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   height:
+    label: height
+    help: Picture height in pixels.
     type: integer
     minimum: 64
     maximum: 2048
   steps:
+    label: steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 100
     default: 8
   guidance:
+    label: prompt guidance
     type: number
     minimum: 0
     maximum: 20
     default: 4
   denoise:
+    label: change strength
+    help: Lower values preserve more of the original.
     type: number
     minimum: 0
     maximum: 1
     default: 0.75
     description: Sampling strength for the masked edit. Lower values preserve more of the source image.
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
     description: Noise seed for the masked edit sampler.
   mask_expand:
+    label: mask expansion
+    help: Grow or shrink the marked area by this many pixels.
     type: integer
     minimum: -256
     maximum: 256
     default: 0
     description: Pixels to grow or shrink the edit mask before sampling.
   mask_feather:
+    label: mask edge softness
+    help: Soften each edge of the marked area by this many pixels.
     type: integer
     minimum: 0
     maximum: 256
