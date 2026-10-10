@@ -9,7 +9,9 @@ distance (Delta E 1976) between pairs of fills after simulating protanopia,
 deuteranopia and tritanopia at full severity (Machado, Oliveira and Fernandes
 2009). With --fail it exits 1 when a text colour is under 4.5:1, a fill other
 than the no-check cell is under 3:1, or Degraded and Down are closer than
-Delta E 20 under any simulation.
+Delta E 20 under any simulation. It also checks the chart fills (--chart-1,
+--chart-2, --chart-3 and --chart-other, 3:1 on the card) and the StateBadge
+ink on its tint (4.5:1).
 """
 from __future__ import annotations
 
@@ -28,6 +30,16 @@ STATES = {
     "blocked": ("blocked", "blocked-fill"),
     "unknown": ("subtle-foreground", "nocheck-fill"),
 }
+# StateBadge: the state's ink on its tint (DESIGN "Status display").
+BADGES = {
+    "ready": ("success", "success-tint"),
+    "busy": ("info", "info-tint"),
+    "degraded": ("warning", "warning-tint"),
+    "down": ("danger", "danger-tint"),
+    "blocked": ("blocked", "blocked-tint"),
+    "unknown": ("subtle-foreground", "muted"),
+}
+CHARTS = ("chart-1", "chart-2", "chart-3", "chart-other")
 PAIRS = [
     ("degraded", "down"),
     ("ready", "degraded"),
@@ -118,6 +130,18 @@ def main(argv: list[str]) -> int:
                 problems.append(f"{theme} {state} text {min(on_card, on_page):.1f}:1 < 4.5:1")
             if state != "unknown" and fill_ratio < 3:
                 problems.append(f"{theme} {state} fill {fill_ratio:.1f}:1 < 3:1")
+        for state, (ink_token, tint_token) in BADGES.items():
+            ink, tint = resolve(values, ink_token), resolve(values, tint_token)
+            ratio = contrast(ink, tint)
+            print(f"badge {state:9} {ink} on {tint}  {ratio:4.1f}")
+            if ratio < 4.5:
+                problems.append(f"{theme} {state} badge ink {ratio:.2f}:1 < 4.5:1 on its tint")
+        for token in CHARTS:
+            fill = resolve(values, token)
+            ratio = contrast(fill, card)
+            print(f"{token:12} {fill}  {ratio:4.1f}")
+            if ratio < 3:
+                problems.append(f"{theme} {token} {ratio:.1f}:1 < 3:1 on the card")
         print("Delta E   " + "  ".join(f"{kind:>6}" for kind in MACHADO))
         for a, b in PAIRS:
             distances = [delta_e(fills[a], fills[b], kind) for kind in MACHADO]

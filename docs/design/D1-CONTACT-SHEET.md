@@ -51,7 +51,7 @@ Round 6 (set-7): win or tie 82 / 71 / 82 / 82%, Status 100% for every judge, Lib
 |---|---|---|
 | Apple Photos' All Photos: one continuous grid, days labelled without breaking rows. All judges: Today and Yesterday rows mostly blank | Date groups; on a 1440 screen Today held 2 tiles and Yesterday 1 in a 6-column grid | One continuous grid; the day sits on the first tile of each day as a small chip ("Today", "Yesterday", "Monday", "Oct 21"). A 390 phone shows 15 tiles in its first screen (d1-13: about 9) |
 | p1, p3, x4: no type, maker or play cue; video and audio look like stills | A duration badge bottom right on video and audio; no maker | Type glyph and length bottom left, a 40 px play disc in the middle of video and audio; with Everyone shown, the maker's initial in their colour top right of every tile |
-| p2, p3: finding one item means opening each; items made by apps read "Image" | "Image" when there is no prompt | Named by type and time: "Picture, Oct 20 at 7:45 PM" (apps' requests never store prompts, a privacy contract) |
+| p2, p3: finding one item means opening each; items made by apps read "Image" | "Image" when there is no prompt | Named by type and time: "Picture, Oct 20 at 7:45 PM" (only the maker sees a prompt; see docs/design/PROMPT_MEMORY.md) |
 
 ### Status: Linear status, incident.io incident
 | Measured in the benchmark, or judged | `d1-13` | `d1-14` change |

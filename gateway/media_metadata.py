@@ -2,8 +2,8 @@
 
 Pure helpers: no proxy, no FastAPI. Images are rewritten at the container
 level (PNG chunks, JPEG marker segments, WebP RIFF chunks) so pixel data and
-entropy-coded payloads stay byte-identical. Audio/video use ``ffmpeg -c copy``
-(stream copy, no re-encode).
+entropy-coded payloads stay byte-identical. WAV, FLAC and common MP3 tags
+are stripped directly; other audio/video use ``ffmpeg -c copy`` (no re-encode).
 
 Container findings for ``embed_media_tags`` (verified with ffprobe, ffmpeg 8):
 
@@ -27,11 +27,12 @@ Where a container cannot hold a key, the fallback is described per function.
 
 from __future__ import annotations
 
+import os
 import shutil
 import struct
 import subprocess
-import uuid
 import zlib
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Mapping
 
@@ -44,6 +45,7 @@ __all__ = [
     "png_text_chunks",
     "exif_bytes",
     "embed_media_tags",
+    "embed_image_metadata",
     "read_media_tags",
 ]
 
@@ -252,7 +254,7 @@ def _strip_jpeg(content: bytes) -> bytes:
         pos += 1
         if marker == 0xD9:  # EOI
             out += b"\xff\xd9"
-            out += content[pos:]  # trailing bytes kept as is
+            # Data after EOI is not image payload and can carry private text.
             return bytes(out)
         if marker == 0x01 or 0xD0 <= marker <= 0xD8:  # standalone
             out += bytes([0xFF, marker])
@@ -307,21 +309,114 @@ def _strip_webp(content: bytes) -> bytes:
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
+def _strip_wav(content: bytes) -> bytes:
+    """Drop non-audio RIFF chunks without a subprocess or PCM re-encoding."""
+    if len(content) < 12 or content[:4] != b"RIFF" or content[8:12] != b"WAVE":
+        raise MediaMetadataError("invalid WAV")
+    end = 8 + struct.unpack("<I", content[4:8])[0]
+    if end > len(content):
+        raise MediaMetadataError("truncated WAV")
+    pos = 12
+    chunks = []
+    changed = end != len(content)
+    # Structural chunks can affect decoded samples or playback order.
+    structural = {b"fmt ", b"data", b"fact", b"ds64", b"cue ", b"plst", b"slnt"}
+    while pos < end:
+        if pos + 8 > end:
+            raise MediaMetadataError("truncated WAV chunk")
+        tag = content[pos:pos + 4]
+        size = struct.unpack("<I", content[pos + 4:pos + 8])[0]
+        next_pos = pos + 8 + size + (size & 1)
+        if next_pos > end:
+            raise MediaMetadataError("truncated WAV chunk")
+        raw = content[pos:next_pos]
+        if tag in structural or (tag == b"LIST" and content[pos + 8:pos + 12] == b"wavl"):
+            chunks.append(raw)
+        else:
+            changed = True
+        pos = next_pos
+    if not changed:
+        return content
+    body = b"WAVE" + b"".join(chunks)
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def _strip_flac(content: bytes) -> bytes:
+    """Keep decoding/seek blocks and compressed frames; discard all text/art."""
+    if not content.startswith(b"fLaC"):
+        raise MediaMetadataError("invalid FLAC")
+    pos, kept = 4, []
+    while True:
+        if pos + 4 > len(content):
+            raise MediaMetadataError("truncated FLAC metadata")
+        header = content[pos]
+        kind = header & 0x7f
+        size = int.from_bytes(content[pos + 1:pos + 4], "big")
+        end = pos + 4 + size
+        if end > len(content):
+            raise MediaMetadataError("truncated FLAC metadata")
+        if kind in {0, 1, 3}:  # STREAMINFO, PADDING, SEEKTABLE
+            kept.append(bytes([kind]) + content[pos + 1:end])
+        pos = end
+        if header & 0x80:
+            break
+    if not kept or kept[0][0] != 0:
+        raise MediaMetadataError("FLAC missing stream information")
+    kept[-1] = bytes([kept[-1][0] | 0x80]) + kept[-1][1:]
+    return b"fLaC" + b"".join(kept) + content[pos:]
+
+
+def _strip_mp3(content: bytes) -> bytes | None:
+    """Losslessly remove ID3; None delegates uncommon APE tags to ffmpeg."""
+    start, end = 0, len(content)
+    while content[start:start + 3] == b"ID3":
+        if start + 10 > end or any(byte & 0x80 for byte in content[start + 6:start + 10]):
+            raise MediaMetadataError("invalid ID3 header")
+        header = content[start:start + 10]
+        size = 0
+        for byte in header[6:10]:
+            size = (size << 7) | byte
+        start += 10 + size + (10 if header[3] == 4 and header[5] & 0x10 else 0)
+        if start > end:
+            raise MediaMetadataError("truncated ID3 tag")
+    if end - start >= 128 and content[end - 128:end - 125] == b"TAG":
+        end -= 128
+    if b"APETAGEX" in content[max(start, end - 160):end] or content[start:start + 8] == b"APETAGEX":
+        return None
+    if end - start < 2 or content[start] != 0xff or content[start + 1] & 0xe0 != 0xe0:
+        return None  # Unknown content is not certified metadata-free.
+    return content[start:end]
+
+
 # ------------------------------------------------------------- ffmpeg side
 
-def _workdir(workdir: Path | None) -> Path:
-    path = Path(workdir) if workdir is not None else Path.home() / ".tmp" / "media_metadata"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+@contextmanager
+def _media_buffers(content: bytes):
+    """Anonymous RAM files: no prompt-bearing pathname, even after SIGKILL.
+
+    The gateway runs on Linux. Fail closed if memfd is unavailable; a disk
+    fallback would violate the forgotten-request storage contract.
+    """
+    if not hasattr(os, "memfd_create"):
+        raise MediaMetadataError("anonymous media buffers unavailable")
+    with ExitStack() as stack:
+        src = os.fdopen(os.memfd_create("azizam-media-input", os.MFD_CLOEXEC), "w+b")
+        stack.enter_context(src)
+        dst = os.fdopen(os.memfd_create("azizam-media-output", os.MFD_CLOEXEC), "w+b")
+        stack.enter_context(dst)
+        src.write(content)
+        src.flush()
+        src.seek(0)
+        yield src, dst
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], *, pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=600)
-    except FileNotFoundError as exc:
-        raise MediaMetadataError(f"{cmd[0]} not found") from exc
+        return subprocess.run(cmd, capture_output=True, timeout=600, pass_fds=pass_fds)
+    except OSError as exc:
+        raise MediaMetadataError("media tool unavailable") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MediaMetadataError(f"{cmd[0]} timed out") from exc
+        raise MediaMetadataError("media tool timed out") from exc
 
 
 def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
@@ -332,26 +427,19 @@ def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
         raise MediaMetadataError(f"no muxer for {suffix_or_mime!r}")
     if shutil.which("ffmpeg") is None:
         raise MediaMetadataError("ffmpeg not found")
-    wd = _workdir(workdir)
-    token = uuid.uuid4().hex
-    src = wd / f"{token}.in{suffix}"
-    dst = wd / f"{token}.out{suffix}"
-    try:
-        src.write_bytes(content)
-        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(src),
+    # Retain the optional workdir API, but never put media bytes in it.
+    if workdir is not None:
+        Path(workdir).mkdir(parents=True, exist_ok=True)
+    with _media_buffers(content) as (src, dst):
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", f"/proc/self/fd/{src.fileno()}",
                "-map", "0", *extra_out, "-c", "copy", "-fflags", "+bitexact",
-               "-f", muxer, str(dst)]
-        proc = _run(cmd)
-        if proc.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
-            err = proc.stderr.decode("utf-8", "replace")[-500:]
-            raise MediaMetadataError(f"ffmpeg failed ({proc.returncode}): {err}")
-        return dst.read_bytes()
-    finally:
-        for p in (src, dst):
-            try:
-                p.unlink()
-            except FileNotFoundError:
-                pass
+               "-f", muxer, f"/proc/self/fd/{dst.fileno()}"]
+        proc = _run(cmd, pass_fds=(src.fileno(), dst.fileno()))
+        if proc.returncode != 0 or os.fstat(dst.fileno()).st_size == 0:
+            # Tool stderr can echo an embedded prompt; keep it out of logs/errors.
+            raise MediaMetadataError(f"ffmpeg failed ({proc.returncode})")
+        dst.seek(0)
+        return dst.read()
 
 
 def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
@@ -367,13 +455,23 @@ def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None 
         return _strip_jpeg(content)
     if kind == "webp":
         return _strip_webp(content)
+    if kind == "audio":
+        suffix = _suffix(suffix_or_mime)
+        if suffix == ".wav":
+            return _strip_wav(content)
+        if suffix == ".flac":
+            return _strip_flac(content)
+        if suffix == ".mp3":
+            clean = _strip_mp3(content)
+            if clean is not None:
+                return clean
     if kind in ("video", "audio"):
         if _suffix(suffix_or_mime) not in _MUXER:
             return content
         return _ffmpeg_rewrite(
             content, suffix_or_mime, workdir,
             ["-map_metadata", "-1", "-map_chapters", "-1",
-             "-map_metadata:s:v", "-1", "-map_metadata:s:a", "-1"],
+             "-map_metadata:s", "-1"],
         )
     return content
 
@@ -401,6 +499,47 @@ def exif_bytes(entries: Mapping[str, str]) -> bytes:
     if other:
         exif[0x010E] = "\n".join(other)
     return exif.tobytes()
+
+
+def embed_image_metadata(content: bytes, suffix_or_mime: str,
+                         entries: Mapping[str, str]) -> bytes:
+    """Restore maker metadata without recompressing JPEG/WebP image payloads."""
+    kind = media_kind(suffix_or_mime)
+    if not entries:
+        return content
+    if kind == "png":
+        return embed_png_text(content, entries)
+    blob = exif_bytes(entries)
+    if kind == "jpeg":
+        clean = _strip_jpeg(content)
+        if not clean.startswith(b"\xff\xd8"):
+            raise MediaMetadataError("invalid JPEG")
+        if len(blob) + 2 > 65535:
+            raise MediaMetadataError("JPEG metadata exceeds segment limit")
+        return clean[:2] + b"\xff\xe1" + struct.pack(">H", len(blob) + 2) + blob + clean[2:]
+    if kind == "webp":
+        clean = _strip_webp(content)
+        if len(clean) < 12 or clean[:4] != b"RIFF" or clean[8:12] != b"WEBP":
+            raise MediaMetadataError("invalid WebP")
+        chunks = clean[12:]
+        if chunks[:4] == b"VP8X":
+            chunks = chunks[:8] + bytes([chunks[8] | 0x08]) + chunks[9:]
+        else:
+            # A basic VP8/VP8L file needs the extended header to advertise EXIF.
+            # Pillow only reads dimensions; it never saves/re-encodes pixels.
+            from io import BytesIO
+            from PIL import Image
+            with Image.open(BytesIO(clean)) as image:
+                width, height = image.size
+                alpha = "A" in image.getbands()
+            flags = 0x08 | (0x10 if alpha else 0)
+            header = bytes([flags, 0, 0, 0]) + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+            chunks = b"VP8X" + struct.pack("<I", 10) + header + chunks
+        payload = blob.removeprefix(b"Exif\x00\x00")
+        chunks += b"EXIF" + struct.pack("<I", len(payload)) + payload + (b"\x00" if len(payload) & 1 else b"")
+        body = b"WEBP" + chunks
+        return b"RIFF" + struct.pack("<I", len(body)) + body
+    return content
 
 
 # ------------------------------------------------------------ embed / read
@@ -446,21 +585,15 @@ def read_media_tags(content: bytes, suffix_or_mime: str, *,
 
     if shutil.which("ffprobe") is None:
         raise MediaMetadataError("ffprobe not found")
-    suffix = _suffix(suffix_or_mime)
-    wd = _workdir(workdir)
-    path = wd / f"{uuid.uuid4().hex}.probe{suffix}"
-    try:
-        path.write_bytes(content)
+    if workdir is not None:
+        Path(workdir).mkdir(parents=True, exist_ok=True)
+    with _media_buffers(content) as (src, _dst):
         proc = _run(["ffprobe", "-v", "error", "-print_format", "json",
-                     "-show_format", "-show_streams", str(path)])
+                     "-show_format", "-show_streams", f"/proc/self/fd/{src.fileno()}"],
+                    pass_fds=(src.fileno(),))
         if proc.returncode != 0:
-            raise MediaMetadataError(proc.stderr.decode("utf-8", "replace")[-500:])
+            raise MediaMetadataError(f"ffprobe failed ({proc.returncode})")
         data = json.loads(proc.stdout or b"{}")
-    finally:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
     merged: dict[str, str] = {}
     for stream in data.get("streams", []):
         for k, v in (stream.get("tags") or {}).items():

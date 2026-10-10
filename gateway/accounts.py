@@ -341,8 +341,8 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
         app_id, credential_id = _id("app"), _id("cred")
         conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,default_profile_id,created_at) VALUES(?,?,?,?,?,?)",
                      (app_id, "personal", "My first app", user_id, link["profile_id"], ts))
-        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,profile_id,hash,prefix,display_name,created_at) "
-                     "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, link["profile_id"], hash_api_key(api_key), api_key[:18], "First app key", ts))
+        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,profile_id,hash,prefix,display_name,created_at,created_by) "
+                     "VALUES(?,?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, link["profile_id"], hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
         conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
         _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"profile_id": link["profile_id"], "app_id": app_id, "credential_id": credential_id})
         _audit(conn, "credential.create", user_id, credential_id, ts,
@@ -442,6 +442,10 @@ def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | Non
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
         _audit(conn, "people.remove" if remove else "people.update", actor, user_id, ts,
                {"profile_id": profile_id, "disabled": disabled}, actor_kind=actor_kind, actor_label=actor_label)
+
+    if remove:
+        from gateway import prompt_memory
+        prompt_memory.delete_person(user_id)
 
 
 def record_oidc_verification(user_id: str, verified: bool, *, path: Path):

@@ -143,10 +143,15 @@ async def speech(request: Request):
     import wave
     from fastapi.responses import Response
 
-    await request.body()
+    import hashlib
+
+    body = await request.body()
+    # Each text gets its own pitch, so different requests make different
+    # files (assets are content-addressed) and the same text the same file.
+    pitch = 180 + hashlib.sha256(body).digest()[0]
     rate = 16000
     frames = b"".join(
-        struct.pack("<h", int(2000 * math.sin(2 * math.pi * 220 * n / rate) * min(1, n / 800, (2 * rate - n) / 800)))
+        struct.pack("<h", int(2000 * math.sin(2 * math.pi * pitch * n / rate) * min(1, n / 800, (2 * rate - n) / 800)))
         for n in range(2 * rate)
     )
     buffer = io.BytesIO()

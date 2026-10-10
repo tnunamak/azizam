@@ -128,6 +128,14 @@ beforeEach(() => {
       overrides: { revisions: { media_job_admission_overrides: "7" } },
     },
     "/admin/api/extensions": { extension_packages: { packages: {} } },
+    "/admin/api/settings/prompt-memory": {
+      prompt_memory: {
+        default_remember: true,
+        never_keep: false,
+        retention_cap: "never",
+      },
+      revision: "7",
+    },
     "/admin/api/people/morgan/reset": {
       url: "/ui/sign-in/#reset=fixture",
       expires_at: invite.expires_at,
@@ -224,6 +232,7 @@ describe("People and Settings red-team regressions", () => {
       "/admin/api/settings/instance",
       "/admin/api/settings/defaults",
       "/admin/api/operator/sign-in",
+      "/admin/api/settings/prompt-memory",
     ])
       responses[path] = new ApiError("owner_required", "Owner required", 403);
     mount(<SettingsPage />, "admin");
@@ -653,6 +662,38 @@ describe("People and Settings red-team regressions", () => {
       "https://public.example.test/ui/sign-in/#reset=fixture",
     );
   });
+  it("draws Settings on the settings template (craft PR 2)", async () => {
+    const { container } = mount(<SettingsPage />);
+    await screen.findByText("Gateway");
+    const instance = screen.getByRole("region", { name: "Instance" });
+    // No jump links while every section fits on the page (ban 22).
+    expect(
+      screen.queryByRole("navigation", { name: "Settings sections" }),
+    ).toBeNull();
+    expect(container.firstElementChild).toHaveClass("page-read", "page-stack");
+    expect(
+      within(instance).getByRole("heading", { name: "Instance" }),
+    ).toHaveClass("text-heading");
+    const row = instance.querySelector("[data-slot=setting-row]")!;
+    expect(row).toHaveTextContent("Gateway");
+    expect(row).toHaveTextContent(
+      "https://public.example.test · Follows device theme",
+    );
+    const edit = within(instance).getByRole("button", {
+      name: "Edit Instance",
+    });
+    expect(edit).toHaveClass("h-8");
+    expect(within(instance).queryByLabelText("Instance name")).toBeNull();
+    await userEvent.click(edit);
+    // The form opens inside the same card, under the row, which keeps Close.
+    expect(within(instance).getByLabelText("Instance name")).toBeInTheDocument();
+    expect(
+      within(instance).getByRole("button", { name: "Close" }),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelectorAll("[data-slot=settings-section]"),
+    ).toHaveLength(7);
+  });
   it("wraps long instance names and URLs in the settings summary", async () => {
     responses["/admin/api/settings/instance"] = {
       instance: {
@@ -662,12 +703,14 @@ describe("People and Settings red-team regressions", () => {
       },
     };
     mount(<SettingsPage />);
+    // The setting row's label wraps anywhere (one line on a phone); its one
+    // detail line truncates.
     const name = await screen.findByText("n".repeat(300));
-    expect(name.closest("section")?.querySelector(".max-w-2xl")).toHaveClass(
-      "min-w-0",
-      "[overflow-wrap:anywhere]",
+    expect(name).toHaveClass("sm:[overflow-wrap:anywhere]", "max-sm:truncate");
+    expect(name.parentElement).toHaveClass("min-w-0");
+    expect(screen.getByText(/https:\/\/example.test\/ppp/)).toHaveClass(
+      "truncate",
     );
-    expect(screen.getByText(/https:\/\/example.test\/ppp/)).toBeInTheDocument();
   });
   it("returns focus to the workspace when a removed row no longer exists", async () => {
     mount(<PeoplePage />);

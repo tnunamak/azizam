@@ -16,6 +16,8 @@ import {
   type UserAccessDefaults,
 } from "@/lib/api";
 import { PageHeader } from "@/components/product/page-header";
+import { SettingRow, SettingsSection } from "@/components/product/setting-row";
+import { HouseholdPromptsSection } from "./household-prompts";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
@@ -119,7 +121,7 @@ function SettingsError({
   onRetry: () => void;
 }) {
   return error instanceof ApiError && error.status === 403 ? (
-    <p role="alert" className="text-muted-foreground text-sm">
+    <p role="alert" className="text-muted-foreground text-meta">
       Only the owner can change this.
     </p>
   ) : (
@@ -132,53 +134,54 @@ function SettingsError({
   );
 }
 
+/**
+ * One settings section (DESIGN "Page templates", settings page): a heading
+ * over one card. The card's row says what is set now in one line and one
+ * line of detail, with Edit at 32 on the right; Edit opens the form under
+ * the row, inside the same card, where the full detail is.
+ */
 function Section({
   title,
   summary,
   children,
 }: {
   title: string;
-  summary?: ReactNode;
+  summary?: { label: ReactNode; description?: ReactNode };
   children: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
-  const showSummary = summary && !editing;
   return (
-    <section
+    <SettingsSection
       id={title.toLowerCase().replaceAll(" ", "-")}
-      aria-label={title}
-      className="grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10"
+      title={title}
     >
-      <h2 className="text-base font-semibold">{title}</h2>
-      <div className="max-w-2xl min-w-0 [overflow-wrap:anywhere]">
-        {showSummary ? (
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 text-sm leading-6">{summary}</div>
-            <Button
-              variant="outline"
-              aria-label={`Edit ${title}`}
-              onClick={() => setEditing(true)}
-            >
-              Edit
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {summary && (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-muted-foreground min-w-0 text-sm leading-6">
-                  {summary}
-                </div>
-                <Button variant="ghost" onClick={() => setEditing(false)}>
-                  Close
-                </Button>
-              </div>
-            )}
-            {children}
-          </div>
-        )}
-      </div>
-    </section>
+      {summary ? (
+        <SettingRow
+          label={summary.label}
+          description={summary.description}
+          control={
+            editing ? (
+              <Button variant="ghost" onClick={() => setEditing(false)}>
+                Close
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                aria-label={`Edit ${title}`}
+                onClick={() => setEditing(true)}
+              >
+                Edit
+              </Button>
+            )
+          }
+        />
+      ) : null}
+      {!summary || editing ? (
+        <div className="min-w-0 space-y-5 p-4 [overflow-wrap:anywhere] sm:p-6">
+          {children}
+        </div>
+      ) : null}
+    </SettingsSection>
   );
 }
 function Loading({ label = "Loading settings" }: { label?: string }) {
@@ -189,8 +192,8 @@ function Loading({ label = "Loading settings" }: { label?: string }) {
       aria-busy="true"
       className="space-y-4"
     >
-      <Skeleton className="h-11 w-full" />
-      <Skeleton className="h-11 w-3/4" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-3/4" />
     </div>
   );
 }
@@ -207,15 +210,12 @@ function Field({
 }) {
   return (
     <div className="min-w-0 space-y-2">
-      <label htmlFor={id} className="text-sm font-medium">
+      <label htmlFor={id} className="text-label">
         {label}
       </label>
       {children}
       {help && (
-        <p
-          id={`${id}-help`}
-          className="text-muted-foreground text-xs leading-relaxed"
-        >
+        <p id={`${id}-help`} className="text-muted-foreground text-meta">
           {help}
         </p>
       )}
@@ -246,12 +246,14 @@ function Toggle({
   return (
     <div className="flex items-center justify-between gap-4">
       <div>
-        <label htmlFor={id} className="text-sm font-medium">
+        <label htmlFor={id} className="text-label">
           {label}
         </label>
-        {help && <p className="text-muted-foreground mt-1 text-xs">{help}</p>}
+        {help && (
+          <p className="text-muted-foreground text-meta mt-0.5">{help}</p>
+        )}
       </div>
-      <div className="flex min-h-11 items-center">
+      <div className="flex min-h-8 items-center max-sm:min-h-11">
         <Switch id={id} checked={checked} onCheckedChange={onChange} />
       </div>
     </div>
@@ -259,7 +261,7 @@ function Toggle({
 }
 function MutationError({ error }: { error: unknown }) {
   return error ? (
-    <p role="alert" className="text-destructive text-sm">
+    <p role="alert" className="text-destructive text-meta">
       <span className="font-medium">Unsaved changes. </span>
       {error instanceof ApiError &&
       error.status === 409 &&
@@ -292,18 +294,14 @@ function InstanceSection() {
     <Section
       title="Instance"
       summary={
-        data ? (
-          <>
-            {data.instance.name && <p>{data.instance.name}</p>}
-            {(data.instance.base_url || theme) && (
-              <p className="text-muted-foreground">
-                {data.instance.base_url}
-                {data.instance.base_url && theme && " · "}
-                {theme}
-              </p>
-            )}
-          </>
-        ) : undefined
+        data
+          ? {
+              label: data.instance.name || "No name set",
+              description:
+                [data.instance.base_url, theme].filter(Boolean).join(" · ") ||
+                undefined,
+            }
+          : undefined
       }
     >
       {isPending ? (
@@ -352,7 +350,7 @@ function InstanceForm({
   });
   if (!owner)
     return (
-      <p role="status" className="text-muted-foreground text-sm">
+      <p role="status" className="text-muted-foreground text-meta">
         Only the owner can change this.
       </p>
     );
@@ -439,22 +437,19 @@ function SignInSection() {
     <Section
       title="Sign-in"
       summary={
-        oidcData && signInData ? (
-          <>
-            <p>
-              {signInData.mode === "both"
-                ? "Built-in accounts and identity provider"
-                : signInData.mode === "oidc"
-                  ? "Identity provider only"
-                  : "Built-in accounts only"}
-            </p>
-            <p className="text-muted-foreground">
-              {oidcData.oidc_config?.enabled
+        oidcData && signInData
+          ? {
+              label:
+                signInData.mode === "both"
+                  ? "Built-in accounts and identity provider"
+                  : signInData.mode === "oidc"
+                    ? "Identity provider only"
+                    : "Built-in accounts only",
+              description: oidcData.oidc_config?.enabled
                 ? `Identity provider enabled${oidcData.oidc_config.issuer ? ` · ${oidcData.oidc_config.issuer}` : ""}`
-                : "No identity provider enabled"}
-            </p>
-          </>
-        ) : undefined
+                : "No identity provider enabled",
+            }
+          : undefined
       }
     >
       <div className="space-y-7">
@@ -512,7 +507,7 @@ function SignInChoiceForm({ signIn }: { signIn: SignInOptions }) {
   });
   if (!owner)
     return (
-      <p role="status" className="text-muted-foreground text-sm">
+      <p role="status" className="text-muted-foreground text-meta">
         Only the owner can change this.
       </p>
     );
@@ -628,7 +623,7 @@ function OidcForm({
   });
   if (!owner)
     return (
-      <p role="status" className="text-muted-foreground text-sm">
+      <p role="status" className="text-muted-foreground text-meta">
         Only the owner can change this.
       </p>
     );
@@ -641,7 +636,7 @@ function OidcForm({
       }}
     >
       {!config && (
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-meta">
           No identity provider is connected yet. Add its details below to enable
           sign-in.
         </p>
@@ -696,7 +691,7 @@ function OidcForm({
         />
       </Field>
       <details>
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
           Provider details and access rules
         </summary>
         <div className="space-y-5 pb-2">
@@ -733,7 +728,7 @@ function OidcForm({
               />
             </Field>
           ))}
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-meta">
             Separate list values with commas. Leave endpoint overrides blank to
             use provider discovery.
           </p>
@@ -751,7 +746,7 @@ function OidcForm({
       </details>
       <MutationError error={mutation.error} />
       <Save pending={mutation.isPending} label="Save sign-in" />
-      <p className="text-muted-foreground text-xs">
+      <p className="text-muted-foreground text-meta">
         Changes apply to future sign-ins. Keep this session open until you test
         the provider.{" "}
         <a className="text-link underline" href="/setup">
@@ -780,32 +775,23 @@ function DefaultsSection() {
     <Section
       title="Defaults"
       summary={
-        data && accessQuery.data ? (
-          <>
-            {data.defaults.profile_id ? (
-              data.profiles.find((p) => p.id === data.defaults.profile_id)
-                ?.name && (
-                <p>
-                  {
-                    data.profiles.find((p) => p.id === data.defaults.profile_id)
-                      ?.name
-                  }
-                </p>
-              )
-            ) : (
-              <p>No default access plan</p>
-            )}
-            <p className="text-muted-foreground">
-              {accessQuery.data?.self_service_apps
-                ? "People can create apps"
-                : "Only owners create apps"}{" "}
-              ·{" "}
-              {accessQuery.data?.auto_create_personal_app
-                ? "Personal app created at sign-in"
-                : "No automatic personal app"}
-            </p>
-          </>
-        ) : undefined
+        data && accessQuery.data
+          ? {
+              label: data.defaults.profile_id
+                ? (data.profiles.find((p) => p.id === data.defaults.profile_id)
+                    ?.name ?? "Default access plan")
+                : "No default access plan",
+              description: `${
+                accessQuery.data.self_service_apps
+                  ? "People can create apps"
+                  : "Only owners create apps"
+              } · ${
+                accessQuery.data.auto_create_personal_app
+                  ? "Personal app created at sign-in"
+                  : "No automatic personal app"
+              }`,
+            }
+          : undefined
       }
     >
       {isPending ? (
@@ -861,7 +847,7 @@ function DefaultsForm({
   });
   if (!owner)
     return (
-      <p role="status" className="text-muted-foreground text-sm">
+      <p role="status" className="text-muted-foreground text-meta">
         Only the owner can change this.
       </p>
     );
@@ -916,10 +902,10 @@ function DefaultsForm({
       </form>
 
       <details>
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
           Default model aliases
         </summary>
-        <p className="text-muted-foreground mb-3 text-sm">
+        <p className="text-muted-foreground text-meta mb-3">
           Aliases come from bootstrap configuration. Edit the source file and
           restart to change them.
         </p>
@@ -927,12 +913,12 @@ function DefaultsForm({
           <pre
             tabIndex={0}
             aria-label="Default model aliases JSON"
-            className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+            className="bg-muted focus-visible:outline-ring rounded-control overflow-x-auto p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
           >
             <code>{JSON.stringify(data.aliases, null, 2)}</code>
           </pre>
         ) : (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-meta">
             No default aliases configured. Add model aliases in the gateway
             configuration.
           </p>
@@ -994,33 +980,31 @@ function MediaSection() {
     <Section
       title="Media admission"
       summary={
-        data ? (
-          <>
-            <p>
-              {data.overrides.media_job_admission?.max_queue_depth ===
-                undefined ||
-              data.overrides.media_job_admission?.max_queue_depth === null
-                ? "Queue depth follows runtime default"
-                : `${data.overrides.media_job_admission.max_queue_depth} jobs can queue`}
-            </p>
-            <p className="text-muted-foreground">
-              {[
-                data.overrides.media_job_admission?.disabled_intents?.length
-                  ? `${data.overrides.media_job_admission.disabled_intents.length} paused job types`
-                  : null,
-                data.overrides.media_job_admission?.disabled_resource_classes
-                  ?.length
-                  ? `${data.overrides.media_job_admission.disabled_resource_classes.length} paused resource classes`
-                  : null,
-                data.overrides.media_job_admission?.reserved_tokens?.length
-                  ? `${data.overrides.media_job_admission.reserved_tokens.length} reserved tokens`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "No media admission rules set"}
-            </p>
-          </>
-        ) : undefined
+        data
+          ? {
+              label:
+                data.overrides.media_job_admission?.max_queue_depth ===
+                  undefined ||
+                data.overrides.media_job_admission?.max_queue_depth === null
+                  ? "Queue depth follows runtime default"
+                  : `${data.overrides.media_job_admission.max_queue_depth} jobs can queue`,
+              description:
+                [
+                  data.overrides.media_job_admission?.disabled_intents?.length
+                    ? `${data.overrides.media_job_admission.disabled_intents.length} paused job types`
+                    : null,
+                  data.overrides.media_job_admission?.disabled_resource_classes
+                    ?.length
+                    ? `${data.overrides.media_job_admission.disabled_resource_classes.length} paused resource classes`
+                    : null,
+                  data.overrides.media_job_admission?.reserved_tokens?.length
+                    ? `${data.overrides.media_job_admission.reserved_tokens.length} reserved tokens`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "No media admission rules set",
+            }
+          : undefined
       }
     >
       {isPending ? (
@@ -1136,7 +1120,7 @@ function MediaForm({
         </Field>
       </div>
       <details>
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
           Admission rules
         </summary>
         <div className="space-y-5 py-3">
@@ -1225,23 +1209,19 @@ function ExtensionsSection() {
     <Section
       title="Extensions"
       summary={
-        data ? (
-          <>
-            <p>
-              {packages.length
+        data
+          ? {
+              label: packages.length
                 ? `${packages.filter((pkg) => pkg.enabled).length} enabled extensions`
-                : "No extensions installed"}
-            </p>
-            {packages.length ? (
-              <p className="text-muted-foreground">
-                {packages
-                  .slice(0, 3)
-                  .map((pkg) => pkg.id)
-                  .join(" · ")}
-              </p>
-            ) : null}
-          </>
-        ) : undefined
+                : "No extensions installed",
+              description: packages.length
+                ? packages
+                    .slice(0, 3)
+                    .map((pkg) => pkg.id)
+                    .join(" · ")
+                : undefined,
+            }
+          : undefined
       }
     >
       {isPending ? (
@@ -1262,8 +1242,10 @@ function ExtensionsSection() {
                   className="flex flex-wrap items-center justify-between gap-3 py-4"
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium break-words">{pkg.id}</p>
-                    <p className="text-muted-foreground mt-1 text-xs">
+                    <p className="text-body font-medium break-words">
+                      {pkg.id}
+                    </p>
+                    <p className="text-muted-foreground text-meta mt-0.5">
                       Version {pkg.version}
                       {pkg.enabled_at ? (
                         <>
@@ -1366,11 +1348,11 @@ function ExtensionsSection() {
               </Button>
               {reviewed && (
                 <div className="space-y-4 border-t pt-5">
-                  <p className="text-sm font-medium">
+                  <p className="text-body font-medium">
                     {reviewed.review.package.id} ·{" "}
                     {reviewed.review.package.version}
                   </p>
-                  <p className="text-muted-foreground text-sm">
+                  <p className="text-muted-foreground text-meta">
                     {Object.entries(reviewed.review.object_counts)
                       .map(
                         ([kind, count]) =>
@@ -1382,13 +1364,13 @@ function ExtensionsSection() {
                     <p
                       key={error}
                       role="alert"
-                      className="text-destructive text-sm"
+                      className="text-destructive text-meta"
                     >
                       {error}
                     </p>
                   ))}
                   {reviewed.review.warnings.map((warning) => (
-                    <p key={warning} className="text-warning text-sm">
+                    <p key={warning} className="text-warning text-meta">
                       {warning}
                     </p>
                   ))}
@@ -1435,21 +1417,17 @@ function AdvancedSection() {
   return (
     <Section
       title="Advanced"
-      summary={
-        <>
-          <p>Redacted configuration snapshot</p>
-          <p className="text-muted-foreground">
-            Read-only export for inspection.
-          </p>
-        </>
-      }
+      summary={{
+        label: "Redacted configuration snapshot",
+        description: "Read-only export for inspection.",
+      }}
     >
       <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
           Effective configuration and export
         </summary>
         <div className="space-y-4 pt-3">
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-meta">
             This is a read-only snapshot, not a restore bundle. Bootstrap
             settings change in their source files; dashboard settings change in
             their own sections.
@@ -1474,7 +1452,7 @@ function AdvancedSection() {
                 <pre
                   tabIndex={0}
                   aria-label="Effective configuration JSON"
-                  className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+                  className="bg-muted focus-visible:outline-ring rounded-control overflow-x-auto p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
                 >
                   <code>{JSON.stringify(data.config, null, 2)}</code>
                 </pre>
@@ -1486,32 +1464,15 @@ function AdvancedSection() {
   );
 }
 export default function SettingsPage() {
-  const sections = [
-    "Instance",
-    "Sign-in",
-    "Defaults",
-    "Media admission",
-    "Extensions",
-    "Advanced",
-  ];
+  // The settings template: a 720 column, sections 32 apart, and no jump
+  // links while every section fits on the page (ban 22).
   return (
-    <div className="max-w-5xl">
+    <div className="page-read page-stack">
       <PageHeader title="Settings" />
-      <nav
-        aria-label="Settings sections"
-        className="mb-2 flex gap-2 overflow-x-auto pb-3"
-      >
-        {sections.map((section) => (
-          <Button key={section} variant="ghost" size="sm" asChild>
-            <a href={`#${section.toLowerCase().replaceAll(" ", "-")}`}>
-              {section}
-            </a>
-          </Button>
-        ))}
-      </nav>
       <InstanceSection />
       <SignInSection />
       <DefaultsSection />
+      <HouseholdPromptsSection />
       <MediaSection />
       <ExtensionsSection />
       <AdvancedSection />

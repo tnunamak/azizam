@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, provenance, receipt_store
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -31,6 +31,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.admin_db = self.root / "admin.db"
         self.jobs_db = self.root / "media_jobs.db"
         self.receipts_db = self.root / "receipts.db"
+        self.prompt_db = self.jobs_db
         self.cache = self.root / "cache"
         self.cache.mkdir()
         admin_store.init_db(self.admin_db)
@@ -89,6 +90,7 @@ class MeMediaRouterTests(unittest.TestCase):
                 admin_db_path=self.admin_db,
                 media_jobs_path=self.jobs_db,
                 receipts_path=self.receipts_db,
+                prompt_memory_path=self.prompt_db,
             )
         )
         self.client = TestClient(app)
@@ -167,6 +169,10 @@ class MeMediaRouterTests(unittest.TestCase):
         self._meta_path(asset_id).write_text(
             json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": 1_700_000_000})
         )
+        if "sha256:alice" in owner_hashes:
+            prompt_memory.put(asset_id, self.alice["id"], prompt, kept_until=None, path=self.prompt_db)
+        if "sha256:bob" in owner_hashes:
+            prompt_memory.put(asset_id, self.bob["id"], prompt, kept_until=None, path=self.prompt_db)
 
     def _receipt(
         self,
@@ -236,6 +242,8 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(own.json()["asset"]["provenance"]["workflow"], "wf.image")
         self.assertEqual(own.json()["asset"]["provenance"]["seed"], 7)
         self.assertEqual(own.json()["asset"]["provenance"]["size"], {"width": 512, "height": 512})
+        self.assertEqual(own.json()["asset"]["prompt"], "misty lake")
+        self.assertEqual(own.json()["asset"]["title"], "misty lake")
 
     def test_owner_everyone_scope_is_role_gated_and_audited(self) -> None:
         alice_asset = "img_" + "c" * 64
@@ -253,8 +261,30 @@ class MeMediaRouterTests(unittest.TestCase):
         allowed = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(allowed.status_code, 200, allowed.text)
         self.assertEqual({item["asset_id"] for item in allowed.json()["assets"]}, {alice_asset, bob_asset})
+        self.assertTrue(all(item["prompt"] is None and item["title"].startswith("Picture by ")
+                            and "misty lake" not in item["title"] for item in allowed.json()["assets"]))
+        foreign = self.client.get(f"/me/api/media?person={self.alice['id']}")
+        self.assertEqual(foreign.status_code, 200, foreign.text)
+        self.assertTrue(all(item["prompt"] is None and "misty lake" not in item["title"]
+                            for item in foreign.json()["assets"]))
         audit = admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db)
         self.assertEqual(len(audit), 1)
+
+    def test_owner_sees_own_prompt_in_instance_library_only(self) -> None:
+        owner_app = admin_store.create_app(
+            "Owner personal", kind="personal", owner_user_id=self.owner["id"], path=self.admin_db,
+        )
+        asset_id = "img_" + "e" * 64
+        self._write_asset(asset_id, ["sha256:alice"], prompt="maker words")
+        prompt_memory.put(asset_id, self.owner["id"], "owner words", kept_until=None, path=self.prompt_db)
+        self._receipt(owner_app["id"], "req_owner")
+        self._job("req_owner", asset_id)
+        self.current_user = self.owner
+        own = self.client.get("/me/api/media")
+        self.assertEqual(own.status_code, 200, own.text)
+        asset = next(item for item in own.json()["assets"] if item["asset_id"] == asset_id)
+        self.assertEqual(asset["prompt"], "owner words")
+        self.assertEqual(asset["title"], "owner words")
 
     def test_media_sources_filter_jobs_and_cache_assets(self) -> None:
         alice_asset = "img_" + "2" * 64
@@ -720,6 +750,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.current_user = self.owner
         detail = self.client.get(f"/me/api/media/{asset_id}")
         self.assertEqual(detail.status_code, 200)
+        self.assertIsNone(detail.json()["asset"]["prompt"])
+        self.assertIsNone(detail.json()["asset"]["workflow_download_url"])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 403)
         self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
@@ -906,6 +939,24 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertNotIn("/media/", json.dumps(body))
         self.assertEqual(rows["Qwen3.8-27B-Uncensored-Q4_K_M.gguf"]["paid_requests"], 0)
         self.assertEqual(rows["remote-chat"]["unknown_paid_requests"], 1)
+
+    def test_usage_counts_speech_as_voice_apart_from_music_and_sounds(self) -> None:
+        # Usage names rows by task: speech is "Read text aloud", not "Make music or sounds".
+        self._receipt(self.app_a["id"], "req_speech", intent="audio.speech",
+                      route_path="/v1/audio/speech", requested_model="voice", resolved_model="voice")
+        self._receipt(self.app_a["id"], "req_speech_path", intent="",
+                      route_path="/v1/audio/speech", requested_model="tts-1", resolved_model="tts-1")
+        self._receipt(self.app_a["id"], "req_music", intent="audio.music",
+                      route_path="/v1/audio/music", requested_model="music", resolved_model="music")
+        usage = self.client.get("/me/api/usage/summary")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        rows = {row["model"]: row["capability"] for row in usage.json()["by_model"]}
+        self.assertEqual(rows["voice"], "voice")
+        self.assertEqual(rows["tts-1"], "voice")
+        self.assertEqual(rows["music"], "audio")
+        day = usage.json()["by_day"][-1]
+        self.assertEqual(day.get("voice"), 2)
+        self.assertEqual(day.get("audio"), 1)
 
     def test_usage_sources_carry_request_counts_and_disabled_state(self) -> None:
         old = admin_store.create_app(

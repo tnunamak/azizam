@@ -14,7 +14,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { CapabilityView, StateTone } from "@/lib/capability-state";
+import {
+  STATE_WORDS,
+  type CapabilityStateKey,
+  type CapabilityView,
+  type StateTone,
+} from "@/lib/capability-state";
+import { Badge } from "@/components/ui/badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { capabilityMeta } from "./readiness";
 
@@ -58,6 +64,12 @@ export function StateIcon({
   );
 }
 
+/**
+ * Icon sizes (DESIGN "Icons"): 16 in rows (the default), 14 in a badge, 20
+ * beside the verdict.
+ */
+export const stateIconSize = { row: "size-4", badge: "size-3.5", verdict: "size-5" };
+
 /** A state word: icon and word in the tone colour. Ready stays quiet. */
 export function StateWord({
   tone,
@@ -71,7 +83,7 @@ export function StateWord({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 text-sm",
+        "text-meta inline-flex items-center gap-1.5",
         tone === "ok"
           ? "text-muted-foreground"
           : cn("font-medium", toneText[tone]),
@@ -81,6 +93,31 @@ export function StateWord({
       <StateIcon tone={tone} />
       {word}
     </span>
+  );
+}
+
+/**
+ * A state in a 20 px badge: the 14 icon and the word in the state's ink on
+ * its tint (Stripe "Failed", Vercel "Expired"). For a row or card title
+ * whose state is not Ready; a Ready row stays quiet (DESIGN "Status display").
+ */
+export function StateBadge({
+  state,
+  word,
+  className,
+}: {
+  state: CapabilityStateKey;
+  /** Defaults to the state's own word. */
+  word?: string;
+  className?: string;
+}) {
+  const { tone, word: stateWord } = STATE_WORDS[state];
+  return (
+    <Badge variant="state" state={state} className={className}>
+      {/* The tone's ink is the badge's ink, so the icon needs no override. */}
+      <StateIcon tone={tone} className={stateIconSize.badge} />
+      {word ?? stateWord}
+    </Badge>
   );
 }
 
@@ -118,7 +155,7 @@ export function StatusLine({
     return (
       <div
         className={cn(
-          "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm",
+          "text-meta flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1",
           className,
         )}
       >
@@ -126,9 +163,9 @@ export function StatusLine({
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          className="flex min-w-0 items-center gap-1.5 font-semibold"
+          className="text-body flex min-w-0 items-center gap-1.5 font-semibold"
         >
-          <StateIcon tone={tone} className="size-4" />
+          <StateIcon tone={tone} className={stateIconSize.row} />
           <span className="min-w-0">{text}</span>
         </p>
         {checkedAt != null ? (
@@ -146,13 +183,13 @@ export function StatusLine({
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        className="flex items-center gap-2.5 text-xl font-semibold tracking-tight"
+        className="text-verdict flex items-center gap-2.5 tracking-tight"
       >
-        <StateIcon tone={tone} className="size-5" />
+        <StateIcon tone={tone} className={stateIconSize.verdict} />
         <span className="min-w-0">{text}</span>
       </p>
       {checkedAt != null || children ? (
-        <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-7.5 text-sm">
+        <div className="text-muted-foreground text-meta mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-7.5">
           {checkedAt != null ? (
             <span>
               Checked <RelativeTime ts={checkedAt} fallback="" />
@@ -255,9 +292,9 @@ export function Callout({
             className={cn("mt-0.5 size-5 shrink-0", severityText[severity])}
           />
           <div className="min-w-0">
-            <Heading className="text-lg font-semibold">{title}</Heading>
+            <Heading className="text-heading">{title}</Heading>
             {meta ? (
-              <p className="text-muted-foreground text-sm">{meta}</p>
+              <p className="text-muted-foreground text-meta">{meta}</p>
             ) : null}
           </div>
         </div>
@@ -266,7 +303,7 @@ export function Callout({
           {children || actions ? (
             <div className="space-y-3">
               {children ? (
-                <div className="text-foreground space-y-1 text-base font-medium">
+                <div className="text-foreground text-body space-y-1 font-medium">
                   {children}
                 </div>
               ) : null}
@@ -284,7 +321,7 @@ export function Callout({
                 type="button"
                 aria-expanded={evidenceOpen}
                 onClick={() => setEvidenceOpen((open) => !open)}
-                className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:min-h-8"
+                className="text-link text-meta inline-flex min-h-8 items-center gap-1 font-medium max-sm:min-h-11"
               >
                 <ChevronRight
                   aria-hidden="true"
@@ -321,9 +358,9 @@ export function Callout({
             order classes put a header action after the body on a phone. */}
         <div className="flex min-w-0 flex-1 flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-4">
           <div className="min-w-0 sm:col-start-1 sm:row-start-1">
-            <Heading className="text-base font-semibold">{title}</Heading>
+            <Heading className="text-body font-semibold">{title}</Heading>
             {meta ? (
-              <p className="text-muted-foreground text-sm">{meta}</p>
+              <p className="text-muted-foreground text-meta">{meta}</p>
             ) : null}
           </div>
           {headerAction ? (
@@ -332,7 +369,7 @@ export function Callout({
             </div>
           ) : null}
           {children ? (
-            <div className="space-y-1 text-sm max-sm:order-2 max-sm:-ml-8 sm:col-span-2">
+            <div className="text-meta space-y-1 max-sm:order-2 max-sm:-ml-8 sm:col-span-2">
               {children}
             </div>
           ) : null}
@@ -354,7 +391,7 @@ export function Callout({
                 type="button"
                 aria-expanded={evidenceOpen}
                 onClick={() => setEvidenceOpen((open) => !open)}
-                className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:hidden"
+                className="text-link text-meta inline-flex items-center gap-1 font-medium max-sm:min-h-11 sm:hidden"
               >
                 {/* The disclosure chevron every <summary> draws (D1.5). */}
                 <ChevronRight
@@ -399,8 +436,9 @@ export function CapabilityList({
 }) {
   // D1.5: one row family across Home, Status and Library. Rows sit in one
   // card with hairlines between them (none above the first row of each
-  // column), and lead with the capability's icon in its colour, as Home's
-  // task rows do; the 32 px tinted tiles were a second row style.
+  // column). Rows are 40 (60 with a detail line; 48 on a phone) and lead with
+  // the capability's icon in ink (DESIGN "Colour budget": capability hues
+  // never tint a list icon).
   return (
     <ul
       className={cn(
@@ -415,23 +453,17 @@ export function CapabilityList({
           <li
             key={view.key}
             className={cn(
-              "grid min-h-11 grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-2.5 first:border-t-0",
+              "grid min-h-(--row-1) grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-2 first:border-t-0 max-sm:min-h-(--row-phone-1)",
               columns === 2 && "sm:nth-2:border-t-0",
             )}
           >
-            <Icon
-              aria-hidden="true"
-              className={cn(
-                "size-4",
-                view.state === "off" || view.state === "blocked"
-                  ? "text-muted-foreground"
-                  : meta.tone,
-              )}
-            />
+            <Icon aria-hidden="true" className="text-muted-foreground size-4" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{view.label}</p>
+              <p className="text-body truncate font-medium">{view.label}</p>
               {showDetail && view.detail ? (
-                <p className="text-muted-foreground text-sm">{view.detail}</p>
+                <p className="text-muted-foreground text-meta mt-0.5">
+                  {view.detail}
+                </p>
               ) : null}
               {actionFor ? actionFor(view) : null}
             </div>
@@ -449,8 +481,8 @@ export function CapabilityList({
  * word when it is not Ready. The detail stays in the chip's title.
  */
 export function CapabilityChips({ views }: { views: CapabilityView[] }) {
-  // 44 px rows in one card (D1.4: pills wrapped unevenly and the phone's
-  // tab bar cut them off): one column on a phone, two beside each other in
+  // 40 px rows (48 on a phone) in one card (D1.4: pills wrapped unevenly and
+  // the phone's tab bar cut them off): one column on a phone, two beside each other in
   // Status's single reading column (D1.5b). Ready stays quiet; any other
   // state shows its word on the right.
   return (
@@ -459,7 +491,7 @@ export function CapabilityChips({ views }: { views: CapabilityView[] }) {
         <li
           key={view.key}
           title={view.detail ?? undefined}
-          className="flex min-h-11 items-center gap-2 border-t text-sm first:border-t-0 sm:nth-2:border-t-0"
+          className="text-meta flex min-h-(--row-1) items-center gap-2 border-t first:border-t-0 max-sm:min-h-(--row-phone-1) sm:nth-2:border-t-0"
         >
           <StateIcon
             tone={view.tone}

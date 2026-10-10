@@ -28,6 +28,7 @@ The contract has three goals:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
@@ -42,6 +43,20 @@ from gateway.provenance import (
 
 class ExtensionError(ValueError):
     """Raised for caller mistakes (bad envelope shape, bad specs)."""
+
+
+def multipart_extensions(value: Any) -> dict[str, Any]:
+    """Parse the shared extensions form field before reading any namespace."""
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError) as exc:
+            raise ExtensionError("extensions must be a JSON object string") from exc
+    if not isinstance(value, Mapping):
+        raise ExtensionError("extensions must be a JSON object string")
+    return dict(value)
 
 
 @dataclass

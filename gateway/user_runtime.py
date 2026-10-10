@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from gateway import admin_store
 from gateway import receipt_store
 from gateway.admin_oidc import AdminSession
-from gateway.admin_runtime import generate_app_api_key
+from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
 from gateway.runtime_auth import hash_api_key
 
 __all__ = [
@@ -444,6 +444,7 @@ def mint_user_app_key(
         hash=hash_api_key(api_key),
         prefix=_key_prefix(api_key),
         display_name=label or "Self-service key",
+        created_by=str(user["id"]),
         path=path,
     )
     admin_store.record_audit(
@@ -458,6 +459,7 @@ def mint_user_app_key(
     out = _sanitize_credential(record)
     out["active"] = True
     out["api_key"] = api_key
+    out["prompt_memory"] = app_key_prompt_memory(app, record)
     return out
 
 

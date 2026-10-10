@@ -1,11 +1,12 @@
 """Hermetic settings journeys: authorization, durable writes and redacted export."""
 import json
+import time
 
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, lan_auth_policy
+from gateway import admin_store, lan_auth_policy, media_jobs, prompt_memory
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.settings_api import create_settings_router, instance_settings
 
@@ -32,6 +33,71 @@ def settings(tmp_path):
 
 
 OWNER = {"test-role": "owner", "x-azizam-csrf": "csrf-fixture"}
+
+
+def test_prompt_memory_owner_kill_switch_purges_existing_prompts(settings, tmp_path, monkeypatch):
+    client, _, _ = settings
+    prompt_db = tmp_path / "media_jobs.db"
+    monkeypatch.setattr(media_jobs, "DB_PATH", prompt_db)
+    prompt_memory.put("img_one", "person-a", "private-sentinel", kept_until=None, path=prompt_db)
+    defaults = client.get("/admin/api/settings/prompt-memory", headers=OWNER)
+    assert defaults.status_code == 200
+    assert defaults.json()["prompt_memory"] == {
+        "default_remember": True, "never_keep": False, "retention_cap": "never",
+    }
+    denied = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": "stale"},
+    )
+    assert denied.status_code == 409
+    assert prompt_memory.get("img_one", "person-a", path=prompt_db)
+    updated = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": defaults.json()["revision"]},
+    )
+    assert updated.status_code == 200
+    assert prompt_memory.get("img_one", "person-a", path=prompt_db) is None
+
+
+def test_prompt_memory_owner_cap_tightens_existing_prompts(settings, tmp_path, monkeypatch):
+    client, _, _ = settings
+    prompt_db = tmp_path / "media_jobs.db"
+    monkeypatch.setattr(media_jobs, "DB_PATH", prompt_db)
+    prompt_memory.put("img_old", "person-a", "old secret", kept_until=None,
+                      created_at=int(time.time()) - 100 * 86400, path=prompt_db)
+    revision = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()["revision"]
+    response = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": False, "retention_cap": "3_months"},
+        headers={**OWNER, "If-Match": revision},
+    )
+    assert response.status_code == 200
+    assert prompt_memory.get("img_old", "person-a", path=prompt_db) is None
+
+
+def test_prompt_memory_kill_switch_reports_pending_metadata_cleanup(tmp_path):
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    auth = lambda _request: AdminContext(
+        subject="owner", roles=frozenset({"owner"}), auth_method="session", csrf_token="csrf-fixture",
+    )
+    app = FastAPI()
+    app.include_router(create_settings_router(
+        auth=auth, admin_path=path, config_provider=lambda: {},
+        on_prompt_memory_kill=lambda: {"metadata_stripping": {"pending": 3}},
+    ))
+    client = TestClient(app)
+    current = client.get("/admin/api/settings/prompt-memory", headers=OWNER)
+    response = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": current.json()["revision"]},
+    )
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["metadata_stripping"]["pending"] == 3
+    assert response.json()["prompt_purge"]["retry_scheduled"] is True
 
 
 @pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])
@@ -244,3 +310,33 @@ def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkey
     assert response.json()["service"]["name"] == "Saved gateway"
     assert response.json()["presentation"] == {"theme_default": "dark"}
     assert "instance_presentation" not in response.text
+
+
+def test_household_erasure_intent_survives_failure_and_reenable(settings, monkeypatch):
+    client, admin_db, _ = settings
+    monkeypatch.setattr(prompt_memory, "prune_all_before", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
+    revision = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()["revision"]
+    value = {"default_remember": True, "never_keep": True, "retention_cap": "never"}
+    response = client.put("/admin/api/settings/prompt-memory", json=value, headers={**OWNER, "If-Match": revision})
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["database_pending"] is True
+    cutoff = prompt_memory.household_erasure_cutoff(admin_path=admin_db)
+    value["never_keep"] = False
+    response = client.put("/admin/api/settings/prompt-memory", json=value,
+                          headers={**OWNER, "If-Match": response.json()["revision"]})
+    assert prompt_memory.household_erasure_cutoff(admin_path=admin_db) == cutoff
+    assert response.json()["prompt_purge"]["database_pending"] is True
+
+
+def test_household_intent_failure_leaves_setting_and_revision_unchanged(settings, monkeypatch):
+    client, _, _ = settings
+    before = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
+    monkeypatch.setattr(admin_store, "_record_prompt_erasure", lambda *a: (_ for _ in ()).throw(RuntimeError("locked")))
+    response = client.put("/admin/api/settings/prompt-memory",
+                          json={**before["prompt_memory"], "never_keep": True},
+                          headers={**OWNER, "If-Match": before["revision"]})
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "prompt_erasure_unavailable"
+    after = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
+    assert after["revision"] == before["revision"]
+    assert after["prompt_memory"] == before["prompt_memory"]

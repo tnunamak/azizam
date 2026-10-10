@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AppsPage from "./page";
+import type { Credential } from "@/lib/api";
 import {
   accountApi,
   type AccountApp,
@@ -62,6 +63,43 @@ function renderApps() {
     </QueryClientProvider>,
   );
 }
+
+it("shows one prompt memory notice for legacy keys without a creator", async () => {
+  const oldKey = {
+    id: "old-key",
+    created_by: null,
+    last_used_at: null,
+  } as Credential;
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        kind: "personal",
+        credentials: [oldKey, { ...oldKey, id: "second-key" }],
+      },
+    ],
+  });
+  renderApps();
+  expect(
+    await screen.findAllByText(/Older keys with no recorded creator/),
+  ).toHaveLength(1);
+});
+
+it("does not advise household app owners to create a key for personal prompt settings", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        credentials: [{ id: "old-key", created_by: null } as Credential],
+      },
+    ],
+  });
+  renderApps();
+  await screen.findByRole("heading", { name: "My laptop" });
+  expect(screen.queryByText(/Older keys with no recorded creator/)).toBeNull();
+});
 
 it("refreshes a partially created app, clears the cancelled draft, and resumes key creation", async () => {
   renderApps();
@@ -154,4 +192,35 @@ it("keeps a newly created app resumable while the session refresh is still pendi
   expect(accountApi.mintKey).toHaveBeenCalledTimes(2);
   expect(accountApi.mintKey).toHaveBeenLastCalledWith(app.id, app.name);
   finishRefresh({ ...snapshot, apps: [previousApp, app] });
+});
+
+it("says what a new key does with prompts, from the gateway's answer", async () => {
+  renderApps();
+  await screen.findByText("Connect your first app");
+  fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
+  fireEvent.change(screen.getByLabelText("App name"), {
+    target: { value: "My laptop" },
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValueOnce({
+    id: "new-key",
+    subject_kind: "app",
+    subject_id: app.id,
+    app_id: app.id,
+    profile_id: null,
+    prefix: "test",
+    display_name: "My laptop",
+    scopes: [],
+    created_at: 1800000000,
+    expires_at: null,
+    revoked_at: null,
+    last_used_at: null,
+    api_key: "test-key-only",
+    prompt_memory: { person_id: "member" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  expect(
+    await screen.findByText(
+      "This key acts as you. Anyone who has it can see the prompts you saved.",
+    ),
+  ).toBeVisible();
 });

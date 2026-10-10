@@ -7,6 +7,8 @@ import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
   authenticated: boolean;
+  /** The signed-in person's id; absent for service keys. */
+  id?: string | null;
   serviceAdmin?: boolean;
   name: string;
   email: string | null;
@@ -33,6 +35,7 @@ export async function fetchViewer(): Promise<Viewer> {
     const role = snapshot.user.role;
     return {
       authenticated: true,
+      id: snapshot.user.id ?? null,
       name: formatPersonName(snapshot.user.name, "Your account"),
       email: snapshot.user.email,
       role,

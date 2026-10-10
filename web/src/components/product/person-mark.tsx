@@ -52,6 +52,7 @@ export function PersonMark({
 }) {
   return (
     <span
+      data-slot="person-mark"
       className={cn(
         "text-person-ink inline-flex shrink-0 items-center justify-center rounded-full font-semibold select-none",
         personHue(name),

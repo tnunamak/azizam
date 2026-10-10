@@ -3,15 +3,43 @@
 import * as React from "react";
 import { cn } from "@/lib/cn";
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/**
+ * DESIGN "List, table and card anatomy": a 36 header in `text-label` subtle
+ * ink with no fill, 40 rows (36 with `dense`, for Usage and Activity), and
+ * `numeric` cells right-aligned in tabular figures.
+ */
+function Table({
+  className,
+  dense = false,
+  ...props
+}: React.ComponentProps<"table"> & { dense?: boolean }) {
+  // A table wider than its container scrolls sideways; keyboard users can
+  // only scroll a region they can focus (WCAG 2.1.1, axe
+  // scrollable-region-focusable), so the container takes focus only then.
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const [scrolls, setScrolls] = React.useState(false);
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const update = () =>
+      setScrolls(container.scrollWidth > container.clientWidth + 1);
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    if (container.firstElementChild) observer.observe(container.firstElementChild);
+    update();
+    return () => observer.disconnect();
+  }, []);
   return (
     <div
+      ref={containerRef}
       data-slot="table-container"
+      tabIndex={scrolls ? 0 : undefined}
       className="relative w-full overflow-x-auto"
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        data-dense={dense ? "" : undefined}
+        className={cn("group/table text-meta w-full caption-bottom", className)}
         {...props}
       />
     </div>
@@ -64,12 +92,17 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   );
 }
 
-function TableHead({ className, ...props }: React.ComponentProps<"th">) {
+function TableHead({
+  className,
+  numeric = false,
+  ...props
+}: React.ComponentProps<"th"> & { numeric?: boolean }) {
   return (
     <th
       data-slot="table-head"
       className={cn(
-        "text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "text-subtle-foreground text-label h-9 px-3 text-left align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        numeric && tableNumeric,
         className,
       )}
       {...props}
@@ -77,18 +110,26 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   );
 }
 
-function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+function TableCell({
+  className,
+  numeric = false,
+  ...props
+}: React.ComponentProps<"td"> & { numeric?: boolean }) {
   return (
     <td
       data-slot="table-cell"
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "h-10 px-3 py-1.5 align-middle whitespace-nowrap group-data-dense/table:h-9 [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        numeric && tableNumeric,
         className,
       )}
       {...props}
     />
   );
 }
+
+/** Right-aligned tabular figures, for counts, money and times. */
+const tableNumeric = "figures text-right";
 
 function TableCaption({
   className,
@@ -97,7 +138,7 @@ function TableCaption({
   return (
     <caption
       data-slot="table-caption"
-      className={cn("text-muted-foreground mt-4 text-sm", className)}
+      className={cn("text-muted-foreground text-meta mt-4", className)}
       {...props}
     />
   );
@@ -112,4 +153,5 @@ export {
   TableRow,
   TableCell,
   TableCaption,
+  tableNumeric,
 };

@@ -6,7 +6,8 @@ import type { ReactNode } from "react";
 const CompactTouchTargetsContext = createContext(false);
 
 /**
- * Keeps a compact route's controls at least 44px until its density breakpoint.
+ * Keeps a compact route's controls at least 44px below 640 px, the one
+ * breakpoint every route follows (DESIGN "Controls").
  * Context reaches portal content, so dialog controls follow the same contract.
  */
 export function CompactTouchTargets({ children }: { children: ReactNode }) {
@@ -20,6 +21,6 @@ export function CompactTouchTargets({ children }: { children: ReactNode }) {
 export function useCompactTouchTargetClass(): string | undefined {
   const compact = useContext(CompactTouchTargetsContext);
   return compact
-    ? "min-h-11 min-w-11 min-[980px]:min-h-0 min-[980px]:min-w-0"
+    ? "max-sm:min-h-11 max-sm:min-w-11"
     : undefined;
 }

@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import LibraryPage from "@/app/library/page";
 
@@ -123,7 +124,7 @@ it("names an uncatalogued model readably and keeps the raw id only in Details", 
   client.clear();
 });
 
-it("labels the ComfyUI workflow link as a download", async () => {
+it("offers the maker's file with details from the viewer's actions", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({
     assets: [{
       asset_id: "workflow",
@@ -144,9 +145,17 @@ it("labels the ComfyUI workflow link as a download", async () => {
     </QueryClientProvider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: "Open Workflow image" }));
-  const link = await screen.findByRole("link", { name: "Download ComfyUI workflow" });
-  expect(link).toHaveAttribute("href", "/workflow.json");
-  expect(link).toHaveAttribute("download");
+  // The gateway sends workflow_download_url to the maker only; the viewer
+  // offers it as "Download with details" in its actions menu, not as a
+  // standing link (docs/design/PROMPT_MEMORY.md).
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).queryByRole("link", { name: /ComfyUI/ })).toBeNull();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: /^Actions for / }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Download with details" }),
+  ).toBeVisible();
   expect(screen.queryByRole("link", { name: "Open in ComfyUI" })).toBeNull();
   client.clear();
 });

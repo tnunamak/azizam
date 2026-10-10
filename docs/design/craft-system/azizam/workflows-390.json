@@ -1,0 +1,1497 @@
+{
+ "scope": "main",
+ "url": "/ui/workflows/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 390,
+   "h": 844
+  },
+  "pageHeight": 1970,
+  "sidebarWidth": 0,
+  "main": {
+   "x": 0,
+   "w": 390,
+   "padding": "24px 20px 112px 20px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1200px",
+  "contentMaxWidthEl": "main.shell-content pb-28 sm:pb-12",
+  "contentLeftFromViewport": 20,
+  "contentRightFromViewport": 20,
+  "contentLeftFromMainEdge": 20,
+  "contentRightFromMainEdge": 20,
+  "titleTop": 80,
+  "titleTopFromMain": 24,
+  "title": {
+   "text": "Workflows",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 80,
+    "height": 58,
+    "sample": "Workflows Choose by purpose and inputs. "
+   },
+   {
+    "tag": "div",
+    "classes": "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between",
+    "top": 170,
+    "height": 100,
+    "sample": "Search workflows All Images Video"
+   },
+   {
+    "tag": "div",
+    "classes": "grid gap-6 sm:grid-cols-2 lg:grid-cols-3",
+    "top": 302,
+    "height": 1556,
+    "sample": "Images Krea 2 Turbo Photoreal images fro"
+   }
+  ],
+  "sectionGaps": [
+   32,
+   32
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-",
+    "gap": 32,
+    "from": "Workflows Choose by purpose an",
+    "to": "Search workflows All Images Vi"
+   },
+   {
+    "parent": "div.space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-",
+    "gap": 32,
+    "from": "Search workflows All Images Vi",
+    "to": "Images Krea 2 Turbo Photoreal "
+   },
+   {
+    "parent": "div.grid gap-6 sm:grid-cols-2 lg:grid-cols-3",
+    "gap": 24,
+    "from": "Images Krea 2 Turbo Photoreal ",
+    "to": "Video Bernini-R Remix Edit a v"
+   },
+   {
+    "parent": "article.bg-card text-card-foreground flex min-w-0 flex-col gap-5 rou",
+    "gap": 20,
+    "from": "Krea 2 Turbo Photoreal images ",
+    "to": "Open in Try Details"
+   },
+   {
+    "parent": "article.bg-card text-card-foreground flex min-w-0 flex-col gap-5 rou",
+    "gap": 20,
+    "from": "Bernini-R Remix Edit a video f",
+    "to": "Open in Try Details"
+   },
+   {
+    "parent": "article.bg-card text-card-foreground flex min-w-0 flex-col gap-5 rou",
+    "gap": 20,
+    "from": "RIFE 2x Frame Interpolation Do",
+    "to": "Open in Try Details"
+   },
+   {
+    "parent": "article.bg-card text-card-foreground flex min-w-0 flex-col gap-5 rou",
+    "gap": 20,
+    "from": "SCAIL-2 Character Replace Put ",
+    "to": "Open in Try Details"
+   }
+  ],
+  "headingGaps": [
+   {
+    "tag": "h2",
+    "text": "Images",
+    "gap": 12
+   },
+   {
+    "tag": "h3",
+    "text": "Krea 2 Turbo",
+    "gap": 8
+   },
+   {
+    "tag": "h2",
+    "text": "Video",
+    "gap": 12
+   },
+   {
+    "tag": "h3",
+    "text": "Bernini-R Remix",
+    "gap": 8
+   },
+   {
+    "tag": "h3",
+    "text": "RIFE 2x Frame Interpolation",
+    "gap": 8
+   },
+   {
+    "tag": "h3",
+    "text": "SCAIL-2 Character Replace",
+    "gap": 8
+   }
+  ]
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Workflows",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 80,
+    "w": 199,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Choose by purpose and inputs.",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 118,
+    "w": 199,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "4 workflows",
+   "role": "badge",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 286,
+    "y": 98,
+    "w": 84,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "All",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(11, 74, 87)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 226,
+    "w": 87,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Images",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 115,
+    "y": 226,
+    "w": 92,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Video",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 215,
+    "y": 226,
+    "w": 82,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Images",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 302,
+    "w": 350,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Krea 2 Turbo",
+   "role": "h3",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 359,
+    "w": 264,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Photoreal images from a prompt",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 389,
+    "w": 264,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Needs: text",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 421,
+    "w": 264,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Optional: a number for width, a number f",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 445,
+    "w": 264,
+    "h": 80,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Makes: a picture",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 529,
+    "w": 264,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Open in Try",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 569,
+    "w": 97,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Details",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 625,
+    "w": 71,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Video",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 714,
+    "w": 350,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Bernini-R Remix",
+   "role": "h3",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 771,
+    "w": 264,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Edit a video from an instruction",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 801,
+    "w": 264,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Needs: a video and text",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 833,
+    "w": 264,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Optional: a number for width, a number f",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 857,
+    "w": 264,
+    "h": 60,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Makes: a video",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 921,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Open in Try",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 961,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Details",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1017,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "RIFE 2x Frame Interpolation",
+   "role": "h3",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1119,
+    "w": 264,
+    "h": 22,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Double a video's frame rate",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1149,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Needs: a video",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1181,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Optional: a number for multiplier, a num",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1205,
+    "w": 264,
+    "h": 40,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Makes: a video",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1249,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Open in Try",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1289,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Details",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1345,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "SCAIL-2 Character Replace",
+   "role": "h3",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1447,
+    "w": 264,
+    "h": 22,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Put a reference character into a video",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1477,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Needs: a picture, a video and text for p",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1509,
+    "w": 264,
+    "h": 40,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Optional: text for source subject, text ",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1553,
+    "w": 264,
+    "h": 140,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Makes: a video",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 85,
+    "y": 1697,
+    "w": 264,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Open in Try",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1737,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Details",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1793,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "input",
+   "variant": null,
+   "size": null,
+   "tag": "input",
+   "role": null,
+   "text": "Search workflows",
+   "height": 44,
+   "width": 350,
+   "borderRadius": "6px",
+   "padding": "4px 12px 4px 36px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(123, 142, 147)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 15,
+   "fontWeight": 400,
+   "classes": "border-input bg-card file:text-foreground placeholder:text-muted-foreground h-10 w-full min-w-0 rounded-control border px-3 py-1 text-base transition-colors file:inline-flex file:h-7 file:border-0 fil",
+   "box": {
+    "x": 20,
+    "y": 170,
+    "w": 350,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "All",
+   "height": 44,
+   "width": 87,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "1px",
+   "borderColor": "oklab(0.362212 -0.0467424 -0.035818 / 0.3)",
+   "borderStyle": "solid",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgb(220, 240, 242)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 20,
+    "y": 226,
+    "w": 87,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Images",
+   "height": 44,
+   "width": 92,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 115,
+    "y": 226,
+    "w": 92,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Video",
+   "height": 44,
+   "width": 82,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 215,
+    "y": 226,
+    "w": 82,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Open in Try",
+   "height": 44,
+   "width": 97,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 569,
+    "w": 97,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Details",
+   "height": 44,
+   "width": 71,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 625,
+    "w": 71,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Open in Try",
+   "height": 44,
+   "width": 97,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 961,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Details",
+   "height": 44,
+   "width": 71,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 1017,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Open in Try",
+   "height": 44,
+   "width": 97,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 1289,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Details",
+   "height": 44,
+   "width": 71,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 1345,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "sm",
+   "tag": "a",
+   "role": null,
+   "text": "Open in Try",
+   "height": 44,
+   "width": 97,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 1737,
+    "w": 97,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Details",
+   "height": 44,
+   "width": 71,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 41,
+    "y": 1793,
+    "w": 71,
+    "h": 44,
+    "inViewport": false
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [
+  {
+   "tag": "article",
+   "slot": null,
+   "classes": "bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 338,
+    "w": 350,
+    "h": 352,
+    "inViewport": true
+   },
+   "firstText": "Krea 2 Turbo Photoreal images from a pro"
+  },
+  {
+   "tag": "article",
+   "slot": null,
+   "classes": "bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 750,
+    "w": 350,
+    "h": 332,
+    "inViewport": true
+   },
+   "firstText": "Bernini-R Remix Edit a video from an ins"
+  },
+  {
+   "tag": "article",
+   "slot": null,
+   "classes": "bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 1098,
+    "w": 350,
+    "h": 312,
+    "inViewport": false
+   },
+   "firstText": "RIFE 2x Frame Interpolation Double a vid"
+  },
+  {
+   "tag": "article",
+   "slot": null,
+   "classes": "bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5",
+   "padding": "20px 20px 20px 20px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 1426,
+    "w": 350,
+    "h": 432,
+    "inViewport": false
+   },
+   "firstText": "SCAIL-2 Character Replace Put a referenc"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "div.flex.flex-wrap.gap-2",
+   "count": 3,
+   "visualRows": 1,
+   "perRow": 3,
+   "itemHeights": [
+    44,
+    44,
+    44
+   ],
+   "heights": [
+    44
+   ],
+   "gaps": [],
+   "columnGaps": [
+    8,
+    8
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 44,
+   "sample": "All",
+   "box": {
+    "x": 20,
+    "y": 226,
+    "w": 350,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.space-y-1.text-sm",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    20,
+    80,
+    20
+   ],
+   "heights": [
+    20,
+    80,
+    20
+   ],
+   "gaps": [
+    4,
+    4
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 128,
+   "sample": "Needs: text",
+   "box": {
+    "x": 85,
+    "y": 421,
+    "w": 264,
+    "h": 128,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.grid.gap-4.sm:grid-cols-2.lg:grid-cols-3",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    332,
+    312,
+    432
+   ],
+   "heights": [
+    332,
+    312,
+    432
+   ],
+   "gaps": [
+    16,
+    16
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 1108,
+   "sample": "Bernini-R Remix Edit a video from an ins",
+   "box": {
+    "x": 20,
+    "y": 750,
+    "w": 350,
+    "h": 1108,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.space-y-1.text-sm",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    20,
+    60,
+    20
+   ],
+   "heights": [
+    20,
+    60,
+    20
+   ],
+   "gaps": [
+    4,
+    4
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 108,
+   "sample": "Needs: a video and text",
+   "box": {
+    "x": 85,
+    "y": 833,
+    "w": 264,
+    "h": 108,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.space-y-1.text-sm",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    20,
+    40,
+    20
+   ],
+   "heights": [
+    20,
+    40,
+    20
+   ],
+   "gaps": [
+    4,
+    4
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 88,
+   "sample": "Needs: a video",
+   "box": {
+    "x": 85,
+    "y": 1181,
+    "w": 264,
+    "h": 88,
+    "inViewport": false
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.space-y-1.text-sm",
+   "count": 3,
+   "visualRows": 3,
+   "perRow": 1,
+   "itemHeights": [
+    40,
+    140,
+    20
+   ],
+   "heights": [
+    40,
+    140,
+    20
+   ],
+   "gaps": [
+    4,
+    4
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 208,
+   "sample": "Needs: a picture, a video and text for p",
+   "box": {
+    "x": 85,
+    "y": 1509,
+    "w": 264,
+    "h": 208,
+    "inViewport": false
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 7
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 26,
+  "rgb(61, 79, 85)": 5,
+  "rgb(11, 74, 87)": 1,
+  "rgb(255, 255, 255)": 4
+ },
+ "bgColors": {
+  "rgb(255, 255, 255)": 11,
+  "rgb(220, 240, 242)": 1,
+  "oklab(0.502207 0.0619754 -0.123303 / 0.1)": 1,
+  "rgb(13, 69, 82)": 4,
+  "oklab(0.518937 0.128143 -0.000759155 / 0.1)": 3
+ },
+ "surface": "workflows",
+ "width": 390,
+ "actualRoute": "/ui/workflows/",
+ "bodyTextLength": 1112
+}

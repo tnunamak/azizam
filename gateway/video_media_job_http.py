@@ -1,14 +1,13 @@
 """HTTP-facing adapters for durable OpenAI video media jobs.
 
-The functions in this module are intentionally pure shape builders. Route
+This module builds job and result shapes, with random request tokens. Route
 wiring can call them before/after backend execution without teaching
 ``proxy.py`` about durable media-job internals.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
+import secrets
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -56,7 +55,7 @@ def job_from_openai_video_request(
         size=_string(body.get("size")) or DEFAULT_VIDEO_SIZE,
         seconds=_float(body.get("seconds"), default=DEFAULT_VIDEO_SECONDS),
         seed=_optional_int(body.get("seed")),
-        request_hash=_request_hash(body),
+        request_hash=secrets.token_hex(32),
         idempotency="header" if context.idempotency_key else "request",
     )
     return video_media_jobs.new_video_generate_job(
@@ -150,11 +149,6 @@ def generation_response_from_job(
     """Project a job to the OpenAI video generation polling response."""
 
     return video_media_jobs.video_generation_payload(job, public_id=public_id)
-
-
-def _request_hash(body: Mapping[str, Any]) -> str:
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _string(value: Any) -> str:

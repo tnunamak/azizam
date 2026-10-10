@@ -270,6 +270,9 @@ class TestSdxlSeamlessTileModelDiscovery(unittest.TestCase):
 
 class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
     async def test_comfy_execution_error_fails_fast(self) -> None:
+        private_prompt = "private-input-sentinel-8ca931"
+        raw_exception = f"0.7\nFailed to encode prompt: {private_prompt}"
+
         class _Response:
             def __init__(self, payload: dict[str, object], status_code: int = 200) -> None:
                 self._payload = payload
@@ -296,7 +299,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                                         {
                                             "node_id": "45",
                                             "node_type": "Image Seamless Texture",
-                                            "exception_message": "0.7\n",
+                                            "exception_message": raw_exception,
                                         },
                                     ]
                                 ],
@@ -318,7 +321,10 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
         assert err is not None
         self.assertEqual(err.status_code, 502)
         body = json.loads(err.body.decode("utf-8"))
-        self.assertIn("Image Seamless Texture node 45: 0.7", body["error"]["message"])
+        self.assertIn("Image Seamless Texture node 45: execution failed", body["error"]["message"])
+        self.assertNotIn("0.7", err.body.decode("utf-8"))
+        self.assertNotIn(raw_exception, err.body.decode("utf-8"))
+        self.assertNotIn(private_prompt, err.body.decode("utf-8"))
 
     async def test_timeout_cancels_prompt_and_reports_queue_position(self) -> None:
         class _Response:
@@ -465,6 +471,8 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
 
 class TestComfyExecutionErrorParsing(unittest.TestCase):
     def test_incomplete_execution_error_is_terminal_failure(self) -> None:
+        private_prompt = "private-input-sentinel-f9b728"
+        raw_exception = f"0.7\nFailed to encode prompt: {private_prompt}"
         job = {
             "status": {
                 "completed": False,
@@ -474,7 +482,7 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
                         {
                             "node_id": "45",
                             "node_type": "Image Seamless Texture",
-                            "exception_message": "0.7\n",
+                            "exception_message": raw_exception,
                         },
                     ]
                 ],
@@ -484,13 +492,17 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
 
         self.assertEqual(
             proxy._comfy_execution_error_message(job),
-            "ComfyUI Image Seamless Texture node 45: 0.7",
+            "ComfyUI Image Seamless Texture node 45: execution failed",
         )
         self.assertEqual(
             proxy._history_terminal_state(job),
-            ("failed", "ComfyUI Image Seamless Texture node 45: 0.7"),
+            ("failed", "ComfyUI Image Seamless Texture node 45: execution failed"),
         )
         self.assertEqual(proxy._job_status_from_history(job), ("failed", 100))
+        for summary in (proxy._comfy_execution_error_message(job), proxy._history_terminal_state(job)[1]):
+            self.assertNotIn("0.7", summary)
+            self.assertNotIn(raw_exception, summary)
+            self.assertNotIn(private_prompt, summary)
 
     def test_error_status_without_payload_is_terminal_failure(self) -> None:
         job = {

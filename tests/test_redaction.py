@@ -127,7 +127,7 @@ class TestRedactionModule(unittest.TestCase):
         self.assertEqual(redaction.find_forbidden_keys(nested, recurse=False), [])
 
     def test_find_forbidden_keys_ignores_non_mapping_list_items(self) -> None:
-        self.assertEqual(redaction.find_forbidden_keys({"tags": ["a", "b", 3]}), [])
+        self.assertEqual(redaction.find_forbidden_keys({"labels": ["a", "b", 3]}), [])
 
     def test_find_forbidden_keys_handles_non_mapping(self) -> None:
         self.assertEqual(redaction.find_forbidden_keys(None), [])

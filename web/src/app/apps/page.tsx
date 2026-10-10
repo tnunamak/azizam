@@ -45,6 +45,7 @@ import {
   CodeBlock,
 } from "@/components/product";
 import { preferredTerms } from "@/lib/terms";
+import { keyPromptNote } from "@/lib/prompt-memory";
 
 const accountKey = ["account", "session"];
 const CLIENTS = [
@@ -57,7 +58,14 @@ const CLIENTS = [
   "JavaScript",
   "curl",
 ];
-type Reveal = { secret: string; app: string; client: string; oldIds: string[] };
+type Reveal = {
+  secret: string;
+  app: string;
+  client: string;
+  oldIds: string[];
+  /** Whether prompts sent with the key are remembered, and for whom. */
+  note?: string | null;
+};
 type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
 
 function accessPlanSummary(app: AccountApp): string {
@@ -158,7 +166,13 @@ function AppsContents() {
         app.id,
         client === "Other app" ? appName : client,
       );
-      setReveal({ secret: key.api_key, app: appName, client, oldIds: [] });
+      setReveal({
+        secret: key.api_key,
+        app: appName,
+        client,
+        oldIds: [],
+        note: keyPromptNote(key.prompt_memory),
+      });
       setSaved(false);
       setCreating(false);
       setCreatedApp(null);
@@ -192,6 +206,7 @@ function AppsContents() {
           app: appName,
           client: "Other app",
           oldIds: ids,
+          note: keyPromptNote(key.prompt_memory),
         });
         setSaved(false);
       } else if (action.kind === "revoke") {
@@ -291,6 +306,16 @@ function AppsContents() {
           </Button>
         }
       />
+      {apps.some(
+        (app) =>
+          app.kind === "personal" &&
+          app.credentials.some((credential) => credential.created_by === null),
+      ) ? (
+        <p className="text-muted-foreground text-meta">
+          Older keys with no recorded creator keep working, but no longer save
+          media prompts. Create a new key to use your prompt settings.
+        </p>
+      ) : null}
       {accountPending ? (
         <div
           role="status"
@@ -402,6 +427,7 @@ function AppsContents() {
                             app: appName,
                             client: "Other app",
                             oldIds: [],
+                            note: keyPromptNote(key.prompt_memory),
                           });
                           await refresh();
                         } catch (err) {
@@ -602,6 +628,7 @@ function AppsContents() {
               {!saved && (
                 <SecretReveal
                   secret={reveal.secret}
+                  note={reveal.note}
                   onSaved={() => void saveKey()}
                 />
               )}

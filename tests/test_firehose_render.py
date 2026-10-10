@@ -98,3 +98,46 @@ def test_module_copy_does_not_say_root_serves_status() -> None:
     assert "`/` and `/firehose` both serve it" not in (firehose_render.__doc__ or "")
     assert "served at `/status`" in (firehose_render.__doc__ or "")
     assert "ai.vivid.fish status dashboard" in (firehose_render.__doc__ or "")
+
+
+def test_live_video_jobs_renderer_has_no_prompt_column() -> None:
+    secret = "SECRET renderer prompt should not appear"
+    html = firehose_render._render_video_jobs([
+        {
+            "status": "running",
+            "percent": 50,
+            "prompt_truncated": secret,
+            "prompt_id": "pid-1",
+        }
+    ])
+
+    assert "Prompt" not in html
+    assert "prompt_truncated" not in html
+    assert secret not in html
+
+
+def test_recent_media_renderers_have_no_prompt_column() -> None:
+    secret = "SECRET recent media prompt should not appear"
+
+    videos_html = firehose_render._render_recent_videos([{"filename": "video.mp4", "prompt": secret}])
+    images_html = firehose_render._render_recent_images([{"filename": "image.png", "prompt": secret}])
+
+    assert "Prompt" not in videos_html
+    assert secret not in videos_html
+    assert "Prompt" not in images_html
+    assert secret not in images_html
+
+
+def test_recent_events_renderer_drops_prompt_shaped_extras() -> None:
+    secret = "SECRET event prompt should not appear"
+    html = firehose_render._render_recent_events([
+        {
+            "ts": 1,
+            "type": "image_route_receipt",
+            "summary": "image request",
+            "prompt_preview": secret,
+        }
+    ])
+
+    assert "prompt_preview" not in html
+    assert secret not in html

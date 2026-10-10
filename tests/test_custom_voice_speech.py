@@ -18,7 +18,7 @@ from gateway.admin_api import AdminContext
 from gateway.admin_runtime import AdminSQLiteStore
 from tests.voice_test_audio import HAVE_FFMPEG, speechlike
 
-WAV = b"RIFF----WAVE"
+WAV = speechlike(0.1)
 
 
 class _FakeClient:

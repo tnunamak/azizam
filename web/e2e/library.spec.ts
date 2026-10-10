@@ -125,15 +125,17 @@ for (const mode of ["light", "dark"] as const) {
       await tile.click();
       const dialog = page.getByRole("dialog");
       // Download prepares a fresh signed URL on click (page.spec.tsx checks
-      // the request); the workflow link sits in Details.
+      // the request); the maker's file with details is in the actions menu.
       await expect(
         dialog.getByRole("button", { name: "Download", exact: true }),
       ).toBeVisible();
       await dialog.getByText("Details", { exact: true }).click();
       await expect(dialog).toContainText("Workflow");
+      await dialog.getByRole("button", { name: /^Actions for / }).click();
       await expect(
-        dialog.getByRole("link", { name: "Download ComfyUI workflow" }),
-      ).toHaveAttribute("href", mediaFixture.assets[0].workflow_download_url!);
+        page.getByRole("menuitem", { name: "Download with details" }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
       await auditPage(page);
       const cards = await page
         .locator("article")
@@ -292,9 +294,14 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await expect(
     page.getByRole("button", { name: "Delete", exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("dialog").getByText("Details", { exact: true }).click();
+  // The gateway sent this item's details download, so the viewer is its
+  // maker's: the file with details is offered, Delete is not.
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: /^Actions for / })
+    .click();
   await expect(
-    page.getByRole("link", { name: "Download ComfyUI workflow" }),
+    page.getByRole("menuitem", { name: "Download with details" }),
   ).toBeVisible();
 });
 

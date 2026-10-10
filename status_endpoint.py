@@ -11,7 +11,7 @@ Design:
 Privacy:
 - Never expose the bearer token, raw API keys, or full tracebacks.
 - Only App/Credential display names from the admin store are surfaced.
-- Prompt text is truncated to 200 chars and only shown for in-flight video jobs.
+- Prompt text is never surfaced through status.
 """
 
 from __future__ import annotations
@@ -2380,10 +2380,6 @@ _FFPROBE_CACHE: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
 _FFPROBE_CACHE_LOCK = threading.Lock()
 _FFPROBE_CACHE_MAX = 200
 _IMG_DIMS_CACHE: dict[tuple[str, int], dict] = {}
-# Cached extracted positive-prompt text per image file. Keyed by (path, mtime)
-# so a re-encode of the same filename invalidates the cache. Bounded.
-_IMG_PROMPT_CACHE: dict[tuple[str, int], Optional[str]] = {}
-
 
 def _ffprobe_video(path: Path, *, size: int, mtime_ns: int) -> dict:
     """Return ``{duration_s, width, height, has_audio}`` or ``{error}``."""
@@ -2472,106 +2468,6 @@ def _image_dims(path: Path, mtime: int) -> dict:
     return info
 
 
-def _extract_image_prompt(path: Path, mtime: int) -> Optional[str]:
-    """Return the positive-prompt text embedded in a ComfyUI PNG, or None.
-
-    ComfyUI stores the full submitted graph in the ``prompt`` PNG-info chunk.
-    We pick the first non-empty ``CLIPTextEncode.inputs.text`` (the positive
-    prompt). Falls back to a sidecar JSON next to the file if the PNG chunk
-    isn't there.
-
-    Cached per (path, mtime). Returns truncated to 240 chars; the caller can
-    further trim for display. Best-effort: any error returns None silently.
-    """
-    key = (str(path), mtime)
-    if key in _IMG_PROMPT_CACHE:
-        return _IMG_PROMPT_CACHE[key]
-    text: Optional[str] = None
-    try:
-        # 1) PNG-info chunk via Pillow (lazy header read).
-        try:
-            from PIL import Image  # type: ignore
-            with Image.open(path) as im:
-                raw = im.info.get("prompt")
-            if raw:
-                graph = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(graph, dict):
-                    for _, node in graph.items():
-                        if not isinstance(node, dict):
-                            continue
-                        ct = node.get("class_type") or ""
-                        if "CLIPText" not in ct and "TextEncode" not in ct:
-                            continue
-                        t = (node.get("inputs") or {}).get("text")
-                        if isinstance(t, str) and t.strip():
-                            text = t.strip()
-                            break
-        except Exception:
-            pass
-        # 2) Sidecar JSON fallback (`<file>.json` next to the image).
-        if not text:
-            sidecar = path.with_suffix(path.suffix + ".json")
-            if not sidecar.is_file():
-                sidecar = path.with_suffix(".json")
-            if sidecar.is_file():
-                try:
-                    data = json.loads(sidecar.read_text(encoding="utf-8"))
-                except Exception:
-                    data = None
-                if isinstance(data, dict):
-                    # Common shapes: {"prompt": "..."} or {"positive": "..."}
-                    for k in ("prompt", "positive", "text"):
-                        v = data.get(k)
-                        if isinstance(v, str) and v.strip():
-                            text = v.strip()
-                            break
-    except Exception:
-        text = None
-    if text is not None and len(text) > 240:
-        text = text[:240]
-    _IMG_PROMPT_CACHE[key] = text
-    if len(_IMG_PROMPT_CACHE) > 200:
-        for k in list(_IMG_PROMPT_CACHE.keys())[:50]:
-            _IMG_PROMPT_CACHE.pop(k, None)
-    return text
-
-
-def _video_prompt_for(
-    *,
-    alias: Optional[str],
-    mtime: int,
-    video_meta: dict[str, dict],
-    recent_events: list[dict],
-) -> Optional[str]:
-    """Best-effort lookup of the prompt text that produced a recent video.
-
-    Strategy: find the most-recent ``video_submit`` event whose ``alias``
-    matches and whose ``ts`` is just before this file's mtime. Then resolve
-    its ``prompt_id`` against ``firehose_metrics._VIDEO_META`` (which holds
-    the truncated prompt for ~6h after submission). Older renders return
-    None — the in-memory window has GCed.
-    """
-    if not alias or not isinstance(recent_events, list):
-        return None
-    candidates = [
-        e for e in recent_events
-        if e.get("type") == "video_submit"
-        and e.get("alias") == alias
-        and e.get("prompt_id")
-        and (e.get("ts") or 0) <= float(mtime) + 5  # 5s slack: event before save
-    ]
-    if not candidates:
-        return None
-    # Closest event with ts <= mtime (latest before).
-    candidates.sort(key=lambda e: float(e.get("ts") or 0), reverse=True)
-    pid = candidates[0].get("prompt_id")
-    meta = (video_meta or {}).get(pid) or {}
-    pt = meta.get("prompt_truncated")
-    if isinstance(pt, str) and pt.strip():
-        return pt.strip()
-    return None
-
-
 def _recent_renders_videos(
     n: int = 20,
     *,
@@ -2586,8 +2482,6 @@ def _recent_renders_videos(
         return []
     files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
     out: list[dict] = []
-    meta = video_meta or {}
-    events = recent_events or []
     for f in files[:n]:
         try:
             st = f.stat()
@@ -2600,12 +2494,6 @@ def _recent_renders_videos(
         # at submission time. We surface the bare filename so the renderer can
         # build a static content URL (proxy serves cached files).
         probe = _ffprobe_video(f, size=st.st_size, mtime_ns=st.st_mtime_ns)
-        prompt = _video_prompt_for(
-            alias=alias,
-            mtime=int(st.st_mtime),
-            video_meta=meta,
-            recent_events=events,
-        )
         out.append({
             "filename": f.name,
             "path": str(f),
@@ -2617,7 +2505,6 @@ def _recent_renders_videos(
             "height": probe.get("height"),
             "has_audio": probe.get("has_audio"),
             "probe_error": probe.get("error"),
-            "prompt": prompt,
         })
     return out
 
@@ -2640,7 +2527,6 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
         except OSError:
             continue
         dims = _image_dims(f, int(st.st_mtime))
-        prompt = _extract_image_prompt(f, int(st.st_mtime))
         out.append({
             "filename": f.name,
             "path": str(f),
@@ -2649,7 +2535,6 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
             "width": dims.get("width"),
             "height": dims.get("height"),
             "probe_error": dims.get("error"),
-            "prompt": prompt,
         })
     return out
 
@@ -2973,7 +2858,6 @@ def _daisy_audit_summary() -> dict:
             )
             summary = (
                 rec.get("summary")
-                or rec.get("prompt")
                 or rec.get("action")
                 or rec.get("command")
                 or ""
@@ -3146,7 +3030,6 @@ def _live_video_jobs(proxy_module, video_meta: dict[str, dict]) -> list[dict]:
             "size": meta.get("size"),
             "seconds": meta.get("seconds"),
             "key_name": meta.get("key_name"),
-            "prompt_truncated": meta.get("prompt_truncated"),
         })
     # Sort: running first by recency, then queued, then terminal.
     def _rank(j):
@@ -3737,28 +3620,9 @@ async def build_status_payload(config: dict) -> dict:
     thermal = await sync_section("sensors", _read_sensors) or {}
     cpu = await sync_section("cpu_usage", _cpu_usage_quick) or {}
 
-    # Pull video submit metadata + recent events early so recent_videos can
-    # join filenames against the prompt_text recorded at submission time. Both
-    # are best-effort; failures degrade to "no prompt" rather than blocking
-    # the whole panel.
-    _video_meta_for_join: dict[str, dict] = {}
-    _events_for_join: list[dict] = []
-    if firehose_metrics is not None:
-        try:
-            _video_meta_for_join = await asyncio.to_thread(firehose_metrics.snapshot_video_meta) or {}
-        except Exception:
-            _video_meta_for_join = {}
-        try:
-            _events_for_join = await asyncio.to_thread(firehose_metrics.snapshot_recent_events, 200) or []
-        except Exception:
-            _events_for_join = []
     recent_videos = await sync_section(
         "recent_videos",
-        lambda: _recent_renders_videos(
-            20,
-            video_meta=_video_meta_for_join,
-            recent_events=_events_for_join,
-        ),
+        lambda: _recent_renders_videos(20),
     ) or []
     recent_images = await sync_section("recent_images", lambda: _recent_renders_images(10)) or []
 

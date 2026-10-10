@@ -18,6 +18,7 @@ from starlette.testclient import TestClient
 import proxy
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.receipts import RouteReceipt
+from tests.media_test_bytes import mp4_bytes
 
 
 def _png_bytes() -> bytes:
@@ -59,7 +60,7 @@ class _FakeAsyncClient:
 
 class _FakeVideoAsyncClient:
     prompt_id = "prompt_sync_video"
-    video_content = b"video-bytes"
+    video_content = mp4_bytes()
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -231,12 +232,13 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.assertEqual(row["app_id"], "app_image")
 
     def test_signed_audio_content_supports_range_and_metadata_mode_signature(self) -> None:
-        raw = b"RIFF" + b"0123456789abcdef" + b"WAVE"
+        raw = _wav_bytes()
         asset_id = proxy.store_asset_bytes(raw, kind="aud", suffix=".wav", owner_key_hash="sha256:owner")
+        clean = proxy.asset_cache_path(asset_id).read_bytes()
         expires = int(time.time()) + 60
-        sig_full = proxy._sign_asset_token(asset_id, expires, "full")
+        sig_none = proxy._sign_asset_token(asset_id, expires, "none")
         request = _StubUrlRequest(
-            query_params={"expires": str(expires), "md": "full", "sig": sig_full},
+            query_params={"expires": str(expires), "md": "none", "sig": sig_none},
             headers={"range": "bytes=4-9"},
         )
 
@@ -249,11 +251,10 @@ class SyncMediaRouteTests(unittest.TestCase):
 
         self.assertEqual(ranged.status_code, 206)
         self.assertEqual(ranged.media_type, "audio/wav")
-        self.assertEqual(ranged.body, raw[4:10])
-        self.assertEqual(ranged.headers["content-range"], f"bytes 4-9/{len(raw)}")
+        self.assertEqual(ranged.body, clean[4:10])
+        self.assertEqual(ranged.headers["content-range"], f"bytes 4-9/{len(clean)}")
         self.assertEqual(ranged.headers["accept-ranges"], "bytes")
 
-        sig_none = proxy._sign_asset_token(asset_id, expires, "none")
         bad_request = _StubUrlRequest(query_params={"expires": str(expires), "md": "full", "sig": sig_none})
         bad = proxy._signed_asset_content_response(
             asset_id,
@@ -446,11 +447,13 @@ class SyncMediaRouteTests(unittest.TestCase):
         with patch.object(proxy, "COMFY_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
-            response = anyio.run(proxy.proxy_comfy_video_content, video_id, auth_context)
+            async def fetch_without_prompt_metadata():
+                return await proxy.proxy_comfy_video_content(video_id, auth_context, metadata_mode="none")
+            response = anyio.run(fetch_without_prompt_metadata)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.media_type, "video/mp4")
-        self.assertEqual(response.body, _FakeVideoAsyncClient.video_content)
+        self.assertIn(b"ftyp", response.body[:32])
         job = media_jobs.get_by_request_id(video_id, path=self.media_db)
         assert job is not None
         self.assertEqual(job["intent"], "video.generate")
@@ -499,12 +502,12 @@ class SyncMediaRouteTests(unittest.TestCase):
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_index():
-                return await proxy.proxy_comfy_video_content(video_id, auth_context, index_library=False)
+                return await proxy.proxy_comfy_video_content(video_id, auth_context, metadata_mode="none", index_library=False)
 
             response = anyio.run(fetch_without_index)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.body, _FakeVideoAsyncClient.video_content)
+        self.assertIn(b"ftyp", response.body[:32])
         self.assertIsNone(media_jobs.get_by_request_id(video_id, path=self.media_db))
 
     def test_receipt_helpers_begin_finish_regular_and_streaming_responses(self) -> None:
