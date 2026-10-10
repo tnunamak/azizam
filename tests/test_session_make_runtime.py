@@ -202,6 +202,36 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             assets = asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(assets[0]["asset_id"], OUTPUT)
 
+    def test_disabling_the_image_class_refuses_edits_at_submit_and_execution(self) -> None:
+        # Review repro (P2-6): disabled_resource_classes=["image"] still admitted an edit.
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a refused edit never reaches the backend")
+
+        self._admission(disabled_resource_classes=["image"])
+        for intent in ("image.generate", "image.edit"):
+            refused = self.runtime.admission(intent)
+            self.assertIsNotNone(refused, f"{intent} is image work")
+            self.assertEqual(refused.status_code, 503)
+        with patch.object(proxy, "proxy_comfy_edit_request", never):
+            with self.assertRaises(me_make.MakeBackendError) as raised:
+                asyncio.run(self.runtime.execute(self._payload("image.edit")))
+        self.assertEqual(raised.exception.http_status, 503)
+        self.assertIn("resource class disabled: image", raised.exception.public_message)
+
+    def test_queued_edit_and_identity_jobs_count_toward_the_queue_limit(self) -> None:
+        # Review repro (P2-6): a queued edit counted 0 toward max_queue_depth. Identity
+        # scene jobs are the regular (non-make) edit-shaped media jobs, with the same gap.
+        self._admission(max_queue_depth=1)
+        for index, intent in enumerate(("image.edit", proxy._IDENTITY_JOB_INTENT)):
+            job_id = f"mj_queued_{index}"
+            media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent=intent, request_id=f"req_{job_id}",
+                                                  app_id=self.app["id"]), path=media_jobs.DB_PATH)
+            self.assertEqual(proxy._media_job_queue_depth(1), 1, f"a queued {intent} job is queued work")
+            refused = proxy._media_job_admission_response("image.generate")
+            self.assertIsNotNone(refused, f"a queued {intent} job fills a one-job queue")
+            self.assertEqual(refused.status_code, 429)
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, path=media_jobs.DB_PATH)
+
     def test_at_most_the_configured_number_of_make_jobs_run_at_once(self) -> None:
         running, peak = 0, 0
 
@@ -312,6 +342,83 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertEqual(asyncio.run(main()), 0, "it does not wait for a turn it will not use")
         self.assertEqual(media_jobs.get(job_id, path=jobs_db)["status"], media_jobs.STATUS_CANCELED)
         self.assertIsNone(self.runtime.load_payload(job_id))
+
+    def _resumed_waiting_job(self, job_id: str) -> None:
+        # After a restart a job resumes as running but still waits for a turn.
+        media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id=f"req_{job_id}",
+                                              app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                          path=media_jobs.DB_PATH)
+        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=media_jobs.DB_PATH)
+        self.runtime.keep_payload(job_id, {**self._payload("image.generate"), "job_id": job_id})
+
+    def test_repeated_cancels_of_a_waiting_resumed_job_settle_it_once(self) -> None:
+        # Review repro (P2-7): two cancels before the loop handled them read as
+        # shutdown, so the job vanished but stayed "running" and held capacity.
+        jobs_db = media_jobs.DB_PATH
+        job_id = "mj_resumed_twice"
+        self._resumed_waiting_job(job_id)
+
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a canceled job never reaches the backend")
+
+        def cancel() -> None:  # The cancel route's path for a job that is not queued.
+            self.assertTrue(self.runtime.request_cancel(job_id))
+            try:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_RUNNING,
+                                         metadata_patch={"cancel_requested_at": 1}, path=jobs_db)
+            except ValueError:  # It already settled.
+                pass
+            self.runtime.drop_payload(job_id)
+
+        def cancel_twice() -> None:  # Two cancel POSTs before the loop runs again.
+            cancel()
+            cancel()
+
+        async def main() -> int:
+            busy = asyncio.Semaphore(1)
+            with patch.object(proxy, "_image_media_job_semaphore", busy), \
+                    patch.object(proxy, "proxy_comfy_request", never):
+                await busy.acquire()
+                self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
+                await asyncio.sleep(0)
+                await asyncio.to_thread(cancel_twice)
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                return len(proxy._image_media_job_tasks)
+
+        self.assertEqual(asyncio.run(main()), 0)
+        job = media_jobs.get(job_id, path=jobs_db)
+        self.assertEqual(job["status"], media_jobs.STATUS_CANCELED, "it settles, so it frees its capacity")
+        self.assertEqual(self.runtime._gates, {})
+        self.assertNotIn(job_id, proxy._image_media_job_scheduled)
+        settled = [e for e in media_jobs.events(job_id, path=jobs_db) if e["event_type"] == "canceled"]
+        self.assertEqual(len(settled), 1, "it settles exactly once")
+
+    def test_shutdown_of_a_waiting_resumed_job_leaves_it_to_resume(self) -> None:
+        jobs_db = media_jobs.DB_PATH
+        job_id = "mj_resumed_shutdown"
+        self._resumed_waiting_job(job_id)
+        ran: list[str] = []
+
+        async def run() -> None:
+            ran.append(job_id)
+
+        async def main() -> bool:
+            busy = asyncio.Semaphore(1)
+            with patch.object(proxy, "_image_media_job_semaphore", busy):
+                await busy.acquire()
+                self.runtime.schedule(job_id, run)
+                await asyncio.sleep(0)
+                task = next(iter(proxy._image_media_job_tasks))
+                task.cancel()  # What the lifespan does at shutdown.
+                await asyncio.gather(task, return_exceptions=True)
+                busy.release()
+                return task.cancelled() and busy._value == 1
+
+        self.assertTrue(asyncio.run(main()), "shutdown still cancels the task and frees no turn it never took")
+        self.assertEqual(ran, [])
+        self.assertEqual(media_jobs.get(job_id, path=jobs_db)["status"], media_jobs.STATUS_RUNNING)
+        self.assertIsNotNone(self.runtime.load_payload(job_id), "the payload stays so the job can resume")
 
     def test_outstanding_limit_holds_under_concurrent_submits(self) -> None:
         import threading
