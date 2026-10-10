@@ -55,6 +55,15 @@ describe("prompt memory rules", () => {
 });
 
 describe("withForget", () => {
+  it("puts forget inside queued workflow requests as well as the envelope", () => {
+    const request = { prompt: "Private words", extensions: { "com.azizam.workflow": { seed: 7 } } };
+    const body = withForget({ intent: "image.generate", request });
+    expect(body.request.extensions).toEqual({
+      "com.azizam.workflow": { seed: 7 },
+      "com.azizam.prompts": { mode: "forget" },
+    });
+    expect(request.extensions).toEqual({ "com.azizam.workflow": { seed: 7 } });
+  });
   it("adds the forget control to a JSON body and keeps other extensions", () => {
     const body = withForget({
       model: "image",
