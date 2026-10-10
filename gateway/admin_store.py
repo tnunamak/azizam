@@ -134,6 +134,15 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
 CREATE INDEX IF NOT EXISTS apps_owner_service ON apps(owner_service_account_id);
 
+-- The App that attributes a person's own signed-in work (the "Azizam" App).
+-- It holds no credentials: browser sessions act through it without a key.
+CREATE TABLE IF NOT EXISTS session_apps (
+  user_id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL UNIQUE,
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(app_id) REFERENCES apps(id)
+);
+
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -1207,6 +1216,7 @@ def ensure_personal_app_for_user(
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT * FROM apps WHERE kind = 'personal' AND owner_user_id = ? "
+            "AND id NOT IN (SELECT app_id FROM session_apps) "
             "ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
@@ -1229,6 +1239,61 @@ def ensure_personal_app_for_user(
         now=now,
         path=path,
     )
+
+
+def ensure_session_app_for_user(
+    user_id: str,
+    *,
+    name: str,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Return the keyless App for a person's signed-in work, creating it once.
+
+    It is a personal App so receipts, jobs, and Library ownership attribute the
+    work to the person, but it is not the person's key home: it never holds
+    credentials and ``ensure_personal_app_for_user`` never returns it.
+    """
+    if not user_id:
+        raise ValueError("user_id is required")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT apps.* FROM session_apps JOIN apps ON apps.id = session_apps.app_id "
+            "WHERE session_apps.user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            app_id = _gen_id("app")
+            conn.execute(
+                "INSERT INTO apps(id, kind, name, owner_user_id, created_at) "
+                "VALUES (?, 'personal', ?, ?, ?)",
+                (app_id, name, user_id, _now() if now is None else int(now)),
+            )
+            conn.execute(
+                "INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)",
+                (user_id, app_id),
+            )
+            row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        conn.commit()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def get_session_app_for_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT apps.* FROM session_apps JOIN apps ON apps.id = session_apps.app_id "
+            "WHERE session_apps.user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def is_session_app(app_id: str, *, path: Path = DB_PATH) -> bool:
+    with _conn(path) as conn:
+        return conn.execute(
+            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+        ).fetchone() is not None
 
 
 def get_app(
@@ -2616,6 +2681,9 @@ __all__ = [
     "list_profiles",
     "create_app",
     "ensure_personal_app_for_user",
+    "ensure_session_app_for_user",
+    "get_session_app_for_user",
+    "is_session_app",
     "get_app",
     "disable_app",
     "list_apps",

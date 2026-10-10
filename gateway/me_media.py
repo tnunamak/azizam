@@ -2,7 +2,8 @@
 
 This module is the user-facing projection over existing durable facts:
 media jobs, generated asset handles, receipts, and the admin store's App
-ownership. It does not execute media work and it does not read live services.
+ownership. It does not execute media work and it does not read live services;
+the session make routes it mounts live in ``gateway.me_make``.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
+from gateway import admin_store, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.user_runtime import UserPortalError
@@ -97,8 +98,37 @@ def create_me_media_router(
     media_jobs_path: PathProvider = media_jobs.DB_PATH,
     receipts_path: PathProvider = receipt_store.DB_PATH,
     prompt_memory_path: PathProvider = prompt_memory.DB_PATH,
+    make_runtime: me_make.MakeRuntime | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api", tags=["me"])
+
+    def find_owned_asset(request: Request, user_id: str, asset_id: str) -> dict[str, Any] | None:
+        admin_path = _resolve_path(admin_db_path)
+        return _find_asset(
+            asset_id,
+            scope=_member_media_scope(user_id, admin_path),
+            request=request,
+            signed_url_builder=signed_url_builder,
+            asset_path_resolver=asset_path_resolver,
+            asset_media_type_resolver=asset_media_type_resolver,
+            asset_catalog_provider=asset_catalog_provider,
+            asset_metadata_reader=asset_metadata_reader,
+            admin_db_path=admin_path,
+            media_jobs_path=_resolve_path(media_jobs_path),
+            receipts_path=_resolve_path(receipts_path),
+            prompt_memory_path=_resolve_path(prompt_memory_path),
+        )
+
+    me_make.add_make_routes(
+        router,
+        session_provider=session_provider,
+        mutation_validator=mutation_validator,
+        find_owned_asset=find_owned_asset,
+        admin_db_path=admin_db_path,
+        media_jobs_path=media_jobs_path,
+        receipts_path=receipts_path,
+        runtime=make_runtime,
+    )
 
     @router.get("/media", include_in_schema=False)
     def list_media(request: Request) -> JSONResponse:

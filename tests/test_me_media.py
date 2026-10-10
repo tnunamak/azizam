@@ -1066,7 +1066,6 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
     _catalog = MeMediaRouterTests._catalog
     _delete_unshared = MeMediaRouterTests._delete_unshared
     _write_asset = MeMediaRouterTests._write_asset
-    tearDown = MeMediaRouterTests.tearDown
 
     make_url = "/me/api/make/jobs"
 
@@ -1092,6 +1091,12 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
             )
         )
         self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        # Let held jobs finish before their temporary stores disappear.
+        self.runtime.release.set()
+        self.runtime.wait_idle()
+        MeMediaRouterTests.tearDown(self)
 
     def _make_headers(self, key: str) -> dict:
         return {
@@ -1409,6 +1414,7 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
             asset = next(item for item in library.json()["assets"] if item["asset_id"] == output)
             self.assertEqual(asset["provenance"]["job_id"], stored["job_id"])
             self.assertEqual(asset["source"]["label"], "Azizam")
+        self.runtime.wait_idle()
         self.assertEqual(self.runtime.payloads, {})
 
     def test_make_never_exposes_key_secrets_on_any_path(self) -> None:
