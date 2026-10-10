@@ -767,7 +767,13 @@ function DefaultsSection() {
       return { ...defaults, profiles };
     },
   });
-  const accessQuery = useQuery({
+  const {
+    data: accessDefaults,
+    isPending: accessPending,
+    isError: accessIsError,
+    error: accessError,
+    refetch: refetchAccess,
+  } = useQuery({
     queryKey: keys.accessDefaults,
     queryFn: api.userAccessDefaults.get,
   });
@@ -775,18 +781,18 @@ function DefaultsSection() {
     <Section
       title="Defaults"
       summary={
-        data && accessQuery.data
+        data && accessDefaults
           ? {
               label: data.defaults.profile_id
                 ? (data.profiles.find((p) => p.id === data.defaults.profile_id)
                     ?.name ?? "Default access plan")
                 : "No default access plan",
               description: `${
-                accessQuery.data.self_service_apps
+                accessDefaults.self_service_apps
                   ? "People can create apps"
                   : "Only owners create apps"
               } · ${
-                accessQuery.data.auto_create_personal_app
+                accessDefaults.auto_create_personal_app
                   ? "Personal app created at sign-in"
                   : "No automatic personal app"
               }`,
@@ -805,16 +811,16 @@ function DefaultsSection() {
       ) : (
         <DefaultsForm data={data} />
       )}
-      {accessQuery.isPending ? (
+      {accessPending ? (
         <Loading />
-      ) : accessQuery.isError ? (
+      ) : accessIsError ? (
         <SettingsError
-          error={accessQuery.error}
+          error={accessError}
           message="Personal app defaults could not be loaded."
-          onRetry={() => void accessQuery.refetch()}
+          onRetry={() => void refetchAccess()}
         />
       ) : (
-        <AccessDefaultsForm initial={accessQuery.data} />
+        <AccessDefaultsForm initial={accessDefaults} />
       )}
     </Section>
   );
