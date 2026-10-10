@@ -23,13 +23,13 @@ export const taskNames = {
   image: "Make a picture",
   video: "Make a video",
   speech: "Read text aloud",
-  transcribe: "Turn a recording into text",
+  transcribe: "Transcribe a recording",
   music: "Make music",
   sound_effects: "Make a sound effect",
   audio: "Make music or sounds",
   decisions: "Choose an option",
   embeddings: "Turn text into numbers",
-  reranking: "Reranking",
+  reranking: "Sort search results",
 } as const;
 
 /**

@@ -471,7 +471,7 @@ function DetailSheet({
                       }
                     />
                     <Fact
-                      label="Capability"
+                      label="Task"
                       value={capabilityLabel(workflow.capability)}
                     />
                     <Fact
@@ -486,26 +486,27 @@ function DetailSheet({
                         `${output.name}: ${output.media_type || "not listed"}`,
                       ).join("; ") || "Not listed"}
                     />
-                    <Fact
-                      label="Engine binding"
-                      value={
-                        workflow.engine_binding ??
-                        "No engine binding configured"
-                      }
-                    />
+                    {owner && (
+                      <Fact
+                        label="Engine"
+                        value={workflow.engine_binding ?? "No engine configured"}
+                      />
+                    )}
                     {timeLabel(workflow.typical_seconds) && (
                       <Fact
                         label="Typical time"
                         value={timeLabel(workflow.typical_seconds)}
                       />
                     )}
-                    <Fact
-                      label="Native route"
-                      value={
-                        workflow.native_route ??
-                        "No native passthrough route configured"
-                      }
-                    />
+                    {owner && (
+                      <Fact
+                        label="Native route"
+                        value={
+                          workflow.native_route ??
+                          "No native passthrough route configured"
+                        }
+                      />
+                    )}
                     <Fact
                       label="Discovery"
                       value={
@@ -519,7 +520,7 @@ function DetailSheet({
                     />
                   </div>
                   <div>
-                    <h3 className="font-medium">Stable aliases</h3>
+                    <h3 className="font-medium">Model names</h3>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {workflow.aliases.length ? (
                         workflow.aliases.map((alias) => (
@@ -533,7 +534,7 @@ function DetailSheet({
                         ))
                       ) : (
                         <p className="text-muted-foreground text-meta">
-                          No stable aliases point here.
+                          No other model names
                         </p>
                       )}
                     </div>
@@ -881,7 +882,11 @@ export default function WorkflowsPage() {
         <EmptyState
           icon={GitBranch}
           title="No workflows available"
-          description="No workflows are set up yet. The person who manages Azizam can add them."
+          description={
+            owner
+              ? "No workflow choices are available."
+              : "No workflow choices are available to you. Ask the owner what you can use."
+          }
           action={
             <Button variant="outline" asChild>
               <Link href="/models">Explore models</Link>
@@ -906,7 +911,7 @@ export default function WorkflowsPage() {
               <span className="sr-only">Search workflows</span>
             </label>
             <Segmented
-              label="Workflow capability"
+              label="Workflow task"
               value={capability}
               onChange={setCapability}
               options={[
@@ -922,7 +927,7 @@ export default function WorkflowsPage() {
             <EmptyState
               icon={Search}
               title="No matching workflows"
-              description="Clear search or choose another capability."
+              description="Clear the search or choose another task."
               action={
                 <Button
                   variant="outline"

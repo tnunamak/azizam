@@ -118,7 +118,7 @@ test.each([0, 4])(
       spend_total_requests: 4,
     });
     expect(await screen.findByText("Remote spend")).toBeVisible();
-    expect(screen.getByText("Unavailable")).toBeVisible();
+    expect(screen.getByText("Cost not recorded")).toBeVisible();
     expect(screen.getByText(/Cost measured for 0 of 4 requests/)).toBeVisible();
     expect(screen.getByText(/4 paid requests have unknown cost/)).toBeVisible();
   },
@@ -281,20 +281,20 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
   const unknown = screen.getByRole("button", { name: "Receipt details for Chat request" });
-  expect(within(unknown).getByText("Cost unknown")).toBeInTheDocument();
+  expect(within(unknown).getByText("Cost not recorded")).toBeInTheDocument();
   const zero = screen.getByRole("button", { name: "Receipt details for Image request" });
-  expect(within(zero).queryByText("Cost unknown")).not.toBeInTheDocument();
+  expect(within(zero).queryByText("Cost not recorded")).not.toBeInTheDocument();
   expect(within(zero).getByText("$0.00")).toBeInTheDocument();
   const local = screen.getByRole("button", { name: "Receipt details for Video request" });
   expect(within(local).getByText("No provider charge")).toBeInTheDocument();
-  // A model row with no locality evidence says Unavailable, never blank.
-  expect(screen.getAllByText("Cost unknown")).toHaveLength(1);
+  // A model row with no locality evidence says Cost not recorded, never blank.
+  expect(screen.getAllByText("Cost not recorded")).toHaveLength(4);
   const modelRow = screen.getByRole("row", { name: /unmeasured-model|Unmeasured Model/ });
-  expect(within(modelRow).getByText("Unavailable")).toBeVisible();
+  expect(within(modelRow).getByText("Cost not recorded")).toBeVisible();
   await user.click(unknown);
   const sheet = screen.getByRole("dialog");
   expect(within(sheet).getByText("Cost")).toBeVisible();
-  expect(within(sheet).getByText("Cost unknown")).toBeVisible();
+  expect(within(sheet).getByText("Cost not recorded")).toBeVisible();
 });
 
 
@@ -344,7 +344,7 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
     if (calls === 1) return Promise.resolve(Response.json({ requests, remote_spend: null }));
     return calls === 2 ? refresh.promise : retry.promise;
   });
-  const cachedLabel = requests ? "Unavailable" : "No requests in this period";
+  const cachedLabel = requests ? "Cost not recorded" : "No requests in this period";
   expect(await screen.findByText(cachedLabel)).toBeVisible();
   act(() => { void client.invalidateQueries({ queryKey: ["usage"] }); });
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Busy · Refreshing usage"));
@@ -367,7 +367,7 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
 
 test.each([undefined, null, "", "   ", false])("Usage never formats unrecorded spend as zero: %s", async (spend) => {
   renderUsage({ remote_spend: spend, remote_spend_available: true });
-  expect(await screen.findByText("Unavailable")).toBeVisible();
+  expect(await screen.findByText("Cost not recorded")).toBeVisible();
   expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
 });
 
@@ -507,7 +507,7 @@ test("Usage reads text to speech as Read text aloud, music as Make music or soun
   expect(within(modelRow("Song Maker")).getByText("Make music or sounds")).toBeVisible();
 });
 
-test("Usage model Cost cell is Local, an amount or Unavailable, and the legend explains it", async () => {
+test("Usage model Spend cell is Local, an amount or Cost not recorded", async () => {
   renderUsage({
     by_model: [
       { model: "local-chat", capability: "chat", requests: 50, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
@@ -521,13 +521,13 @@ test("Usage model Cost cell is Local, an amount or Unavailable, and the legend e
   expect(within(modelRow("Local Chat")).getByText("Local")).toBeVisible();
   expect(within(modelRow("Zero Chat")).getByText("Local")).toBeVisible();
   expect(within(modelRow("Paid Image")).getByText("$0.25")).toBeVisible();
-  expect(within(modelRow("Mystery")).getByText("Unavailable")).toBeVisible();
+  expect(within(modelRow("Mystery")).getByText("Cost not recorded")).toBeVisible();
   const partial = modelRow("Partial");
   expect(within(partial).getByText("$0.50")).toBeVisible();
   expect(within(partial).getByText("partial")).toBeVisible();
   expect(screen.getByText(/Local: no provider charge\./)).toBeVisible();
-  expect(screen.getByText(/Unavailable: the provider cost was not recorded\./)).toBeVisible();
-  // No row is blank in the Cost column.
+  expect(screen.queryByText(/Unavailable: the provider cost was not recorded\./)).not.toBeInTheDocument();
+  // No row is blank in the Spend column.
   for (const row of within(screen.getByRole("table", { name: "Models" })).getAllByRole("row").slice(1)) {
     expect(within(row).getAllByRole("cell").at(-1)).not.toBeEmptyDOMElement();
   }
@@ -543,7 +543,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
   const legend = screen.getAllByText("Make a picture").map((node) => node.parentElement);
   expect(legend.length).toBeGreaterThan(0);
   for (const name of [
-    "Turn a recording into text",
+    "Transcribe a recording",
     "Choose an option",
     "Turn text into numbers",
   ]) {
@@ -626,7 +626,7 @@ test("Usage By task combines model counts and cost, sorts by count and shows per
   const table = await screen.findByRole("table", { name: "By task" });
   expect(table).toHaveAttribute("data-dense");
   expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent))
-    .toEqual(["Task", "Requests", "Share", "Cost"]);
+    .toEqual(["Task", "Requests", "Share", "Spend"]);
   expect(within(table).getAllByRole("row").slice(1).map((row) =>
     within(row).getAllByRole("cell").map((cell) => cell.textContent),
   )).toEqual([
@@ -664,4 +664,60 @@ test("Usage By task does not divide by an empty period total", async () => {
   const table = await screen.findByRole("table", { name: "By task" });
   expect(within(table).getByText("Unknown")).toBeVisible();
   expect(table).not.toHaveTextContent(/NaN|Infinity/);
+});
+
+test.each(["success", "succeeded", "ok"])("COPY-11 usage completion once (%s)", async (status) => {
+  renderUsage({ receipts: [{ request_id: "completed", capability: "chat", status }] });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getAllByText("Completed")).toHaveLength(1);
+  expect(sheet.queryByText("The gateway completed this request.")).toBeNull();
+});
+
+test.each([
+  ["in_progress", "In progress", "The request was still running when this receipt was recorded."],
+  ["timed_out", "Timed out", "The request timed out before a result was recorded."],
+  ["incomplete", "Outcome not recorded", "The receipt does not include a final outcome."],
+])("COPY-11 usage outcome context (%s)", async (status, label, summary) => {
+  renderUsage({ receipts: [{ request_id: "context", capability: "chat", status }] });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getAllByText(label)).toHaveLength(1);
+  expect(sheet.getByText(summary)).toBeVisible();
+});
+
+test.each([undefined, "provider", "opaque_stage"])("COPY-08 usage failure uncertainty (%s)", async (stage) => {
+  renderUsage({
+    receipts: [{ request_id: "failed", capability: "chat", status: "failed", metadata: { stage, error_code: "opaque_code" } }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getByText("We couldn't tell where this stopped.")).toBeVisible();
+  expect(sheet.getAllByText("Failed")).toHaveLength(1);
+  expect(sheet.getByText(stage ? `Stage: ${stage} · Error code: opaque_code` : "Error code: opaque_code")).toBeVisible();
+  expect(sheet.queryByText("The request failed.")).toBeNull();
+});
+
+test("COPY-17 usage spend and task labels", async () => {
+  renderUsage({
+    by_model: [
+      { model: "sorter", capability: "rerank", requests: 1 },
+      { model: "recorder", capability: "transcribe", requests: 1 },
+    ],
+  });
+  await screen.findByRole("table", { name: "Models" });
+  for (const name of ["By task", "Models"]) {
+    const table = within(screen.getByRole("table", { name }));
+    expect(table.getByRole("columnheader", { name: "Spend" })).toBeVisible();
+    expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
+    expect(table.getByText("Sort search results")).toBeVisible();
+    expect(table.getByText("Transcribe a recording")).toBeVisible();
+    expect(table.getAllByText("Cost not recorded")).toHaveLength(2);
+  }
 });

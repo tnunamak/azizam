@@ -59,10 +59,10 @@ type RequestPage = {
 
 function requestSummary(receipt: Receipt) {
   const intent = receipt.intent?.replace(/[._-]/g, " ") || "AI request";
-  if (/\bspeech\b/.test(intent)) return "Speech request";
-  if (/\bimage\b/.test(intent)) return "Images request";
-  if (/\bdecision\b|\bdecide\b/.test(intent)) return "Decisions request";
-  if (/\bembedding\b|\bembed\b/.test(intent)) return "Embeddings request";
+  if (/\bspeech\b/.test(intent)) return "Voice request";
+  if (/\bimage\b/.test(intent)) return "Image request";
+  if (/\bdecision\b|\bdecide\b/.test(intent)) return "Decision request";
+  if (/\bembedding\b|\bembed\b/.test(intent)) return "Embedding request";
   return intent.charAt(0).toUpperCase() + intent.slice(1);
 }
 function outcome(status?: string) {
@@ -119,9 +119,9 @@ function outcomeNeedsAttention(status?: string) {
 }
 function outcomeSummary(receipt: Receipt) {
   const label = outcome(receipt.status);
-  if (label === "Completed") return "The gateway completed this request.";
+  if (label === "Completed") return "";
   if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Failed") return "The request failed.";
+  if (label === "Failed") return "We couldn't tell where this stopped.";
   if (label === "Timed out")
     return "The request timed out before a result was recorded.";
   if (label === "In progress")
@@ -469,7 +469,7 @@ export function Requests() {
               <SheetHeader className="pr-14">
                 <SheetTitle>{requestSummary(record.receipt)}</SheetTitle>
                 <SheetDescription>
-                  {outcome(record.receipt.status)} · {record.person_label}
+                  {record.person_label}
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
@@ -479,9 +479,11 @@ export function Requests() {
                   >
                     {outcome(record.receipt.status)}
                   </p>
-                  <p className="text-muted-foreground mt-2">
-                    {outcomeSummary(record.receipt)}
-                  </p>
+                  {outcomeSummary(record.receipt) && (
+                    <p className="text-muted-foreground mt-2">
+                      {outcomeSummary(record.receipt)}
+                    </p>
+                  )}
                   {outcomeCause(record.receipt) ? (
                     <p className="text-muted-foreground mt-2">
                       {outcomeCause(record.receipt)}

@@ -478,7 +478,7 @@ describe("WorkflowsPage empathy copy", () => {
   test("a member whose every workflow is not set up sees the empty state", async () => {
     serve([faceLikeness]);
     renderWorkflows(member);
-    expect(await screen.findByText("No workflows are set up yet. The person who manages Azizam can add them.")).toBeVisible();
+    expect(await screen.findByText("No workflow choices are available to you. Ask the owner what you can use.")).toBeVisible();
   });
 
   test("a delegated admin gets the member view, not the owner's details", async () => {
@@ -536,9 +536,65 @@ describe("WorkflowsPage empathy copy", () => {
   test("an empty catalog says who can add workflows without directing members to owner pages", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: [] })));
     renderWorkflows();
-    expect(await screen.findByText("No workflows are set up yet. The person who manages Azizam can add them.")).toBeVisible();
+    expect(await screen.findByText("No workflow choices are available to you. Ask the owner what you can use.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Explore models" })).toHaveAttribute("href", "/models");
     expect(document.querySelector('a[href="/engines"], a[href="/status"], a[href="/people"]')).toBeNull();
+  });
+
+  test.each([member, { ...member, role: "admin", admin: true }, owner])(
+    "COPY-01 workflow details for $role",
+    async (viewer) => {
+      serve([{
+        ...workflows[0],
+        engine_binding: "private-engine",
+        native_route: "/private-native-route",
+        aliases: [],
+      }]);
+      renderWorkflows(viewer);
+      fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+      const sheet = within(screen.getByRole("dialog"));
+      const isOwner = viewer.role === "owner";
+      fireEvent.click(sheet.getByText(isOwner ? "Technical details" : "Input details"));
+      expect(sheet.getByText("Task")).toBeVisible();
+      expect(sheet.getByRole("heading", { name: "Model names" })).toBeVisible();
+      expect(sheet.getByText("No other model names")).toBeVisible();
+      for (const value of ["Engine", "private-engine", "Native route", "/private-native-route"]) {
+        if (isOwner) expect(sheet.getByText(value)).toBeVisible();
+        else expect(sheet.queryByText(value)).toBeNull();
+      }
+      expect(sheet.queryByText("Engine binding")).toBeNull();
+      expect(sheet.queryByText("Stable aliases")).toBeNull();
+    },
+  );
+
+  test.each([member, owner])("COPY-01 missing engine for $role", async (viewer) => {
+    renderWorkflows(viewer);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    fireEvent.click(sheet.getByText(viewer.admin ? "Technical details" : "Input details"));
+    for (const value of ["No engine configured", "No native passthrough route configured"]) {
+      if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
+      else expect(sheet.queryByText(value)).toBeNull();
+    }
+  });
+
+  test("COPY-09 owner empty catalog", async () => {
+    serve([]);
+    renderWorkflows(owner);
+    expect(await screen.findByText("No workflow choices are available.")).toBeVisible();
+    expect(screen.queryByText(/Ask the owner/)).toBeNull();
+  });
+
+  test("COPY-14 workflow task filters", async () => {
+    renderWorkflows();
+    await screen.findByText("Upscale image");
+    expect(screen.getByLabelText("Workflow task")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search workflows" }), {
+      target: { value: "does not match" },
+    });
+    expect(screen.getByText("Clear the search or choose another task.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("Upscale image")).toBeVisible();
   });
 
 });

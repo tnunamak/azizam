@@ -186,7 +186,7 @@ describe("models catalog refresh", () => {
         expect(detail.getByRole("heading", { name: "Updated title" })).toBeVisible();
         expect(detail.getByText("Updated purpose.")).toBeVisible();
         expect(detail.getByText("Updated engine")).toBeVisible();
-        expect(detail.getByText("chat: updated-target")).toBeVisible();
+        expect(detail.queryByText("chat: updated-target")).toBeNull();
         expect(detail.getByText("Paid · $2")).toBeVisible();
         expect(detail.getByText("Unavailable")).toBeVisible();
         expect(detail.queryByText("Original purpose.")).toBeNull();
@@ -695,7 +695,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("keeps technical descriptions out of cards and shows them in details", async () => {
+  it("keeps technical descriptions out of member cards and details", async () => {
     renderModels(
       catalog([
         row({
@@ -719,10 +719,10 @@ describe("models catalog contract distinctions", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText("Technical description")).toBeVisible();
+    expect(dialog.queryByText("Technical description")).toBeNull();
     expect(
-      dialog.getByText("Served via local llama.cpp on :5051."),
-    ).toBeVisible();
+      dialog.queryByText("Served via local llama.cpp on :5051."),
+    ).toBeNull();
   });
 
   it("renders the human engine label independently of profile description", async () => {
@@ -887,7 +887,7 @@ describe("models catalog contract distinctions", () => {
     );
 
     await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.queryByText("Local · no provider charge")).toBeNull();
+    expect(screen.getByText("Local · no provider charge")).toBeVisible();
     expect(screen.queryByText("Price not provided")).toBeNull();
   });
 
@@ -1601,14 +1601,14 @@ describe("models query-string deep links", () => {
 describe("task-first catalog rows", () => {
   it("hides wholly empty cost and status columns and explains local cost once", async () => {
     renderModels(catalog([row(), row({ id: "fast" })]));
-    const table = within(await screen.findByRole("table", { name: "Available model aliases" }));
+    const table = within(await screen.findByRole("table", { name: "Available model names" }));
     expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
     expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
     expect(table.queryByRole("columnheader", { name: "Use" })).toBeNull();
     expect(table.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
-    expect(screen.getAllByText("Local models without a listed cost: Free (runs here)")).toHaveLength(1);
+    expect(screen.getAllByText("Local · no provider charge")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    expect(screen.getAllByText("Local models without a listed cost: Free (runs here)")).toHaveLength(1);
+    expect(screen.getAllByText("Local · no provider charge")).toHaveLength(1);
     expect(table.getAllByRole("button", { name: "Details" })).toHaveLength(2);
   });
 
@@ -1622,7 +1622,7 @@ describe("task-first catalog rows", () => {
         availability: { ...row().availability, status: "busy" },
       }),
     ]));
-    const table = within(await screen.findByRole("table", { name: "Available model aliases" }));
+    const table = within(await screen.findByRole("table", { name: "Available model names" }));
     expect(table.getByRole("columnheader", { name: "Cost" })).toBeInTheDocument();
     expect(table.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
@@ -1645,12 +1645,12 @@ describe("task-first catalog rows", () => {
       renderModels(catalog([remote], [{ ...remote, id: "exact", alias: false, object: "model_catalog.model" }]));
       await screen.findByRole("button", { name: "Copy model name chat" });
       fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      for (const name of ["Available model aliases", "All models"]) {
+      for (const name of ["Available model names", "All models"]) {
         const table = within(screen.getByRole("table", { name }));
         expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
         expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
       }
-      expect(screen.queryByText("Local models without a listed cost: Free (runs here)")).toBeNull();
+      expect(screen.queryByText("Local · no provider charge")).toBeNull();
     },
   );
 
@@ -1703,5 +1703,45 @@ describe("task-first catalog rows", () => {
       expect(cells[cells.length - 2]).toHaveClass("max-sm:row-start-2");
       expect(within(modelRow).getByRole("button", { name: "Details" })).toBeInTheDocument();
     }
+  });
+});
+
+describe("member copy boundaries", () => {
+  it.each([member, owner])("COPY-02 model details for $role", async (viewer) => {
+    renderModels(catalog([row({
+      resolves_to: { "chat.completions": "private-target" },
+      technical_description: "Private engine configuration.",
+    })]), viewer);
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const sheet = within(screen.getByRole("dialog"));
+    for (const value of ["Technical details", "Resolves to", "chat.completions: private-target", "Technical description", "Private engine configuration."]) {
+      if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
+      else expect(sheet.queryByText(value)).toBeNull();
+    }
+    expect(sheet.getByText("Chat through your configured model.")).toBeVisible();
+  });
+
+  it("COPY-03 model names and task", async () => {
+    renderModels(catalog([row()], [row({ id: "exact", alias: false, object: "model_catalog.model" })]));
+    expect(await screen.findByRole("table", { name: "Available model names" })).toBeVisible();
+    expect(screen.queryByRole("table", { name: "Available model aliases" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    const table = within(screen.getByRole("table", { name: "All models" }));
+    expect(table.getByRole("columnheader", { name: "Task" })).toBeInTheDocument();
+    expect(table.queryByRole("columnheader", { name: "Capability" })).toBeNull();
+  });
+
+  it.each([
+    ["transcribe", "Transcribe a recording"],
+    ["rerank", "Sort search results"],
+  ])("COPY-15 shared model task %s", async (capability, label) => {
+    renderModels(catalog([row({
+      id: "task-model",
+      capability,
+      capabilities: [{ ...row().capabilities[0], capability }],
+    })]));
+    const copy = await screen.findByRole("button", { name: "Copy model name task-model" });
+    expect(within(copy.closest("tr")!).getByText(label)).toBeVisible();
   });
 });

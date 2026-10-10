@@ -821,7 +821,7 @@ export default function Page() {
   const viewer = useViewer();
   if (!viewer.admin) {
     return (
-      <ErrorState message="This page is available to gateway owners and admins. Sign in with an owner account to continue." />
+      <ErrorState message="Only an owner or admin can manage backends. Ask an owner or admin for help." />
     );
   }
   return (

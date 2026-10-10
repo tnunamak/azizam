@@ -178,12 +178,12 @@ function nonnegativeNumberOrNull(value: unknown): number | null {
 
 function money(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "Not measured yet";
+    return "Cost not recorded";
   }
   if (value > 0 && value < 0.01) {
-    return "<$0.01";
+    return "Less than USD 0.01";
   }
-  return `$${value.toFixed(2)}`;
+  return `USD ${value.toFixed(2)}`;
 }
 
 function countOrZero(value: unknown): number {
@@ -197,7 +197,7 @@ function preciseUsd(
   fallback: number | null | undefined,
 ): string {
   const trimmed = value.trim();
-  if (trimmed) return `$${trimmed}`;
+  if (trimmed) return `USD ${trimmed}`;
   return money(fallback);
 }
 
@@ -582,7 +582,7 @@ function providerState(provider: ProviderRecord) {
     };
   return {
     status: "unknown" as const,
-    reason: "Configured, observation unknown.",
+    reason: "Provider connection not confirmed.",
   };
 }
 
@@ -956,7 +956,7 @@ function DetailCard({
               size="sm"
               onClick={() => setEditing(editing === "plans" ? null : "plans")}
             >
-              Edit plans
+              Edit access plans
             </Button>
             <Button
               variant="outline"
@@ -1126,7 +1126,7 @@ function DetailCard({
               <h3 className="text-meta font-medium">Edit access plans</h3>
               {planDraft.length === 0 && (
                 <p className="text-muted-foreground text-meta">
-                  No plans selected. Paid requests will be denied.
+                  No access plans selected. Paid requests will be denied.
                 </p>
               )}
               {plans.map((plan) => (
@@ -1153,7 +1153,7 @@ function DetailCard({
                 onClick={() => onSavePlans(provider, planDraft)}
                 disabled={busy}
               >
-                Save plans
+                Save access plans
               </Button>
             </div>
           )}
@@ -1838,8 +1838,8 @@ function AddProviderDialog({
               <h3 className="text-meta font-medium">Access plans</h3>
               {allowedPlans.length === 0 && (
                 <p className="text-muted-foreground rounded-panel border p-3 text-meta">
-                  No plans selected. Paid requests will be denied until an owner
-                  allows a plan.
+                  No access plans selected. Paid requests will be denied until an owner
+                  allows an access plan.
                 </p>
               )}
               {plans.map((plan) => (
@@ -2229,8 +2229,8 @@ export default function ProvidersPage() {
     <>
       <PageHeader
         title="Providers"
-        answer="Remote providers are explicit paid routes."
-        description="Requests only go remote when a model names that provider. Paid access is never automatic."
+        answer="Paid models run with provider pages."
+        description="A request uses a provider only when its model names one."
         actions={
           missingApi ? undefined : (
             <Button onClick={() => setAddOpen(true)}>
@@ -2354,7 +2354,9 @@ export default function ProvidersPage() {
         }
         description={
           confirmTarget
-            ? `This changes ${confirmTarget.provider.name}. The full key is never shown again.`
+            ? confirmTarget.action === "remove"
+              ? `Remove ${confirmTarget.provider.name} from this proxy?`
+              : `Delete the saved key for ${confirmTarget.provider.name}?`
             : undefined
         }
         confirmLabel={

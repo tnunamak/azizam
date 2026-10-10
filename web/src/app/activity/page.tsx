@@ -347,10 +347,14 @@ export default function ActivityPage() {
               icon={History}
               title={
                 category || actor
-                  ? "No changes match these filters"
+                  ? "No matching changes"
                   : "No changes yet"
               }
-              description="Changes to apps, keys and access plans appear here. Create an app to start seeing changes."
+              description={
+                category || actor
+                  ? "Clear filters to see other changes."
+                  : "Changes to apps, keys and access plans appear here."
+              }
               action={
                 category || actor ? (
                   <Button

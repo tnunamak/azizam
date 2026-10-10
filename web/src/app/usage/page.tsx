@@ -473,7 +473,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
           noPaidRequests ? (
             "No paid requests"
           ) : summary.remoteSpendUsd === null ? (
-            "Unavailable"
+            "Cost not recorded"
           ) : (
             <Money amount={summary.remoteSpendUsd} summary />
           )
@@ -641,7 +641,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <TableHead scope="col" className="max-sm:px-2">Task</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Requests</TableHead>
                     <TableHead scope="col" numeric className="max-sm:px-2">Share</TableHead>
-                    <TableHead scope="col" numeric className="max-sm:px-2">Cost</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Spend</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -701,7 +701,7 @@ function ModelTable({
                     Requests
                   </TableHead>
                   <TableHead scope="col" numeric>
-                    Cost
+                    Spend
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -733,16 +733,11 @@ function ModelTable({
                 })}
               </TableBody>
             </Table>
-            <p className="text-muted-foreground text-meta">
-              {[
-                kinds.has("local") ? "Local: no provider charge." : null,
-                kinds.has("unavailable")
-                  ? "Unavailable: the provider cost was not recorded."
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            </p>
+            {kinds.has("local") && (
+              <p className="text-muted-foreground text-meta">
+                Local: no provider charge.
+              </p>
+            )}
             {rows.length > 5 ? (
               <Button variant="ghost" onClick={onToggle}>
                 {showAll ? "Show top 5" : `View all ${rows.length} models`}
@@ -760,9 +755,9 @@ function ModelTable({
 type ModelCostKind = "amount" | "partial" | "local" | "unavailable";
 
 /**
- * What the Cost cell of a model row says. A recorded charge shows the amount.
+ * What the Spend cell of a model row says. A recorded charge shows the amount.
  * No charge shows "Local" only when the gateway counted no paid requests;
- * anything else without an amount is Unavailable, never a blank or a guess.
+ * anything else without an amount says Cost not recorded, never a blank or a guess.
  */
 function modelCostKind(row: UsageModel): ModelCostKind {
   const unknownPaid = (row.unknownPaidRequests ?? 0) > 0;
@@ -777,7 +772,7 @@ function ModelCost({ row }: { row: UsageModel }) {
   const kind = modelCostKind(row);
   if (kind === "local") return <span className="text-muted-foreground">Local</span>;
   if (kind === "unavailable")
-    return <span className="text-muted-foreground">Unavailable</span>;
+    return <span className="text-muted-foreground">Cost not recorded</span>;
   return (
     <>
       <Money amount={row.costUsd} summary />
@@ -904,12 +899,11 @@ function ReceiptSheet({
                   <CapabilityLabel capability={receipt.capability} />
                   <StatusBadge status={receipt.status} />
                 </div>
-                <p className="text-meta font-medium">
-                  {receiptOutcome(receipt.status)}
-                </p>
-                <p className="text-muted-foreground mt-2 text-meta">
-                  {receiptOutcomeSummary(receipt)}
-                </p>
+                {receiptOutcomeSummary(receipt) && (
+                  <p className="text-muted-foreground mt-2 text-meta">
+                    {receiptOutcomeSummary(receipt)}
+                  </p>
+                )}
                 {receiptOutcomeCause(receipt) ? (
                   <p className="text-muted-foreground mt-2 text-meta">
                     {receiptOutcomeCause(receipt)}
@@ -1085,9 +1079,9 @@ function receiptOutcome(status: string | null) {
 
 function receiptOutcomeSummary(receipt: UsageReceipt) {
   const label = receiptOutcome(receipt.status);
-  if (label === "Completed") return "The gateway completed this request.";
+  if (label === "Completed") return "";
   if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Failed") return "The request failed.";
+  if (label === "Failed") return "We couldn't tell where this stopped.";
   if (label === "Timed out")
     return "The request timed out before a result was recorded.";
   if (label === "Accepted")
@@ -1482,7 +1476,7 @@ function ReceiptCost({
   if (receipt.costUsd != null)
     return <Money amount={receipt.costUsd} summary={summary} />;
   if (object(receipt.raw).remote === false) return <>No provider charge</>;
-  return <>Cost unknown</>;
+  return <>Cost not recorded</>;
 }
 
 function shortDate(value: string) {

@@ -789,25 +789,11 @@ function DetailSheet({
                   label={row.alias ? "Model name" : "Exact model"}
                   value={row.id}
                 />
-                {Object.keys(row.resolves_to).length > 0 && (
-                  <Fact
-                    label="Resolves to"
-                    value={Object.entries(row.resolves_to)
-                      .map(([op, target]) => `${op}: ${target}`)
-                      .join(", ")}
-                  />
-                )}
                 {engineLabel(row) !== titleFor(row) && (
                   <Fact label="Engine or provider" value={engineLabel(row)} />
                 )}
                 {locality && <Fact label="Location" value={locality} />}
                 {cost && <Fact label="Cost" value={cost} />}
-                {row.technical_description && (
-                  <Fact
-                    label="Technical description"
-                    value={row.technical_description}
-                  />
-                )}
                 {timing && (
                   <Fact
                     label={
@@ -819,6 +805,27 @@ function DetailSheet({
                   />
                 )}
               </div>
+              {viewerAdmin && (Object.keys(row.resolves_to).length > 0 || row.technical_description) && (
+                <section className="space-y-3">
+                  <h3 className="font-medium">Technical details</h3>
+                  <div className="grid gap-3 text-meta sm:grid-cols-2">
+                    {Object.keys(row.resolves_to).length > 0 && (
+                      <Fact
+                        label="Resolves to"
+                        value={Object.entries(row.resolves_to)
+                          .map(([op, target]) => `${op}: ${target}`)
+                          .join(", ")}
+                      />
+                    )}
+                    {row.technical_description && (
+                      <Fact
+                        label="Technical description"
+                        value={row.technical_description}
+                      />
+                    )}
+                  </div>
+                </section>
+              )}
               <div>
                 <h3 className="font-medium">Availability</h3>
                 <div className="mt-3 space-y-3 rounded-panel border p-3">
@@ -1103,7 +1110,7 @@ export default function ModelsClient() {
             </div>
           </section>
           {showLocalCostNote && (
-            <p className="text-muted-foreground text-meta">Local models without a listed cost: Free (runs here)</p>
+            <p className="text-muted-foreground text-meta">{preferredTerms.localPricing}</p>
           )}
           {groupedAliases.length === 0 ? (
             <EmptyState
@@ -1141,10 +1148,10 @@ export default function ModelsClient() {
             />
           ) : (
             <div
-              aria-label="Available model aliases"
+              aria-label="Available model names"
               className="bg-card overflow-hidden rounded-panel border"
             >
-              <Table aria-label="Available model aliases" className="max-sm:block">
+              <Table aria-label="Available model names" className="max-sm:block">
                 <TableHeader className="max-sm:hidden">
                   <TableRow>
                     <TableHead>Task and model name</TableHead>
@@ -1189,7 +1196,7 @@ export default function ModelsClient() {
                   <TableHeader className="max-sm:hidden">
                     <TableRow>
                       <TableHead>Task and model name</TableHead>
-                      <TableHead>Capability</TableHead>
+                      <TableHead>Task</TableHead>
                       <TableHead>Engine or provider</TableHead>
                       {modelHasCost && <TableHead numeric>Cost</TableHead>}
                       {modelHasStatus && <TableHead>Status</TableHead>}

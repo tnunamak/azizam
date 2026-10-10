@@ -11,6 +11,9 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import Activity from "./page";
+import ProvidersPage from "../providers/page";
+import EnginesPage from "../engines/page";
+import { ViewerContext } from "@/components/shell/session";
 
 import { Requests } from "./requests";
 const pointerMethods = [
@@ -97,7 +100,7 @@ it.each([0, 1])(
       "opaque-person",
     );
     await user.click(screen.getByRole("button", { name: "Apply" }));
-    await screen.findByText("No changes match these filters");
+    await screen.findByText("No matching changes");
     await user.click(
       screen.getAllByRole("button", { name: "Clear filters" })[buttonIndex],
     );
@@ -299,8 +302,8 @@ it("shows newest receipts first with person and app despite a source label, and 
   mountRequests();
   const table = await screen.findByRole("table", { name: "Request receipts" });
   const buttons = within(table).getAllByRole("button");
-  expect(buttons[0]).toHaveAccessibleName("Request details: Images request by Alex");
-  expect(buttons[1]).toHaveAccessibleName("Request details: Speech request by Sam");
+  expect(buttons[0]).toHaveAccessibleName("Request details: Image request by Alex");
+  expect(buttons[1]).toHaveAccessibleName("Request details: Voice request by Sam");
   expect(within(buttons[0]).getByText("Alex · Studio")).toBeVisible();
   expect(within(buttons[0]).getByText("Failed")).toBeVisible();
   expect(buttons[0]).toHaveTextContent("1.3 s");
@@ -331,8 +334,154 @@ it("labels unrecorded time and duration without inventing a zero duration", asyn
     }),
   }));
   mountRequests();
-  const row = await screen.findByRole("button", { name: "Request details: Speech request by Sam" });
+  const row = await screen.findByRole("button", { name: "Request details: Voice request by Sam" });
   expect(row).toHaveTextContent("Outcome not recorded");
   expect(row).toHaveTextContent("Time not recorded · Duration not recorded");
   expect(row).not.toHaveTextContent("0 ms");
+});
+
+it("COPY-10 filtered changes guidance", async () => {
+  const user = userEvent.setup();
+  mount();
+  expect(await screen.findByText("Changes to apps, keys and access plans appear here.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Create an app" })).toBeVisible();
+  await user.click(screen.getByRole("combobox", { name: "Change type" }));
+  await user.click(screen.getByRole("option", { name: "Apps" }));
+  expect(await screen.findByText("No matching changes")).toBeVisible();
+  expect(screen.getByText("Clear filters to see other changes.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Create an app" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(2);
+});
+
+function serveCopyReceipt(receipt: Record<string, unknown>) {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      records: [{ receipt: { request_id: "copy-receipt", ...receipt }, person_label: "Sam", app_label: "Reader", created_at: 0 }],
+      next_cursor: null, people: [], sources: [],
+    }),
+  }));
+  mountRequests();
+}
+
+it.each([
+  ["speech.synthesis", "Voice request"],
+  ["image.generate", "Image request"],
+  ["decide", "Decision request"],
+  ["embed", "Embedding request"],
+])("COPY-13 activity receipt name %s", async (intent, title) => {
+  serveCopyReceipt({ intent });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: `Request details: ${title} by Sam` }));
+  expect(within(screen.getByRole("dialog")).getByRole("heading", { name: title })).toBeVisible();
+});
+
+it.each(["success", "succeeded", "ok"])("COPY-11 activity completion once (%s)", async (status) => {
+  serveCopyReceipt({ intent: "image", status });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Image request by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getAllByText("Completed")).toHaveLength(1);
+  expect(sheet.queryByText("The gateway completed this request.")).toBeNull();
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Sam");
+});
+
+it.each([undefined, "provider", "opaque_stage"])("COPY-08 activity failure uncertainty (%s)", async (stage) => {
+  serveCopyReceipt({ intent: "chat", status: "failed", stage, error_code: "opaque_code" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.getByText("We couldn't tell where this stopped.")).toBeVisible();
+  expect(sheet.getByText(stage ? `Stage: ${stage} · Error code: opaque_code` : "Error code: opaque_code")).toBeVisible();
+  expect(sheet.queryByText("The request failed.")).toBeNull();
+});
+
+it.each([
+  ["in_progress", "The request was still running when this receipt was recorded."],
+  ["timed_out", "The request timed out before a result was recorded."],
+  ["incomplete", "The receipt does not include a final outcome."],
+])("COPY-11 activity outcome context (%s)", async (status, summary) => {
+  serveCopyReceipt({ intent: "chat", status });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Sam");
+  expect(sheet.getByText(summary)).toBeVisible();
+});
+
+function mountCopyProviders(provider: Record<string, unknown> = {}, reconciliations: unknown[] = []) {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/reconciliation")) return Response.json({ reconciliations });
+    if (path === "/admin/api/providers") return Response.json({
+      providers: [{ id: "example-provider", name: "Example Provider", key_set: true, ...provider }],
+    });
+    return Response.json({});
+  }));
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+      <ProvidersPage />
+    </QueryClientProvider>,
+  );
+}
+
+it.each([
+  [null, "Cost not recorded"],
+  [0, "USD 0.00"],
+  [0.001, "Less than USD 0.01"],
+  [0.42, "USD 0.42"],
+])("COPY-06 provider amounts (%s)", async (amount, label) => {
+  mountCopyProviders({ spend_today_usd: amount, spend_month_usd: amount });
+  await screen.findByRole("heading", { name: "Example Provider" });
+  expect(screen.getAllByText(String(label))).toHaveLength(2);
+  expect(screen.getByText("Paid models run with provider pages.")).toBeVisible();
+  expect(screen.getByText("A request uses a provider only when its model names one.")).toBeVisible();
+  expect(screen.queryByText(/Paid access is never automatic/)).toBeNull();
+});
+
+it.each([
+  ["Remove provider", "Remove Example Provider from this proxy?"],
+  ["Delete key", "Delete the saved key for Example Provider?"],
+])("COPY-07 provider confirmation %s", async (action, description) => {
+  mountCopyProviders();
+  const user = userEvent.setup();
+  await screen.findByRole("heading", { name: "Example Provider" });
+  await user.click(screen.getByText("Manage"));
+  await user.click(screen.getByRole("button", { name: "More actions for Example Provider" }));
+  await user.click(await screen.findByRole("menuitem", { name: action }));
+  expect(await screen.findByText(description)).toBeVisible();
+  expect(screen.queryByText(/The full key is never shown again/)).toBeNull();
+});
+
+it("COPY-06 provider charge precision", async () => {
+  const amount = "0.0000123456789012345";
+  mountCopyProviders(
+    { spend: { pending_reconciliation_count: 1 } },
+    [{ id: 1, estimated_usd: amount, request_id: "request-1" }],
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("heading", { name: "Example Provider" });
+  await user.click(screen.getByText("Manage"));
+  await user.click(screen.getByRole("button", { name: "Reconcile charges" }));
+  expect(await screen.findByText(`USD ${amount}`)).toBeVisible();
+});
+
+it("COPY-18 access plan names", async () => {
+  mountCopyProviders();
+  const user = userEvent.setup();
+  await screen.findByRole("heading", { name: "Example Provider" });
+  await user.click(screen.getByText("Manage"));
+  await user.click(screen.getByRole("button", { name: "Edit access plans" }));
+  expect(screen.getByText("No access plans selected. Paid requests will be denied.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save access plans" })).toBeVisible();
+});
+
+it("COPY-19 backend access guidance", () => {
+  render(
+    <ViewerContext.Provider value={{ authenticated: true, name: "Sam", email: null, role: "member", admin: false }}>
+      <EnginesPage />
+    </ViewerContext.Provider>,
+  );
+  expect(screen.getByText("Only an owner or admin can manage backends. Ask an owner or admin for help.")).toBeVisible();
+  expect(screen.queryByText(/Sign in with an owner account/)).toBeNull();
 });
