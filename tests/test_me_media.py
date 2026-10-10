@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, prompt_memory, provenance, receipt_store
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -1040,6 +1040,697 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertTrue(sources[f"app:{old['id']}"]["disabled"])
         self.assertFalse(sources[f"app:{self.app_a['id']}"]["disabled"])
         self.assertIsNotNone(sources[f"app:{old['id']}"]["created_at"])
+
+
+# ---------------------------------------------------------------------------
+# Session make API acceptance contract.
+# Run with pytest tests/test_me_media.py -k MeMakeApiAcceptanceTests, or
+# python -m unittest tests.test_me_media.MeMakeApiAcceptanceTests.
+#
+# Wire contract: POST/GET /me/api/make/jobs; GET /{job_id};
+# POST /{job_id}/cancel. POST JSON: intent, model, prompt, optional
+# source_asset_id/source_job_id, and the existing prompt-memory extension
+# extensions["com.azizam.prompts"] = {"mode": "forget"}. Responses:
+# {"job": {...}} / {"jobs": [...]}. First submissions return 202.
+#
+# Execution runs behind the router's make runtime. The fake runtime below is
+# the backend boundary only: the job lifecycle (running, succeeded, failed,
+# cancel, events, errors) is the code under test, so no test writes job
+# status or job assets itself.
+# ---------------------------------------------------------------------------
+
+
+class _GatedMakeRuntime:
+    """Deterministic stand-in for the gateway's media backend.
+
+    Jobs run on their own threads, so they outlive the request (and the
+    request's event loop) that scheduled them. ``release`` holds every
+    backend call until a test lets it go.
+    """
+
+    def __init__(self, asset_path) -> None:
+        import threading
+
+        self._asset_path = asset_path
+        self.payloads: dict[str, dict] = {}
+        self.calls: list[dict] = []
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.release.set()
+        self.fail_with: BaseException | None = None
+        self.threads: list = []
+        self.limits = me_make.MakeLimits()
+        self.canceled: set[str] = set()
+        self.autostart = True
+        self.pending: list = []
+        self.refusal = None  # The operator's admission refusal, if any.
+
+    def keep_payload(self, job_id: str, payload) -> None:
+        self.payloads[job_id] = json.loads(json.dumps(payload))
+
+    def load_payload(self, job_id: str):
+        return self.payloads.get(job_id)
+
+    def drop_payload(self, job_id: str) -> None:
+        self.payloads.pop(job_id, None)
+
+    def request_cancel(self, job_id: str) -> bool:
+        self.canceled.add(job_id)
+        return True
+
+    def admission(self, intent: str):
+        return self.refusal
+
+    def schedule(self, job_id: str, run) -> None:
+        import asyncio
+        import threading
+
+        if not self.autostart:  # Stays queued until the test runs it.
+            self.pending.append(run)
+            return
+        thread = threading.Thread(target=lambda: asyncio.run(run()), daemon=True)
+        self.threads.append(thread)
+        thread.start()
+
+    async def execute(self, payload):
+        import asyncio
+        import hashlib
+
+        self.calls.append(json.loads(json.dumps(payload)))
+        self.started.set()
+        await asyncio.to_thread(self.release.wait, 10)
+        if payload["job_id"] in self.canceled:
+            raise me_make.MakeCanceled()
+        if self.fail_with is not None:
+            raise self.fail_with
+        output = "img_" + hashlib.sha256(payload["job_id"].encode()).hexdigest()
+        self._asset_path(output).write_bytes(PNG_1X1)
+        return [{"asset_id": output, "media_type": "image/png"}]
+
+    def wait_idle(self, timeout: float = 10) -> None:
+        for thread in list(self.threads):
+            thread.join(timeout)
+            if thread.is_alive():
+                raise AssertionError("make job thread did not finish")
+
+
+FORGET = {"com.azizam.prompts": {"mode": "forget"}}
+
+
+class MeMakeApiAcceptanceTests(unittest.TestCase):
+    # Reuse the exact existing session/storage fixtures without inheriting
+    # (and therefore rerunning) every existing test method.
+    _session = MeMediaRouterTests._session
+    _mutation_validator = MeMediaRouterTests._mutation_validator
+    _asset_path = MeMediaRouterTests._asset_path
+    _meta_path = MeMediaRouterTests._meta_path
+    _asset_metadata = MeMediaRouterTests._asset_metadata
+    _catalog = MeMediaRouterTests._catalog
+    _delete_unshared = MeMediaRouterTests._delete_unshared
+    _write_asset = MeMediaRouterTests._write_asset
+
+    make_url = "/me/api/make/jobs"
+
+    def setUp(self) -> None:
+        MeMediaRouterTests.setUp(self)
+        self.runtime = _GatedMakeRuntime(self._asset_path)
+        app = FastAPI()
+        app.include_router(
+            me_media.create_me_media_router(
+                session_provider=self._session,
+                mutation_validator=self._mutation_validator,
+                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
+                asset_path_resolver=self._asset_path,
+                asset_media_type_resolver=lambda asset_id, path: "image/png",
+                asset_deleter=self._delete_unshared,
+                asset_catalog_provider=self._catalog,
+                asset_metadata_reader=self._asset_metadata,
+                admin_db_path=self.admin_db,
+                media_jobs_path=self.jobs_db,
+                receipts_path=self.receipts_db,
+                prompt_memory_path=self.prompt_db,
+                make_runtime=self.runtime,
+            )
+        )
+        self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        # Let held jobs finish before their temporary stores disappear.
+        self.runtime.release.set()
+        self.runtime.wait_idle()
+        MeMediaRouterTests.tearDown(self)
+
+    def _make_headers(self, key: str) -> dict:
+        return {
+            "Idempotency-Key": key,
+            "x-azizam-user-action": "1",
+            "x-azizam-csrf": "valid-csrf",
+        }
+
+    def _picture(self, **overrides) -> dict:
+        body = {"intent": "image.generate", "model": "image",
+                "prompt": "a blue bird on a yellow branch"}
+        body.update(overrides)
+        return body
+
+    def _submit_make(self, key: str, **overrides):
+        response = self.client.post(
+            self.make_url, json=self._picture(**overrides),
+            headers=self._make_headers(key),
+        )
+        self.assertNotIn("authorization", response.request.headers)
+        self.assertIn(response.status_code, (200, 202), response.text)
+        job = response.json()["job"]
+        self.assertTrue(job["job_id"].startswith("mj_"), job)
+        self.assertIsNotNone(media_jobs.get(job["job_id"], path=self.jobs_db))
+        return response, job
+
+    def _finished(self, job_id: str) -> dict:
+        self.runtime.wait_idle()
+        stored = media_jobs.get(job_id, path=self.jobs_db)
+        self.assertIn(stored["status"], media_jobs.TERMINAL_STATUSES, stored)
+        return stored
+
+    def _completed_output(self, key: str, **overrides) -> tuple[dict, str]:
+        _, job = self._submit_make(key, **overrides)
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["status"], media_jobs.STATUS_SUCCEEDED, stored)
+        return job, stored["assets"][0]["asset_id"]
+
+    def _make_list(self, **params) -> list:
+        response = self.client.get(self.make_url, params=params)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["jobs"]
+
+    def _as(self, user):
+        test = self
+
+        class _Switch:
+            def __enter__(self):
+                self.previous = test.current_user
+                test.current_user = user
+
+            def __exit__(self, *exc):
+                test.current_user = self.previous
+
+        return _Switch()
+
+    def _assert_discloses_nothing(self, response, *canaries: str) -> None:
+        wire = response.text + json.dumps(dict(response.headers))
+        for canary in canaries:
+            self.assertNotIn(canary, wire)
+
+    def test_make_member_picture_has_person_and_azizam_receipt(self) -> None:
+        # Criterion 1: neither fixture-created App is named Azizam.
+        self.assertFalse(any(
+            app["name"] == "Azizam"
+            for app in admin_store.list_apps(path=self.admin_db)
+        ))
+        response, job = self._submit_make("alice-first-picture")
+        self.assertEqual(response.status_code, 202, response.text)
+        stored = media_jobs.get(job["job_id"], path=self.jobs_db)
+        self.assertEqual(stored["intent"], "image.generate")
+        receipt = receipt_store.get(
+            stored["request_id"], audience="internal", path=self.receipts_db,
+        )
+        self.assertIsNotNone(receipt, "Submission must persist a route receipt")
+        self.assertEqual(receipt["app_id"], stored["app_id"])
+        app = admin_store.get_app(receipt["app_id"], path=self.admin_db)
+        self.assertEqual(app["name"], "Azizam")
+        self.assertEqual(app["kind"], "personal")
+        self.assertEqual(app["owner_user_id"], self.alice["id"])
+        # The Azizam App is never a key: no credential is ever attached to it.
+        self.assertEqual(admin_store.list_active_credentials(
+            subject_kind="app", app_id=app["id"], path=self.admin_db), [])
+        own = self.client.get(f"{self.make_url}/{job['job_id']}")
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["job"]["job_id"], job["job_id"])
+        # The backend runs as the session person, through the Azizam App.
+        self._finished(job["job_id"])
+        self.assertEqual(self.runtime.calls[0]["auth"],
+                         {"app_id": app["id"], "person_id": self.alice["id"]})
+
+        _, second = self._submit_make("alice-second-picture")
+        self.assertEqual(
+            media_jobs.get(second["job_id"], path=self.jobs_db)["app_id"],
+            app["id"], "Repeated use must reuse the person's Azizam App",
+        )
+        with self._as(self.bob):
+            _, bob = self._submit_make("bob-first-picture")
+        bob_app = admin_store.get_app(
+            media_jobs.get(bob["job_id"], path=self.jobs_db)["app_id"],
+            path=self.admin_db,
+        )
+        self.assertEqual(bob_app["name"], "Azizam")
+        self.assertEqual(bob_app["owner_user_id"], self.bob["id"])
+        self.assertNotEqual(bob_app["id"], app["id"])
+
+    def test_make_idempotency_reuses_job_only_for_same_person_and_key(self) -> None:
+        # Criterion 2, also exercising own list and the optional status filter.
+        _, first = self._submit_make("same-key")
+        _, again = self._submit_make("same-key")
+        _, different = self._submit_make("different-key")
+        self.assertEqual(first["job_id"], again["job_id"])
+        self.assertNotEqual(first["job_id"], different["job_id"])
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 2)
+        self.runtime.wait_idle()
+        self.runtime.release.clear()
+        self.runtime.started.clear()
+        _, held = self._submit_make("held-key")
+        self.assertTrue(self.runtime.started.wait(5))
+        own_ids = {job["job_id"] for job in self._make_list()}
+        self.assertEqual(own_ids, {first["job_id"], different["job_id"], held["job_id"]})
+        running = self._make_list(status=media_jobs.STATUS_RUNNING)
+        self.assertEqual([job["job_id"] for job in running], [held["job_id"]])
+        done = self._make_list(status=media_jobs.STATUS_SUCCEEDED)
+        self.assertEqual({job["job_id"] for job in done}, {first["job_id"], different["job_id"]})
+        self.runtime.release.set()
+        with self._as(self.bob):
+            _, bob = self._submit_make("same-key")
+            self.assertNotIn(bob["job_id"], own_ids)
+            self.assertEqual([job["job_id"] for job in self._make_list()], [bob["job_id"]])
+
+    def test_make_cannot_read_another_person_job(self) -> None:
+        # Criterion 3: job read isolation; the denial discloses nothing.
+        canary = "bob-private-canary-5d1f"
+        with self._as(self.bob):
+            foreign, foreign_asset = self._completed_output("bob-private-job", prompt=canary)
+        _, own = self._submit_make("alice-visible")
+        response = self.client.get(f"{self.make_url}/{foreign['job_id']}")
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self._assert_discloses_nothing(response, canary, foreign_asset, "/v1/assets/")
+        listed = self.client.get(self.make_url)
+        self.assertEqual([job["job_id"] for job in listed.json()["jobs"]], [own["job_id"]])
+        self._assert_discloses_nothing(listed, canary, foreign_asset, foreign["job_id"])
+
+    def test_make_cannot_cancel_another_person_job(self) -> None:
+        # Criterion 3: a running foreign job is untouched and undisclosed.
+        canary = "bob-running-canary-77aa"
+        self.runtime.release.clear()
+        with self._as(self.bob):
+            _, foreign = self._submit_make("bob-running", prompt=canary)
+        self.assertTrue(self.runtime.started.wait(5))
+        before = media_jobs.get(foreign["job_id"], path=self.jobs_db)
+        self.assertEqual(before["status"], media_jobs.STATUS_RUNNING)
+        response = self.client.post(
+            f"{self.make_url}/{foreign['job_id']}/cancel",
+            headers=self._make_headers("forbidden-cancel"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self._assert_discloses_nothing(response, canary)
+        self.assertEqual(media_jobs.get(foreign["job_id"], path=self.jobs_db), before)
+        self.runtime.release.set()
+        self.assertEqual(self._finished(foreign["job_id"])["status"], media_jobs.STATUS_SUCCEEDED)
+
+    def test_make_owner_can_cancel_own_running_job(self) -> None:
+        # A running job's work may not stop at once, so the job says
+        # cancel_requested until it settles, then canceled with no output.
+        self.runtime.release.clear()
+        _, job = self._submit_make("cancel-mine")
+        self.assertTrue(self.runtime.started.wait(5))
+        url = f"{self.make_url}/{job['job_id']}"
+        response = self.client.post(f"{url}/cancel", headers=self._make_headers("cancel-mine"))
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["job"]["status"], me_make.CANCEL_REQUESTED)
+        self.assertEqual(self.runtime.payloads, {}, "the prompt is not kept for a canceled job")
+        self.assertEqual(self.client.get(url).json()["job"]["status"], me_make.CANCEL_REQUESTED)
+        self.assertEqual([item["status"] for item in self._make_list()], [me_make.CANCEL_REQUESTED])
+        self.runtime.release.set()
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["status"], media_jobs.STATUS_CANCELED)
+        self.assertEqual(stored["assets"], [])
+        self.assertEqual(self.client.get(url).json()["job"]["status"], media_jobs.STATUS_CANCELED)
+        library = self.client.get("/me/api/media").json()
+        self.assertNotIn(job["job_id"], json.dumps(library))
+        finished = self.client.post(f"{url}/cancel", headers=self._make_headers("cancel-mine"))
+        self.assertEqual(finished.status_code, 409, finished.text)
+
+    def test_make_restart_settles_a_pending_cancel_as_canceled(self) -> None:
+        self.runtime.release.clear()
+        _, job = self._submit_make("cancel-then-restart")
+        self.assertTrue(self.runtime.started.wait(5))
+        self.client.post(f"{self.make_url}/{job['job_id']}/cancel", headers=self._make_headers("cancel-then-restart"))
+        resumed = me_make.resume_jobs(runtime=self.runtime, jobs_path=self.jobs_db)
+        self.assertEqual(resumed, 0)
+        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_CANCELED)
+
+    def test_make_cancel_of_a_queued_job_is_immediate(self) -> None:
+        import asyncio
+
+        self.runtime.autostart = False
+        _, job = self._submit_make("cancel-queued")
+        response = self.client.post(f"{self.make_url}/{job['job_id']}/cancel",
+                                    headers=self._make_headers("cancel-queued"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["job"]["status"], media_jobs.STATUS_CANCELED)
+        for run in self.runtime.pending:
+            asyncio.run(run())
+        self.assertEqual(self.runtime.calls, [], "a canceled job never reaches the backend")
+        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_CANCELED)
+
+    def _refused(self, key: str, status: int, code: str, **overrides) -> dict:
+        jobs_before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(self.make_url, json=self._picture(**overrides),
+                                    headers=self._make_headers(key))
+        self.assertEqual(response.status_code, status, response.text)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], code)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), jobs_before, "nothing is stored")
+        return error
+
+    def test_make_meets_operator_admission_before_storing_anything(self) -> None:
+        from fastapi import Response
+
+        refusal = {"error": {"code": "resource_admission_denied", "message": "intent disabled: image.generate"}}
+        self.runtime.refusal = Response(content=json.dumps(refusal), status_code=503,
+                                         media_type="application/json", headers={"Retry-After": "30"})
+        response = self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("refused"))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json(), refusal, "the same refusal regular media jobs get")
+        self.assertEqual(response.headers["retry-after"], "30")
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
+        self.assertFalse(any(app["name"] == "Azizam" for app in admin_store.list_apps(path=self.admin_db)))
+        self.assertEqual(self.runtime.payloads, {})
+        self.assertEqual(self.runtime.calls, [])
+        invalid = self.client.post(self.make_url, json=self._picture(prompt=""), headers=self._make_headers("bad"))
+        self.assertEqual(invalid.status_code, 400, "an invalid request is told what is wrong first")
+        self.runtime.refusal = None
+        self._submit_make("admitted")
+
+    def test_make_refuses_oversize_requests_before_storing_anything(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(max_prompt_chars=100)
+        self._refused("long", 400, "prompt_too_long", prompt="x" * 101)
+        for n in (0, 11, 1_000_000, True, "2"):
+            with self.subTest(n=n):
+                self._refused(f"n-{n}", 400, "invalid_n", n=n)
+        self.assertEqual(self.runtime.payloads, {})
+        self.assertEqual(self.runtime.calls, [])
+        self._submit_make("fits", prompt="x" * 100, n=10)
+
+    def test_make_limits_outstanding_jobs_per_person(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(per_person=2, household=10)
+        self.runtime.release.clear()
+        self._submit_make("first")
+        self._submit_make("second")
+        error = self._refused("third", 429, "too_many_jobs")
+        self.assertIn("Wait for one to finish", error["message"])
+        self.assertEqual(len(self.runtime.payloads), 2)
+        with self._as(self.bob):
+            self._submit_make("bob-first")
+        self.runtime.release.set()
+        self.runtime.wait_idle()
+        self._submit_make("after-finish")
+
+    def test_make_limits_outstanding_jobs_for_the_household(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(per_person=5, household=2)
+        self.runtime.release.clear()
+        self._submit_make("alice-first")
+        with self._as(self.bob):
+            self._submit_make("bob-first")
+        response = self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("alice-second"))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "make_busy")
+        self.assertEqual(response.headers["retry-after"], "60")
+        self.assertEqual(len(self.runtime.payloads), 2)
+
+    def test_make_cannot_use_another_person_asset_as_source(self) -> None:
+        # Criterion 3: asset boundary. Same valid edit shape succeeds with an owned asset.
+        canary = "bob-asset-canary-0c3e"
+        own_asset, foreign_asset = "img_" + "a1" * 32, "img_" + "b1" * 32
+        self._write_asset(own_asset, ["sha256:alice"])
+        self._write_asset(foreign_asset, ["sha256:bob"], prompt=canary)
+        _, own = self._submit_make("own-edit", intent="image.edit", source_asset_id=own_asset)
+        self._finished(own["job_id"])
+        self.assertEqual(self.runtime.calls[-1]["body"]["source_asset_id"], own_asset)
+        before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(
+            self.make_url,
+            json=self._picture(intent="image.edit", source_asset_id=foreign_asset),
+            headers=self._make_headers("foreign-asset-edit"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self._assert_discloses_nothing(response, canary, "/v1/assets/")
+        self.assertEqual(media_jobs.count(path=self.jobs_db), before)
+        self.assertEqual(len(self.runtime.calls), 1)
+
+    def test_make_cannot_use_another_person_job_as_source_even_if_output_is_shared(self) -> None:
+        # Criterion 3: job boundary, independent of the asset boundary. Bob's
+        # output is explicitly shared with Alice, so only a job-ownership check
+        # can reject Bob's job as a source.
+        canary = "bob-job-canary-41b9"
+        with self._as(self.bob):
+            foreign, shared_asset = self._completed_output("bob-source", prompt=canary)
+        self._meta_path(shared_asset).write_text(json.dumps({
+            "asset_id": shared_asset, "owner_key_hashes": ["sha256:bob", "sha256:alice"],
+            "updated_at": 1_700_000_000,
+        }))
+        self.assertEqual(self.client.get(f"/me/api/media/{shared_asset}").status_code, 200)
+        own, own_asset = self._completed_output("own-source")
+        _, own_edit = self._submit_make("own-job-edit", intent="image.edit", source_job_id=own["job_id"])
+        self._finished(own_edit["job_id"])
+        self.assertEqual(self.runtime.calls[-1]["body"]["source_asset_id"], own_asset)
+        calls = len(self.runtime.calls)
+        before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(
+            self.make_url,
+            json=self._picture(intent="image.edit", source_job_id=foreign["job_id"]),
+            headers=self._make_headers("foreign-job-edit"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self._assert_discloses_nothing(response, canary, shared_asset)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), before)
+        self.assertEqual(len(self.runtime.calls), calls)
+
+    def test_make_produced_asset_is_isolated_to_its_maker(self) -> None:
+        # Criterion 3: the asset a make job produces is readable and
+        # downloadable by its maker only.
+        _, output = self._completed_output("isolated-output")
+        own = self.client.get(f"/me/api/media/{output}")
+        self.assertEqual(own.status_code, 200, own.text)
+        download = self.client.get(f"/me/api/media/{output}/download")
+        self.assertEqual(download.status_code, 200, download.text)
+        self.assertIn(output, download.json()["download_url"])
+        with self._as(self.bob):
+            for url in (f"/me/api/media/{output}", f"/me/api/media/{output}/download"):
+                denied = self.client.get(url)
+                self.assertEqual(denied.status_code, 404, denied.text)
+                self._assert_discloses_nothing(denied, "/v1/assets/", "download_url")
+            library = self.client.get("/me/api/media")
+            self.assertNotIn(output, library.text)
+
+    def test_make_durable_edit_runs_to_completion_after_client_disconnects(self) -> None:
+        # Criterion 4: the client goes away before the response body arrives
+        # while the backend is mid-job. The job still finishes on its own, and
+        # its output lands in the maker's Library.
+        import asyncio
+
+        source = "img_" + "c1" * 32
+        self._write_asset(source, ["sha256:alice"])
+        self.runtime.release.clear()
+        body = json.dumps(self._picture(intent="image.edit", source_asset_id=source)).encode()
+        sent_status = []
+
+        async def invoke_with_disconnect():
+            consumed = False
+
+            async def receive():
+                nonlocal consumed
+                if not consumed:
+                    consumed = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            async def send(message):
+                if message["type"] == "http.response.start":
+                    sent_status.append(message["status"])
+                elif message["type"] == "http.response.body":
+                    raise ConnectionError("synthetic browser disconnect before body delivery")
+
+            headers = {"content-type": "application/json",
+                       "content-length": str(len(body)),
+                       **self._make_headers("disconnected-edit")}
+            scope = {
+                "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+                "http_version": "1.1", "method": "POST", "scheme": "http",
+                "path": self.make_url, "raw_path": self.make_url.encode(),
+                "query_string": b"", "root_path": "",
+                "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+                "client": ("127.0.0.1", 12345), "server": ("testserver", 80),
+            }
+            try:
+                await self.client.app(scope, receive, send)
+            except ConnectionError:
+                pass
+
+        # The request's own event loop ends here, with the backend still held.
+        asyncio.run(invoke_with_disconnect())
+        self.client.close()
+        self.assertEqual(len(sent_status), 1)
+        self.assertIn(sent_status[0], (200, 202))
+        self.assertTrue(self.runtime.started.wait(5), "the job must start without the client")
+        stored = media_jobs.recent(path=self.jobs_db)[0]
+        self.assertEqual(stored["intent"], "image.edit")
+        self.assertEqual(stored["status"], media_jobs.STATUS_RUNNING)
+        self.assertEqual(stored["assets"], [])
+        self.assertEqual(self.runtime.calls[0]["body"]["source_asset_id"], source)
+        self.assertEqual(self.runtime.calls[0]["intent"], "image.edit")
+
+        self.runtime.release.set()
+        with TestClient(self.client.app) as reconnected:
+            deadline = time.time() + 10
+            while True:
+                polled = reconnected.get(f"{self.make_url}/{stored['job_id']}")
+                self.assertEqual(polled.status_code, 200, polled.text)
+                if polled.json()["job"]["status"] in media_jobs.TERMINAL_STATUSES:
+                    break
+                self.assertLess(time.time(), deadline, "job never finished")
+                time.sleep(0.02)
+            self.assertEqual(polled.json()["job"]["status"], media_jobs.STATUS_SUCCEEDED)
+            output = polled.json()["job"]["assets"][0]["asset_id"]
+            library = reconnected.get("/me/api/media")
+            self.assertEqual(library.status_code, 200, library.text)
+            asset = next(item for item in library.json()["assets"] if item["asset_id"] == output)
+            self.assertEqual(asset["provenance"]["job_id"], stored["job_id"])
+            self.assertEqual(asset["source"]["label"], "Azizam")
+        self.runtime.wait_idle()
+        self.assertEqual(self.runtime.payloads, {})
+
+    def test_make_never_exposes_key_secrets_on_any_path(self) -> None:
+        # Criterion 5: real secret values, not field-name guesses. Alice holds a
+        # real minted key; the backend holds its own provider secret and puts
+        # it in a failure. Neither value may appear in any response body or
+        # header on success, replay, list, detail, cancel, denial, invalid
+        # request, or backend failure. Make calls may not mint a key at all.
+        from unittest import mock
+        from gateway import admin_runtime, user_runtime
+
+        alice_key = user_runtime.mint_user_app_key(
+            self._session(None), self.app_a["id"], path=self.admin_db,
+        )["api_key"]
+        backend_secret = "sk-backend-canary-e91f0c2d7a"
+        minted: list[str] = []
+        real_app_key = admin_runtime.generate_app_api_key
+        real_admin_key = admin_runtime.generate_admin_api_key
+
+        def record(real):
+            def wrapper():
+                value = real()
+                minted.append(value)
+                return value
+            return wrapper
+
+        credentials_before = len(admin_store.list_credentials(path=self.admin_db))
+        with mock.patch.object(admin_runtime, "generate_app_api_key", record(real_app_key)), \
+                mock.patch.object(user_runtime, "generate_app_api_key", record(real_app_key)), \
+                mock.patch.object(admin_runtime, "generate_admin_api_key", record(real_admin_key)):
+            response, job = self._submit_make("no-secret")
+            repeat, _ = self._submit_make("no-secret")
+            self.runtime.wait_idle()
+            self.runtime.fail_with = RuntimeError(f"upstream rejected Bearer {backend_secret}")
+            _, failed = self._submit_make("failing-secret")
+            self.assertEqual(self._finished(failed["job_id"])["status"], media_jobs.STATUS_FAILED)
+            self.runtime.fail_with = None
+            with self._as(self.bob):
+                _, foreign = self._submit_make("bob-secret")
+            self.runtime.wait_idle()
+            responses = [
+                response, repeat,
+                self.client.get(self.make_url),
+                self.client.get(f"{self.make_url}/{job['job_id']}"),
+                self.client.get(f"{self.make_url}/{failed['job_id']}"),
+                self.client.post(f"{self.make_url}/{job['job_id']}/cancel",
+                                 headers=self._make_headers("cancel-no-secret")),
+                self.client.get(f"{self.make_url}/{foreign['job_id']}"),
+                self.client.post(f"{self.make_url}/{foreign['job_id']}/cancel",
+                                 headers=self._make_headers("cancel-foreign")),
+                self.client.post(self.make_url, json=self._picture(intent="image.nope"),
+                                 headers=self._make_headers("invalid")),
+                self.client.post(self.make_url, json=self._picture()),
+            ]
+        self.assertEqual(minted, [], "a make call minted a key")
+        self.assertEqual(len(admin_store.list_credentials(path=self.admin_db)), credentials_before)
+        self.assertEqual([item.status_code for item in responses[2:5]], [200, 200, 200])
+        self.assertEqual(responses[4].json()["job"]["status"], media_jobs.STATUS_FAILED)
+        self.assertEqual(responses[8].status_code, 400, responses[8].text)
+        self.assertEqual(responses[9].status_code, 403, responses[9].text)
+        secrets = [alice_key, backend_secret, *minted]
+        stored = json.dumps(media_jobs.get(failed["job_id"], audience="internal", path=self.jobs_db))
+        stored += json.dumps(media_jobs.events(failed["job_id"], audience="internal", path=self.jobs_db))
+        for secret in secrets:
+            self.assertNotIn(secret, stored)
+        for item in responses:
+            with self.subTest(method=item.request.method, url=str(item.request.url)):
+                self._assert_discloses_nothing(item, *secrets)
+
+    def test_make_submit_and_cancel_require_both_mutation_headers(self) -> None:
+        # Criterion 6: missing each header independently, plus neither header.
+        _, job = self._submit_make("csrf-control")
+        self.runtime.wait_idle()
+        for omitted in (("x-azizam-user-action",), ("x-azizam-csrf",),
+                        ("x-azizam-user-action", "x-azizam-csrf")):
+            headers = self._make_headers("csrf-rejected")
+            for key in omitted:
+                headers.pop(key)
+            for url in (self.make_url, f"{self.make_url}/{job['job_id']}/cancel"):
+                with self.subTest(omitted=omitted, url=url):
+                    before = media_jobs.get(job["job_id"], path=self.jobs_db)
+                    count = media_jobs.count(path=self.jobs_db)
+                    response = self.client.post(url, json=self._picture(), headers=headers)
+                    self.assertEqual(response.status_code, 403, response.text)
+                    expected = ("user_action_header_required" if "x-azizam-user-action" in omitted
+                                else "user_csrf_required")
+                    self.assertEqual(response.json()["error"]["code"], expected)
+                    self.assertEqual(media_jobs.count(path=self.jobs_db), count)
+                    self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db), before)
+
+    def test_make_forget_extension_keeps_prompt_out_of_storage_for_whole_lifecycle(self) -> None:
+        # Criterion 7: inspect internal stores after success and after a
+        # backend failure that echoes the prompt, not just at submission.
+        import sqlite3
+
+        prompt = "forget-canary-7b3e-private-blue-heron"
+        failing = "forget-canary-9a2c-private-grey-heron"
+        response, job = self._submit_make("forget-picture", prompt=prompt, extensions=FORGET)
+        # The forget control passes through to the backend.
+        self.runtime.wait_idle()
+        self.assertEqual(self.runtime.calls[-1]["body"]["prompt"], prompt)
+        self.assertEqual(self.runtime.calls[-1]["body"]["extensions"], FORGET)
+        self.assertEqual(self._finished(job["job_id"])["status"], media_jobs.STATUS_SUCCEEDED)
+        self.runtime.fail_with = RuntimeError(f"backend could not draw {failing}")
+        _, failed = self._submit_make("forget-failing", prompt=failing, extensions=FORGET)
+        self.assertEqual(self._finished(failed["job_id"])["status"], media_jobs.STATUS_FAILED)
+
+        for job_id in (job["job_id"], failed["job_id"]):
+            stored = media_jobs.get(job_id, audience="internal", path=self.jobs_db)
+            events = media_jobs.events(job_id, audience="internal", path=self.jobs_db)
+            self.assertTrue(events)
+            receipt = receipt_store.get(stored["request_id"], audience="internal", path=self.receipts_db)
+            self.assertIsNotNone(receipt)
+            for canary in (prompt, failing):
+                self.assertNotIn(canary, json.dumps(stored))
+                self.assertNotIn(canary, json.dumps(events))
+                self.assertNotIn(canary, json.dumps(receipt))
+        for db in (self.jobs_db, self.receipts_db):
+            with sqlite3.connect(db) as conn:
+                dump = "\n".join(conn.iterdump())
+            self.assertNotIn(prompt, dump)
+            self.assertNotIn(failing, dump)
+        # Execution payloads are released once the job is terminal.
+        self.assertEqual(self.runtime.payloads, {})
+        for job_id in (job["job_id"], failed["job_id"]):
+            detail = self.client.get(f"{self.make_url}/{job_id}")
+            self.assertEqual(detail.status_code, 200, detail.text)
+            self._assert_discloses_nothing(detail, prompt, failing)
+        self._assert_discloses_nothing(response, prompt)
+
+    def test_make_rejects_a_malformed_forget_extension(self) -> None:
+        response = self.client.post(
+            self.make_url,
+            json=self._picture(extensions={"com.azizam.prompts": {"mode": "maybe"}}),
+            headers=self._make_headers("bad-forget"),
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
 
 
 if __name__ == "__main__":

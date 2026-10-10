@@ -134,7 +134,9 @@ def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
 
 def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, Any]:
     app = admin_store.get_app(app_id, path=path)
-    if app is None or app.get("owner_user_id") != user_id:
+    # The keyless session App is not a self-service App: it never gets a key.
+    if (app is None or app.get("owner_user_id") != user_id
+            or admin_store.is_session_app(app_id, path=path)):
         raise UserPortalError(
             "app_not_found",
             "App not found for this account",
@@ -272,7 +274,7 @@ def build_user_portal_snapshot(
 
     apps: list[dict[str, Any]] = []
     for app in admin_store.list_apps_for_user(user["id"], path=path):
-        if app.get("disabled_at"):
+        if app.get("disabled_at") or admin_store.is_session_app(str(app["id"]), path=path):
             continue
         apps.append(_app_payload(
             app,

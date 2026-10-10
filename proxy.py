@@ -43,6 +43,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 import contextvars
+import io
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
@@ -52,7 +53,7 @@ import yaml
 from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.datastructures import FormData
+from starlette.datastructures import FormData, Headers, UploadFile
 from starlette.requests import ClientDisconnect, HTTPConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -70,6 +71,7 @@ from gateway import (
     default_profiles,
     media_jobs,
     me_prompt_memory,
+    me_make,
     me_media,
     prompt_memory,
     receipt_store,
@@ -160,6 +162,7 @@ from gateway.admin_runtime import (
     create_admin_service_account_key,
     is_human_user_record,
     runtime_identity_for_app_credential_hash,
+    runtime_identity_for_session_app,
     service_account_session_subject,
     session_admin_role_subject,
 )
@@ -862,6 +865,13 @@ IMAGE_MEDIA_JOB_RESUME_ON_START = bool_from_config(
 )
 _image_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 _image_media_job_tasks: set[asyncio.Task] = set()
+# Session make jobs (/me/api/make/jobs) share the image job concurrency.
+_SESSION_MAKE_CFG = IMAGE_MEDIA_JOBS_CFG.get("make", {}) or {}
+SESSION_MAKE_LIMITS = me_make.MakeLimits(
+    max_prompt_chars=max(1, int(_SESSION_MAKE_CFG.get("max_prompt_chars", 32_000))),
+    per_person=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding_per_person", 3))),
+    household=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding", 12))),
+)
 _image_media_job_scheduled: set[str] = set()
 
 # Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
@@ -6928,7 +6938,72 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
 _CURRENT_MAKER = object()
 
 
-def store_asset_bytes(
+class MediaPublishCanceled(Exception):
+    """A canceled make job tried to publish output."""
+
+
+class _MakePublishGate:
+    """Decides once, under one lock, whether a make job publishes or is canceled.
+
+    Publication (``store_asset_bytes``, which also keeps the prompt) and
+    cancel take the same lock, so a job never does both.
+
+    Cancel also stops the job's work on its event loop: it ends the wait for
+    a turn (``stop_waiting``), or cancels the route call once it runs. It never
+    cancels the job's task, so only shutdown does that.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.canceled = False
+        self.published = False
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.stop_waiting: asyncio.Event | None = None
+        self.call: asyncio.Future | None = None
+
+    def cancel(self) -> bool:
+        """Cancel unless output is already published. Safe from any thread."""
+        with self.lock:
+            if self.published:
+                return False
+            self.canceled = True
+            loop = self.loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):  # A closed loop runs nothing.
+                loop.call_soon_threadsafe(self._stop)
+        return True
+
+    def _stop(self) -> None:
+        # On the job's loop, which also clears ``stop_waiting`` when the wait ends.
+        if self.stop_waiting is not None:
+            self.stop_waiting.set()
+        elif self.call is not None:
+            self.call.cancel()
+
+
+_MAKE_PUBLISH_GATE: contextvars.ContextVar[_MakePublishGate | None] = contextvars.ContextVar(
+    "make_publish_gate", default=None,
+)
+
+
+def store_asset_bytes(content: bytes, **options: Any) -> str:
+    """Store clean media; any retained prompt lives only in asset_prompts.
+
+    Inside a canceled make job this publishes nothing and raises
+    ``MediaPublishCanceled``.
+    """
+    gate = _MAKE_PUBLISH_GATE.get()
+    if gate is None:
+        return _store_asset_bytes(content, **options)
+    with gate.lock:
+        if gate.canceled:
+            raise MediaPublishCanceled("the make job was canceled")
+        asset_id = _store_asset_bytes(content, **options)
+        gate.published = True
+    return asset_id
+
+
+def _store_asset_bytes(
     content: bytes,
     *,
     kind: str = "img",
@@ -13112,6 +13187,10 @@ async def lifespan(app: FastAPI):
                     f"[proxy] Resumed {resumed_video} pending video media job(s)",
                     flush=True,
                 )
+        if IMAGE_MEDIA_JOB_RESUME_ON_START:
+            resumed_make = me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH)
+            if resumed_make:
+                print(f"[proxy] Resumed {resumed_make} pending make job(s)", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
@@ -14328,25 +14407,216 @@ app.include_router(
     )
 )
 
+# Where a person's Library comes from. The person API and make jobs share it.
+_PERSON_LIBRARY: dict[str, Any] = {
+    "asset_path_resolver": lambda asset_id: asset_cache_path(asset_id),
+    "asset_media_type_resolver": lambda asset_id, path: asset_media_type(asset_id, path),
+    "asset_catalog_provider": lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
+    "asset_metadata_reader": _read_asset_metadata,
+    "admin_db_path": lambda: ADMIN_STORE.path,
+    "media_jobs_path": lambda: media_jobs.DB_PATH,
+    "receipts_path": lambda: receipt_store.DB_PATH,
+    "prompt_memory_path": lambda: media_jobs.DB_PATH,
+}
+
+
+class _SessionMakeRuntime:
+    """Runs session make jobs through the existing image routes.
+
+    Payloads use the image job spool, so prompt memory, forget, and erasure
+    apply to them exactly as to API-key image jobs. Jobs run through the image
+    job semaphore, so at most the configured concurrency run at once.
+    """
+
+    limits = SESSION_MAKE_LIMITS
+
+    def __init__(self) -> None:
+        self._gates: dict[str, _MakePublishGate] = {}
+
+    def keep_payload(self, job_id: str, payload: Mapping[str, Any]) -> None:
+        _spool_media_job_payload(job_id, copy.deepcopy(dict(payload)))
+
+    def load_payload(self, job_id: str) -> dict[str, Any] | None:
+        return _load_image_media_job_payload(job_id)
+
+    def drop_payload(self, job_id: str) -> None:
+        _delete_image_media_job_payload(job_id)
+
+    def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
+        if job_id in _image_media_job_scheduled:
+            return
+        _image_media_job_scheduled.add(job_id)
+        gate = self._gates.setdefault(job_id, _MakePublishGate())
+
+        async def bounded() -> None:
+            semaphore, stop_waiting = _image_media_job_semaphore, gate.stop_waiting
+            turn = asyncio.ensure_future(semaphore.acquire())
+            stopped = asyncio.ensure_future(stop_waiting.wait())
+            if gate.canceled:  # Canceled before its loop was known.
+                stop_waiting.set()
+
+            def end_wait() -> bool:
+                """Stop both waits; True when the job holds a turn."""
+                gate.stop_waiting = None
+                stopped.cancel()
+                return not turn.cancel()
+
+            try:
+                await asyncio.wait((turn, stopped), return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                # Shutdown, the only thing that cancels this task: the job resumes later.
+                if end_wait():
+                    semaphore.release()
+                raise
+            if not end_wait():
+                # Canceled while it waited for a turn: settle it now, without a
+                # turn. ``execute`` refuses a canceled job, so no backend runs.
+                await run()
+                return
+            try:
+                await run()
+            finally:
+                semaphore.release()
+
+        loop = asyncio.get_running_loop()
+        # A cancel while the job waits for a turn ends the wait at once, so
+        # only queued or running jobs hold a task and a gate.
+        gate.loop, gate.stop_waiting = loop, asyncio.Event()
+        task = loop.create_task(bounded())
+        _image_media_job_tasks.add(task)
+
+        def _done(done_task: asyncio.Task) -> None:
+            _image_media_job_tasks.discard(done_task)
+            _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
+            if not done_task.cancelled() and done_task.exception() is not None:
+                print(f"[proxy] make job task crashed for {job_id}: {done_task.exception()}", flush=True)
+
+        task.add_done_callback(_done)
+
+    def admission(self, intent: str) -> Response | None:
+        # The same operator admission regular media jobs meet at submit.
+        return _media_job_admission_response(intent)
+
+    def request_cancel(self, job_id: str) -> bool:
+        gate = self._gates.get(job_id)
+        # A job with no gate is not running here, so it cannot publish.
+        return True if gate is None else gate.cancel()
+
+    async def execute(self, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        gate = self._gates.get(str(payload.get("job_id") or "")) or _MakePublishGate()
+        if gate.canceled:
+            raise me_make.MakeCanceled()
+        auth = payload.get("auth") or {}
+        identity = runtime_identity_for_session_app(
+            str(auth.get("app_id") or ""), str(auth.get("person_id") or ""),
+            inherited_profile_id_for_app=_inherited_profile_id_for_app, path=ADMIN_STORE.path,
+        )
+        if identity is None:
+            raise me_make.MakeBackendError("This account can no longer make things", http_status=403)
+        auth_context = AuthContext(identity=identity)
+        body = copy.deepcopy(dict(payload.get("body") or {}))
+        body["response_format"] = "url"
+        if payload.get("intent") == "image.edit":
+            source_asset_id = str(body.pop("source_asset_id", ""))
+            # The person may have deleted the picture since asking, and a
+            # shared copy can stay in the cache, so recheck the Library itself.
+            if me_media.owned_library_asset(str(identity.person_id), source_asset_id, **_PERSON_LIBRARY) is None:
+                raise me_make.MakeBackendError("The source picture is no longer in your Library", http_status=404)
+            source = asset_cache_path(source_asset_id)
+            if source is None or not source.exists():
+                raise me_make.MakeBackendError("The source picture is no longer available", http_status=404)
+            fields: list[tuple[str, Any]] = [
+                (key, json.dumps(value) if isinstance(value, (dict, list)) else str(value))
+                for key, value in body.items()
+            ]
+            fields.append(("image", UploadFile(
+                io.BytesIO(source.read_bytes()), filename=source.name,
+                headers=Headers({"content-type": asset_media_type(source_asset_id, source)}),
+            )))
+            request: Any = _FormBodyRequestShim(form=FormData(fields), scheme="http", netloc="127.0.0.1")
+            route, call = "/v1/images/edits", proxy_comfy_edit_request
+        else:
+            request = _JsonBodyRequestShim(body=body, headers={}, scheme="http", netloc="127.0.0.1")
+            route, call = "/v1/images/generations", proxy_comfy_request
+        receipt = start_image_route_receipt(route, auth_context)
+        receipt.job_id = str(payload.get("job_id") or "") or None
+        decision = _apply_image_route_policy(receipt, auth_context)
+        # The operator may have turned this work off since the job was admitted.
+        refusal = _media_job_admission_response(str(payload.get("intent") or ""), count_queue=False)
+        if decision.denied:
+            response = _policy_denied_response(decision)
+        elif refusal is not None:
+            finish_image_route_receipt(receipt, refusal)
+            raise me_make.MakeBackendError(_admission_refusal_message(refusal),
+                                           http_status=int(refusal.status_code))
+        else:
+            # Erasure fences compare against when the person asked, not when it ran.
+            token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
+            gate_token = _MAKE_PUBLISH_GATE.set(gate)
+            try:
+                response = await _cancellable_make_call(gate, call(request, auth_context, receipt=receipt))
+            finally:
+                _MAKE_PUBLISH_GATE.reset(gate_token)
+                _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
+        finish_image_route_receipt(receipt, response)
+        if gate.canceled:
+            raise me_make.MakeCanceled()
+        if not 200 <= int(response.status_code) < 300:
+            raise me_make.MakeBackendError(_media_job_failure_message(response),
+                                           http_status=int(response.status_code))
+        return _assets_from_image_response(response)
+
+
+def _admission_refusal_message(response: Response) -> str:
+    try:
+        message = json.loads(bytes(response.body))["error"]["message"]
+    except Exception:  # noqa: BLE001
+        message = ""
+    return str(message or "This gateway is not accepting this work right now")
+
+
+async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Response]) -> Response:
+    """Run a make job's route call so that ``gate.cancel`` stops it.
+
+    The backend may finish its own work, but the gate keeps the output from
+    being published. Shutdown cancels the whole task instead, and that still
+    raises ``CancelledError`` so the job can resume.
+    """
+    call = asyncio.ensure_future(work)
+    with gate.lock:
+        gate.loop, gate.call = asyncio.get_running_loop(), call
+        if gate.canceled:
+            call.cancel()
+    try:
+        return await call
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if gate.canceled and (current is None or not current.cancelling()):
+            raise me_make.MakeCanceled() from None
+        raise
+    except Exception:
+        if gate.canceled:
+            raise me_make.MakeCanceled() from None
+        raise
+
+
+_SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
+
+
 app.include_router(
     me_media.create_me_media_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         signed_url_builder=lambda request, asset_id, mode: build_signed_asset_url(request, asset_id, mode),
-        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
-        asset_media_type_resolver=lambda asset_id, path: asset_media_type(asset_id, path),
         asset_deleter=me_media.conservative_asset_deleter(
             metadata_reader=_read_asset_metadata,
             asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
             metadata_path_resolver=_asset_metadata_path,
             prompt_memory_path=lambda: media_jobs.DB_PATH,
         ),
-        asset_catalog_provider=lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
-        asset_metadata_reader=_read_asset_metadata,
-        admin_db_path=lambda: ADMIN_STORE.path,
-        media_jobs_path=lambda: media_jobs.DB_PATH,
-        receipts_path=lambda: receipt_store.DB_PATH,
-        prompt_memory_path=lambda: media_jobs.DB_PATH,
+        make_runtime=_SESSION_MAKE_RUNTIME,
+        **_PERSON_LIBRARY,
     )
 )
 
@@ -20109,6 +20379,17 @@ class _JsonBodyRequestShim:
         return copy.deepcopy(self._body)
 
 
+class _FormBodyRequestShim(_JsonBodyRequestShim):
+    """Request-shaped multipart form for replaying an edit off the HTTP path."""
+
+    def __init__(self, *, form: FormData, scheme: str, netloc: str) -> None:
+        super().__init__(body={}, headers={}, scheme=scheme, netloc=netloc)
+        self._form = form
+
+    async def form(self) -> FormData:
+        return self._form
+
+
 def _gateway_auth_context(request: Request, path: str) -> AuthContext | Response:
     auth_context = _auth_context_from_scope(request)
     if auth_context is not NO_AUTH_CONTEXT or not AUTH_ENABLED:
@@ -20576,20 +20857,25 @@ def _persist_image_media_job_payload(
     job_id: str, *, body: Mapping[str, Any], request: Request,
     auth_context: AuthContext,
 ) -> None:
+    identity = auth_context.identity
+    _spool_media_job_payload(job_id, {
+        "schema_version": 1,
+        "body": copy.deepcopy(dict(body)),
+        "headers": _safe_image_job_headers(request),
+        "url": {"scheme": request.url.scheme or "http",
+                "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
+        "auth": {"name": identity.name if identity else None,
+                 "key_hash": identity.key_hash if identity else None,
+                 "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(auth_context)},
+        "created_at": int(time.time()),
+    })
+
+
+def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
+    """Keep a job's execution payload; on disk only if prompt memory allows it."""
     with _MEDIA_PAYLOAD_LOCK:
-        identity = auth_context.identity
-        person_id = _auth_person_id(auth_context)
-        payload = {
-            "schema_version": 1,
-            "body": copy.deepcopy(dict(body)),
-            "headers": _safe_image_job_headers(request),
-            "url": {"scheme": request.url.scheme or "http",
-                    "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
-            "auth": {"name": identity.name if identity else None,
-                     "key_hash": identity.key_hash if identity else None,
-                     "app_id": getattr(identity, "app_id", None), "person_id": person_id},
-            "created_at": int(time.time()),
-        }
+        person_id = payload["auth"].get("person_id")
+        body = copy.deepcopy(payload["body"])
         memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
         with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
             # Service/LAN execution spools are temporary operational state. Their
@@ -21331,15 +21617,12 @@ def _media_job_prompt_body(payload: Mapping[str, Any], body: Mapping[str, Any]) 
 
 
 _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
-_MEDIA_JOB_SUPPORTED_INTENTS = frozenset({
-    "image.generate",
-    "audio.generate",
-    "music.generate",
-    "sfx.generate",
-    INTENT_VIDEO_GENERATE,
-})
+# Every intent the gateway runs as a media job, and its admission resource
+# class. Jobs with these intents count toward the media queue depth.
 _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
     "image.generate": "image",
+    "image.edit": "image",
+    _IDENTITY_JOB_INTENT: "image",
     "audio.generate": "audio",
     "music.generate": "audio",
     "sfx.generate": "audio",
@@ -21397,12 +21680,17 @@ def _media_job_queue_depth(
         depth += sum(
             1
             for row in rows
-            if str(row.get("intent") or "") in _MEDIA_JOB_SUPPORTED_INTENTS
+            if str(row.get("intent") or "") in _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT
         )
     return depth
 
 
-def _media_job_admission_response(intent: str) -> Response | None:
+def _media_job_admission_response(intent: str, *, count_queue: bool = True) -> Response | None:
+    """Return the operator's refusal for new media work, or None to admit it.
+
+    ``count_queue=False`` skips the queue-depth limit, for a job that was
+    already admitted and would otherwise count itself.
+    """
     admission_cfg = _effective_media_job_admission_cfg()
     service_override = _operator_service_availability_overrides().get("comfyui", {})
     override_state = str(service_override.get("state") or "available")
@@ -21415,7 +21703,7 @@ def _media_job_admission_response(intent: str) -> Response | None:
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
         service_reasons_list.append(reason or f"ComfyUI operator mode: {override_state}")
-    max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth")
+    max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth") if count_queue else None
     service_retry_after = (
         _optional_int_config(service_override, "retry_after_seconds")
         if isinstance(service_override, Mapping)
@@ -21447,7 +21735,7 @@ def _media_job_admission_response(intent: str) -> Response | None:
                 max_queue_depth,
                 admission_cfg=admission_cfg,
             )
-        },
+        } if count_queue else {},
         load_retry_after=_optional_int_config(
             admission_cfg,
             "queue_retry_after_seconds",

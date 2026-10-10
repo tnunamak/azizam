@@ -222,6 +222,13 @@ def _assert_safe_mapping(label: str, data: Any) -> None:
     _shared_assert_safe_mapping(label, data, recurse=True)
 
 
+def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
+    """Filter a job dict read with ``audience="internal"`` for another audience."""
+    if audience not in _AUDIENCES:
+        raise ValueError(f"audience must be one of {_AUDIENCES}")
+    return _filter_for_audience(job, audience)
+
+
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
     if audience == "internal":
         return dict(data)
@@ -399,9 +406,26 @@ def upsert(
     return record
 
 
+@dataclass(frozen=True)
+class OutstandingLimit:
+    """At most ``maximum`` queued or running jobs of one mode (and App)."""
+
+    scope: str
+    maximum: int
+    mode: str
+    app_id: str | None = None
+
+
+class OutstandingLimitReached(Exception):
+    def __init__(self, limit: OutstandingLimit) -> None:
+        super().__init__(f"{limit.scope} outstanding job limit reached")
+        self.limit = limit
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
+    outstanding_limits: Iterable[OutstandingLimit] = (),
     path: Path = DB_PATH,
 ) -> MediaJob:
     """Create a new job, returning the existing one if ``request_id`` matches.
@@ -409,17 +433,35 @@ def create(
     This is the safe idempotent create primitive for handlers: clients may
     retry POST /v1/videos with the same Idempotency-Key/request_id and we
     must return the same job_id every time.
+
+    ``outstanding_limits`` are checked in the same write transaction as the
+    insert, so concurrent creates cannot overshoot them. A full limit raises
+    ``OutstandingLimitReached`` and stores nothing.
     """
     record = _coerce_to_job(job)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
             existing = conn.execute(
                 "SELECT job_json FROM media_jobs WHERE request_id = ?",
                 (record.request_id,),
             ).fetchone()
             if existing:
+                conn.rollback()
                 data = json.loads(existing[0])
                 return _coerce_to_job(data)
+        for limit in outstanding_limits:
+            clauses = ["status IN (?, ?)", "json_extract(job_json, '$.metadata.mode') = ?"]
+            params: list[Any] = [STATUS_QUEUED, STATUS_RUNNING, limit.mode]
+            if limit.app_id is not None:
+                clauses.append("json_extract(job_json, '$.app_id') = ?")
+                params.append(limit.app_id)
+            outstanding = conn.execute(
+                f"SELECT COUNT(*) FROM media_jobs WHERE {' AND '.join(clauses)}", params,
+            ).fetchone()[0]
+            if outstanding >= limit.maximum:
+                conn.rollback()
+                raise OutstandingLimitReached(limit)
         _write_job(conn, record)
         conn.commit()
     return record
@@ -648,13 +690,16 @@ def update_status(
     error: str | None = None,
     add_assets: Iterable[Mapping[str, Any]] | None = None,
     metadata_patch: Mapping[str, Any] | None = None,
+    expected_status: str | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
 
     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
-    are accepted so progress updates during ``running`` are idempotent.
+    are accepted so progress updates during ``running`` are idempotent. With
+    ``expected_status``, the write applies only if the job is still in that
+    status; otherwise it raises ``ValueError``.
     """
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {sorted(ALL_STATUSES)}")
@@ -672,6 +717,9 @@ def update_status(
     ts = int(now if now is not None else _now())
 
     with _conn(path) as conn:
+        # Read and write in one transaction so a concurrent transition cannot
+        # slip between them.
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT job_json FROM media_jobs WHERE job_id = ?",
             (job_id,),
@@ -683,6 +731,8 @@ def update_status(
             return None
         current = dict(data)
         prev_status = current.get("status", STATUS_QUEUED)
+        if expected_status is not None and prev_status != expected_status:
+            raise ValueError(f"job {job_id!r} is {prev_status!r}, not {expected_status!r}")
         if status not in _ALLOWED_TRANSITIONS.get(prev_status, frozenset()):
             raise ValueError(
                 f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"

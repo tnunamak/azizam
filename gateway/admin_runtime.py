@@ -1596,10 +1596,13 @@ def runtime_identity_for_app_credential_hash(
     admin keys remain control-plane-only.
     """
     with admin_store.runtime_auth_connection(path) as connection:
-        credential = admin_store.find_credential_by_hash(key_hash, path=path, connection=connection)
+        credential = admin_store.find_runtime_credential_by_hash(key_hash, path=path, connection=connection)
         if credential is None or not _credential_active(credential):
             return None
         if credential.get("subject_kind") != "app":
+            return None
+        # A session App acts only through its person's browser session.
+        if credential["on_session_app"]:
             return None
 
         # Record that this key was just used so the portal can show real "used N
@@ -1621,34 +1624,13 @@ def runtime_identity_for_app_credential_hash(
         if not app_id:
             return None
         app = admin_store.get_app(app_id, path=path, connection=connection)
-        if app is None or app.get("disabled_at"):
+        profile = _runtime_app_profile(
+            app, credential.get("profile_id"),
+            inherited_profile_id_for_app=inherited_profile_id_for_app,
+            path=path, connection=connection,
+        )
+        if app is None or profile is None:
             return None
-
-        if app.get("owner_user_id"):
-            has_accounts = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
-            owner = connection.execute(
-                "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
-                (app["owner_user_id"],),
-            ).fetchone() if has_accounts else None
-            if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
-                return None
-
-        profile = DEFAULT_PROFILE
-        profile_id = credential.get("profile_id") or app.get("default_profile_id")
-        if not profile_id and inherited_profile_id_for_app is not None:
-            profile_id = inherited_profile_id_for_app(app)
-        if profile_id:
-            profile_record = admin_store.get_profile(str(profile_id), path=path, connection=connection)
-            if profile_record is None:
-                return None
-            try:
-                profile = load_profile(
-                    profile_record.get("profile"),
-                    default_id=str(profile_id),
-                )
-            except ProfileLoadError:
-                return None
-
         return RuntimeIdentity(
             name=str(app.get("name") or credential.get("display_name") or app_id),
             key_hash=key_hash,
@@ -1657,6 +1639,79 @@ def runtime_identity_for_app_credential_hash(
             app_id=app_id,
             person_id=person_for_app_credential(app, credential),
         )
+
+
+def runtime_identity_for_session_app(
+    app_id: str,
+    person_id: str,
+    *,
+    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None = None,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return the keyless identity a signed-in person acts through.
+
+    It passes the same App, owner, and profile checks as an App key, but only
+    for the person's own session App, which never holds a credential. Its
+    ``key_hash`` is the App's ownership principal, not a credential hash.
+    """
+    with admin_store.runtime_auth_connection(path) as connection:
+        app = admin_store.get_app(app_id, path=path, connection=connection)
+        if (app is None or app.get("owner_user_id") != person_id
+                or not admin_store.is_session_app(app_id, path=path, connection=connection)):
+            return None
+        profile = _runtime_app_profile(
+            app, None, inherited_profile_id_for_app=inherited_profile_id_for_app,
+            path=path, connection=connection,
+        )
+        if profile is None:
+            return None
+        return RuntimeIdentity(
+            name=str(app.get("name") or app_id),
+            key_hash=f"app:{app_id}",
+            downstream={},
+            profile=profile,
+            app_id=app_id,
+            person_id=person_id,
+        )
+
+
+def _runtime_app_profile(
+    app: Mapping[str, Any] | None,
+    profile_id: Any,
+    *,
+    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None,
+    path: Path,
+    connection: Any,
+) -> Any:
+    """Return the profile an enabled App runs with, or None if it may not run."""
+    if app is None or app.get("disabled_at"):
+        return None
+
+    if app.get("owner_user_id"):
+        has_accounts = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
+        owner = connection.execute(
+            "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
+            (app["owner_user_id"],),
+        ).fetchone() if has_accounts else None
+        if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
+            return None
+
+    profile = DEFAULT_PROFILE
+    profile_id = profile_id or app.get("default_profile_id")
+    if not profile_id and inherited_profile_id_for_app is not None:
+        profile_id = inherited_profile_id_for_app(app)
+    if profile_id:
+        profile_record = admin_store.get_profile(str(profile_id), path=path, connection=connection)
+        if profile_record is None:
+            return None
+        try:
+            profile = load_profile(
+                profile_record.get("profile"),
+                default_id=str(profile_id),
+            )
+        except ProfileLoadError:
+            return None
+    return profile
 
 def create_admin_service_account_key(
     name: str,

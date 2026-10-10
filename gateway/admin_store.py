@@ -134,6 +134,15 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
 CREATE INDEX IF NOT EXISTS apps_owner_service ON apps(owner_service_account_id);
 
+-- The App that attributes a person's own signed-in work (the "Azizam" App).
+-- It holds no credentials: browser sessions act through it without a key.
+CREATE TABLE IF NOT EXISTS session_apps (
+  user_id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL UNIQUE,
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(app_id) REFERENCES apps(id)
+);
+
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -163,6 +172,20 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject_kind, subject_id);
 CREATE INDEX IF NOT EXISTS credentials_app ON credentials(app_id);
 CREATE INDEX IF NOT EXISTS credentials_active ON credentials(revoked_at);
+-- A session App never holds a credential, whoever asks: a key on it would let
+-- a key holder act as that person's signed-in work.
+CREATE TRIGGER IF NOT EXISTS credentials_never_on_session_apps
+BEFORE INSERT ON credentials
+WHEN EXISTS (SELECT 1 FROM session_apps WHERE app_id = COALESCE(NEW.app_id, NEW.subject_id))
+BEGIN
+  SELECT RAISE(ABORT, 'session Apps never hold credentials');
+END;
+CREATE TRIGGER IF NOT EXISTS credentials_never_move_to_session_apps
+BEFORE UPDATE OF app_id, subject_id ON credentials
+WHEN EXISTS (SELECT 1 FROM session_apps WHERE app_id = COALESCE(NEW.app_id, NEW.subject_id))
+BEGIN
+  SELECT RAISE(ABORT, 'session Apps never hold credentials');
+END;
 
 CREATE TABLE IF NOT EXISTS admin_role_assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -292,6 +315,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
     if "created_by" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
+    # Keys made on a session App before the trigger existed stop working.
+    conn.execute(
+        "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
+        "AND COALESCE(app_id, subject_id) IN (SELECT app_id FROM session_apps)",
+        (_now(),),
+    )
     _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
@@ -1207,6 +1236,7 @@ def ensure_personal_app_for_user(
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT * FROM apps WHERE kind = 'personal' AND owner_user_id = ? "
+            "AND id NOT IN (SELECT app_id FROM session_apps) "
             "ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
@@ -1229,6 +1259,64 @@ def ensure_personal_app_for_user(
         now=now,
         path=path,
     )
+
+
+def ensure_session_app_for_user(
+    user_id: str,
+    *,
+    name: str,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Return the keyless App for a person's signed-in work, creating it once.
+
+    It is a personal App so receipts, jobs, and Library ownership attribute the
+    work to the person, but it is not the person's key home: it never holds
+    credentials and ``ensure_personal_app_for_user`` never returns it.
+    """
+    if not user_id:
+        raise ValueError("user_id is required")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT apps.* FROM session_apps JOIN apps ON apps.id = session_apps.app_id "
+            "WHERE session_apps.user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            app_id = _gen_id("app")
+            conn.execute(
+                "INSERT INTO apps(id, kind, name, owner_user_id, created_at) "
+                "VALUES (?, 'personal', ?, ?, ?)",
+                (app_id, name, user_id, _now() if now is None else int(now)),
+            )
+            conn.execute(
+                "INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)",
+                (user_id, app_id),
+            )
+            row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        conn.commit()
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def get_session_app_for_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT apps.* FROM session_apps JOIN apps ON apps.id = session_apps.app_id "
+            "WHERE session_apps.user_id = ?",
+            (user_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def is_session_app(
+    app_id: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> bool:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
+        return conn.execute(
+            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+        ).fetchone() is not None
 
 
 def get_app(
@@ -1399,6 +1487,10 @@ def create_credential_hash(
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
     with _conn(path) as conn:
+        if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
+            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+        ).fetchone():
+            raise ValueError("this App is a person's signed-in App and cannot hold API keys")
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
             "profile_id, hash, prefix, display_name, scopes_json, "
@@ -1495,6 +1587,25 @@ def find_credential_by_hash(
             "SELECT * FROM credentials WHERE hash = ?", (hash,)
         ).fetchone()
     return _credential_row_to_dict(row) if row else None
+
+
+def find_runtime_credential_by_hash(
+    hash: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any] | None:
+    """Look up a credential and, in the same query, whether its App is a
+    session App (``on_session_app``)."""
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
+        row = conn.execute(
+            "SELECT credentials.*, EXISTS(SELECT 1 FROM session_apps WHERE session_apps.app_id = "
+            "COALESCE(NULLIF(credentials.app_id, ''), credentials.subject_id)) AS on_session_app "
+            "FROM credentials WHERE hash = ?", (hash,)
+        ).fetchone()
+    if row is None:
+        return None
+    credential = _credential_row_to_dict(row)
+    credential["on_session_app"] = bool(credential["on_session_app"])
+    return credential
 
 
 def list_active_credentials(
@@ -2616,6 +2727,9 @@ __all__ = [
     "list_profiles",
     "create_app",
     "ensure_personal_app_for_user",
+    "ensure_session_app_for_user",
+    "get_session_app_for_user",
+    "is_session_app",
     "get_app",
     "disable_app",
     "list_apps",
@@ -2624,6 +2738,7 @@ __all__ = [
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",
+    "find_runtime_credential_by_hash",
     "list_credentials",
     "list_active_credentials",
     "assign_admin_role",
