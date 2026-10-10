@@ -96,6 +96,8 @@ SYSTEM_FILES = [
     "app/people/plans.tsx",
     "app/apps/page.tsx",
     "components/product/secret-reveal.tsx",
+    # PR 4: Home
+    "app/home/page.tsx",
 ]
 # Overlays may lift with a shadow (menus, popovers, dialogs, sheets, toasts).
 OVERLAY_FILES = {

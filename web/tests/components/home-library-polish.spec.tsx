@@ -260,9 +260,11 @@ describe("Home and Library polish", () => {
     // An unusable task is not a link; it names its state and gives the reason.
     expect(screen.queryByRole("link", { name: /Make a picture/ })).toBeNull();
     const picture = screen.getByText("Make a picture").closest("li")!;
-    expect(picture).toHaveAttribute("title", "Not set up yet.");
     expect(within(picture).getByText("Off")).toBeVisible();
-    expect(within(picture).getByText("Not set up yet.")).toBeVisible();
+    // The reason is a trailing fact that may be cut; its full text is its title.
+    const reason = within(picture).getByText("Not set up yet.");
+    expect(reason).toBeVisible();
+    expect(reason).toHaveAttribute("title", "Not set up yet.");
     expect(within(picture).queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByRole("button", { name: "Details" })).toBeNull();

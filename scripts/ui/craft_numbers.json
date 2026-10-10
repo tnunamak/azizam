@@ -13,7 +13,12 @@
   },
   "enforce": {
     "home": [
-      "controls"
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
     ],
     "status": [
       "controls"
