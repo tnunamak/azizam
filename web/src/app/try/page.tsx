@@ -164,13 +164,14 @@ const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
   image: { model: "image", prompt: "A calm teal fish mark on a white card." },
   speech: { model: "tts", prompt: "The gateway is ready." },
   transcribe: { model: "stt", prompt: "" },
+  // Everyday examples: a member reads these, so no gateway test words.
   decide: {
     model: "decide",
-    prompt: "Which option should run first for a smoke test?",
+    prompt: "What should I do?",
   },
   embed: {
     model: "embeddings",
-    prompt: "Gateway receipts are useful evidence.",
+    prompt: "Pancakes need flour, eggs and milk.",
   },
   workflow: {
     model: "",
@@ -978,9 +979,9 @@ export default function TryPage() {
   );
   const [voice, setVoice] = useState("alloy");
   const [decisionState, setDecisionState] = useState(
-    "Gateway smoke test is starting.",
+    "It is raining and the bus is 20 minutes late.",
   );
-  const [options, setOptions] = useState("Run chat\nRun embeddings");
+  const [options, setOptions] = useState("Take a taxi\nWait for the bus");
   const [file, setFile] = useState<File | null>(null);
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
