@@ -136,12 +136,12 @@ describe("WorkflowsPage empathy copy", () => {
     renderWorkflows();
 
     expect(await screen.findByText("Upscale image")).toBeVisible();
-    expect(screen.getByText("Upscale and restore an image")).toBeVisible();
+    // Rows name the workflow and what it makes; needs and purpose are in the sheet.
+    expect(screen.queryByText("Upscale and restore an image")).toBeNull();
     expect(screen.getByText("Clean text")).toBeVisible();
-    expect(screen.getByText("Needs: a picture")).toBeVisible();
-    expect(screen.getByText("Optional: a number")).toBeVisible();
+    expect(screen.queryByText("Needs: a picture")).toBeNull();
     expect(screen.getByText("Makes: a picture")).toBeVisible();
-    expect(screen.getByText("Needs: text")).toBeVisible();
+    expect(screen.queryByText("Needs: text")).toBeNull();
     expect(screen.queryByText("image/png")).not.toBeInTheDocument();
     expect(screen.queryByText("2.0 s")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Has image" })).toBeNull();
@@ -150,14 +150,19 @@ describe("WorkflowsPage empathy copy", () => {
 
     expect(screen.getByText("Upscale image")).toBeVisible();
     expect(screen.queryByText("Clean text")).not.toBeInTheDocument();
-    expect(screen.getByText("Needs: a picture")).toBeVisible();
+    expect(screen.getByText("Makes: a picture")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Upscale and restore an image")).toBeVisible();
+    expect(sheet.getByText("Needs: a picture")).toBeVisible();
+    expect(sheet.getByText("Optional: a number")).toBeVisible();
   });
 
   test("detail sheet uses plain input copy and preserves exact workflow values", async () => {
     renderWorkflows();
 
     await screen.findByText("Upscale image");
-    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Details for / })[0]);
 
     await waitFor(() => expect(screen.getByText("Purpose")).toBeVisible());
     expect(
@@ -223,13 +228,16 @@ describe("WorkflowsPage empathy copy", () => {
     }];
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: catalog })));
     renderWorkflows();
-    const card = await screen.findByRole("article", { name: "Upscale image" });
-    expect(within(card).getByText("Needs: a picture and text")).toBeVisible();
-    expect(within(card).getByText("Optional: an audio clip")).toBeVisible();
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
     expect(within(card).getByText("Makes: a video")).toBeVisible();
     expect(card).not.toHaveTextContent("opaque_");
     expect(card).not.toHaveTextContent("video/mp4");
     expect(card).not.toHaveTextContent("ignored_video");
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Needs: a picture and text")).toBeVisible();
+    expect(sheet.getByText("Optional: an audio clip")).toBeVisible();
+    expect(sheet.getByText("Makes: a video")).toBeVisible();
   });
 
   test("does not infer a picture from an input name or an output from a capability", async () => {
@@ -240,10 +248,13 @@ describe("WorkflowsPage empathy copy", () => {
     }];
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: catalog })));
     renderWorkflows();
-    const card = await screen.findByRole("article", { name: "Upscale image" });
-    expect(within(card).getByText("Needs: text")).toBeVisible();
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
     expect(within(card).getByText("Makes: output not listed")).toBeVisible();
-    expect(within(card).queryByText(/Needs: a picture/)).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Needs: text")).toBeVisible();
+    expect(sheet.getByText("Makes: output not listed")).toBeVisible();
+    expect(sheet.queryByText(/Needs: a picture/)).toBeNull();
   });
 
   test("keeps ignored required inputs out of needs and describes missing input metadata", async () => {
@@ -253,14 +264,20 @@ describe("WorkflowsPage empathy copy", () => {
     ];
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: catalog })));
     renderWorkflows();
-    expect(await screen.findByText("Needs: no required inputs")).toBeVisible();
-    expect(screen.getByText("Needs: inputs not listed")).toBeVisible();
+    const first = await screen.findByRole("listitem", { name: "Upscale image" });
+    fireEvent.click(within(first).getByRole("button", { name: "Details for Upscale image" }));
+    expect(within(screen.getByRole("dialog")).getByText("Needs: no required inputs")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const second = screen.getByRole("listitem", { name: workflows[1].title });
+    fireEvent.click(within(second).getByRole("button", { name: `Details for ${workflows[1].title}` }));
+    expect(within(screen.getByRole("dialog")).getByText("Needs: inputs not listed")).toBeVisible();
   });
 
   test("puts the next action before folded schema, requests and discovery, with recent outputs last", async () => {
     renderWorkflows();
     await screen.findByText("Upscale image");
-    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Details for / })[0]);
     const dialog = screen.getByRole("dialog");
     const details = within(dialog).getByText("Technical details").closest("details")!;
     const action = within(dialog).getByRole("link", { name: "Open in Try" });
@@ -285,11 +302,15 @@ describe("WorkflowsPage empathy copy", () => {
     serve([faceLikeness, { ...workflows[0], id: "w.ready", title: "Ready one" }]);
     renderWorkflows(owner);
     fireEvent.click(await screen.findByText("Not set up (1)"));
-    const card = screen.getByRole("article", { name: "Face Likeness Check" });
-    expect(within(card).getByText("Needs: a face photo and a photo to check")).toBeVisible();
-    expect(within(card).getByText("Optional: a list of people and custom thresholds")).toBeVisible();
+    const card = screen.getByRole("listitem", { name: "Face Likeness Check" });
     expect(within(card).getByText("Makes: a likeness score")).toBeVisible();
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Face Likeness Check" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Needs: a face photo and a photo to check")).toBeVisible();
+    expect(sheet.getByText("Optional: a list of people and custom thresholds")).toBeVisible();
+    expect(sheet.getByText("Makes: a likeness score")).toBeVisible();
     expect(card).not.toHaveTextContent(/text and text|a file/);
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/text and text|a file/);
   });
 
   test("without declared labels it falls back to the media kind, then to the input name, and de-duplicates", async () => {
@@ -306,10 +327,13 @@ describe("WorkflowsPage empathy copy", () => {
       outputs: [{ name: "report", media_type: "application/json" }],
     }]);
     renderWorkflows();
-    const card = await screen.findByRole("article", { name: "Upscale image" });
-    expect(within(card).getByText("Needs: a picture for reference, a picture for candidate and a file")).toBeVisible();
-    expect(within(card).getByText("Optional: text for people, text for thresholds and a number")).toBeVisible();
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
     expect(within(card).getByText("Makes: a report")).toBeVisible();
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Needs: a picture for reference, a picture for candidate and a file")).toBeVisible();
+    expect(sheet.getByText("Optional: text for people, text for thresholds and a number")).toBeVisible();
+    expect(sheet.getByText("Makes: a report")).toBeVisible();
   });
 
   test("members do not see workflows that are not set up, but still see ones that are only busy", async () => {
@@ -325,7 +349,7 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.queryByText("Face Likeness Check")).toBeNull();
     expect(screen.queryByText("Turned off")).toBeNull();
     expect(screen.queryByText(/Not set up/)).toBeNull();
-    expect(screen.getByText("2 workflows")).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows2");
     expect(document.querySelector('a[href^="/engines"], a[href^="/status"], a[href^="/people"]')).toBeNull();
   });
 
@@ -341,8 +365,8 @@ describe("WorkflowsPage empathy copy", () => {
     await screen.findByText("Ready one");
     const section = screen.getByText("Not set up (1)").closest("details")!;
     expect(section).not.toHaveAttribute("open");
-    expect(within(section).getByRole("article", { name: "Face Likeness Check", hidden: true })).toBeInTheDocument();
-    expect(screen.getByText("2 workflows")).toBeVisible();
+    expect(within(section).getByRole("listitem", { name: "Face Likeness Check", hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows2");
     fireEvent.click(screen.getByText("Not set up (1)"));
     expect(section).toHaveAttribute("open");
   });
@@ -357,7 +381,7 @@ describe("WorkflowsPage empathy copy", () => {
   ])("the owner gets one specific reason and a real next step for %j", async (availability, line, linkName, href) => {
     serve([{ ...workflows[0], availability: { ...availability, available: false } }]);
     renderWorkflows(owner);
-    const card = await screen.findByRole("article", { name: "Upscale image", hidden: true });
+    const card = await screen.findByRole("listitem", { name: "Upscale image", hidden: true });
     expect(within(card).getByText(line)).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: linkName, hidden: true })).toHaveAttribute("href", href);
     expect(card).not.toHaveTextContent(/Unavailable\.|Not available right now/);
@@ -367,14 +391,14 @@ describe("WorkflowsPage empathy copy", () => {
   test("the engine link goes to the one engine the workflow is bound to", async () => {
     serve([{ ...workflows[0], engine_binding: "comfyui", availability: { status: "unavailable", reason_code: "unavailable_disabled", available: false } }]);
     renderWorkflows(owner);
-    const card = await screen.findByRole("article", { name: "Upscale image", hidden: true });
+    const card = await screen.findByRole("listitem", { name: "Upscale image", hidden: true });
     expect(within(card).getByRole("link", { name: "Open Engines", hidden: true })).toHaveAttribute("href", "/engines?service=comfyui");
   });
 
   test("busy and starting workflows keep a disabled Try button and one retry line", async () => {
     serve([{ ...workflows[0], availability: { status: "starting", reason_code: "starting", available: false } }]);
     renderWorkflows(member);
-    const card = await screen.findByRole("article", { name: "Upscale image" });
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
     expect(within(card).getByRole("button", { name: "Open in Try" })).toBeDisabled();
     expect(within(card).getByText("Try again in a moment.")).toBeVisible();
     expect(within(card).getAllByText(/Starting/)).toHaveLength(1);

@@ -88,6 +88,7 @@ const legacyCopy: Record<string, string[]> = {
     "Stable aliases stay the same when the backing model changes.\n                This catalog is scoped to models your access plan allows.",
     "Cost",
     "Cost",
+    "Cost",
   ],
   "app/providers/page.tsx": [
     "Profile",

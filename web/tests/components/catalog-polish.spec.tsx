@@ -121,7 +121,7 @@ describe("catalog polish", () => {
     expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
     const fastCard = screen
       .getByRole("button", { name: "Copy model name fast" })
-      .closest("article");
+      .closest("tr");
     expect(within(fastCard!).queryByText("Free (your hardware)")).toBeNull();
     expect(within(fastCard!).queryByText("No provider charge")).toBeNull();
     expect(screen.queryByText("Not measured yet")).toBeNull();
@@ -129,7 +129,7 @@ describe("catalog polish", () => {
     expect(screen.queryByText(/Two requests are ahead of yours/)).toBeNull();
     const image = screen
       .getByRole("button", { name: "Copy model name image" })
-      .closest("article");
+      .closest("tr");
     fireEvent.click(within(image!).getByRole("button", { name: "Details" }));
     const detail = screen.getByRole("dialog");
     expect(within(detail).getByText("Paid · $0.04 per image")).toBeVisible();
@@ -240,7 +240,7 @@ describe("catalog polish", () => {
     renderCatalog([row("local-image", "image.generate")]);
 
     const card = await screen.findByRole("heading", { name: "Images", level: 2 });
-    const rowArticle = card.closest("article");
+    const rowArticle = card.closest("tr");
     expect(within(rowArticle!).queryByText("Free (your hardware)")).toBeNull();
     expect(within(rowArticle!).queryByText("No provider charge")).toBeNull();
   });

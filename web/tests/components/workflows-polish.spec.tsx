@@ -107,29 +107,35 @@ function renderWorkflows(viewer?: Viewer) {
   );
 }
 
-it("keeps browsing cards compact and leaves manifest facts in the detail view", async () => {
+it("keeps browsing rows compact and leaves manifest facts in the detail view", async () => {
+  const user = userEvent.setup();
   renderWorkflows();
   const card = within(
-    await screen.findByRole("article", { name: "Product render" }),
+    await screen.findByRole("listitem", { name: "Product render" }),
   );
 
-  expect(card.getByText("Needs: text")).toBeVisible();
-  expect(card.getByText("Optional: a number")).toBeVisible();
+  expect(card.queryByText("Needs: text")).toBeNull();
+  expect(card.queryByText("Optional: a number")).toBeNull();
   expect(card.getByText("Makes: a picture")).toBeVisible();
   expect(card.queryByRole("img", { name: "Text input" })).toBeNull();
   expect(card.queryByText("prompt")).toBeNull();
-  expect(card.getByText("Create product renders.")).toBeVisible();
+  expect(card.queryByText("Create product renders.")).toBeNull();
   expect(card.queryByText("Output")).toBeNull();
   expect(card.queryByText("image/png")).toBeNull();
   expect(card.queryByText("seed: 0 to 65535")).toBeNull();
   expect(card.queryByText(/full manifest note/)).toBeNull();
   expect(card.queryByText("studio, flatlay")).toBeNull();
+  await user.click(card.getByRole("button", { name: "Details for Product render" }));
+  const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
+  expect(sheet.getByText("Needs: text")).toBeVisible();
+  expect(sheet.getByText("Optional: a number")).toBeVisible();
+  expect(sheet.getByText("Create product renders.")).toBeVisible();
 });
 
 it("keeps the manifest's research and engine notes from members", async () => {
   const user = userEvent.setup();
   renderWorkflows();
-  await user.click(await screen.findByRole("button", { name: "Details" }));
+  await user.click(await screen.findByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   await user.click(sheet.getByText("Technical details"));
   expect(sheet.queryByText(/full manifest note/)).toBeNull();
@@ -138,7 +144,7 @@ it("keeps the manifest's research and engine notes from members", async () => {
 it("puts manifest details behind a closed native disclosure", async () => {
   const user = userEvent.setup();
   renderWorkflows(ownerViewer);
-  await user.click(await screen.findByRole("button", { name: "Details" }));
+  await user.click(await screen.findByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   const disclosure = sheet
     .getByText("Technical details")
@@ -167,7 +173,7 @@ it("puts manifest details behind a closed native disclosure", async () => {
 it("renders mobile input summaries beside the desktop table", async () => {
   const user = userEvent.setup();
   renderWorkflows();
-  await user.click(await screen.findByRole("button", { name: "Details" }));
+  await user.click(await screen.findByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   await user.click(sheet.getByText("Technical details"));
   const mobileSummaries = sheet.getByRole("list", { name: "Input summaries" });
@@ -198,12 +204,12 @@ it("shows the owner one specific reason and a next step for a workflow that is n
   render(<QueryClientProvider client={client}><ViewerContext.Provider value={ownerViewer}><WorkflowsPage /></ViewerContext.Provider></QueryClientProvider>);
   await screen.findByText("Not set up (1)");
   await user.click(screen.getByText("Not set up (1)"));
-  const card = within(screen.getByRole("article", { name: "Product render" }));
+  const card = within(screen.getByRole("listitem", { name: "Product render" }));
   expect(card.getByText("Turned off. Turn it on in Engines.")).toBeVisible();
   expect(card.getByRole("link", { name: "Open Engines" })).toHaveAttribute("href", "/engines?service=image-local");
   expect(card.queryByRole("link", { name: "Open in Try" })).toBeNull();
   expect(card.queryByRole("button", { name: "Open in Try" })).toBeNull();
-  await user.click(card.getByRole("button", { name: "Details" }));
+  await user.click(card.getByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   expect(sheet.getByText("Turned off. Turn it on in Engines.")).toBeVisible();
   expect(sheet.getByRole("link", { name: "Open Engines" })).toBeVisible();
@@ -214,9 +220,9 @@ it("shows the owner one specific reason and a next step for a workflow that is n
 it("keeps available workflow Run links unchanged on cards and in details", async () => {
   const user = userEvent.setup();
   renderWorkflows();
-  const card = within(await screen.findByRole("article", { name: "Product render" }));
+  const card = within(await screen.findByRole("listitem", { name: "Product render" }));
   expect(card.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
-  await user.click(card.getByRole("button", { name: "Details" }));
+  await user.click(card.getByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
 });
@@ -237,8 +243,8 @@ it("updates an open details sheet when a refresh makes its workflow unavailable"
   ));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><WorkflowsPage /></QueryClientProvider>);
-  const card = within(await screen.findByRole("article", { name: "Product render" }));
-  await user.click(card.getByRole("button", { name: "Details" }));
+  const card = within(await screen.findByRole("listitem", { name: "Product render" }));
+  await user.click(card.getByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   expect(sheet.getByRole("link", { name: "Open in Try" })).toBeInTheDocument();
   available = false;
@@ -253,4 +259,19 @@ it("updates an open details sheet when a refresh makes its workflow unavailable"
   );
   expect(sheetRun.nextElementSibling).not.toHaveTextContent(/Unavailable/);
   client.clear();
+});
+
+it("opens workflow details from the list row and exposes named capability segments", async () => {
+  const user = userEvent.setup();
+  renderWorkflows();
+  const list = await screen.findByRole("list", { name: "Images workflows" });
+  const row = within(list).getByRole("listitem", { name: "Product render" });
+  expect(row).toHaveAttribute("data-lines", "2");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows1");
+  const filters = within(screen.getByRole("group", { name: "Workflow capability" }));
+  expect(filters.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(filters.getByRole("button", { name: "Images" }));
+  expect(filters.getByRole("button", { name: "Images" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(row).getByText("Makes: a picture"));
+  expect(screen.getByRole("dialog", { name: "Product render" })).toBeVisible();
 });

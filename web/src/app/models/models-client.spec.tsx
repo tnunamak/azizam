@@ -160,7 +160,7 @@ describe("models catalog refresh", () => {
         name: "Copy model name refresh-model",
       });
       fireEvent.click(
-        within(copy.closest(alias ? "article" : "tr")!).getByRole("button", {
+        within(copy.closest("tr")!).getByRole("button", {
           name: "Details",
         }),
       );
@@ -211,7 +211,7 @@ describe("models catalog refresh", () => {
         name: "Copy model name removed-model",
       });
       fireEvent.click(
-        within(copy.closest(alias ? "article" : "tr")!).getByRole("button", {
+        within(copy.closest("tr")!).getByRole("button", {
           name: "Details",
         }),
       );
@@ -235,7 +235,7 @@ describe("models catalog refresh", () => {
       });
       expect(screen.queryByRole("dialog")).toBeNull();
       fireEvent.click(
-        within(restoredCopy.closest(alias ? "article" : "tr")!).getByRole("button", {
+        within(restoredCopy.closest("tr")!).getByRole("button", {
           name: "Details",
         }),
       );
@@ -284,11 +284,11 @@ describe("models visible-text search", () => {
       }),
     ]));
     fireEvent.click(await screen.findByRole("button", { name: "All models" }));
-    expect(within(screen.getByRole("table")).getByText("Firefly")).toBeVisible();
+    expect(within(screen.getByRole("table", { name: "All models" })).getByText("Firefly")).toBeVisible();
     fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
       target: { value: "FIREFLY" },
     });
-    expect(within(screen.getByRole("table")).getByRole("button", {
+    expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", {
       name: "Copy model name opaque-exact",
     })).toBeVisible();
   });
@@ -410,7 +410,7 @@ describe("models catalog contract distinctions", () => {
       0,
     );
     fireEvent.click(
-      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByText("Example request")).toBeVisible();
@@ -510,7 +510,7 @@ describe("models catalog contract distinctions", () => {
     await screen.findByRole("button", { name: "Copy model name chat" });
     const chatGroup = screen
       .getByRole("heading", { name: "Chat", level: 2 })
-      .closest("section")!;
+      .closest("tbody")!;
     expect(
       within(chatGroup).getByRole("button", { name: "1 more Chat models" }),
     ).toBeInTheDocument();
@@ -561,7 +561,7 @@ describe("models catalog contract distinctions", () => {
       name: "Copy model name chat",
     });
     const facts = within(
-      within(copy.closest("article")!).getByRole("list", {
+      within(copy.closest("tr")!).getByRole("list", {
         name: "Model facts",
       }),
     );
@@ -589,7 +589,7 @@ describe("models catalog contract distinctions", () => {
       name: "Copy model name chat",
     });
     expect(
-      within(copy.closest("article")!).queryByRole("list", {
+      within(copy.closest("tr")!).queryByRole("list", {
         name: "Model facts",
       }),
     ).toBeNull();
@@ -601,7 +601,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name chat",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
 
     expect(copy).toBeVisible();
     fireEvent.click(card.getByRole("button", { name: "Details" }));
@@ -633,7 +633,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name fast",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
 
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
@@ -659,7 +659,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name chat",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
 
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
@@ -682,7 +682,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name fast",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
 
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
@@ -710,7 +710,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name fast",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
     expect(
       card.queryByText("Answers quickly for everyday prompts."),
     ).toBeNull();
@@ -738,7 +738,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name chat",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
     expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
     expect(card.queryByText("llama.cpp (chat)")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
@@ -760,7 +760,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name chat",
     });
-    const card = within(copy.closest("article")!);
+    const card = within(copy.closest("tr")!);
 
     expect(card.queryByText("OpenRouter")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
@@ -871,7 +871,7 @@ describe("models catalog contract distinctions", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-    const table = within(screen.getByRole("table"));
+    const table = within(screen.getByRole("table", { name: "All models" }));
 
     expect(table.getByText("Rerank")).toBeVisible();
   });
@@ -934,7 +934,7 @@ describe("models catalog contract distinctions", () => {
     const localCopy = await screen.findByRole("button", {
       name: "Copy model name local-unknown",
     });
-    expect(within(localCopy.closest("article")!).queryByText("Cost not recorded")).toBeNull();
+    expect(within(localCopy.closest("tr")!).queryByText("Cost not recorded")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
     fireEvent.click(screen.getByRole("button", { name: "Cost not recorded" }));
     expect(localCopy).toBeVisible();
@@ -960,12 +960,12 @@ describe("models catalog contract distinctions", () => {
       const copy = await screen.findByRole("button", {
         name: "Copy model name chat",
       });
-      const card = within(copy.closest("article")!);
+      const card = within(copy.closest("tr")!);
       expect(card.getByText("Cost not recorded")).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
       const alternative = screen.getByRole("button", {
         name: "Copy model name unknown-alternative",
-      }).closest("article")!;
+      }).closest("tr")!;
       expect(within(alternative).getByText("Cost not recorded")).toBeVisible();
       fireEvent.click(card.getByRole("button", { name: "Details" }));
       expect(within(screen.getByRole("dialog")).getByText("Cost not recorded")).toBeVisible();
@@ -1143,10 +1143,10 @@ describe("models catalog contract distinctions", () => {
     expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "All models" }));
     expect(
-      within(screen.getByRole("table")).getByText("Coder Q8"),
+      within(screen.getByRole("table", { name: "All models" })).getByText("Coder Q8"),
     ).toBeVisible();
     fireEvent.click(
-      within(screen.getByRole("table")).getByRole("button", {
+      within(screen.getByRole("table", { name: "All models" })).getByRole("button", {
         name: "Details",
       }),
     );
@@ -1220,12 +1220,12 @@ describe("models catalog contract distinctions", () => {
     const music = within(
       (
         await screen.findByRole("button", { name: "Copy model name music" })
-      ).closest("article")!,
+      ).closest("tr")!,
     );
     const sfx = within(
       screen
         .getByRole("button", { name: "Copy model name sfx" })
-        .closest("article")!,
+        .closest("tr")!,
     );
     expect(
       music
@@ -1277,7 +1277,7 @@ describe("models catalog contract distinctions", () => {
     expect(screen.queryByText("The service is not configured.")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
     fireEvent.click(
-      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     const action = screen.getByRole("link", { name: "Connect an engine" });
     expect(action).toHaveAttribute("href", "/ui/engines/");
@@ -1342,7 +1342,7 @@ describe("models catalog contract distinctions", () => {
     const busyCopy = await screen.findByRole("button", {
       name: "Copy model name busy-image",
     });
-    const busyCard = within(busyCopy.closest("article")!);
+    const busyCard = within(busyCopy.closest("tr")!);
     expect(
       busyCard.getByRole("button", { name: "Copy model name busy-image" }),
     ).toBeVisible();
@@ -1355,7 +1355,7 @@ describe("models catalog contract distinctions", () => {
       name: "Copy model name remote-catalog",
     });
     fireEvent.click(
-      within(remoteCopy.closest("article")!).getByRole("button", {
+      within(remoteCopy.closest("tr")!).getByRole("button", {
         name: "Details",
       }),
     );
@@ -1384,7 +1384,7 @@ describe("models catalog contract distinctions", () => {
     expect(screen.queryByText("Observation time not reported")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
     fireEvent.click(
-      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+      within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute(
       "href",
@@ -1425,7 +1425,7 @@ describe("models catalog contract distinctions", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-    const table = within(screen.getByRole("table"));
+    const table = within(screen.getByRole("table", { name: "All models" }));
 
     expect(table.getByText("Unavailable")).toBeVisible();
     expect(table.queryByText("From configuration")).toBeNull();
@@ -1466,7 +1466,7 @@ describe("model cost and clipboard recovery", () => {
       const copy = await screen.findByRole("button", {
         name: "Copy model name chat",
       });
-      const card = within(copy.closest("article")!);
+      const card = within(copy.closest("tr")!);
       expect(card.getByText(label)).toBeVisible();
       fireEvent.click(card.getByRole("button", { name: "Details" }));
       expect(within(screen.getByRole("dialog")).getByText(label)).toBeVisible();
@@ -1476,7 +1476,7 @@ describe("model cost and clipboard recovery", () => {
         }),
       );
       fireEvent.click(screen.getByRole("button", { name: "All models" }));
-      expect(within(screen.getByRole("table")).getByText(label)).toBeVisible();
+      expect(within(screen.getByRole("table", { name: "All models" })).getByText(label)).toBeVisible();
     },
   );
 
@@ -1583,7 +1583,7 @@ describe("models query-string deep links", () => {
       row({ id, alias: false, object: "model_catalog.model" }),
       row({ id: "other-model", alias: false, object: "model_catalog.model" }),
     ]));
-    const table = within(await screen.findByRole("table"));
+    const table = within(await screen.findByRole("table", { name: "All models" }));
     expect(
       table.getByRole("button", { name: `Copy model name ${id}` }),
     ).toBeVisible();

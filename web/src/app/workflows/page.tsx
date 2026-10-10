@@ -9,7 +9,6 @@ import {
   Search,
   SlidersHorizontal,
 } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
 import {
   MEDIA_NOUN,
@@ -42,10 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  CapabilityIcon,
-  type Capability,
-} from "@/components/product/capability-icon";
+import type { Capability } from "@/components/product/capability-icon";
 import {
   CodeBlock,
   EmptyState,
@@ -53,7 +49,8 @@ import {
   PageHeader,
   StatusPill,
 } from "@/components/product";
-import { FilterToggle } from "@/components/product/filter-toggle";
+import { ListCard, ListRow } from "@/components/product/list-card";
+import { Segmented } from "@/components/product/segmented";
 import {
   workflowAvailabilityView,
   type WorkflowReadiness,
@@ -117,22 +114,6 @@ function capabilityLabel(value: string) {
     }[value as WorkflowCapability] ??
     value.replace(/[_-]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
   );
-}
-
-function iconCapability(value: string): Capability {
-  return ["audio", "music", "sfx"].includes(value)
-    ? "voice"
-    : [
-          "image",
-          "video",
-          "voice",
-          "chat",
-          "transcribe",
-          "decide",
-          "embed",
-        ].includes(value)
-      ? (value as Capability)
-      : "image";
 }
 
 function timeLabel(value: number | null): string | undefined {
@@ -281,7 +262,7 @@ function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
   const required = inputSummary(workflow, true);
   const optional = inputSummary(workflow, false);
   return (
-    <div aria-label="What you need and get" className="space-y-1 text-sm">
+    <div aria-label="What you need and get" className="space-y-1 text-meta">
       <p>Needs: {required || (workflow.inputs.length ? "no required inputs" : "inputs not listed")}</p>
       {optional && <p>Optional: {optional}</p>}
       <p>Makes: {outputSummary(workflow)}</p>
@@ -314,7 +295,7 @@ function WorkflowAction({
   if (view.runnable) {
     const showStatus = !hideReadyStatus || status !== "ready";
     return (
-      <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
         {showStatus && (
           <StatusPill status={status} reason={view.text ?? undefined} summary />
         )}
@@ -328,7 +309,7 @@ function WorkflowAction({
   }
   const ownerSetup = owner && view.readiness === "setup";
   return (
-    <div className="space-y-3">
+    <div className="flex max-w-sm flex-wrap items-center gap-2 max-sm:max-w-40">
       {(view.readiness === "wait" || view.readiness === "down") && (
         <StatusPill status={status} summary />
       )}
@@ -338,7 +319,7 @@ function WorkflowAction({
             Open in Try
           </Button>
         )}
-        <p className="text-muted-foreground text-sm">{view.text}</p>
+        <p className="text-muted-foreground text-meta">{view.text}</p>
         {view.fix && (
           <Button asChild variant="outline" size="sm">
             <Link href={view.fix.href}>{view.fix.action}</Link>
@@ -359,29 +340,27 @@ function WorkflowCard({
   onDetail: (workflow: WorkflowRow) => void;
 }) {
   return (
-    <article
+    <ListRow
+      lines={2}
       aria-label={workflow.title}
-      className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5"
-    >
-      <div className="flex min-w-0 items-start gap-3">
-        <CapabilityIcon capability={iconCapability(workflow.capability)} />
-        <div className="min-w-0 flex-1">
-          <h3 className="font-semibold break-words">{workflow.title}</h3>
-          <p className="text-muted-foreground mt-2 line-clamp-2 text-sm">
-            {purposeLabel(workflow)}
-          </p>
-          <div className="mt-3">
-            <WorkflowSummary workflow={workflow} />
-          </div>
-        </div>
-      </div>
-      <div className="mt-auto space-y-3">
-        <WorkflowAction workflow={workflow} owner={owner} hideReadyStatus />
-        <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
-          Details
-        </Button>
-      </div>
-    </article>
+      className="hover:bg-muted/50 cursor-pointer"
+      onClick={(event) => {
+        if (!(event.target as HTMLElement).closest("a, button")) onDetail(workflow);
+      }}
+      title={
+        <button
+          type="button"
+          aria-label={`Details for ${workflow.title}`}
+          className="rounded-control text-left after:absolute after:inset-0 after:content-[''] hover:underline"
+          onClick={() => onDetail(workflow)}
+        >
+          {workflow.title}
+        </button>
+      }
+      meta={`Makes: ${outputSummary(workflow)}`}
+      metaTitle={`Makes: ${outputSummary(workflow)}`}
+      trailing={<WorkflowAction workflow={workflow} owner={owner} hideReadyStatus />}
+    />
   );
 }
 
@@ -389,12 +368,12 @@ function LoadingWorkflows() {
   return (
     <div aria-label="Loading workflows" aria-busy="true" role="status">
       <div className="mb-6 flex flex-wrap gap-3">
-        <Skeleton className="h-11 w-56" />
-        <Skeleton className="h-11 w-28" />
+        <Skeleton className="h-8 max-sm:h-11 w-56" />
+        <Skeleton className="h-8 max-sm:h-11 w-28" />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="space-y-px overflow-hidden rounded-panel border">
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-64 rounded-xl" />
+          <Skeleton key={index} className="h-(--row-2) max-sm:h-(--row-phone-2) rounded-none" />
         ))}
       </div>
     </div>
@@ -412,7 +391,7 @@ function DetailSheet({
 }) {
   return (
     <Sheet open={!!workflow} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:!max-w-5xl [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
+      <SheetContent className="w-full overflow-y-auto sm:!max-w-5xl">
         {workflow && (
           <>
             <SheetHeader className="border-b pr-12">
@@ -425,25 +404,25 @@ function DetailSheet({
               <section className="space-y-3">
                 <h3 className="font-medium">Purpose</h3>
                 {purposeLabel(workflow) && (
-                  <p className="text-muted-foreground text-sm break-words">
+                  <p className="text-muted-foreground text-meta break-words">
                     {purposeLabel(workflow)}
                   </p>
                 )}
                 <WorkflowSummary workflow={workflow} />
               </section>
               <WorkflowAction workflow={workflow} owner={owner} />
-              <details className="rounded-lg border p-4">
-                <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
+              <details className="rounded-panel border p-4">
+                <summary className="focus-visible:outline-ring min-h-8 max-sm:min-h-11 cursor-pointer py-1.5 font-medium focus-visible:outline-2">
                   Technical details
                 </summary>
                 <div className="mt-3 space-y-4">
                   {/* Research and engine notes are for the owner, never a member. */}
                   {owner && workflow.technical_notes && (
-                    <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
+                    <p className="text-muted-foreground text-meta break-words whitespace-pre-wrap">
                       {workflow.technical_notes}
                     </p>
                   )}
-                  <div className="grid gap-4 text-sm sm:grid-cols-2">
+                  <div className="grid gap-4 text-meta sm:grid-cols-2">
                     <Fact
                       label="Workflow"
                       value={
@@ -518,7 +497,7 @@ function DetailSheet({
                           </Badge>
                         ))
                       ) : (
-                        <p className="text-muted-foreground text-sm">
+                        <p className="text-muted-foreground text-meta">
                           No stable aliases point here.
                         </p>
                       )}
@@ -526,22 +505,22 @@ function DetailSheet({
                   </div>
                   <div>
                     <h3 className="font-medium">Inputs</h3>
-                    <p className="text-muted-foreground mt-1 text-sm">
+                    <p className="text-muted-foreground mt-1 text-meta">
                       Inputs marked Applies change the request. Ignored inputs have
                       no effect on this route.
                     </p>
                     <ul
                       aria-label="Input summaries"
-                      className="mt-3 divide-y rounded-lg border px-4 sm:hidden"
+                      className="mt-3 divide-y rounded-panel border px-4 sm:hidden"
                     >
                       {workflow.inputs.map((input) => (
                         <li key={input.name} className="space-y-2 py-4">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <h4 className="font-mono text-sm break-all">
+                              <h4 className="font-mono text-meta break-all">
                                 {input.name}
                               </h4>
-                              <p className="text-muted-foreground text-xs">
+                              <p className="text-muted-foreground text-label">
                                 {input.type}
                                 {input.required ? " · Required" : " · Optional"}
                               </p>
@@ -553,14 +532,14 @@ function DetailSheet({
                             </Badge>
                           </div>
                           {input.description && (
-                            <p className="text-muted-foreground text-sm break-words">
+                            <p className="text-muted-foreground text-meta break-words">
                               {input.description}
                             </p>
                           )}
-                          <dl className="space-y-2 text-sm">
+                          <dl className="space-y-2 text-meta">
                             {input.default != null && (
                               <div>
-                                <dt className="text-muted-foreground text-xs">
+                                <dt className="text-muted-foreground text-label">
                                   Default
                                 </dt>
                                 <dd className="break-words">
@@ -570,7 +549,7 @@ function DetailSheet({
                             )}
                             {rangeLabel(input) && (
                               <div>
-                                <dt className="text-muted-foreground text-xs">
+                                <dt className="text-muted-foreground text-label">
                                   Range
                                 </dt>
                                 <dd className="break-words">{rangeLabel(input)}</dd>
@@ -581,11 +560,11 @@ function DetailSheet({
                       ))}
                     </ul>
                     <div
-                      className="mt-3 hidden max-w-full overflow-x-auto rounded-lg border sm:block [&>div]:overflow-visible"
+                      className="mt-3 hidden max-w-full overflow-x-auto rounded-panel border sm:block [&>div]:overflow-visible"
                       tabIndex={0}
                       aria-label="Scrollable inputs"
                     >
-                      <Table className="min-w-[40rem] table-fixed">
+                      <Table className="min-w-160 table-fixed">
                         <TableHeader>
                           <TableRow>
                             <TableHead>Name</TableHead>
@@ -598,13 +577,13 @@ function DetailSheet({
                         <TableBody>
                           {workflow.inputs.map((input) => (
                             <TableRow key={input.name}>
-                              <TableCell className="font-mono text-xs break-all !whitespace-normal">
+                              <TableCell className="font-mono text-label break-all !whitespace-normal">
                                 {input.name}
                                 {input.required && (
-                                  <span className="ml-1 text-xs">(required)</span>
+                                  <span className="ml-1 text-label">(required)</span>
                                 )}
                                 {input.description && (
-                                  <p className="text-muted-foreground mt-1 font-sans text-xs">
+                                  <p className="text-muted-foreground mt-1 font-sans text-label">
                                     {input.description}
                                   </p>
                                 )}
@@ -668,7 +647,7 @@ function DetailSheet({
 function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <div className="text-muted-foreground text-xs">{label}</div>
+      <div className="text-muted-foreground text-label">{label}</div>
       <div className="mt-1 font-medium break-words">{value}</div>
     </div>
   );
@@ -686,7 +665,7 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
   return (
     <section aria-label="Recent jobs">
       <h3 className="font-medium">Recent jobs</h3>
-      <p className="text-muted-foreground mt-1 text-sm">
+      <p className="text-muted-foreground mt-1 text-meta">
         Your latest outputs from this workflow, with their original request
         details.
       </p>
@@ -705,14 +684,14 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
           />
         </div>
       ) : !data?.assets.length ? (
-        <p className="text-muted-foreground mt-4 text-sm">
+        <p className="text-muted-foreground mt-4 text-meta">
           No recent jobs yet. Run this workflow in Try to create your first
           result.
         </p>
       ) : (
         <ul className="mt-4 divide-y">
           {data.assets.map((asset) => (
-            <li key={asset.asset_id} className="space-y-2 py-4 text-sm">
+            <li key={asset.asset_id} className="space-y-2 py-4 text-meta">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium">
                   {asset.kind.charAt(0).toUpperCase() + asset.kind.slice(1)}{" "}
@@ -721,12 +700,12 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
                 <RelativeTime
                   ts={asset.created_at}
                   fallback=""
-                  className="text-muted-foreground text-xs"
+                  className="text-muted-foreground text-label"
                 />
               </div>
               {asset.prompt && <p className="break-words">{asset.prompt}</p>}
               {(asset.model || asset.workflow || asset.generation_ms != null) && (
-                <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-label">
                   {asset.model && (
                     <>
                       <dt>Model</dt>
@@ -831,17 +810,14 @@ export default function WorkflowsPage() {
   const setupGroups = groupsOf(notSetUp);
 
   return (
-    <div className="space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
+    <div className="space-y-(--space-section)">
       <PageHeader
         title="Workflows"
+        count={data ? rows.length : undefined}
         subtitle="Choose by purpose and inputs."
         actions={
           isFetching ? (
             <Badge variant="outline">Refreshing</Badge>
-          ) : data ? (
-            <Badge variant="outline">
-              {rows.length} {rows.length === 1 ? "workflow" : "workflows"}
-            </Badge>
           ) : undefined
         }
       />
@@ -865,13 +841,14 @@ export default function WorkflowsPage() {
         />
       ) : (
         <>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <label className="relative min-w-0 flex-1 lg:max-w-md">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="relative min-w-0 flex-1 sm:max-w-80">
               <Search
                 aria-hidden="true"
                 className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
               />
               <Input
+                size="sm"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search workflows"
@@ -879,26 +856,18 @@ export default function WorkflowsPage() {
               />
               <span className="sr-only">Search workflows</span>
             </label>
-            <div className="flex flex-wrap gap-2">
-              <FilterToggle
-                pressed={capability === "all"}
-                size="sm"
-                onClick={() => setCapability("all")}
-              >
-                <SlidersHorizontal aria-hidden="true" />
-                All
-              </FilterToggle>
-              {availableCapabilities.map((cap) => (
-                <FilterToggle
-                  key={cap}
-                  pressed={capability === cap}
-                  size="sm"
-                  onClick={() => setCapability(cap)}
-                >
-                  {capabilityLabel(cap)}
-                </FilterToggle>
-              ))}
-            </div>
+            <Segmented
+              label="Workflow capability"
+              value={capability}
+              onChange={setCapability}
+              options={[
+                { value: "all", label: "All", icon: SlidersHorizontal },
+                ...availableCapabilities.map((cap) => ({
+                  value: cap,
+                  label: capabilityLabel(cap),
+                })),
+              ]}
+            />
           </div>
           {filtered.length === 0 ? (
             <EmptyState
@@ -923,25 +892,23 @@ export default function WorkflowsPage() {
                 <WorkflowGroups
                   label="Available workflows"
                   groups={grouped}
-                  count={working.length}
                   owner={owner}
                   onDetail={setDetailId}
                 />
               )}
               {notSetUp.length > 0 && (
                 <details
-                  className="rounded-xl border p-4"
+                  className="rounded-panel border p-4"
                   open={setupOpen || query.trim() !== ""}
                   onToggle={(event) => setSetupOpen(event.currentTarget.open)}
                 >
-                  <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
+                  <summary className="focus-visible:outline-ring min-h-8 max-sm:min-h-11 cursor-pointer py-1.5 font-medium focus-visible:outline-2">
                     Not set up ({notSetUp.length})
                   </summary>
                   <div className="mt-4">
                     <WorkflowGroups
                       label="Workflows that are not set up"
                       groups={setupGroups}
-                      count={notSetUp.length}
                       owner={owner}
                       onDetail={setDetailId}
                     />
@@ -964,45 +931,26 @@ export default function WorkflowsPage() {
 function WorkflowGroups({
   label,
   groups,
-  count,
   owner,
   onDetail,
 }: {
   label: string;
   groups: { capability: string; rows: WorkflowRow[] }[];
-  count: number;
   owner: boolean;
   onDetail: (id: string) => void;
 }) {
   return (
-    <div
-      aria-label={label}
-      className={cn(
-        "grid gap-6",
-        count > 1 && "sm:grid-cols-2",
-        count > 2 && "lg:grid-cols-3",
-      )}
-    >
+    <div aria-label={label} className="space-y-(--space-section)">
       {groups.map((group) => (
         <section
           key={group.capability}
           aria-label={`${capabilityLabel(group.capability)} workflows`}
-          className={cn(
-            "min-w-0 space-y-3",
-            group.rows.length > 1 && "sm:col-span-2",
-            group.rows.length > 2 && "lg:col-span-3",
-          )}
+          className="min-w-0"
         >
-          <h2 className="text-lg font-semibold">
+          <h2 className="text-heading mb-(--space-heading)">
             {capabilityLabel(group.capability)}
           </h2>
-          <div
-            className={cn(
-              "grid gap-4",
-              group.rows.length > 1 && "sm:grid-cols-2",
-              group.rows.length > 2 && "lg:grid-cols-3",
-            )}
-          >
+          <ListCard label={`${capabilityLabel(group.capability)} workflows`}>
             {group.rows.map((workflow) => (
               <WorkflowCard
                 key={workflow.id}
@@ -1011,7 +959,7 @@ function WorkflowGroups({
                 onDetail={(row) => onDetail(row.id)}
               />
             ))}
-          </div>
+          </ListCard>
         </section>
       ))}
     </div>

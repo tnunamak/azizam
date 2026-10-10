@@ -74,7 +74,7 @@ it("shows the supplied engine label and measured speed without an unknown speed 
   const copy = await screen.findByRole("button", {
     name: "Copy model name chat",
   });
-  const card = within(copy.closest("article")!);
+  const card = within(copy.closest("tr")!);
   expect(card.queryByText("Local", { exact: true })).toBeNull();
   expect(screen.queryByText("Local · no provider charge")).toBeNull();
   expect(card.queryByText("Unknown", { exact: true })).toBeNull();
@@ -187,7 +187,7 @@ it("uses human model titles while keeping exact ids as secondary code and detail
     ],
   );
   fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
-  const table = within(screen.getByRole("table"));
+  const table = within(screen.getByRole("table", { name: "All models" }));
   expect(table.getByText("Chat model")).toBeVisible();
   expect(table.getByText(id).tagName).toBe("CODE");
   expect(table.getByText("Household assistant")).toBeVisible();

@@ -153,7 +153,7 @@ function CatalogIcon({ row }: { row: CatalogRow }) {
     <span
       role="img"
       aria-label={primaryCapabilityLabel(row)}
-      className="bg-muted text-muted-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-md"
+      className="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center"
     >
       <Icon aria-hidden="true" className="size-4" />
     </span>
@@ -403,7 +403,7 @@ function availabilityAction(
 function AvailabilityFacts({ row }: { row: CatalogRow }) {
   const enabled = enabledLabel(row);
   return (
-    <div className="flex flex-wrap gap-2 text-xs">
+    <div className="flex flex-wrap gap-2 text-meta">
       <Badge variant="secondary">Allowed by your access</Badge>
       {configurationLabel(row) && (
         <Badge variant="outline">{configurationLabel(row)}</Badge>
@@ -439,7 +439,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
           void copyName();
         }}
         aria-label={`Copy model name ${row.id}`}
-        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
+        className="bg-muted hover:bg-muted/80 flex h-8 max-sm:min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-control px-3 text-left font-mono text-meta transition"
       >
         <code className="truncate">{row.id}</code>
         {copied ? (
@@ -453,7 +453,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
           className="mt-2 space-y-2"
           onClick={(event) => event.stopPropagation()}
         >
-          <p role="alert" className="text-destructive text-sm">
+          <p role="alert" className="text-destructive text-meta">
             Copy failed. Select the model name and copy it manually.
           </p>
           <Input
@@ -562,38 +562,36 @@ function AliasOptionRow({
   onDetail: (row: CatalogRow) => void;
 }) {
   return (
-    <article
-      className="hover:bg-muted/40 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 sm:flex-nowrap sm:pl-14"
-      onClick={() => onDetail(row)}
-    >
-      <div className="min-w-0 flex-1 basis-40">
-        <h3 className="min-h-5 truncate text-sm font-medium">
-          {titleFor(row) ?? ""}
-        </h3>
-        <p className="text-muted-foreground line-clamp-1 min-h-4 text-xs">
+    <TableRow onClick={() => onDetail(row)} className="cursor-pointer">
+      <TableCell className="h-(--row-2) py-1 max-sm:h-(--row-phone-2)" />
+      <TableCell className="h-(--row-2) py-1 max-sm:h-(--row-phone-2)">
+        <h3 className="text-body font-medium">{titleFor(row) ?? ""}</h3>
+        <p className="text-muted-foreground text-meta mt-0.5 max-w-80 truncate" title={descriptionFor(row)}>
           {descriptionFor(row)}
         </p>
-        <p className="text-muted-foreground min-h-4 text-xs">
-          {costLabel(row) ?? ""}
-        </p>
-        <ModelFacts row={row} className="mt-1" />
-      </div>
-      <CopyModelName row={row} />
-      {availabilityState(row) !== "ready" && (
-        <Availability row={row} showReason={false} />
-      )}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={(event) => {
-          event.stopPropagation();
-          onDetail(row);
-        }}
-      >
-        <span className="sr-only">Details</span>
-        <ChevronRight aria-hidden="true" />
-      </Button>
-    </article>
+      </TableCell>
+      <TableCell className="py-1"><ModelFacts row={row} /></TableCell>
+      <TableCell className="py-1"><CopyModelName row={row} /></TableCell>
+      <TableCell numeric className="py-1">{costLabel(row) ?? ""}</TableCell>
+      <TableCell className="py-1">
+        {availabilityState(row) !== "ready" && (
+          <Availability row={row} showReason={false} />
+        )}
+      </TableCell>
+      <TableCell className="py-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDetail(row);
+          }}
+        >
+          <span className="sr-only">Details</span>
+          <ChevronRight aria-hidden="true" />
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -613,74 +611,72 @@ function CapabilityRow({
   const open = expanded || searching;
   const alternativesId = `model-alternatives-${primaryCapability(primary)}`;
   return (
-    <section className="min-w-0 border-b last:border-b-0">
-      <article
-        className="hover:bg-muted/40 grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 xl:grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_7rem_5rem_2.75rem] xl:px-4"
-        onClick={() => onDetail(primary)}
-      >
-        <CatalogIcon row={primary} />
-        <h2 className="text-sm font-semibold">
-          {primaryCapabilityLabel(primary)}
-        </h2>
-        <div className="col-start-2 row-start-2 min-w-0 space-y-1 xl:col-start-auto xl:row-start-auto">
-          <h3 className="truncate text-sm">{titleFor(primary)}</h3>
-          <ModelFacts row={primary} />
-        </div>
-        <div className="col-start-2 row-start-3 flex min-w-0 flex-wrap items-center gap-2 xl:col-start-auto xl:row-start-auto">
-          <CopyModelName row={primary} />
-          {costLabel(primary) && (
-            <span className="text-muted-foreground text-xs">
-              {costLabel(primary)}
-            </span>
-          )}
-        </div>
-        <div className="col-start-3 row-start-2 xl:col-start-auto xl:row-start-auto">
+    <>
+    <TableBody aria-label={`${primaryCapabilityLabel(primary)} models`}>
+      <TableRow className="cursor-pointer" onClick={() => onDetail(primary)}>
+        <TableCell className="py-1">
+          <div className="flex items-center gap-3">
+            <CatalogIcon row={primary} />
+            <h2 className="text-body font-medium">
+              {primaryCapabilityLabel(primary)}
+            </h2>
+          </div>
+        </TableCell>
+        <TableCell className="py-1">
+          <h3 className="text-body font-medium">{titleFor(primary)}</h3>
+        </TableCell>
+        <TableCell className="py-1"><ModelFacts row={primary} /></TableCell>
+        <TableCell className="py-1"><CopyModelName row={primary} /></TableCell>
+        <TableCell numeric className="py-1">{costLabel(primary)}</TableCell>
+        <TableCell className="py-1">
           {availabilityState(primary) !== "ready" && (
             <Availability row={primary} showReason={false} />
           )}
-        </div>
-        <div className="col-start-3 row-start-3 xl:col-start-auto xl:row-start-auto">
-          {alternatives.length > 0 && (
-            <button
-              type="button"
-              aria-label={`${alternatives.length} more ${primaryCapabilityLabel(primary)} models`}
-              aria-expanded={open}
-              aria-controls={alternativesId}
-              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs whitespace-nowrap outline-none focus-visible:ring-[3px]"
+        </TableCell>
+        <TableCell className="py-1">
+          <div className="flex items-center justify-end gap-2">
+            {alternatives.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`${alternatives.length} more ${primaryCapabilityLabel(primary)} models`}
+                aria-expanded={open}
+                aria-controls={alternativesId}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setExpanded((value) => !value);
+                }}
+              >
+                {alternatives.length} more
+                <ChevronDown
+                  aria-hidden="true"
+                  className={cn("size-4 transition", open && "rotate-180")}
+                />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={(event) => {
                 event.stopPropagation();
-                setExpanded((value) => !value);
+                onDetail(primary);
               }}
             >
-              {alternatives.length} more
-              <ChevronDown
-                aria-hidden="true"
-                className={cn("size-3 transition", open && "rotate-180")}
-              />
-            </button>
-          )}
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="col-start-3 row-start-1 xl:col-start-auto xl:row-start-auto"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDetail(primary);
-          }}
-        >
-          <span className="sr-only">Details</span>
-          <ChevronRight aria-hidden="true" />
-        </Button>
-      </article>
+              <span className="sr-only">Details</span>
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </TableBody>
       {open && alternatives.length > 0 && (
-        <div id={alternativesId} className="bg-muted/20 divide-y border-t">
+        <TableBody id={alternativesId} className="bg-muted/20">
           {alternatives.map((row) => (
             <AliasOptionRow key={row.id} row={row} onDetail={onDetail} />
           ))}
-        </div>
+        </TableBody>
       )}
-    </section>
+    </>
   );
 }
 
@@ -688,13 +684,13 @@ function LoadingCatalog() {
   return (
     <div aria-label="Loading models" aria-busy="true" role="status">
       <div className="mb-6 flex flex-wrap gap-3">
-        <Skeleton className="h-11 w-56" />
-        <Skeleton className="h-11 w-28" />
-        <Skeleton className="h-11 w-28" />
+        <Skeleton className="h-8 max-sm:h-11 w-56" />
+        <Skeleton className="h-8 max-sm:h-11 w-28" />
+        <Skeleton className="h-8 max-sm:h-11 w-28" />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="space-y-px overflow-hidden rounded-panel border">
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-64 rounded-xl" />
+          <Skeleton key={index} className="h-(--row-2) max-sm:h-(--row-phone-2) rounded-none" />
         ))}
       </div>
     </div>
@@ -703,8 +699,8 @@ function LoadingCatalog() {
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border p-3">
-      <div className="text-muted-foreground text-xs">{label}</div>
+    <div className="rounded-panel border p-3">
+      <div className="text-muted-foreground text-meta">{label}</div>
       <div className="mt-1 font-medium break-words">{value}</div>
     </div>
   );
@@ -735,7 +731,7 @@ function DetailSheet({
               <SheetDescription>{descriptionFor(row)}</SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
-              <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="grid gap-3 text-meta sm:grid-cols-2">
                 <Fact
                   label={row.alias ? "Model name" : "Exact model"}
                   value={row.id}
@@ -772,7 +768,7 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Availability</h3>
-                <div className="mt-3 space-y-3 rounded-lg border p-3">
+                <div className="mt-3 space-y-3 rounded-panel border p-3">
                   <Availability row={row} />
                   <AvailabilityFacts row={row} />
                   {action && (
@@ -793,13 +789,13 @@ function DetailSheet({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-muted-foreground mt-2 text-sm">{row.id}</p>
+                  <p className="text-muted-foreground mt-2 text-meta">{row.id}</p>
                 )}
               </div>
               <div>
                 <h3 className="font-medium">Inputs and outputs</h3>
                 {(row.io.input.length > 0 || row.io.output.length > 0) && (
-                  <dl className="text-muted-foreground mt-2 space-y-1 text-sm">
+                  <dl className="text-muted-foreground mt-2 space-y-1 text-meta">
                     {row.io.input.length > 0 && (
                       <div>
                         <dt className="inline">Inputs: </dt>
@@ -826,11 +822,11 @@ function DetailSheet({
               <div>
                 <h3 className="font-medium">Recent receipts</h3>
                 {row.recent_receipts.length ? (
-                  <ul className="mt-3 space-y-2 text-sm">
+                  <ul className="mt-3 space-y-2 text-meta">
                     {row.recent_receipts.slice(0, 5).map((receipt, index) => (
                       <li
                         key={readString(receipt.request_id) ?? index}
-                        className="rounded-lg border p-3"
+                        className="rounded-panel border p-3"
                       >
                         {[
                           readString(receipt.status)?.toLowerCase() ===
@@ -845,7 +841,7 @@ function DetailSheet({
                           .join(" · ")}
                         {readString(receipt.request_id) && (
                           <a
-                            className="mt-2 block min-h-11 content-center underline underline-offset-4"
+                            className="mt-2 block min-h-8 max-sm:min-h-11 content-center underline underline-offset-4"
                             href={`/r/${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
                             View receipt
@@ -855,7 +851,7 @@ function DetailSheet({
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-muted-foreground mt-2 text-sm">
+                  <p className="text-muted-foreground mt-2 text-meta">
                     No recent receipts were reported for this model.
                   </p>
                 )}
@@ -950,7 +946,7 @@ export default function ModelsClient() {
     .filter((group) => group.rows.length > 0);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-(--space-section)">
       <PageHeader title="Models" answer="Pick a model name." />
       {catalogPending ? (
         <LoadingCatalog />
@@ -975,13 +971,14 @@ export default function ModelsClient() {
         <>
           <section aria-label="Model filters" className="space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <label className="relative min-w-0 flex-1">
+              <label className="relative min-w-0 flex-1 sm:max-w-80">
                 <span className="sr-only">Search models</span>
                 <Search
                   aria-hidden="true"
                   className="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2"
                 />
                 <Input
+                  size="sm"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={`Search ${preferredTerms.requestSelector.toLowerCase()}s or providers`}
@@ -991,7 +988,7 @@ export default function ModelsClient() {
             </div>
             <div className="flex flex-wrap items-center gap-2 pb-1">
               <FilterToggle
-                className="px-3 text-xs [&>svg]:hidden"
+                className="px-3 text-meta [&>svg]:hidden"
                 pressed={capability === "all"}
                 onClick={() => setCapability("all")}
               >
@@ -1000,7 +997,7 @@ export default function ModelsClient() {
               {availableCapabilities.map((cap) => (
                 <FilterToggle
                   key={cap}
-                  className="px-3 text-xs [&>svg]:hidden"
+                  className="px-3 text-meta [&>svg]:hidden"
                   pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
@@ -1021,7 +1018,7 @@ export default function ModelsClient() {
                   type="button"
                   aria-pressed={showNoProviderCharge}
                   onClick={() => setShowNoProviderCharge((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
                 >
                   No provider charge
                 </button>
@@ -1029,7 +1026,7 @@ export default function ModelsClient() {
                   type="button"
                   aria-pressed={showPaid}
                   onClick={() => setShowPaid((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
                 >
                   Paid
                 </button>
@@ -1037,7 +1034,7 @@ export default function ModelsClient() {
                   type="button"
                   aria-pressed={showUnknownCost}
                   onClick={() => setShowUnknownCost((value) => !value)}
-                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground h-8 max-sm:min-h-11 rounded-control px-3 text-meta underline-offset-4 transition outline-none focus-visible:ring-2 aria-pressed:underline"
                 >
                   Cost not recorded
                 </button>
@@ -1081,22 +1078,35 @@ export default function ModelsClient() {
           ) : (
             <div
               aria-label="Available model aliases"
-              className="bg-card overflow-hidden rounded-lg border"
+              className="bg-card overflow-hidden rounded-panel border"
             >
-              {groupedAliases.map((group) => (
-                <CapabilityRow
-                  key={group.capability}
-                  rows={group.rows}
-                  onDetail={selectDetail}
-                  searching={Boolean(query.trim())}
-                />
-              ))}
+              <Table aria-label="Available model aliases">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Capability</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead>Model facts</TableHead>
+                    <TableHead>Model name</TableHead>
+                    <TableHead numeric>Cost</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Use</TableHead>
+                  </TableRow>
+                </TableHeader>
+                {groupedAliases.map((group) => (
+                  <CapabilityRow
+                    key={group.capability}
+                    rows={group.rows}
+                    onDetail={selectDetail}
+                    searching={Boolean(query.trim())}
+                  />
+                ))}
+              </Table>
             </div>
           )}
           <section className="space-y-3">
             <button
               type="button"
-              className="hover:bg-muted/70 focus-visible:ring-ring flex w-full items-center justify-between rounded-lg border px-4 py-3 text-left transition outline-none focus-visible:ring-[3px]"
+              className="hover:bg-muted/70 focus-visible:ring-ring flex w-full items-center justify-between rounded-panel border px-4 h-8 max-sm:min-h-11 text-left transition outline-none focus-visible:ring-2"
               onClick={() => setTableOpen((value) => !value)}
               aria-expanded={tableOpen}
             >
@@ -1109,14 +1119,14 @@ export default function ModelsClient() {
               />
             </button>
             {tableOpen && (
-              <div className="overflow-x-auto rounded-lg border">
-                <Table>
+              <div className="overflow-x-auto rounded-panel border">
+                <Table aria-label="All models">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Model</TableHead>
                       <TableHead>Capability</TableHead>
                       <TableHead>Engine or provider</TableHead>
-                      <TableHead>Cost</TableHead>
+                      <TableHead numeric>Cost</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Use</TableHead>
                     </TableRow>
@@ -1125,25 +1135,30 @@ export default function ModelsClient() {
                     {modelRows.map((row) => (
                       <TableRow
                         key={row.id}
-                        className="cursor-pointer"
+                        className={cn(
+                          "cursor-pointer max-sm:h-(--row-phone-1)",
+                          (row.tags?.length || (row.architecture?.input_modalities?.length && row.architecture?.output_modalities?.length))
+                            ? "h-(--row-2) max-sm:h-(--row-phone-2)"
+                            : "h-(--row-1)",
+                        )}
                         onClick={() => selectDetail(row)}
                       >
-                        <TableCell className="font-medium">
-                          {titleFor(row) && (
-                            <span className="mb-1 block">{titleFor(row)}</span>
-                          )}
-                          <CopyModelName row={row} />
+                        <TableCell className="text-body py-1 font-medium">
+                          <div className="flex items-center gap-3">
+                            {titleFor(row) && <span>{titleFor(row)}</span>}
+                            <CopyModelName row={row} />
+                          </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-1">
                           {primaryCapabilityLabel(row)}
                           <ModelFacts row={row} className="mt-1" />
                         </TableCell>
-                        <TableCell>{summaryEngineLabel(row)}</TableCell>
-                        <TableCell>{costLabel(row)}</TableCell>
-                        <TableCell>
+                        <TableCell className="py-1">{summaryEngineLabel(row)}</TableCell>
+                        <TableCell numeric className="py-1">{costLabel(row)}</TableCell>
+                        <TableCell className="py-1">
                           <Availability row={row} showReason={false} />
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="py-1">
                           <Button
                             variant="outline"
                             size="sm"
