@@ -136,11 +136,14 @@ const shots = {
     as: seed.owner_email,
     go: "/ui/settings/",
     act: async (page) => {
-      await page.locator("#prompts").scrollIntoViewIfNeeded();
+      // The Prompts heading just under the header, with Defaults above it.
       await page
         .locator("#prompts")
         .evaluate((el) =>
-          el.closest("section")?.scrollIntoView({ block: "start" }),
+          window.scrollTo(
+            0,
+            el.getBoundingClientRect().top + window.scrollY - 120,
+          ),
         );
     },
   },
