@@ -197,7 +197,7 @@ test.describe("Library: the prompt is the maker's alone", () => {
     await ctx.close();
   });
 
-  test("the maker of an unkept prompt reads Prompt not saved", async ({
+  test("the maker of an unkept prompt reads No saved prompt", async ({
     browser,
     baseURL,
   }) => {
@@ -206,7 +206,7 @@ test.describe("Library: the prompt is the maker's alone", () => {
       .asset;
     expect(item.prompt).toBeNull();
     const dialog = await openViewer(page, robinsForgotten().asset_id);
-    await expect(dialog.getByText("Prompt not saved")).toBeVisible();
+    await expect(dialog.getByText("No saved prompt")).toBeVisible();
     await expect(
       dialog.getByRole("button", { name: "Copy prompt" }),
     ).toHaveCount(0);
@@ -291,10 +291,9 @@ test.describe("Try: Don't keep this prompt", () => {
     const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
     await expect(toggle).not.toBeChecked();
     await expect(
-      page.getByText(
-        "Azizam tries to save the prompt with the audio. Only you can see saved prompts.",
-      ),
+      page.getByText("Azizam tries to keep the prompt with the audio."),
     ).toBeVisible();
+    await expect(page.getByText("Only you can see kept prompts.")).toBeVisible();
 
     const kept = `The paper boat is on the puddle ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(kept);
@@ -309,11 +308,11 @@ test.describe("Try: Don't keep this prompt", () => {
     ).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByText("Prompt not saved")).toHaveCount(0);
+    await expect(page.getByText("Prompt not kept")).toHaveCount(0);
 
     await toggle.click();
     await expect(
-      page.getByText("Not kept. The audio still goes to Library."),
+      page.getByText("The audio still goes to Library."),
     ).toBeVisible();
     const forgotten = `A lantern glows in the fog ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(forgotten);
@@ -325,7 +324,7 @@ test.describe("Try: Don't keep this prompt", () => {
     expect((await forgetSubmit).postDataJSON().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    await expect(page.getByText("Prompt not saved")).toBeVisible({
+    await expect(page.getByText("Prompt not kept")).toBeVisible({
       timeout: 60_000,
     });
 
@@ -349,7 +348,7 @@ test.describe("Try: Don't keep this prompt", () => {
     );
     expect(newest.prompt).toBeNull();
     const dialog = await openViewer(page, newest.asset_id);
-    await expect(dialog.getByText("Prompt not saved")).toBeVisible();
+    await expect(dialog.getByText("No saved prompt")).toBeVisible();
     await ctx.close();
 
     // The owner sees Robin's clips without their words.
@@ -579,11 +578,11 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
   expect((await submitted).postDataJSON().extensions).toEqual({
     "com.azizam.prompts": { mode: "forget" },
   });
-  await expect(page.getByText("Prompt not saved")).toBeVisible({
+  await expect(page.getByText("Prompt not kept")).toBeVisible({
     timeout: 60_000,
   });
   await expect(
-    page.getByText("Not kept. The audio still goes to Library."),
+    page.getByText("The audio still goes to Library."),
   ).toBeVisible();
   const media = await (
     await page.request.get("/me/api/media?scope=me&limit=50")
