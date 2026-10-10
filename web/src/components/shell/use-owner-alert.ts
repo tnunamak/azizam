@@ -55,7 +55,7 @@ export function useOwnerAlertTarget(
     enabled,
   });
   const { data, isError } = useQuery({
-    queryKey: ["foundation", "health"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     enabled,
     refetchInterval: 30_000,

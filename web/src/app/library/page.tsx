@@ -89,7 +89,7 @@ import {
 import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
-import { api } from "@/lib/api";
+import { api, queryKeys } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import {
   promptMemoryKey,
@@ -1062,7 +1062,7 @@ type PersonLookup = (asset: MediaAsset) => string | null;
 
 function usePeople(enabled: boolean, sources: MediaSource[]) {
   const { data: users } = useQuery({
-    queryKey: ["library", "people"],
+    queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled,
     retry: false,
@@ -1909,14 +1909,6 @@ export default function LibraryPage() {
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
-  // The viewer's own payload: in-progress work, their id and their apps.
-  const { data: home } = useQuery({
-    queryKey: ["account", "home"],
-    queryFn: productApi.home,
-    retry: false,
-    refetchInterval: (query) =>
-      inProgressMedia(query.state.data?.receipts).length > 0 ? 15_000 : false,
-  });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const removedAssetIds = useRef(new Set<string>());
   const deletingAssetId = useRef<string | null>(null);
@@ -1938,6 +1930,25 @@ export default function LibraryPage() {
   );
   const instanceView = canChooseOwner && owner !== "mine";
   const debouncedSearch = useDebouncedValue(search, 250);
+  // The payload also supplies identity/apps, so keep its initial read. Only
+  // poll rapidly when running work can actually appear under these filters.
+  const showRunningMedia =
+    ["default", "everyone", "mine"].includes(owner) &&
+    model === "all" &&
+    source === "all" &&
+    !debouncedSearch.trim();
+  const { data: home } = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: productApi.home,
+    retry: false,
+    refetchInterval: (query) =>
+      showRunningMedia &&
+      inProgressMedia(query.state.data?.receipts).some(
+        (item) => kind === "all" || item.kind === kind,
+      )
+        ? 15_000
+        : false,
+  });
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
@@ -2107,13 +2118,10 @@ export default function LibraryPage() {
   );
   const inProgress = useMemo(
     () =>
-      ["default", "everyone", "mine"].includes(owner) &&
-      model === "all" &&
-      source === "all" &&
-      !debouncedSearch.trim()
+      showRunningMedia
         ? runningMedia.filter((item) => kind === "all" || item.kind === kind)
         : [],
-    [debouncedSearch, kind, model, owner, runningMedia, source],
+    [showRunningMedia, kind, runningMedia],
   );
   // When running work finishes, its creation is now in the list.
   const runningCount = useRef(runningMedia.length);
@@ -2123,7 +2131,7 @@ export default function LibraryPage() {
   }, [refetch, runningMedia.length]);
   // Owners can see how long the gateway keeps pictures (images.cache_ttl).
   const { data: gatewayStatus } = useQuery({
-    queryKey: ["foundation", "health"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     enabled: canChooseOwner,
     retry: false,
