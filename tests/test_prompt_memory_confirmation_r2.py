@@ -69,7 +69,8 @@ def test_queued_outer_forget_reaches_execution_and_never_hits_disk(household, in
     ("sfx.generate", "tangoflux"),
     ("video.generate", "ltx-2.3"),
 ])
-def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, monkeypatch, intent, model):
+@pytest.mark.parametrize("outcome", ["completed", "backend-failure"])
+def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, monkeypatch, intent, model, outcome):
     from tests.test_prompt_memory_identity import _png
     hh = household
     receipt_path = hh.root / "receipts.db"
@@ -90,6 +91,20 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
     assert "queued route private sentinel" not in json.dumps(job)
     payload = proxy._load_image_media_job_payload(job_id)
     assert payload["body"]["extensions"] == FORGET
+    if outcome == "backend-failure":
+        from fastapi.responses import JSONResponse
+        async def fail(*args, **kwargs):
+            return JSONResponse({"error": {"message": body["prompt"]}}, status_code=400)
+        monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda *_: hh.auth)
+        for name in ("proxy_comfy_request", "proxy_audio_generate", "proxy_comfy_video_create"):
+            monkeypatch.setattr(proxy, name, fail)
+        kind = "image" if intent == "image.generate" else "video" if intent == "video.generate" else "audio"
+        asyncio.run(getattr(proxy, f"_run_{kind}_media_job")(job_id))
+        job = media_jobs.get(job_id, audience="internal", path=hh.jobs)
+        assert job["status"] == media_jobs.STATUS_FAILED
+        assert body["prompt"] not in json.dumps(job)
+        assert b"queued route private sentinel" not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
+        return
     context = proxy._begin_media_delivery(hh.auth)
     try:
         assert proxy._note_media_metadata_body(payload["body"]) is None
