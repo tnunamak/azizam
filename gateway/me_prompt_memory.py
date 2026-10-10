@@ -31,6 +31,7 @@ def create_me_prompt_memory_router(
     admin_db_path: Path = admin_store.DB_PATH,
     prompt_memory_path: Path | None = None,
     on_person_prompt_purge: PersonPromptPurger | None = None,
+    on_person_memory_off: Callable[[str, int], Any] | None = None,
     purge_status_provider: PurgeStatusProvider | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api", tags=["me"])
@@ -103,7 +104,7 @@ def create_me_prompt_memory_router(
         from gateway import prompt_memory
 
         person_id = str(session.subject)
-        await asyncio.to_thread(
+        changed = await asyncio.to_thread(
             admin_store.put_prompt_memory_preference,
             person_id,
             remember=remember,
@@ -123,14 +124,20 @@ def create_me_prompt_memory_router(
         except Exception:
             purge_failed = True
         if not remember:
+            cutoff = int(changed["updated_at"])
             kwargs = {"path": prompt_memory_path} if prompt_memory_path is not None else {}
             try:
-                await asyncio.to_thread(prompt_memory.delete_person, person_id, **kwargs)
+                await asyncio.to_thread(prompt_memory.mark_person_erasure, person_id,
+                                        admin_path=admin_db_path, now=cutoff)
+                await asyncio.to_thread(prompt_memory.prune_person_before, person_id, cutoff, **kwargs)
             except Exception:
                 purge_failed = True
-            if on_person_prompt_purge is not None:
+            if on_person_memory_off is not None or on_person_prompt_purge is not None:
                 try:
-                    result = await asyncio.to_thread(on_person_prompt_purge, person_id)
+                    if on_person_memory_off is not None:
+                        result = await asyncio.to_thread(on_person_memory_off, person_id, cutoff)
+                    else:
+                        result = await asyncio.to_thread(on_person_prompt_purge, person_id)
                     if isinstance(result, Mapping):
                         purge_info.update(result)
                 except Exception:

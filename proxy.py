@@ -14287,6 +14287,7 @@ app.include_router(
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         household_provider=lambda: prompt_memory_settings(ADMIN_DB_PATH),
         on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
+        on_person_memory_off=lambda person_id, cutoff: _purge_person_prompt_memory(person_id, cutoff=cutoff),
         purge_status_provider=lambda person_id: _prompt_purge_status(person_id),
         admin_db_path=ADMIN_STORE.path,
         prompt_memory_path=media_jobs.DB_PATH,
@@ -20026,6 +20027,7 @@ def _prompt_migration_state_path() -> Path:
 
 
 _PROMPT_PURGE_COLUMNS = {
+    "payloads_pending": "INTEGER NOT NULL DEFAULT 1",
     "generation": "INTEGER NOT NULL DEFAULT 1",
     "queued_at": "INTEGER",
     "attempts": "INTEGER NOT NULL DEFAULT 0",
@@ -20065,7 +20067,7 @@ def _queue_prompt_purge(person_id: str, cutoff: int) -> None:
         conn.execute(
             "INSERT INTO prompt_purge_queue(person_id, generation, queued_at, cutoff) VALUES (?, 1, ?, ?) "
             "ON CONFLICT(person_id) DO UPDATE SET generation=generation+1, "
-            "cutoff=MAX(cutoff, excluded.cutoff)",
+            "cutoff=MAX(cutoff, excluded.cutoff), payloads_pending=1",
             (person_id, int(time.time()), int(cutoff)),
         )
 
@@ -20120,6 +20122,14 @@ def _prompt_purge_status(person_id: str) -> dict[str, Any]:
                 "FROM prompt_purge_queue WHERE person_id IN (?, '*')", (person_id,),
             ).fetchall()
     if not rows:
+        if person_id == "*":
+            cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or 0
+        else:
+            with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
+                cutoff = policy["forgot_before"]
+        if cutoff > _prompt_purge_covered(person_id):
+            return {"pending": True, "retry_scheduled": True,
+                    "metadata_stripping": {"status": "retrying", "last_error": "cleanup_not_queued"}}
         return {"pending": False, "metadata_stripping": {"status": "complete"}}
     attempts = max(row[1] for row in rows)
     counts = [row[3] for row in rows if row[3] is not None]
@@ -20196,13 +20206,13 @@ def _wake_prompt_purge_drain() -> None:
         pass  # The loop closed; the next start drains the durable queue.
 
 
-def _purge_person_prompt_memory(person_id: str) -> dict[str, Any]:
+def _purge_person_prompt_memory(person_id: str, *, cutoff: int | None = None) -> dict[str, Any]:
     """Erase a person's saved prompts and chats now; queue their cached files.
 
     Stripping files can wait behind the migration's scan lock, so it runs in
     the background and stays visible through ``_prompt_purge_status``.
     """
-    cutoff = prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path)
+    cutoff = prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path, now=cutoff)
     _erase_person_prompts_before(person_id, cutoff)
     _wake_prompt_purge_drain()
     return _prompt_purge_status(person_id)
@@ -20211,18 +20221,30 @@ def _purge_person_prompt_memory(person_id: str) -> dict[str, Any]:
 def _erase_person_prompts_before(person_id: str, cutoff: int) -> None:
     prompt_memory.prune_person_before(person_id, cutoff)
     responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
-    _purge_prompt_payload_files(person_id, before=cutoff)
-    # Queue last: a queued cutoff means only cached files remain.
+    # Persist retry intent before spool cleanup, which can fail independently.
     _queue_prompt_purge(person_id, cutoff)
+    _purge_queued_payloads(person_id)
 
 
 def _purge_prompt_memory_on_kill() -> dict[str, Any]:
     prompt_memory.delete_all()
-    _purge_prompt_payload_files()
     responses_store.delete_all(path=responses_store.DB_PATH)
     _queue_prompt_purge("*", prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or int(time.time()))
+    _purge_queued_payloads("*")
     _wake_prompt_purge_drain()
     return _prompt_purge_status("*")
+
+
+def _purge_queued_payloads(person_id: str) -> None:
+    with _prompt_purge_queue() as conn:
+        row = conn.execute("SELECT generation, cutoff, payloads_pending FROM prompt_purge_queue WHERE person_id=?", (person_id,)).fetchone()
+    if row is None or not row[2]:
+        return
+    generation, cutoff, _ = row
+    _purge_prompt_payload_files(None if person_id == "*" else person_id, before=cutoff)
+    with _prompt_purge_queue() as conn:
+        conn.execute("UPDATE prompt_purge_queue SET payloads_pending=0 WHERE person_id=? AND generation=?",
+                     (person_id, generation))
 
 
 def _strip_queued_prompt_files(person_id: str) -> None:
@@ -20232,6 +20254,7 @@ def _strip_queued_prompt_files(person_id: str) -> None:
         return
     generation, cutoff = row
     try:
+        _purge_queued_payloads(person_id)
         result = prompt_metadata_migration.strip_cached_assets(
             IMAGE_CACHE_DIR, _prompt_migration_state_path(),
             asset_ids=None if person_id == "*" else _person_cached_asset_ids(person_id),
@@ -20271,8 +20294,8 @@ def _maintain_household_prompt_memory() -> None:
         # Settings are retry intent if the request's cleanup failed. Spools
         # and files are queued once per switch-on, not on every pass.
         if cutoff > _prompt_purge_covered("*"):
-            _purge_prompt_payload_files(before=cutoff)
             _queue_prompt_purge("*", cutoff)
+            _purge_queued_payloads("*")
     else:
         prompt_memory.tighten_retention(household["retention_cap"])
 

@@ -2477,10 +2477,13 @@ def put_prompt_memory_preference(
             "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
             (user_id, 1 if remember else 0, retention, ts, updated_by),
         )
+        row = conn.execute("SELECT * FROM prompt_memory_preferences WHERE user_id=?", (user_id,)).fetchone()
         conn.commit()
-    record = get_prompt_memory_preference(user_id, path=path)
+    # Return this write's timestamp even if a later request changes the setting.
+    record = _row_to_dict(row)
     if record is None:
         raise RuntimeError("prompt memory preference write failed")
+    record["remember"] = bool(record["remember"])
     return record
 
 

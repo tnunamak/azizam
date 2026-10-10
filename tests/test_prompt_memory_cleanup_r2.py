@@ -250,7 +250,7 @@ def test_maintenance_loop_drains_queue_soon_after_erasure(hh, monkeypatch):
     assert asyncio.run(scenario())
 
 
-def _me_client(hh):
+def _me_client(hh, *, off_callback=None):
     app = FastAPI()
     app.include_router(create_me_prompt_memory_router(
         session_provider=lambda _request: AdminSession(
@@ -260,6 +260,7 @@ def _me_client(hh):
         admin_db_path=hh.admin,
         prompt_memory_path=hh.jobs,
         on_person_prompt_purge=proxy._purge_person_prompt_memory,
+        on_person_memory_off=off_callback or (lambda person, cutoff: proxy._purge_person_prompt_memory(person, cutoff=cutoff)),
         purge_status_provider=proxy._prompt_purge_status,
     ))
     return TestClient(app)
@@ -410,3 +411,62 @@ def test_owner_can_poll_queued_household_cleanup(hh):
     assert response.json()["prompt_purge"]["metadata_stripping"]["status"] == "queued"
     proxy._drain_prompt_purges()
     assert "prompt_purge" not in client.get("/admin/api/settings/prompt-memory").json()
+
+
+def test_spool_failure_keeps_get_pending_and_retries_after_reenable(hh, monkeypatch):
+    person = hh.robin["id"]
+    path = _legacy_file(hh)
+    spool = _spool(hh, "mj_retry", int(time.time()) - 10)
+    real_purge = proxy._purge_prompt_payload_files
+    def fail(*_args, **_kwargs):
+        raise OSError("fixture spool failure")
+    monkeypatch.setattr(proxy, "_purge_prompt_payload_files", fail)
+    client = _me_client(hh)
+    response = client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"})
+    assert response.status_code == 202
+    assert client.get("/me/api/prompt-memory").json()["prompt_purge"]["pending"] is True
+    assert SENTINEL.encode() in path.read_bytes()
+    proxy._drain_prompt_purges()
+    assert proxy._prompt_purge_status(person)["metadata_stripping"]["status"] == "retrying"
+    # The setting can change while the durable queue still needs spool cleanup.
+    prompt_memory.put_member(person, remember=True, retention="never", path=hh.admin)
+    monkeypatch.setattr(proxy, "_purge_prompt_payload_files", real_purge)
+    proxy._maintain_prompt_memory()
+    assert not spool.exists()
+    assert SENTINEL.encode() not in path.read_bytes()
+    assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
+
+
+def test_get_reports_unqueued_erasure_intent(hh, monkeypatch):
+    person = hh.robin["id"]
+    _legacy_file(hh)
+    real_prune = prompt_memory.prune_person_before
+    monkeypatch.setattr(prompt_memory, "prune_person_before", lambda *_a, **_k: (_ for _ in ()).throw(OSError("fixture DB failure")))
+    client = _me_client(hh)
+    assert client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"}).status_code == 202
+    status = client.get("/me/api/prompt-memory").json()["prompt_purge"]
+    assert status["pending"] is True
+    assert status["metadata_stripping"]["last_error"] == "cleanup_not_queued"
+    monkeypatch.setattr(prompt_memory, "prune_person_before", real_prune)
+    proxy._maintain_prompt_memory()
+    assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
+
+
+def test_delayed_off_callback_preserves_new_prompt_chat_and_spool(hh, monkeypatch):
+    person = hh.robin["id"]
+    switched_off = int(time.time()) - 20
+    monkeypatch.setattr(admin_store, "_now", lambda: switched_off)
+    def delayed_off(person_id, cutoff):
+        assert cutoff == switched_off
+        admin_store.put_prompt_memory_preference(person, remember=True, retention="never", now=switched_off + 10, path=hh.admin)
+        assert prompt_memory.put("img_" + "d" * 64, person, "fresh prompt", kept_until=None,
+                                 created_at=switched_off + 10, admin_path=hh.admin)
+        _save_response(hh, "resp_fresh", switched_off + 10)
+        _spool(hh, "mj_fresh", switched_off + 10)
+        return proxy._purge_person_prompt_memory(person_id, cutoff=cutoff)
+    client = _me_client(hh, off_callback=delayed_off)
+    response = client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"})
+    assert response.status_code == 202
+    assert prompt_memory.get("img_" + "d" * 64, person)["prompt_text"] == "fresh prompt"
+    assert proxy.responses_store.get("resp_fresh", path=proxy.responses_store.DB_PATH) is not None
+    assert proxy._image_media_job_payload_path("mj_fresh").exists()
