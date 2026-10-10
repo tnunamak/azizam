@@ -68,7 +68,7 @@ export function HouseholdPromptsSection() {
             ? failure.message
             : "The setting wasn’t saved. Try again.",
       );
-      if (failure instanceof ApiError && failure.status === 409) void refetch();
+      void refetch();
     },
   });
 
@@ -137,7 +137,7 @@ export function HouseholdPromptsSection() {
           description={
             pending?.kind === "cap"
               ? `Everyone’s prompts older than ${capLabel[pending.value].toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
-              : "Nothing new will be kept. Deletion of everyone’s saved prompts may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library."
+              : "Nothing new will be kept. Deletion of everyone’s saved prompts may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library. Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies."
           }
           confirmLabel={
             pending?.kind === "cap"

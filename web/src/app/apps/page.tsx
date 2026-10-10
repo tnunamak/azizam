@@ -306,6 +306,14 @@ function AppsContents() {
           </Button>
         }
       />
+      {apps.some((app) =>
+        app.credentials.some((credential) => credential.created_by === null),
+      ) ? (
+        <p className="text-muted-foreground text-meta">
+          Older keys with no recorded creator keep working, but no longer save
+          media prompts. Create a new key to use your prompt settings.
+        </p>
+      ) : null}
       {accountPending ? (
         <div
           role="status"

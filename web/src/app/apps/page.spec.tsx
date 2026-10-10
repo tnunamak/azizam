@@ -65,12 +65,19 @@ function renderApps() {
 }
 
 it("shows one prompt memory notice for legacy keys without a creator", async () => {
-  const oldKey = { id: "old-key", created_by: null, last_used_at: null } as Credential;
-  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [
-    { ...app, credentials: [oldKey, { ...oldKey, id: "second-key" }] },
-  ] });
+  const oldKey = {
+    id: "old-key",
+    created_by: null,
+    last_used_at: null,
+  } as Credential;
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [oldKey, { ...oldKey, id: "second-key" }] }],
+  });
   renderApps();
-  expect(await screen.findAllByText(/Older keys with no recorded creator/)).toHaveLength(1);
+  expect(
+    await screen.findAllByText(/Older keys with no recorded creator/),
+  ).toHaveLength(1);
 });
 
 it("refreshes a partially created app, clears the cancelled draft, and resumes key creation", async () => {
