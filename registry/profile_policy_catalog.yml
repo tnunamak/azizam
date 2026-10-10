@@ -44,7 +44,7 @@ intents:
     label: Turn text into numbers
     summary_label: embeddings
     description: embeddings and reranking for search, memory, indexes
-    aliases: [embeddings]
+    aliases: [embeddings, embedding]
   - id: image.generate
     label: Make a picture
     summary_label: image generation
@@ -64,7 +64,7 @@ intents:
     label: Turn a recording into text
     summary_label: speech transcription
     description: transcription input
-    aliases: [audio.transcriptions]
+    aliases: [audio.transcriptions, audio.transcribe]
   - id: speech.translation
     label: Translate a recording into English text
     summary_label: speech translation

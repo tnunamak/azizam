@@ -26,6 +26,7 @@ from gateway.admin_catalog import (
     profile_policy_catalog,
     profile_policy_label_map,
 )
+from gateway.plan_vocabulary import canonical_intent
 from gateway.gateway_shell import (
     SHELL_CSS,
     esc as _esc,
@@ -814,15 +815,8 @@ def _profile_access_summary(record: Mapping[str, Any] | None) -> str:
     if intents or trust or resources or exposure or tags:
         labels: list[str] = []
         intent_labels = profile_policy_label_map("intents")
-        intent_labels.update({
-            "chat.completions": "chat",
-            "embedding": "embeddings",
-            "embeddings": "embeddings",
-            "audio.transcribe": "audio transcription",
-            "audio.speech": "text to speech",
-        })
         for intent in intents:
-            labels.append(intent_labels.get(intent, intent))
+            labels.append(intent_labels.get(canonical_intent(intent), intent))
         if not labels and tags:
             labels.extend(tags)
         if not labels:
