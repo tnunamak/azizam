@@ -172,6 +172,20 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject_kind, subject_id);
 CREATE INDEX IF NOT EXISTS credentials_app ON credentials(app_id);
 CREATE INDEX IF NOT EXISTS credentials_active ON credentials(revoked_at);
+-- A session App never holds a credential, whoever asks: a key on it would let
+-- a key holder act as that person's signed-in work.
+CREATE TRIGGER IF NOT EXISTS credentials_never_on_session_apps
+BEFORE INSERT ON credentials
+WHEN EXISTS (SELECT 1 FROM session_apps WHERE app_id = COALESCE(NEW.app_id, NEW.subject_id))
+BEGIN
+  SELECT RAISE(ABORT, 'session Apps never hold credentials');
+END;
+CREATE TRIGGER IF NOT EXISTS credentials_never_move_to_session_apps
+BEFORE UPDATE OF app_id, subject_id ON credentials
+WHEN EXISTS (SELECT 1 FROM session_apps WHERE app_id = COALESCE(NEW.app_id, NEW.subject_id))
+BEGIN
+  SELECT RAISE(ABORT, 'session Apps never hold credentials');
+END;
 
 CREATE TABLE IF NOT EXISTS admin_role_assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -301,6 +315,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
     if "created_by" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
+    # Keys made on a session App before the trigger existed stop working.
+    conn.execute(
+        "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
+        "AND COALESCE(app_id, subject_id) IN (SELECT app_id FROM session_apps)",
+        (_now(),),
+    )
     _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
@@ -1464,6 +1484,10 @@ def create_credential_hash(
         json.dumps(sorted({s for s in scopes if s})) if scopes else None
     )
     with _conn(path) as conn:
+        if subject_kind in _DATA_PLANE_SUBJECTS and conn.execute(
+            "SELECT 1 FROM session_apps WHERE app_id = ?", (app_id,)
+        ).fetchone():
+            raise ValueError("this App is a person's signed-in App and cannot hold API keys")
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
             "profile_id, hash, prefix, display_name, scopes_json, "

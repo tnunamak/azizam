@@ -172,6 +172,62 @@ class SessionAppStoreTests(unittest.TestCase):
             user_runtime.mint_user_app_key(session, app["id"], path=self.admin)
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
 
+    def _legacy_session_app_key(self, app_id: str, key_hash: str) -> str:
+        """Write a key the way a gateway without the session-App guard could."""
+        import sqlite3
+
+        conn = sqlite3.connect(self.admin)
+        try:
+            conn.execute("DROP TRIGGER IF EXISTS credentials_never_on_session_apps")
+            conn.execute(
+                "INSERT INTO credentials(id, subject_kind, subject_id, app_id, hash, prefix, created_at) "
+                "VALUES ('cred_legacy', 'app', ?, ?, ?, 'opk_legacy', 1)", (app_id, app_id, key_hash),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return "cred_legacy"
+
+    def test_no_one_can_create_a_key_for_a_session_app(self) -> None:
+        from gateway.admin_api import AdminContext
+        from gateway.admin_runtime import AdminSQLiteStore
+
+        app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
+        with self.assertRaises(ValueError):
+            admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
+                                               hash="h" * 64, prefix="opk_x", path=self.admin)
+        for actor in ("admin", self.user["id"]):
+            with self.subTest(actor=actor), self.assertRaises(ValueError):
+                AdminSQLiteStore(self.admin).create_credential(
+                    app_id=app["id"], data={},
+                    actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"admin"})),
+                )
+        self.assertEqual(admin_store.list_credentials(path=self.admin), [])
+        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], path=self.admin)
+        admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
+                                           hash="o" * 64, prefix="opk_o", path=self.admin)
+
+    def test_a_session_app_key_never_authenticates(self) -> None:
+        from gateway.admin_runtime import runtime_identity_for_app_credential_hash
+
+        app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
+        self._legacy_session_app_key(app["id"], "s" * 64)
+        self.assertIsNone(runtime_identity_for_app_credential_hash("s" * 64, path=self.admin))
+
+    def test_startup_revokes_existing_session_app_keys(self) -> None:
+        app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
+        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], path=self.admin)
+        kept = admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
+                                                  hash="o" * 64, prefix="opk_o", path=self.admin)
+        legacy = self._legacy_session_app_key(app["id"], "s" * 64)
+        admin_store.init_db(self.admin)
+        credentials = {item["id"]: item for item in admin_store.list_credentials(path=self.admin)}
+        self.assertIsNotNone(credentials[legacy]["revoked_at"])
+        self.assertIsNone(credentials[kept["id"]]["revoked_at"])
+        with self.assertRaises(ValueError):
+            admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
+                                               hash="n" * 64, prefix="opk_n", path=self.admin)
+
 
 if __name__ == "__main__":
     unittest.main()
