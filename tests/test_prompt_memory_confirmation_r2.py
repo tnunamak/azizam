@@ -1,5 +1,6 @@
 """Privacy regressions from the independent Round 2 confirmation."""
 import json
+import asyncio
 import sqlite3
 from unittest.mock import patch
 
@@ -13,8 +14,35 @@ from tests.test_identity_api import BINDING, GOOD, PHOTO, TEMPLATE, FakeClient
 from tests.test_prompt_memory_final_cleanup import household
 from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
+from tests.test_identity_api import build
+from tests.test_settings_api import settings, OWNER
+from tests.test_video_workflow_execution import VideoWorkflowExecutionTests, _Request, _Form, _Upload
 
 FORGET = {prompt_memory.NAMESPACE: {"mode": "forget"}}
+
+
+@pytest.mark.parametrize("extensions", ["not json", "[]", "null", "42"])
+@pytest.mark.parametrize("route", [identity_api.IDENTITY_PATH, identity_api.LIKENESS_PATH])
+def test_identity_rejects_malformed_extensions_clearly(route, extensions):
+    client, _, _ = build([GOOD])
+    files = [("image", ("p.png", PHOTO, "image/png"))] if route == identity_api.IDENTITY_PATH else [
+        ("reference", ("p.png", PHOTO, "image/png")), ("candidate", ("c.png", GOOD, "image/png"))]
+    result = client.post(route, files=files, data={"prompt": "hello", "extensions": extensions})
+    assert result.status_code == 400, result.text
+    assert result.json()["error"]["param"] == "extensions"
+    assert "JSON object" in result.json()["error"]["message"]
+
+
+def test_video_edit_accepts_json_extensions_field(household):
+    class Form(_Form):
+        def keys(self):
+            return (*super().keys(), "extensions")
+        def get(self, name, default=None):
+            return json.dumps(FORGET) if name == "extensions" else super().get(name, default)
+    async def form(self):
+        return Form()
+    with patch.object(_Request, "form", form):
+        asyncio.run(VideoWorkflowExecutionTests("test_manifest_video_workflow_runs_against_fake_comfyui").test_manifest_video_workflow_runs_against_fake_comfyui())
 
 
 @pytest.mark.parametrize("intent,extract", [
@@ -84,6 +112,48 @@ def test_retention_trim_runs_after_admin_commit_without_its_write_lock(household
                         headers={"x-azizam-user-action": "1"})
     assert result.status_code == 200, result.text
     assert prompt_memory.get("img_during_trim", hh.robin["id"])
+
+
+def test_household_retention_trim_does_not_hold_admin_lock(settings, monkeypatch, tmp_path):
+    client, admin, _ = settings
+    monkeypatch.setattr(media_jobs, "DB_PATH", tmp_path / "jobs.db")
+    def trim(*args, **kwargs):
+        assert prompt_memory.household_settings(admin_path=admin)["retention_cap"] == "3_months"
+        with sqlite3.connect(admin, timeout=0) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(prompt_memory, "tighten_retention", trim)
+    before = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
+    result = client.put("/admin/api/settings/prompt-memory", json={**before["prompt_memory"], "retention_cap": "3_months"},
+                        headers={**OWNER, "if-match": before["revision"]})
+    assert result.status_code == 200, result.text
+
+
+def test_failed_admin_retention_write_cannot_trim_prompts(household, monkeypatch):
+    hh = household
+    client = _client(hh.admin, hh.jobs, user_id=hh.robin["id"])
+    def fail(*args, **kwargs):
+        callback = kwargs.get("validate_in_transaction")
+        if callback:
+            callback(None)
+        raise RuntimeError("setting commit failed")
+    monkeypatch.setattr(admin_store, "put_prompt_memory_preference", fail)
+    with patch.object(prompt_memory, "tighten_retention") as trim:
+        result = client.put("/me/api/prompt-memory", json={"remember": True, "retention": "3_months"},
+                            headers={"x-azizam-user-action": "1"})
+    assert result.status_code == 503
+    trim.assert_not_called()
+
+
+def test_trim_failure_reports_that_setting_was_saved(household, monkeypatch):
+    hh = household
+    client = _client(hh.admin, hh.jobs, user_id=hh.robin["id"])
+    monkeypatch.setattr(prompt_memory, "tighten_retention", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("busy")))
+    result = client.put("/me/api/prompt-memory", json={"remember": True, "retention": "3_months"},
+                        headers={"x-azizam-user-action": "1"})
+    assert result.status_code == 503
+    assert result.json()["error"]["code"] == "prompt_retention_pending"
+    assert "setting was saved" in result.json()["error"]["message"]
+    assert prompt_memory.get_member(hh.robin["id"], path=hh.admin)["retention"] == "3_months"
 
 
 def test_completed_household_erasure_is_not_replayed_every_maintenance(household):

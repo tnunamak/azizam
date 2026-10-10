@@ -254,6 +254,7 @@ describe("Settings: the household's prompt rules", () => {
     expect(dialog).toHaveTextContent(
       "Turning this off later can’t bring them back.",
     );
+    expect(dialog).toHaveTextContent("engine’s own history, external output folders, backups, or downloaded copies");
     await user.click(
       within(dialog).getByRole("button", { name: "Never keep prompts" }),
     );
