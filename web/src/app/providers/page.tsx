@@ -670,6 +670,7 @@ function sameModelSettings(a: ProviderModel, b: ProviderModel) {
 
 function DetailCard({
   provider,
+  featured = false,
   plans,
   busy,
   onAction,
@@ -678,6 +679,7 @@ function DetailCard({
   onSavePlans,
 }: {
   provider: ProviderRecord;
+  featured?: boolean;
   plans: AccessPlan[];
   busy?: boolean;
   onAction: (action: string, provider: ProviderRecord) => void;
@@ -726,101 +728,127 @@ function DetailCard({
       rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     );
   }
+  const overview = (
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+      <div className="space-y-3">
+        <SpendBar
+          label="Today"
+          spent={provider.spendToday}
+          cap={provider.capDaily}
+        />
+        <SpendBar
+          label="This month"
+          spent={provider.spendMonth}
+          cap={provider.capMonthly}
+        />
+        {provider.needsReconciliation && (
+          <p className="text-muted-foreground text-meta">
+            Totals include estimated charges that are not final bills.
+          </p>
+        )}
+      </div>
+      <div className="rounded-panel border p-3">
+        <h3 className="text-meta font-medium">Enabled models</h3>
+        <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+          {enabledModels.length ? (
+            enabledModels.map((model) => (
+              <Badge
+                key={model.id}
+                variant="outline"
+                className="max-w-full break-words whitespace-normal"
+              >
+                {model.id}
+              </Badge>
+            ))
+          ) : (
+            <span className="text-muted-foreground text-meta">
+              No models enabled
+            </span>
+          )}
+        </div>
+        <h3 className="mt-4 text-meta font-medium">Access plans</h3>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {plans
+            .filter((plan) => provider.plans.includes(plan.id))
+            .map((plan) => (
+              <Badge key={plan.id} variant="secondary">
+                {plan.name}
+              </Badge>
+            ))}
+          {!provider.plans.length && (
+            <span className="text-muted-foreground text-meta">
+              No access plans can use this provider
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
   return (
     <li className="min-w-0">
-      <details className="group">
-        <summary className="list-none marker:hidden">
-          <div className="grid min-h-(--row-2) cursor-pointer gap-3 px-4 py-1.5 max-sm:min-h-(--row-phone-2) sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
-            <div className="flex min-w-0 gap-3 sm:items-center">
+      {featured && (
+        <div className="space-y-4 p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <Logo value={provider.name} />
               <div className="min-w-0">
-                <h2 className="truncate text-body font-medium">
-                  {provider.name}
-                </h2>
-                <span className="text-muted-foreground mt-0.5 block truncate text-meta">
+                <h2 className="text-heading break-words">{provider.name}</h2>
+                <p className="text-muted-foreground mt-0.5 text-meta">
                   <ProviderKeySummary provider={provider} />
-                </span>
+                </p>
               </div>
             </div>
             <StatusPill status={state.status} reason={state.reason} summary />
-            <div className="min-w-0 space-y-2">
-              {provider.spendMonth != null ? (
-                <SpendBar
-                  label="This month"
-                  spent={provider.spendMonth}
-                  cap={provider.capMonthly}
-                />
-              ) : provider.capMonthly != null ? (
-                <p className="text-muted-foreground text-meta">
-                  Monthly cap: {money(provider.capMonthly)}
-                </p>
-              ) : null}
-              {provider.capDaily != null && (
-                <p className="text-muted-foreground text-meta">
-                  Daily cap: {money(provider.capDaily)}
-                </p>
-              )}
-            </div>
-            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-control border px-3 text-meta font-medium transition-colors">
+          </div>
+          {overview}
+        </div>
+      )}
+      <details className="group">
+        <summary className="list-none marker:hidden">
+          {featured ? (
+            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground mx-4 mb-4 inline-flex h-8 cursor-pointer items-center justify-center rounded-control border px-3 text-meta font-medium transition-colors max-sm:min-h-11 sm:mx-6">
               Manage
             </span>
-          </div>
+          ) : (
+            <div className="grid min-h-(--row-2) cursor-pointer gap-3 px-4 py-1.5 max-sm:min-h-(--row-phone-2) sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
+              <div className="flex min-w-0 gap-3 sm:items-center">
+                <Logo value={provider.name} />
+                <div className="min-w-0">
+                  <h2 className="truncate text-body font-medium">
+                    {provider.name}
+                  </h2>
+                  <span className="text-muted-foreground mt-0.5 block truncate text-meta">
+                    <ProviderKeySummary provider={provider} />
+                  </span>
+                </div>
+              </div>
+              <StatusPill status={state.status} reason={state.reason} summary />
+              <div className="min-w-0 space-y-2">
+                {provider.spendMonth != null ? (
+                  <SpendBar
+                    label="This month"
+                    spent={provider.spendMonth}
+                    cap={provider.capMonthly}
+                  />
+                ) : provider.capMonthly != null ? (
+                  <p className="text-muted-foreground text-meta">
+                    Monthly cap: {money(provider.capMonthly)}
+                  </p>
+                ) : null}
+                {provider.capDaily != null && (
+                  <p className="text-muted-foreground text-meta">
+                    Daily cap: {money(provider.capDaily)}
+                  </p>
+                )}
+              </div>
+              <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-control border px-3 text-meta font-medium transition-colors">
+                Manage
+              </span>
+            </div>
+          )}
         </summary>
         <div className="border-t px-4 pt-4 pb-4 sm:px-5">
-          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-            <div className="space-y-3">
-              <SpendBar
-                label="Today"
-                spent={provider.spendToday}
-                cap={provider.capDaily}
-              />
-              <SpendBar
-                label="This month"
-                spent={provider.spendMonth}
-                cap={provider.capMonthly}
-              />
-              {provider.needsReconciliation && (
-                <p className="text-muted-foreground text-meta">
-                  Totals include estimated charges that are not final bills.
-                </p>
-              )}
-            </div>
-            <div className="rounded-panel border p-3">
-              <h3 className="text-meta font-medium">Enabled models</h3>
-              <div className="mt-3 flex min-w-0 flex-wrap gap-2">
-                {enabledModels.length ? (
-                  enabledModels.map((model) => (
-                    <Badge
-                      key={model.id}
-                      variant="outline"
-                      className="max-w-full break-words whitespace-normal"
-                    >
-                      {model.id}
-                    </Badge>
-                  ))
-                ) : (
-                  <span className="text-muted-foreground text-meta">
-                    No models enabled
-                  </span>
-                )}
-              </div>
-              <h3 className="mt-4 text-meta font-medium">Access plans</h3>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {plans
-                  .filter((plan) => provider.plans.includes(plan.id))
-                  .map((plan) => (
-                    <Badge key={plan.id} variant="secondary">
-                      {plan.name}
-                    </Badge>
-                  ))}
-                {!provider.plans.length && (
-                  <span className="text-muted-foreground text-meta">
-                    No access plans can use this provider
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+          {!featured && overview}
           <details className="mt-3 text-meta">
             <summary className="text-muted-foreground min-h-8 max-sm:min-h-11 cursor-pointer content-center">
               Provider details
@@ -2187,6 +2215,16 @@ export default function ProvidersPage() {
   const latestError = [action, saveModels, saveCaps, savePlans, saveGlobalCaps]
     .filter((mutation) => mutation.error)
     .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error;
+  const globalCaps = (
+    <GlobalCapsEditor
+      key="global-caps"
+      global={globalState}
+      busy={busy}
+      onSave={(daily, monthly) =>
+        saveGlobalCaps.mutate({ daily, monthly })
+      }
+    />
+  );
   return (
     <>
       <PageHeader
@@ -2242,18 +2280,13 @@ export default function ProvidersPage() {
           <ProviderEmptyState onAdd={() => setAddOpen(true)} />
         ) : (
           <div className="space-y-(--space-section)">
-            <GlobalCapsEditor
-              global={globalState}
-              busy={busy}
-              onSave={(daily, monthly) =>
-                saveGlobalCaps.mutate({ daily, monthly })
-              }
-            />
+            {records.length !== 1 && globalCaps}
             <ListCard label="Providers">
               {records.map((provider) => (
                 <DetailCard
                   key={provider.id}
                   provider={provider}
+                  featured={records.length === 1}
                   plans={planRows}
                   busy={busy}
                   onSaveModels={(providerRecord, models) =>
@@ -2285,6 +2318,7 @@ export default function ProvidersPage() {
                 />
               ))}
             </ListCard>
+            {records.length === 1 && globalCaps}
             {latestError && (
               <div role="alert" className="text-danger text-meta">
                 <AlertCircle className="mr-1 inline size-4" />

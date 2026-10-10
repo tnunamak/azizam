@@ -571,3 +571,119 @@ it("treats a saved price typed as 9.0 as clean once the server stores 9", async 
     client.clear();
   }
 });
+
+async function renderProviderOverview(count = 1, unknownSpend = false) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/catalog")) return Response.json({ providers: [] });
+    if (path.endsWith("/profiles")) {
+      return Response.json({
+        plans: [
+          { id: "family", name: "Family plan" },
+          { id: "guests", name: "Guest plan" },
+        ],
+      });
+    }
+    return Response.json({
+      providers: Array.from({ length: count }, (_, index) => ({
+        id: `provider-${index}`,
+        name: `Household provider ${index + 1}`,
+        enabled: true,
+        reachable: true,
+        key_set: true,
+        spend: unknownSpend
+          ? { status: "unknown" }
+          : { daily_usd: 2, monthly_usd: 12 },
+        caps: unknownSpend ? {} : { daily_usd: 5, monthly_usd: 50 },
+        models: [
+          { id: "enabled-model", enabled: true },
+          { id: "disabled-model", enabled: false },
+        ],
+        allowed_plans: ["family"],
+      })),
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <ProvidersPage />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("heading", { name: "Household provider 1" });
+  return { client, fetchMock };
+}
+
+it("shows a single provider's state, spend, enabled models and allowed plans before Manage", async () => {
+  const { client, fetchMock } = await renderProviderOverview();
+  try {
+    const list = screen.getByRole("list", { name: "Providers" });
+    const row = within(list).getByRole("listitem");
+    const scope = within(row);
+    const manage = scope.getByText("Manage");
+    const disclosure = manage.closest("details")!;
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(scope.getByText("Ready")).toBeVisible();
+    expect(scope.getByText("$12.00 of $50.00")).toBeVisible();
+    expect(scope.getByText("$2.00 of $5.00")).toBeVisible();
+    expect(scope.getByRole("progressbar", { name: "This month spend" })).toBeVisible();
+    expect(scope.getByRole("heading", { name: "Enabled models" })).toBeVisible();
+    expect(scope.getByRole("heading", { name: "Access plans" })).toBeVisible();
+    const enabledModel = scope.getAllByText("enabled-model").find((node) => !disclosure.contains(node));
+    expect(enabledModel).toBeVisible();
+    expect(scope.getByText("Family plan")).toBeVisible();
+    expect(scope.queryByText("Guest plan")).toBeNull();
+    expect(scope.getAllByText("disabled-model").every((node) => disclosure.contains(node))).toBe(true);
+    expect(list.compareDocumentPosition(screen.getByRole("heading", { name: "Global spend cap" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(manage);
+    expect(scope.getByRole("button", { name: "Edit models" })).toBeVisible();
+    fireEvent.click(manage);
+    expect(scope.getByText("$12.00 of $50.00")).toBeVisible();
+    expect(scope.getByText("Family plan")).toBeVisible();
+    expect(fetchMock.mock.calls.map(([input]) => String(input)).sort()).toEqual([
+      "/admin/api/profiles",
+      "/admin/api/providers",
+      "/admin/api/providers/-/catalog",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+  } finally {
+    client.clear();
+  }
+});
+
+it("keeps unknown spend and unset caps visible in the single-provider overview", async () => {
+  const { client } = await renderProviderOverview(1, true);
+  try {
+    const row = within(screen.getByRole("list", { name: "Providers" })).getByRole("listitem");
+    for (const label of ["Not measured yet", "Spend unknown · No cap set"]) {
+      const values = within(row).getAllByText(label);
+      expect(values).toHaveLength(2);
+      values.forEach((value) => expect(value).toBeVisible());
+    }
+    expect(within(row).queryByRole("progressbar")).toBeNull();
+  } finally {
+    client.clear();
+  }
+});
+
+it("keeps multiple providers as collapsed management rows", async () => {
+  const { client } = await renderProviderOverview(2);
+  try {
+    const rows = within(screen.getByRole("list", { name: "Providers" })).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const scope = within(row);
+      expect(scope.getByText("Manage").closest("details")).not.toHaveAttribute("open");
+      expect(scope.getByText("Family plan")).not.toBeVisible();
+      fireEvent.click(scope.getByText("Manage"));
+      expect(scope.getByText("Family plan")).toBeVisible();
+      expect(scope.getByRole("button", { name: "Edit caps" })).toBeVisible();
+    }
+  } finally {
+    client.clear();
+  }
+});

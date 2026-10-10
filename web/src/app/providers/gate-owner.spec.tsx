@@ -95,6 +95,7 @@ it("SE-25 distinguishes positive spend over a zero cap from recorded zero spend"
   const provider = screen.getByText("Provider ID: cost-provider").closest("li")!;
   expect(provider.querySelector('[aria-label="Today spend"]')).toHaveAttribute("aria-valuenow", "0");
   const monthly = provider.querySelectorAll('[aria-label="This month spend"]');
-  expect(monthly).toHaveLength(2);
+  // A sole provider shows its overview once (no collapsed summary copy).
+  expect(monthly).toHaveLength(1);
   for (const bar of monthly) expect(bar).toHaveAttribute("aria-valuenow", "100");
 });
