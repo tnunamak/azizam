@@ -215,7 +215,7 @@ def test_trim_failure_reports_that_setting_was_saved(household, monkeypatch):
     monkeypatch.setattr(prompt_memory, "tighten_retention", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("busy")))
     result = client.put("/me/api/prompt-memory", json={"remember": True, "retention": "3_months"},
                         headers={"x-azizam-user-action": "1"})
-    assert result.status_code == 503
+    assert result.status_code == 202
     assert result.json()["error"]["code"] == "prompt_retention_pending"
     assert "setting was saved" in result.json()["error"]["message"]
     assert prompt_memory.get_member(hh.robin["id"], path=hh.admin)["retention"] == "3_months"
