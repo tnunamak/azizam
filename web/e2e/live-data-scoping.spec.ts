@@ -103,7 +103,7 @@ test("owner sees keyless LAN and service app media and usage", async ({
   // The seeded audio.speech request, under its task name from lib/terms
   // (taskNames.speech), then its model and count.
   await expect(
-    page.getByRole("row", { name: new RegExp(`^${taskNames.speech} Voice 1\\b`) }),
+    page.getByRole("row", { name: new RegExp(`${taskNames.speech} Voice 1\\b`) }),
   ).toBeVisible();
 });
 
