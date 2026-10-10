@@ -908,14 +908,28 @@ function CreationMedia({
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  useEffect(() => {
+  const [previousCreation, setPreviousCreation] = useState({
+    assetId: creation.asset_id,
+    src: creation.download_url,
+    posterUrl,
+  });
+  if (
+    previousCreation.assetId !== creation.asset_id ||
+    previousCreation.src !== creation.download_url ||
+    previousCreation.posterUrl !== posterUrl
+  ) {
+    setPreviousCreation({
+      assetId: creation.asset_id,
+      src: creation.download_url,
+      posterUrl,
+    });
     setImageFailed(false);
     setPosterFailed(false);
     setVideoFailed(false);
     setAudioError(null);
     setIsPlaying(false);
     setAudioSrc(creation.download_url ?? undefined);
-  }, [creation.asset_id, creation.download_url, posterUrl]);
+  }
 
   if (creation.kind === "image" && creation.download_url && !imageFailed) {
     return (

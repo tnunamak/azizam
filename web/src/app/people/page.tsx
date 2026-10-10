@@ -550,7 +550,7 @@ export default function PeoplePage() {
                         ) : null}
                       </span>,
                       person.last_active ? (
-                        <RelativeTime ts={person.last_active} />
+                        <RelativeTime key="active" ts={person.last_active} />
                       ) : null,
                       ...(hasUsageMeasurement
                         ? [

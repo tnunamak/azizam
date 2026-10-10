@@ -44,17 +44,22 @@ function readAsDataUri(file: File): Promise<string> {
 
 /** A preview link for a chosen file, revoked when the file changes. */
 function useObjectUrl(file: File | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{
+    file: File;
+    url: string;
+  } | null>(null);
+  const [previousFile, setPreviousFile] = useState(file);
+  if (previousFile !== file) {
+    setPreviousFile(file);
+    setPreview(null);
+  }
   useEffect(() => {
-    if (!file || typeof URL.createObjectURL !== "function") {
-      setUrl(null);
-      return;
-    }
+    if (!file || typeof URL.createObjectURL !== "function") return;
     const next = URL.createObjectURL(file);
-    setUrl(next);
+    setPreview({ file, url: next });
     return () => URL.revokeObjectURL(next);
   }, [file]);
-  return url;
+  return preview && preview.file === file ? preview.url : null;
 }
 
 const SUBTYPE = /^[a-z]+\/([a-z0-9]+)/i;
@@ -112,7 +117,11 @@ export function MediaInput({
   const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
   const dataUriChosen = !fileMode && Boolean(value?.startsWith("data:"));
 
-  useEffect(() => setPreviewFailed(false), [value, file]);
+  const [previousInput, setPreviousInput] = useState({ value, file });
+  if (previousInput.value !== value || previousInput.file !== file) {
+    setPreviousInput({ value, file });
+    setPreviewFailed(false);
+  }
 
   async function choose(file: File | undefined) {
     if (!file) return;
@@ -346,15 +355,22 @@ function LibraryPicker({
   onPick: (assetId: string) => void;
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
-    "idle",
+    open ? "loading" : "idle",
   );
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [attempt, setAttempt] = useState(0);
+  const [previousRequest, setPreviousRequest] = useState({ open, attempt });
+  if (
+    previousRequest.open !== open ||
+    previousRequest.attempt !== attempt
+  ) {
+    setPreviousRequest({ open, attempt });
+    if (open) setState("loading");
+  }
 
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    setState("loading");
     fetch("/me/api/media?kind=image&limit=40&scope=me", {
       credentials: "same-origin",
       signal: controller.signal,
