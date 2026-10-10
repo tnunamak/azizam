@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compose before/after captures from contact.mjs into one JPEG per surface.
 
-Usage: contact_sheet.py <before-dir> <after-dir> <out-dir>
+Usage: contact_sheet.py <before-dir> <after-dir> <out-dir> [surface,surface]
 
 Each sheet has two rows (before, after) and four columns (1440 light, 1440 dark,
 390 light, 390 dark). Desktop shots are scaled to 50 %, phone shots to 50 %.
@@ -20,8 +20,9 @@ LABEL = 22
 
 def main() -> None:
     before, after, out = (Path(a) for a in sys.argv[1:4])
+    surfaces = sys.argv[4].split(",") if len(sys.argv) > 4 else SURFACES
     out.mkdir(parents=True, exist_ok=True)
-    for surface in SURFACES:
+    for surface in surfaces:
         rows = []
         for name, folder in (("before", before), ("after", after)):
             shots = []
