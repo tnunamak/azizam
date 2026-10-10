@@ -98,3 +98,8 @@ describe("model names never expose a path on the gateway host", () => {
     expect(JSON.stringify(scrubbed)).not.toContain("/media/");
   });
 });
+
+test("scrubModelPaths shortens a declared fallback model path for members", () => {
+  const scrubbed = scrubModelPaths({ declared_fallback: "/private/models/Fallback.gguf" });
+  expect(JSON.stringify(scrubbed)).not.toContain("/private/models/");
+});

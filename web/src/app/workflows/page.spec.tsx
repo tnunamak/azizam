@@ -335,6 +335,13 @@ describe("WorkflowsPage empathy copy", () => {
     expect(await screen.findByText("No workflows are set up yet. The person who manages Azizam can add them.")).toBeVisible();
   });
 
+  test("a delegated admin gets the member view, not the owner's details", async () => {
+    serve([{ ...workflows[0], id: "w.ready", title: "Ready one" }, faceLikeness]);
+    renderWorkflows({ ...member, name: "Robin", role: "admin", admin: true });
+    expect(await screen.findByText("Ready one")).toBeVisible();
+    expect(screen.queryByText(/Not set up/)).toBeNull();
+  });
+
   test("the owner finds unavailable workflows in a folded Not set up section", async () => {
     serve([{ ...workflows[0], id: "w.ready", title: "Ready one" }, faceLikeness]);
     renderWorkflows(owner);

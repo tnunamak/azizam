@@ -787,7 +787,9 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
 }
 
 export default function WorkflowsPage() {
-  const owner = useViewer().admin;
+  // Owner-only details use the same rule as Usage and Activity; a delegated
+  // admin is not the owner.
+  const owner = ["owner", "superadmin"].includes(useViewer().role);
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<string>("all");
   const [detailId, setDetailId] = useState<string | null>(null);

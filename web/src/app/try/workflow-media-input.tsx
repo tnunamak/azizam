@@ -116,8 +116,9 @@ export function MediaInput({
 
   async function choose(file: File | undefined) {
     if (!file) return;
-    const operation = ++selection.current;
     setFileError(null);
+    // A rejected file must not cancel a pending valid choice, so the selection
+    // generation advances only after the file passes validation.
     if (!file.type.startsWith(`${kind}/`)) {
       setFileError(
         `That file is not ${withArticle(noun)}. Choose ${withArticle(noun)} file.`,
@@ -130,6 +131,7 @@ export function MediaInput({
       );
       return;
     }
+    const operation = ++selection.current;
     if (fileMode) {
       onFileChange?.(file);
       setSource(file.name);

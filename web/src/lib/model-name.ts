@@ -122,7 +122,7 @@ export function technicalModelDetails<T>(value: T, owner: boolean): T {
   return owner ? value : scrubModelPaths(value);
 }
 
-const MODEL_KEY = /model|display_name|resolves_to|^(?:id|name|title)$/i;
+const MODEL_KEY = /model|display_name|resolves_to|fallback|^(?:id|name|title)$/i;
 
 /**
  * A payload with every model-naming field that holds a file path shortened to

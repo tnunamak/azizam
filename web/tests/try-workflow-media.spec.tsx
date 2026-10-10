@@ -385,6 +385,17 @@ describe("media selection races", () => {
     expect(changed.mock.calls).toEqual([["data:image/png;base64,new"]]);
   });
 
+  it("a rejected file does not cancel a pending valid picture", async () => {
+    const readers = deferredReaders();
+    const changed = vi.fn();
+    render(<MediaInput id="picture" label="Picture" kind="image" onChange={changed} />);
+    fireEvent.change(pickerInput(), { target: { files: [PNG] } });
+    const notAPicture = new File(["x"], "notes.txt", { type: "text/plain" });
+    fireEvent.change(pickerInput(), { target: { files: [notAPicture] } });
+    await finishRead(readers[0], "data:image/png;base64,valid");
+    expect(changed.mock.calls).toEqual([["data:image/png;base64,valid"]]);
+  });
+
   it.each(["remove", "link", "unmount"])("invalidates a pending file read on %s", async (action) => {
     const readers = deferredReaders();
     const changed = vi.fn();
