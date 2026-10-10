@@ -23,6 +23,8 @@ import {
   ChevronRight,
   Copy,
   Download,
+  EyeOff,
+  FileDown,
   ImageIcon,
   ListFilter,
   Pause,
@@ -114,7 +116,14 @@ interface MediaAsset {
   duration_s?: number | null;
   poster_asset_id?: string | null;
   owner_name?: string | null;
-  source?: { id?: string; kind: string; label: string; app_id?: string };
+  /** `person_id` is the maker, when the gateway knows who made it. */
+  source?: {
+    id?: string;
+    kind: string;
+    label: string;
+    app_id?: string;
+    person_id?: string;
+  };
   available?: boolean;
   unavailable_reason?: string | null;
 }
@@ -149,10 +158,12 @@ function kindLabel(kind: MediaKind) {
 }
 
 /**
- * A creation's name when it has no prompt. Apps' requests never store
- * prompts (docs/CORE_CONTRACTS.md, a privacy contract), so such items are
- * named by type and time, "Video, Oct 20 at 7:45 PM", never "Image" alone
- * (D1.6); the maker is beside the name in the viewer and on hover.
+ * A creation's name when the viewer has no prompt for it. The gateway gives
+ * a prompt only to the person who made the item, and only while it is kept
+ * (docs/design/PROMPT_MEMORY.md); apps' keys and "Don't keep this prompt"
+ * keep none. Such items are named by type and time, "Video, Oct 20 at 7:45
+ * PM", never "Image" alone (D1.6); the maker is beside the name in the
+ * viewer and on hover.
  */
 function untitledName(asset: MediaAsset): string {
   const date = toDateValue(asset.created_at);
@@ -328,8 +339,16 @@ function UnavailablePreview({
   );
 }
 
-async function prepareDownload(asset: MediaAsset, everyone: boolean) {
-  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
+/**
+ * `withDetails` asks for the maker's copy with the prompt and settings
+ * embedded; the gateway refuses it to anyone else (HTTP 403).
+ */
+async function prepareDownload(
+  asset: MediaAsset,
+  everyone: boolean,
+  withDetails = false,
+) {
+  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}${withDetails ? "&metadata=full" : ""}`;
   const response = await fetch(path, { credentials: "same-origin" });
   if (!response.ok) {
     throw new Error("Download could not be prepared. Try again.");
@@ -1294,6 +1313,7 @@ function CreationViewer({
   person,
   downloading,
   onDownload,
+  maker,
   onDelete,
   onReturnFocus,
 }: {
@@ -1305,7 +1325,12 @@ function CreationViewer({
   nameModel: NameModel;
   person: string | null;
   downloading: boolean;
-  onDownload: (asset: MediaAsset) => void;
+  onDownload: (asset: MediaAsset, withDetails?: boolean) => void;
+  /**
+   * The viewer made this item. Only the maker learns whether a prompt was
+   * kept; anyone else sees no prompt and no sign that one exists.
+   */
+  maker: boolean;
   onDelete: ((asset: MediaAsset) => void) | null;
   /** Called with the creation shown last when the viewer closes. */
   onReturnFocus: (assetId: string) => void;
@@ -1334,6 +1359,10 @@ function CreationViewer({
   const model = asset.model ? nameModel(asset.model) : "";
   const title = shortTitle(asset);
   const prompt = asset.prompt?.trim() ?? "";
+  // The gateway offers the file with details only to its maker, while the
+  // prompt is kept.
+  const detailsDownload =
+    Boolean(asset.workflow_download_url) && asset.available !== false;
   const charge = !asset.request_id
     ? null
     : receiptPending
@@ -1447,13 +1476,31 @@ function CreationViewer({
                   {title}
                 </DialogPrimitive.Title>
                 <div className="-mt-1.5 -mr-1.5 flex shrink-0 items-center gap-1">
-                  {onDelete ? (
+                  {onDelete || detailsDownload ? (
                     <OverflowMenu label={`Actions for ${title}`}>
-                      <OverflowMenuSeparator />
-                      <OverflowMenuItem danger onSelect={() => onDelete(asset)}>
-                        <Trash2 className="size-4" aria-hidden />
-                        Delete
-                      </OverflowMenuItem>
+                      {detailsDownload ? (
+                        // The maker's own copy with the prompt and settings
+                        // inside the file, as Photos' "Export Unmodified
+                        // Original" sits apart from Share.
+                        <OverflowMenuItem
+                          onSelect={() => onDownload(asset, true)}
+                        >
+                          <FileDown className="size-4" aria-hidden />
+                          Download with details
+                        </OverflowMenuItem>
+                      ) : null}
+                      {onDelete ? (
+                        <>
+                          <OverflowMenuSeparator />
+                          <OverflowMenuItem
+                            danger
+                            onSelect={() => onDelete(asset)}
+                          >
+                            <Trash2 className="size-4" aria-hidden />
+                            Delete
+                          </OverflowMenuItem>
+                        </>
+                      ) : null}
                     </OverflowMenu>
                   ) : null}
                   <DialogPrimitive.Close
@@ -1520,23 +1567,24 @@ function CreationViewer({
                     {downloading ? "Preparing…" : "Download"}
                   </Button>
                 ) : null}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!asset.prompt}
-                  onClick={() => {
-                    void navigator.clipboard.writeText(asset.prompt || "").then(
-                      () => toast.success("Prompt copied."),
-                      () =>
-                        toast.error(
-                          "Prompt could not be copied. Select the text to copy it.",
-                        ),
-                    );
-                  }}
-                >
-                  <Copy aria-hidden="true" />
-                  Copy prompt
-                </Button>
+                {prompt ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(prompt).then(
+                        () => toast.success("Prompt copied."),
+                        () =>
+                          toast.error(
+                            "Prompt could not be copied. Select the text to copy it.",
+                          ),
+                      );
+                    }}
+                  >
+                    <Copy aria-hidden="true" />
+                    Copy prompt
+                  </Button>
+                ) : null}
                 {asset.request_id ? (
                   <Button asChild variant="outline" size="sm">
                     <a
@@ -1583,6 +1631,13 @@ function CreationViewer({
                   </h3>
                   <p className="text-sm break-words">{prompt}</p>
                 </section>
+              ) : !prompt && maker ? (
+                // The maker learns why Copy prompt is missing. Nobody else
+                // is told a prompt ever existed.
+                <p className="text-muted-foreground text-meta flex items-center gap-1.5">
+                  <EyeOff aria-hidden="true" className="size-4 shrink-0" />
+                  Prompt not saved
+                </p>
               ) : null}
               <details className="group">
                 <summary className="text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center text-sm font-medium">
@@ -1640,19 +1695,6 @@ function CreationViewer({
                         : JSON.stringify(asset.workflow, null, 2)
                       : "Not recorded"}
                   </pre>
-                  {asset.workflow_download_url ? (
-                    <Button
-                      asChild
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                    >
-                      <a href={asset.workflow_download_url} download>
-                        <Download aria-hidden="true" /> Download ComfyUI
-                        workflow
-                      </a>
-                    </Button>
-                  ) : null}
                 </section>
               </details>
             </div>
@@ -1994,6 +2036,13 @@ export default function LibraryPage() {
   const viewerAppIds = new Set(
     (Array.isArray(home?.apps) ? home.apps : []).map((app) => app.id),
   );
+  /** The viewer made this item: they hold its prompt, or the gateway names
+   * them as its maker. Owning the App is not enough (CORE_CONTRACTS). */
+  function isMaker(asset: MediaAsset) {
+    if (asset.prompt) return true;
+    const me = viewerUserId ?? viewer.id ?? null;
+    return Boolean(me && asset.source?.person_id === me);
+  }
   function madeByViewer(asset: MediaAsset) {
     if (!instanceView) return true;
     const appId =
@@ -2452,9 +2501,10 @@ export default function LibraryPage() {
           nameModel={nameModel}
           person={selectedPerson}
           downloading={downloadingAssetId === selected.asset_id}
-          onDownload={(asset) => {
+          maker={isMaker(selected)}
+          onDownload={(asset, withDetails) => {
             setDownloadingAssetId(asset.asset_id);
-            void prepareDownload(asset, instanceView).then(
+            void prepareDownload(asset, instanceView, withDetails).then(
               () => {
                 toast.success("Download ready.");
                 setDownloadingAssetId(null);
