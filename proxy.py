@@ -865,6 +865,13 @@ IMAGE_MEDIA_JOB_RESUME_ON_START = bool_from_config(
 )
 _image_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 _image_media_job_tasks: set[asyncio.Task] = set()
+# Session make jobs (/me/api/make/jobs) share the image job concurrency.
+_SESSION_MAKE_CFG = IMAGE_MEDIA_JOBS_CFG.get("make", {}) or {}
+SESSION_MAKE_LIMITS = me_make.MakeLimits(
+    max_prompt_chars=max(1, int(_SESSION_MAKE_CFG.get("max_prompt_chars", 32_000))),
+    per_person=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding_per_person", 3))),
+    household=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding", 12))),
+)
 _image_media_job_scheduled: set[str] = set()
 
 # Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
@@ -14346,8 +14353,11 @@ class _SessionMakeRuntime:
     """Runs session make jobs through the existing image routes.
 
     Payloads use the image job spool, so prompt memory, forget, and erasure
-    apply to them exactly as to API-key image jobs.
+    apply to them exactly as to API-key image jobs. Jobs run through the image
+    job semaphore, so at most the configured concurrency run at once.
     """
+
+    limits = SESSION_MAKE_LIMITS
 
     def keep_payload(self, job_id: str, payload: Mapping[str, Any]) -> None:
         _spool_media_job_payload(job_id, copy.deepcopy(dict(payload)))
@@ -14362,7 +14372,12 @@ class _SessionMakeRuntime:
         if job_id in _image_media_job_scheduled:
             return
         _image_media_job_scheduled.add(job_id)
-        task = asyncio.get_running_loop().create_task(run())
+
+        async def bounded() -> None:
+            async with _image_media_job_semaphore:
+                await run()
+
+        task = asyncio.get_running_loop().create_task(bounded())
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
@@ -54,8 +55,24 @@ class MakeBackendError(Exception):
         self.http_status = http_status
 
 
+@dataclass(frozen=True)
+class MakeLimits:
+    """What one make request may ask for, and how much work may wait.
+
+    ``max_images`` matches the image routes' ``n`` range. Outstanding jobs
+    are queued or running make jobs, per person and for the whole household.
+    """
+
+    max_prompt_chars: int = 32_000
+    max_images: int = 10
+    per_person: int = 3
+    household: int = 12
+
+
 class MakeRuntime(Protocol):
     """How the gateway runs a make job. Payloads hold the prompt."""
+
+    limits: MakeLimits
 
     def keep_payload(self, job_id: str, payload: Mapping[str, Any]) -> None: ...
 
@@ -69,10 +86,11 @@ class MakeRuntime(Protocol):
 
 
 class _MakeError(Exception):
-    def __init__(self, code: str, message: str, status_code: int) -> None:
+    def __init__(self, code: str, message: str, status_code: int, *, retry_after: int | None = None) -> None:
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.retry_after = retry_after
 
 
 def add_make_routes(
@@ -229,7 +247,7 @@ def _submit(
     receipts_path: Path,
 ) -> tuple[int, dict[str, Any]]:
     user_id = str(user["id"])
-    intent, model, backend_body = _parse(body)
+    intent, model, backend_body = _parse(body, runtime.limits)
     forget = backend_body.get("extensions", {}).get(prompt_memory.NAMESPACE) is not None
     app = admin_store.ensure_session_app_for_user(user_id, name=APP_NAME, path=admin_path)
     if app.get("disabled_at"):
@@ -262,7 +280,18 @@ def _submit(
         metadata={"mode": JOB_MODE, "requested_model": model[:160],
                   **({"source_asset_id": source_asset_id} if source_asset_id else {})},
     )
-    created = media_jobs.create(job, path=jobs_path)
+    try:
+        created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
+                                    path=jobs_path)
+    except media_jobs.OutstandingLimitReached as exc:
+        if exc.limit.scope == "person":
+            raise _MakeError(
+                "too_many_jobs",
+                f"You already have {exc.limit.maximum} things being made. "
+                "Wait for one to finish, then try again.", 429,
+            ) from None
+        raise _MakeError("make_busy", "Azizam is busy making other things. Try again in a minute.",
+                         503, retry_after=60) from None
     if created.job_id != job.job_id:  # A concurrent retry won the same key.
         return _replay_status(created.to_dict()), _client_job(created.job_id, jobs_path)
     receipt = RouteReceipt(
@@ -289,7 +318,14 @@ def _submit(
     return 202, _client_job(job.job_id, jobs_path)
 
 
-def _parse(body: Any) -> tuple[str, str, dict[str, Any]]:
+def _outstanding_limits(app_id: str, limits: MakeLimits) -> list[media_jobs.OutstandingLimit]:
+    return [
+        media_jobs.OutstandingLimit("person", limits.per_person, JOB_MODE, app_id=app_id),
+        media_jobs.OutstandingLimit("household", limits.household, JOB_MODE),
+    ]
+
+
+def _parse(body: Any, limits: MakeLimits) -> tuple[str, str, dict[str, Any]]:
     if not isinstance(body, Mapping):
         raise _MakeError("invalid_json", "Send a JSON object", 400)
     unknown = sorted(set(body) - _BACKEND_FIELDS - {"intent", *_SOURCE_FIELDS})
@@ -304,6 +340,12 @@ def _parse(body: Any) -> tuple[str, str, dict[str, Any]]:
     prompt = body.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         raise _MakeError("prompt_required", "Describe what to make", 400)
+    if len(prompt) > limits.max_prompt_chars:
+        raise _MakeError("prompt_too_long",
+                         f"Describe it in at most {limits.max_prompt_chars:,} characters", 400)
+    count = body.get("n", 1)
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= limits.max_images:
+        raise _MakeError("invalid_n", f"n must be a whole number from 1 to {limits.max_images}", 400)
     try:
         prompt_memory.requested_mode(body)
     except prompt_memory.PromptModeError as exc:
@@ -448,9 +490,12 @@ def _resolve(provider: PathProvider) -> Path:
     return provider() if callable(provider) else provider
 
 
-def _json(content: Mapping[str, Any], status_code: int = 200) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content=content, headers={"cache-control": "no-store"})
+def _json(content: Mapping[str, Any], status_code: int = 200,
+          headers: Mapping[str, str] | None = None) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content=content,
+                        headers={"cache-control": "no-store", **(headers or {})})
 
 
 def _error(exc: _MakeError) -> JSONResponse:
-    return _json({"error": {"code": exc.code, "message": exc.message}}, exc.status_code)
+    headers = {"retry-after": str(exc.retry_after)} if exc.retry_after else None
+    return _json({"error": {"code": exc.code, "message": exc.message}}, exc.status_code, headers)

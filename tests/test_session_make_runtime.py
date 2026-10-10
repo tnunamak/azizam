@@ -157,6 +157,52 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertNotIn("private make prompt", raised.exception.public_message)
         self.assertEqual(raised.exception.http_status, 500)
 
+    def test_at_most_the_configured_number_of_make_jobs_run_at_once(self) -> None:
+        running, peak = 0, 0
+
+        def job(job_id: str):
+            async def run() -> None:
+                nonlocal running, peak
+                running += 1
+                peak = max(peak, running)
+                await asyncio.sleep(0.01)
+                running -= 1
+            return run
+
+        async def main() -> None:
+            with patch.object(proxy, "_image_media_job_semaphore", asyncio.Semaphore(2)):
+                for index in range(8):
+                    self.runtime.schedule(f"mj_bounded_{index}", job(f"mj_bounded_{index}"))
+                await asyncio.gather(*list(proxy._image_media_job_tasks))
+
+        asyncio.run(main())
+        self.assertEqual(peak, 2)
+
+    def test_outstanding_limit_holds_under_concurrent_submits(self) -> None:
+        import threading
+
+        jobs_db = self.root / "jobs.db"
+        limit = media_jobs.OutstandingLimit("person", 1, me_make.JOB_MODE, app_id=self.app["id"])
+        outcomes: list[str] = []
+        barrier = threading.Barrier(8)
+
+        def submit(index: int) -> None:
+            job = media_jobs.MediaJob(intent="image.generate", request_id=f"req_race_{index}",
+                                      app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE})
+            barrier.wait()
+            try:
+                media_jobs.create(job, outstanding_limits=[limit], path=jobs_db)
+                outcomes.append("created")
+            except media_jobs.OutstandingLimitReached:
+                outcomes.append("refused")
+
+        threads = [threading.Thread(target=submit, args=(index,)) for index in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(sorted(outcomes), ["created"] + ["refused"] * 7)
+
     def test_forget_payload_never_reaches_disk(self) -> None:
         payload = self._payload(prompt="forget spool sentinel",
                                 extensions={prompt_memory.NAMESPACE: {"mode": "forget"}})

@@ -399,9 +399,26 @@ def upsert(
     return record
 
 
+@dataclass(frozen=True)
+class OutstandingLimit:
+    """At most ``maximum`` queued or running jobs of one mode (and App)."""
+
+    scope: str
+    maximum: int
+    mode: str
+    app_id: str | None = None
+
+
+class OutstandingLimitReached(Exception):
+    def __init__(self, limit: OutstandingLimit) -> None:
+        super().__init__(f"{limit.scope} outstanding job limit reached")
+        self.limit = limit
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
+    outstanding_limits: Iterable[OutstandingLimit] = (),
     path: Path = DB_PATH,
 ) -> MediaJob:
     """Create a new job, returning the existing one if ``request_id`` matches.
@@ -409,17 +426,35 @@ def create(
     This is the safe idempotent create primitive for handlers: clients may
     retry POST /v1/videos with the same Idempotency-Key/request_id and we
     must return the same job_id every time.
+
+    ``outstanding_limits`` are checked in the same write transaction as the
+    insert, so concurrent creates cannot overshoot them. A full limit raises
+    ``OutstandingLimitReached`` and stores nothing.
     """
     record = _coerce_to_job(job)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
             existing = conn.execute(
                 "SELECT job_json FROM media_jobs WHERE request_id = ?",
                 (record.request_id,),
             ).fetchone()
             if existing:
+                conn.rollback()
                 data = json.loads(existing[0])
                 return _coerce_to_job(data)
+        for limit in outstanding_limits:
+            clauses = ["status IN (?, ?)", "json_extract(job_json, '$.metadata.mode') = ?"]
+            params: list[Any] = [STATUS_QUEUED, STATUS_RUNNING, limit.mode]
+            if limit.app_id is not None:
+                clauses.append("json_extract(job_json, '$.app_id') = ?")
+                params.append(limit.app_id)
+            outstanding = conn.execute(
+                f"SELECT COUNT(*) FROM media_jobs WHERE {' AND '.join(clauses)}", params,
+            ).fetchone()[0]
+            if outstanding >= limit.maximum:
+                conn.rollback()
+                raise OutstandingLimitReached(limit)
         _write_job(conn, record)
         conn.commit()
     return record

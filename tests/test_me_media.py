@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, prompt_memory, provenance, receipt_store
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -1014,6 +1014,7 @@ class _GatedMakeRuntime:
         self.release.set()
         self.fail_with: BaseException | None = None
         self.threads: list = []
+        self.limits = me_make.MakeLimits()
 
     def keep_payload(self, job_id: str, payload) -> None:
         self.payloads[job_id] = json.loads(json.dumps(payload))
@@ -1274,6 +1275,52 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(stored["status"], media_jobs.STATUS_CANCELED)
         self.assertEqual(stored["assets"], [])
         self.assertEqual(self.runtime.payloads, {})
+
+    def _refused(self, key: str, status: int, code: str, **overrides) -> dict:
+        jobs_before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(self.make_url, json=self._picture(**overrides),
+                                    headers=self._make_headers(key))
+        self.assertEqual(response.status_code, status, response.text)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], code)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), jobs_before, "nothing is stored")
+        return error
+
+    def test_make_refuses_oversize_requests_before_storing_anything(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(max_prompt_chars=100)
+        self._refused("long", 400, "prompt_too_long", prompt="x" * 101)
+        for n in (0, 11, 1_000_000, True, "2"):
+            with self.subTest(n=n):
+                self._refused(f"n-{n}", 400, "invalid_n", n=n)
+        self.assertEqual(self.runtime.payloads, {})
+        self.assertEqual(self.runtime.calls, [])
+        self._submit_make("fits", prompt="x" * 100, n=10)
+
+    def test_make_limits_outstanding_jobs_per_person(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(per_person=2, household=10)
+        self.runtime.release.clear()
+        self._submit_make("first")
+        self._submit_make("second")
+        error = self._refused("third", 429, "too_many_jobs")
+        self.assertIn("Wait for one to finish", error["message"])
+        self.assertEqual(len(self.runtime.payloads), 2)
+        with self._as(self.bob):
+            self._submit_make("bob-first")
+        self.runtime.release.set()
+        self.runtime.wait_idle()
+        self._submit_make("after-finish")
+
+    def test_make_limits_outstanding_jobs_for_the_household(self) -> None:
+        self.runtime.limits = me_make.MakeLimits(per_person=5, household=2)
+        self.runtime.release.clear()
+        self._submit_make("alice-first")
+        with self._as(self.bob):
+            self._submit_make("bob-first")
+        response = self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("alice-second"))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error"]["code"], "make_busy")
+        self.assertEqual(response.headers["retry-after"], "60")
+        self.assertEqual(len(self.runtime.payloads), 2)
 
     def test_make_cannot_use_another_person_asset_as_source(self) -> None:
         # Criterion 3: asset boundary. Same valid edit shape succeeds with an owned asset.
