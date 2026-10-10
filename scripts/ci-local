@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Run the four CI jobs from .github/workflows/ci.yml on this machine, against
+# an exact commit, and record receipts. With --signoff, post a "signoff"
+# commit status through `gh signoff` when every job passes.
+#
+# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--skip-compose]
+#
+# The run uses a clean detached worktree of HEAD (npm ci, fresh Python
+# environments from the hermetic lock), so the live checkout and its
+# node_modules are never touched. A tree that already passed is not run
+# again unless --force is given. See docs/ops/CI.md.
+set -euo pipefail
+
+signoff=0 force=0 port=18640 skip_compose=0
+while (($#)); do
+  case $1 in
+    --signoff) signoff=1 ;;
+    --force) force=1 ;;
+    --port) port=$2; shift ;;
+    --skip-compose) skip_compose=1 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+repo=$(git rev-parse --show-toplevel)
+cd "$repo"
+if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+  echo "ci-local runs on HEAD: commit or stash tracked changes first" >&2
+  exit 2
+fi
+sha=$(git rev-parse HEAD)
+tree=$(git rev-parse 'HEAD^{tree}')
+receipts_root=${AZIZAM_CI_RECEIPTS:-$HOME/.tmp/azizam-ci-receipts}
+receipts=$receipts_root/$tree
+
+sign() {
+  ((signoff)) || return 0
+  gh signoff create
+  echo "signoff posted for $sha"
+}
+
+if [[ -f $receipts/PASS && $force == 0 ]]; then
+  echo "tree $tree already passed (receipts: $receipts)"
+  sign
+  exit 0
+fi
+
+scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
+mkdir -p "$scratch" "$receipts/logs"
+rm -f "$receipts/PASS" "$receipts/steps.tsv"
+work=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
+cleanup() { git -C "$repo" worktree remove --force "$work" >/dev/null 2>&1 || rm -rf "$work"; }
+trap cleanup EXIT
+git worktree add --quiet --detach "$work" "$sha"
+cd "$work"
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" > "$receipts/run.tsv"
+
+failed=0
+step() {
+  local name=$1; shift
+  local start=$SECONDS rc=0
+  echo "== $name"
+  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 || rc=$?
+  printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" >> "$receipts/steps.tsv"
+  if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
+}
+
+lock=tests/requirements-hermetic.lock
+# Job: Web check
+step web-npm-ci bash -c 'cd web && npm ci --no-audit --no-fund'
+step web-check bash -c 'cd web && npm run check'
+step web-unit bash -c 'cd web && npx vitest run'
+# Job: Python tests
+step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx
+# Job: Fresh instance e2e
+step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python $lock"
+step fresh-native env FRESH_INSTANCE_PYTHON="$work/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+if ((skip_compose)); then
+  printf 'fresh-compose\tskipped\t0\n' >> "$receipts/steps.tsv"
+  failed=1
+  echo "== fresh-compose SKIPPED: the run cannot pass without it"
+else
+  step fresh-compose env FRESH_INSTANCE_PYTHON="$work/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
+fi
+# Job: Production UI journey (build comes from web-check above)
+step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes $lock"
+step e2e-browser bash -c 'cd web && npx playwright install chromium'
+step e2e bash -c "cd web && UI_E2E_PORT=$port npm run test:e2e"
+if ((failed)) && [[ -d web/test-results ]]; then
+  # Keep browser evidence for a failing run only; the worktree is removed on exit.
+  cp -a web/test-results "$receipts/test-results"
+fi
+
+printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
+column -t "$receipts/steps.tsv"
+if ((failed)); then
+  echo "ci-local FAILED for $sha; receipts: $receipts"
+  exit 1
+fi
+echo "$sha" > "$receipts/PASS"
+echo "ci-local PASSED for $sha; receipts: $receipts"
+cd "$repo"
+sign
