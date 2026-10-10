@@ -1466,14 +1466,16 @@ export default function SettingsPage() {
   // The settings template: a 720 column, sections 32 apart, and no jump
   // links while every section fits on the page (ban 22).
   return (
-    <div className="page-read page-stack">
+    <div className="page-read">
       <PageHeader title="Settings" />
-      <InstanceSection />
-      <SignInSection />
-      <DefaultsSection />
-      <MediaSection />
-      <ExtensionsSection />
-      <AdvancedSection />
+      <div className="page-stack">
+        <InstanceSection />
+        <SignInSection />
+        <DefaultsSection />
+        <MediaSection />
+        <ExtensionsSection />
+        <AdvancedSection />
+      </div>
     </div>
   );
 }

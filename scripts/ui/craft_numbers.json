@@ -28,6 +28,22 @@
       "geometry",
       "cards",
       "colour"
+    ],
+    "people": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "apps": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
     ]
   },
   "desktop_width": 1440,
@@ -83,7 +99,8 @@
       "390": 20
     },
     "section_gap": 32,
-    "tolerance": 1
+    "tolerance": 1,
+    "title_gap": 24
   },
   "cards": {
     "radius": 8,

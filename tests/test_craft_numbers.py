@@ -77,6 +77,15 @@ def test_geometry_reads_page_padding_and_section_gaps():
         "page padding is 48, not 32", "a section gap is 20, not 32"]
 
 
+def test_geometry_expects_24_under_the_page_header_and_32_between_sections():
+    layout = {"main": {"padding": "32px 32px 40px 32px"},
+              "sections": [{"tag": "header"}, {"tag": "section"}, {"tag": "section"}],
+              "sectionGaps": [24, 32]}
+    assert craft_numbers.check_geometry(measured(layout=layout), 1440, CFG) == []
+    layout["sectionGaps"] = [32, 32]
+    assert craft_numbers.check_geometry(measured(layout=layout), 1440, CFG) == ["a section gap is 32, not 24"]
+
+
 def test_cards_need_radius_8_and_no_shadow_but_media_is_exempt():
     def card(radius, shadow=False, classes="rounded-panel border"):
         return {"box": {"w": 300, "h": 100}, "hasBorder": True, "hasShadow": shadow,

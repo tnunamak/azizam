@@ -135,9 +135,13 @@ def check_geometry(data: dict, width: int, cfg: dict) -> list[str]:
     left = px(parts[3]) if len(parts) == 4 else None
     if want is not None and left is not None and abs(left - want) > rule["tolerance"]:
         problems.append(f"page padding is {left:g}, not {want}")
-    for gap in layout.get("sectionGaps") or []:
-        if abs(gap - rule["section_gap"]) > rule["tolerance"]:
-            problems.append(f"a section gap is {gap:g}, not {rule['section_gap']}")
+    sections = layout.get("sections") or []
+    for index, gap in enumerate(layout.get("sectionGaps") or []):
+        # The page header sits 24 above the first section (--space-title).
+        after_header = index < len(sections) and sections[index].get("tag") == "header"
+        want_gap = rule["title_gap"] if after_header else rule["section_gap"]
+        if abs(gap - want_gap) > rule["tolerance"]:
+            problems.append(f"a section gap is {gap:g}, not {want_gap}")
     return problems
 
 
