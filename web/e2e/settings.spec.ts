@@ -732,8 +732,12 @@ test("independent sign-in and defaults saves retain the other form's drafts", as
   );
 });
 
+// Craft PR 2: a setting row is one line of label and one of detail on a
+// phone (64 px), and its detail is one line everywhere. Long text never
+// overflows: the name wraps above 640 px; a truncated line carries its full
+// text in its title; Edit shows the full values.
 for (const width of [390, 1440]) {
-  test(`long instance names and public URLs wrap at ${width}px`, async ({
+  test(`long instance names and public URLs stay inside the page at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -752,12 +756,22 @@ for (const width of [390, 1440]) {
       await expect(field).toBeVisible();
       expect(
         await field.evaluate(
-          (el) =>
-            el.scrollWidth <= el.clientWidth &&
-            el.getBoundingClientRect().right <= innerWidth,
+          (el) => el.getBoundingClientRect().right <= innerWidth,
         ),
       ).toBe(true);
+      // Wrapped in full, or cut with an ellipsis that keeps the full text.
+      const fits = await field.evaluate(
+        (el) => el.scrollWidth <= el.clientWidth,
+      );
+      if (!fits) {
+        await expect(field).toHaveCSS("text-overflow", "ellipsis");
+        expect(await field.getAttribute("title")).toContain(text);
+      }
+      if (text === name && width === 1440) expect(fits).toBe(true);
     }
+    await editSection(page, "Instance");
+    await expect(section.getByLabel("Instance name")).toHaveValue(name);
+    await expect(section.getByLabel("Public base URL")).toHaveValue(url);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,

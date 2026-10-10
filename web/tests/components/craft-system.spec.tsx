@@ -414,7 +414,7 @@ describe("SettingsSection and SettingRow", () => {
     );
     const row = section.querySelector<HTMLElement>("[data-slot=setting-row]")!;
     expect(classes(row)).toEqual(
-      expect.arrayContaining(["min-h-(--row-setting)", "px-4", "py-3"]),
+      expect.arrayContaining(["min-h-(--row-setting)", "px-4", "py-2.5"]),
     );
     expect(classes(screen.getByText("Passwords"))).toEqual(
       expect.arrayContaining(["text-body", "font-medium"]),
