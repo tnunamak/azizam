@@ -192,6 +192,68 @@ def test_settings_reconcile_cleanup_even_if_queue_write_never_happened(stores):
     assert prompt_memory.get("video_unfetched", user["id"], path=jobs) is None
 
 
+def test_completed_member_erasure_does_not_rescan_or_delete_new_prompts(stores, monkeypatch):
+    _root, admin, jobs, user, _app, _auth = stores
+    person_id = user["id"]
+    prompt_memory.put("old_asset", person_id, "old prompt", kept_until=None, path=jobs, admin_path=admin)
+    prompt_memory.put_member(person_id, remember=False, retention="never", path=admin)
+    proxy._maintain_person_prompt_memory(person_id)
+
+    prompt_memory.put_member(person_id, remember=True, retention="1_year", path=admin)
+    prompt_memory.put("fresh_asset", person_id, "new prompt", kept_until=None, path=jobs, admin_path=admin)
+    calls = []
+    monkeypatch.setattr(proxy.media_jobs, "erase_prompt_derivatives", lambda *a, **kw: calls.append("media"))
+    monkeypatch.setattr(prompt_memory, "prune_person_before", lambda *a, **kw: calls.append("prompts"))
+    monkeypatch.setattr(proxy.responses_store, "delete_person_before", lambda *a, **kw: calls.append("responses"))
+
+    proxy._maintain_person_prompt_memory(person_id)
+
+    assert calls == []
+    assert prompt_memory.get("fresh_asset", person_id, path=jobs)["prompt_text"] == "new prompt"
+
+
+def test_forget_payload_store_caps_count_and_releases_terminal_payload(stores, monkeypatch):
+    _root, _admin, jobs, _user, _app, auth = stores
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_COUNT", 1)
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_BYTES", 10_000)
+    forget = {"prompt": "private", "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}}}
+    active = media_jobs.create(media_jobs.MediaJob(job_id="mj_cap_active", intent="image.generate"), path=jobs)
+    proxy._persist_image_media_job_payload(active.job_id, body=forget, request=request(), auth_context=auth)
+
+    with pytest.raises(proxy.EphemeralMediaPayloadCapacityError):
+        proxy._persist_image_media_job_payload("mj_cap_refused", body=forget, request=request(), auth_context=auth)
+    assert not proxy._image_media_job_payload_path("mj_cap_refused").exists()
+
+    media_jobs.update_status(active.job_id, media_jobs.STATUS_SUCCEEDED, path=jobs)
+    assert proxy._prune_orphaned_media_job_payloads() == 1
+    proxy._persist_image_media_job_payload("mj_cap_replacement", body=forget, request=request(), auth_context=auth)
+
+
+def test_forget_payload_byte_cap_refuses_without_disk_fallback(stores, monkeypatch):
+    root, _admin, _jobs, _user, _app, auth = stores
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_COUNT", 10)
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_BYTES", 100)
+    forget = {"prompt": "x" * 1000, "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}}}
+    with pytest.raises(proxy.EphemeralMediaPayloadCapacityError):
+        proxy._persist_image_media_job_payload("mj_too_large", body=forget, request=request(), auth_context=auth)
+    assert proxy._load_image_media_job_payload("mj_too_large") is None
+    assert not proxy._image_media_job_payload_path("mj_too_large").exists()
+    assert not list(root.rglob("mj_too_large.json"))
+
+
+def test_stale_ephemeral_payload_releases_capacity(stores, monkeypatch):
+    _root, _admin, jobs, _user, _app, auth = stores
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_COUNT", 1)
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_BYTES", 10_000)
+    forget = {"prompt": "private", "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}}}
+    job = media_jobs.create(media_jobs.MediaJob(job_id="mj_cap_stale", intent="image.generate"), path=jobs)
+    proxy._persist_image_media_job_payload(job.job_id, body=forget, request=request(), auth_context=auth)
+    stale = proxy._load_image_media_job_payload(job.job_id)
+    stale["created_at"] = int(time.time()) - media_jobs.RETAIN_S - 1
+    assert proxy._prune_orphaned_media_job_payloads() == 1
+    proxy._persist_image_media_job_payload("mj_after_stale", body=forget, request=request(), auth_context=auth)
+
+
 def test_cancel_clears_upstream_video_prompt_and_all_execution_payloads(stores):
     _root, admin, jobs, user, _app, auth = stores
     job = media_jobs.create(media_jobs.MediaJob(intent="video.generate", metadata={"upstream_video_id": "video_cancel"}), path=jobs)
