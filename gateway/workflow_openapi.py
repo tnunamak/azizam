@@ -255,6 +255,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
         return out
     if record.intent in ("image.generate", "image.edit"):
         out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
+                    "label": "number of results",
                     "description": "Number of images.", "in": "body", "field": "n"})
     if record.intent.startswith("video."):
         if "length" not in inputs:

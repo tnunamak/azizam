@@ -305,7 +305,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
             "applies": "Route option",
             "request_field": extra.get("field", extra["name"]),
         }
-        for optional in ("default", "minimum", "maximum", "enum", "description"):
+        for optional in ("default", "minimum", "maximum", "enum", "description", "label"):
             if optional in extra:
                 row[optional] = extra[optional]
         rows.append(row)

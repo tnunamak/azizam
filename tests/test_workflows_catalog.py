@@ -347,6 +347,8 @@ class WorkflowsCatalogTests(unittest.TestCase):
         edit = next(row for row in payload["workflows"] if row["id"] == "image.edit.qwen-image-2.1-edit")
         edit_inputs = {row["name"]: row for row in edit["inputs"]}
         self.assertEqual(edit_inputs["cfg"]["label"], "prompt strength")
+        # The route's own options carry plain names too ("n" is never a label).
+        self.assertEqual(edit_inputs["n"]["label"], "number of results")
         self.assertNotIn("Reddit", json.dumps(edit_inputs))
         self.assertEqual(
             edit["example_request"]["files"]["image"],
