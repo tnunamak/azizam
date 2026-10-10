@@ -78,7 +78,16 @@ npm run sweep                    # household fixture + an unclaimed gateway for 
 npm run sweep:live               # synthetic live-data harness (18866-18867)
 npm run sweep:copy               # live-data harness on a COPY of production data (18870-18871)
 npm run sweep -- --out ~/report.md   # also save the report, JSON and cited screenshots there
+npm run sweep:gate               # pre-deploy gate: fixture sweep, fails only on findings not in the baseline
 ```
+
+`npm run sweep` exits non-zero on any failing finding, on a state that could not
+be swept, on a route with no sweep entry, or on a broken test. `sweep:gate`
+passes `--baseline e2e/sweep/baseline.fixtures.json`, the known findings, so only
+new ones fail; it also prints the known findings that are no longer seen. After
+fixing or accepting findings, refresh it with
+`npm run sweep -- --write-baseline e2e/sweep/baseline.fixtures.json` and commit it.
+The gate matches a finding by surface, rule and text, not by selector.
 
 Each page fails on horizontal overflow (including popovers), filesystem paths,
 raw ids, research notes, raw errors, member jargon, visible Unknown states,

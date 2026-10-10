@@ -18,6 +18,7 @@
     "sweep": "node e2e/sweep/run.mjs",
     "sweep:live": "node e2e/sweep/run.mjs --live",
     "sweep:copy": "node e2e/sweep/run.mjs --copy",
+    "sweep:gate": "node e2e/sweep/run.mjs --baseline e2e/sweep/baseline.fixtures.json",
     "sweep:report": "node e2e/sweep/report.mjs"
   },
   "dependencies": {

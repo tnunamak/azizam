@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Merge per-test sweep findings into sweep.json and a human report grouped
 // surface → rule → finding. Usage: node e2e/sweep/report.mjs [fixtures|live|copy] [--out file.md]
+//   [--baseline file.json] [--write-baseline file.json]
+// Exit status (the pre-deploy gate): 1 if a route lacks a sweep entry, a state could
+// not be swept, a test broke for another reason, or a failing finding is not in the baseline.
 // --out also copies the screenshots the report cites to <file>-shots/ so the
 // report survives deleting test-results/.
 import { existsSync, readdirSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
@@ -10,8 +13,11 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const targetName = args.find((arg) => ["fixtures", "live", "copy"].includes(arg)) ?? process.env.SWEEP_TARGET ?? "fixtures";
-const outIndex = args.indexOf("--out");
-const out = outIndex >= 0 ? path.resolve(args[outIndex + 1]) : null;
+const flag = (name) => (args.indexOf(name) >= 0 ? path.resolve(args[args.indexOf(name) + 1]) : null);
+const out = flag("--out");
+// Gate: --baseline <file> fails only on findings not listed there; --write-baseline <file> records them.
+const baselineFile = flag("--baseline");
+const writeBaselineFile = flag("--write-baseline");
 const dir = path.resolve(here, "../../test-results/sweep", targetName);
 const findingsDir = path.join(dir, "findings");
 if (!existsSync(findingsDir)) throw new Error(`No sweep results in ${findingsDir}; run the sweep first`);
@@ -59,7 +65,7 @@ for (const f of findings) {
   const key = keyOf(f);
   let entry = merged.get(key);
   if (!entry) {
-    entry = { rule: f.rule, severity: f.severity, surface: f.surface, text: f.text, selector: f.selector, context: f.context, note: f.note, screenshot: f.screenshot, views: new Set(), states: new Set(), routes: new Set(), count: 0 };
+    entry = { key, rule: f.rule, severity: f.severity, surface: f.surface, text: f.text, selector: f.selector, context: f.context, note: f.note, screenshot: f.screenshot, views: new Set(), states: new Set(), routes: new Set(), count: 0 };
     merged.set(key, entry);
   }
   entry.count++;
@@ -199,4 +205,43 @@ if (out) {
   if (cited.size) mkdirSync(shotDir, { recursive: true });
   for (const shot of cited) if (existsSync(path.join(dir, shot))) copyFileSync(path.join(dir, shot), path.join(shotDir, path.basename(shot)));
 }
+// ---------- Gate ----------
+const broken = [];
+if (runStats) {
+  const report = JSON.parse(readFileSync(path.join(dir, "playwright.json"), "utf8"));
+  const walk = (suite) => {
+    for (const spec of suite.specs ?? [])
+      for (const test of spec.tests ?? [])
+        for (const result of test.results ?? []) {
+          if (["passed", "skipped"].includes(result.status)) continue;
+          const message = (result.errors ?? []).map((error) => error.message ?? "").join("\n");
+          // Findings and unsweepable states are judged below; anything else broke the run.
+          if (!/\d+ sweep findings|states that could not be swept/.test(message))
+            broken.push(`${spec.title}: ${result.status} ${message.split("\n")[0].slice(0, 200)}`);
+        }
+    for (const child of suite.suites ?? []) walk(child);
+  };
+  for (const suite of report.suites ?? []) walk(suite);
+  for (const error of report.errors ?? []) broken.push(`run error: ${(error.message ?? "").split("\n")[0].slice(0, 200)}`);
+}
+// The gate matches on surface, rule and text, not the selector, so a layout change
+// that moves a known defect does not make it "new".
+const gateKey = (f) => [f.surface, f.rule, f.key.split("|").slice(4).join("|")].join("|");
+if (writeBaselineFile) {
+  const entries = failing.map((f) => ({ key: gateKey(f), surface: f.surface, rule: f.rule, text: f.text.slice(0, 160) }));
+  writeFileSync(writeBaselineFile, `${JSON.stringify({ target: targetName, written_at: summary.generated_at, findings: entries }, null, 1)}\n`);
+  console.log(`[sweep] wrote ${entries.length} known findings to ${writeBaselineFile}`);
+}
+const known = baselineFile ? new Set(JSON.parse(readFileSync(baselineFile, "utf8")).findings.map((f) => f.key)) : null;
+const fresh = known ? failing.filter((f) => !known.has(gateKey(f))) : failing;
+const gone = known ? [...known].filter((key) => !failing.some((f) => gateKey(f) === key)) : [];
+const problems = [
+  ...broken.map((line) => `broken: ${line}`),
+  ...errored.map((s) => `could not sweep: ${s.surface} ${s.route} ${s.state} (${s.role} ${s.width} ${s.theme}): ${s.reason}`),
+  ...fresh.map((f) => `${known ? "new " : ""}finding: [${f.rule}] ${f.surface}: ${f.text.slice(0, 140)}`),
+];
 console.log(`[sweep] ${checked} states, ${failing.length} unique failing findings → ${path.join(dir, "report.md")}${out ? ` and ${out}` : ""}`);
+if (known) console.log(`[sweep] baseline ${baselineFile}: ${failing.length - fresh.length} known, ${fresh.length} new, ${gone.length} no longer seen`);
+for (const line of problems.slice(0, 40)) console.log(`[sweep] ${line}`);
+if (problems.length > 40) console.log(`[sweep] … ${problems.length - 40} more`);
+process.exit(problems.length ? 1 : 0);
