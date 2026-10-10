@@ -185,9 +185,6 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                 audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
                 audit_target_kind="operator_setting", audit_target_id=PROMPT_MEMORY_SETTING_KEY,
                 audit_metadata={"fields": sorted(body)}, path=admin_path,
-                validate_in_transaction=(lambda _conn: prompt_memory.tighten_retention(
-                    body["retention_cap"], path=prompt_memory_path,
-                )) if not body["never_keep"] else None,
             )
         except admin_store.SettingsConflictError:
             return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
@@ -196,6 +193,13 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                                 "message": "The setting wasn’t saved. Try again."}}, status_code=503)
         purge_info: dict[str, Any] = {}
         purge_failed = False
+        if not body["never_keep"]:
+            try:
+                await asyncio.to_thread(prompt_memory.tighten_retention, body["retention_cap"], path=prompt_memory_path)
+            except Exception:
+                return JSONResponse({"error": {"code": "prompt_retention_pending",
+                    "message": "The setting was saved. Older prompt cleanup is pending and will be retried."}},
+                    status_code=503, headers={"Cache-Control": "no-store"})
         if body["never_keep"]:
             try:
                 await asyncio.to_thread(prompt_memory.prune_all_before, int(changed["updated_at"]), path=prompt_memory_path)

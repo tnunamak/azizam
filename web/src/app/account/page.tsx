@@ -42,11 +42,7 @@ type Pending =
   | { kind: "delete" };
 
 function errorMessage(error: unknown, fallback: string) {
-  return error instanceof ApiError && error.status === 503
-    ? "The gateway couldn’t finish this change. Try again."
-    : error instanceof Error && error.message
-      ? error.message
-      : fallback;
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /**
@@ -94,10 +90,12 @@ function PromptsSection() {
         next,
       );
     },
-    onError: (failure) =>
+    onError: (failure) => {
       toast.error(
         errorMessage(failure, "Your setting wasn’t saved. Try again."),
-      ),
+      );
+      void queryClient.invalidateQueries({ queryKey: promptMemoryKey });
+    },
   });
   const remove = useMutation({
     mutationFn: accountApi.deleteSavedPrompts,
@@ -110,6 +108,9 @@ function PromptsSection() {
             ? "You had no saved prompts."
             : `Deleted ${count} saved ${count === 1 ? "prompt" : "prompts"}.`,
       );
+      void queryClient.invalidateQueries({ queryKey: promptMemoryKey });
+    },
+    onError: () => {
       void queryClient.invalidateQueries({ queryKey: promptMemoryKey });
     },
   });
@@ -317,7 +318,7 @@ function PromptsSection() {
               toast.error(
                 errorMessage(
                   failure,
-                  "Your prompts weren’t deleted. Try again.",
+                  "Deletion could not be confirmed. Reload Your settings to see whether it is pending.",
                 ),
               );
               throw failure;

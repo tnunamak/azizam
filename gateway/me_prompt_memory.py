@@ -113,15 +113,20 @@ def create_me_prompt_memory_router(
                 admin_store.put_prompt_memory_preference,
                 person_id, remember=remember, retention=str(retention),
                 updated_by=person_id, path=admin_db_path,
-                validate_in_transaction=(lambda _conn: prompt_memory.tighten_retention(
-                    str(retention), person_id=person_id, path=prompt_memory_path,
-                )) if remember else None,
             )
         except Exception:
             return JSONResponse({"error": {"code": "prompt_erasure_unavailable",
                                 "message": "The setting wasn’t saved. Try again."}}, status_code=503)
         purge_info: dict[str, Any] = {}
         purge_failed = False
+        if remember:
+            try:
+                await asyncio.to_thread(prompt_memory.tighten_retention, str(retention),
+                                        person_id=person_id, path=prompt_memory_path)
+            except Exception:
+                return JSONResponse({"error": {"code": "prompt_retention_pending",
+                    "message": "The setting was saved. Older prompt cleanup is pending and will be retried."}},
+                    status_code=503, headers={"Cache-Control": "no-store"})
         if not remember:
             cutoff = int(changed["updated_at"])
             kwargs = {"path": prompt_memory_path} if prompt_memory_path is not None else {}
@@ -170,7 +175,14 @@ def create_me_prompt_memory_router(
         purge_info: dict[str, Any] = {}
         purge_failed = False
         try:
-            deleted = await asyncio.to_thread(prompt_memory.delete_person, person_id, **kwargs)
+            cutoff = await asyncio.to_thread(prompt_memory.mark_person_erasure, person_id, admin_path=admin_db_path)
+        except Exception:
+            return JSONResponse({"error": {"code": "prompt_erasure_unavailable",
+                "message": "Deletion could not be started. Try again."}, "deleted_prompts": 0,
+                "prompt_purge": {"pending": True, "retry_scheduled": False, "retry_required": True}},
+                status_code=503, headers={"Cache-Control": "no-store"})
+        try:
+            deleted = await asyncio.to_thread(prompt_memory.prune_person_before, person_id, cutoff, **kwargs)
         except Exception:
             deleted = 0
             purge_failed = True
@@ -184,14 +196,18 @@ def create_me_prompt_memory_router(
         pending = purge_failed or _has_pending_purge(purge_info)
         if pending:
             purge_info["pending"] = True
-            # A one-time deletion has no durable retry intent if its callback
-            # failed before recording the fence. Ask the caller to retry.
-            purge_info["retry_scheduled"] = not purge_failed
+            purge_info["retry_scheduled"] = True
             if purge_failed:
-                purge_info["retry_required"] = True
+                purge_info["database_pending"] = True
+        else:
+            try:
+                await asyncio.to_thread(prompt_memory.complete_erasure, person_id, cutoff, admin_path=admin_db_path)
+            except Exception:
+                pending = True
+                purge_info.update(pending=True, database_pending=True, retry_scheduled=True)
         return JSONResponse(
             {"deleted_prompts": int(deleted), **({"prompt_purge": purge_info} if purge_info else {})},
-            status_code=503 if purge_failed else (202 if pending else 200),
+            status_code=202 if pending else 200,
             headers={"Cache-Control": "no-store"},
         )
 
