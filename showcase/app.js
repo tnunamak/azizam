@@ -43,7 +43,10 @@
 
   async function api(path, opts) {
     const o = Object.assign({}, opts || {});
-    o.headers = authHeaders(o.headers);
+    // Paths can come from server responses (e.g. data[0].url); the Bearer key
+    // goes only to the gateway origin, never to a URL some response named.
+    if (C.isSameOrigin(path, location.href)) o.headers = authHeaders(o.headers);
+    else { o.headers = Object.assign({}, o.headers || {}); o.credentials = "omit"; }
     const res = await fetch(path, o);
     if (!res.ok) {
       let body = await res.text();

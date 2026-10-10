@@ -430,8 +430,19 @@
     return out;
   }
 
+  /** True only when `target` resolves to the same origin as `base`. Anything
+   * unparseable or opaque (data:, javascript:, about:) counts as cross-origin.
+   * app.js uses this so the stored API key never leaves the gateway origin. */
+  function isSameOrigin(target, base) {
+    try {
+      const b = new URL(base);
+      const u = new URL(target, b);
+      return u.origin !== "null" && u.origin === b.origin;
+    } catch (e) { return false; }
+  }
+
   return {
-    EXT_KEY, shortId, classifyWorkflow, resolveRef, formFields, planWorkflow, fillPath,
+    EXT_KEY, isSameOrigin, shortId, classifyWorkflow, resolveRef, formFields, planWorkflow, fillPath,
     curlFor, pythonFor, jsFor, buildSections, capabilityIndex, aliasesByWorkflow,
     statusSummary, examplesByCard, PROTOCOLS, isBlank,
   };
