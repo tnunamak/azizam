@@ -20615,15 +20615,19 @@ def _image_media_job_request_id(
     fallback_request_id: str,
 ) -> tuple[str, str, str]:
     owner = _asset_owner_key(auth_context) or "anonymous"
+    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
     if idempotency_key:
+        identity = {"owner": owner, "idempotency_key": idempotency_key}
+        if not memory.keep and memory.reason != "no_person":
+            # A forget request must not return an earlier remembered job.
+            identity["prompt_memory"] = "forget"
         canonical = json.dumps(
-            {"owner": owner, "idempotency_key": idempotency_key},
+            identity,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
         digest = hmac.new(_image_signing_secret(), canonical, hashlib.sha256).hexdigest()
         return f"imgjob_idem_{digest[:40]}", digest, "idempotency_key"
-    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
     if not memory.keep and memory.reason != "no_person":
         return fallback_request_id, uuid.uuid4().hex + uuid.uuid4().hex, "request"
     if _image_job_body_has_seed(body):

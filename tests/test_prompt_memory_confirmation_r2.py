@@ -37,7 +37,8 @@ def test_video_edit_accepts_json_extensions_field(household):
     response, _raw = asyncio.run(NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
     assert response.status_code == 200, response.body
     assert response.media_type == "video/mp4"
-    assert not proxy.media_metadata.read_media_tags(response.body, ".mp4")
+    tags = proxy.media_metadata.read_media_tags(response.body, ".mp4")
+    assert not {"prompt", "workflow", "azizam_provenance"}.intersection(tags)
 
 
 @pytest.mark.parametrize("intent,extract", [

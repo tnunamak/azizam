@@ -389,7 +389,8 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
     def note_form(auth: Any, form: Any) -> Response | None:
         body = dict(form.multi_items())
         try:
-            body["extensions"] = multipart_extensions(body.get("extensions"))
+            if "extensions" in body:
+                body["extensions"] = multipart_extensions(body["extensions"])
         except ExtensionError as exc:
             return error(400, "invalid_extensions", str(exc), param="extensions")
         return deps.note_delivery(auth, body) if deps.note_delivery is not None else None
