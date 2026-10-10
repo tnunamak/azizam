@@ -1,61 +1,21 @@
 """Real-credential regressions for service privacy and legacy Library visibility."""
 from __future__ import annotations
 
-
-import asyncio
-
-
-import base64
-
-
 import io
-
-
 import json
-
-
-import os
-
-
-import stat
-
-
 import time
-
-
 from pathlib import Path
-
-
 from types import SimpleNamespace
 
-
-from unittest.mock import AsyncMock, patch
-
-
 import pytest
-
-
 from starlette.requests import Request
 
-
 import proxy
-
-
-from gateway import accounts, admin_store, media_jobs, media_metadata, me_media, prompt_memory, receipt_store
-
-
+from gateway import accounts, admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.admin_api import AdminContext
-
-
 from gateway.admin_oidc import AdminSession
-
-
 from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
-
-
 from gateway.runtime_auth import hash_api_key
-
-
 from gateway.user_runtime import mint_user_app_key
 
 
@@ -118,6 +78,7 @@ def test_service_app_key_has_no_person_or_prompt_memory(hh):
     result = hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)
     assert result["prompt_memory"]["person_id"] is None
     assert "not remembered" in result["prompt_memory"]["description"]
+    assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
     key = result["api_key"]
     auth = _ctx_for(key, hh.admin)
     assert auth.identity.person_id is None
@@ -132,7 +93,7 @@ def test_service_app_key_has_no_person_or_prompt_memory(hh):
     assert decision.person_id is None and proxy._responses_scope(auth)["person_id"] is None
 
 
-def test_removed_admin_key_on_service_app_keeps_working_with_dead_person(hh):
+def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     admin_member = admin_store.upsert_oidc_user("iss", "adm", email="adm@x.test", path=hh.admin)
     sa = admin_store.ensure_service_account("auto", path=hh.admin)
     svc = admin_store.create_app("Automation", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
@@ -178,6 +139,7 @@ def test_legacy_personal_key_remembers_prompt_and_keeps_library_item(hh):
 
 
 def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
+    prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     sa = admin_store.ensure_service_account("webui", path=hh.admin)
     svc = admin_store.create_app("Open WebUI", kind="service", owner_service_account_id=sa["id"], path=hh.admin)
     auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)["api_key"], hh.admin)
@@ -199,6 +161,8 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
     assert item["prompt"] is None
     assert prompt_memory.get_person_prompts(hh.owner["id"]) == {}
     assert item["workflow_download_url"] is None
+    assert item["source"]["app_id"] == svc["id"]
+    assert "robin typed this" not in item["title"]
 
 
 
@@ -208,6 +172,7 @@ def test_owner_key_on_members_app_is_no_person_but_media_is_visible(hh):
     assert auth.identity.person_id is None
     assert result["prompt_memory"]["person_id"] is None
     assert "not remembered" in result["prompt_memory"]["description"]
+    assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
     ctx = proxy._begin_media_delivery(auth)
     try:
         proxy._note_media_metadata_body({"prompt": SENTINEL})
@@ -270,3 +235,39 @@ def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
     response = proxy._signed_asset_content_response(asset_id, request, invalid_message="x", missing_message="y", auth_context=auth)
     assert response.status_code == 403
     assert SENTINEL.encode() not in proxy.asset_cache_path(asset_id).read_bytes()
+
+
+def test_legacy_personal_key_honors_its_app_owners_off_setting(hh):
+    prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"],
+        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin)
+    auth = _ctx_for("legacy-off-key", hh.admin)
+    ctx = proxy._begin_media_delivery(auth)
+    try:
+        proxy._note_media_metadata_body({"prompt": SENTINEL})
+        asset_id = proxy.store_asset_bytes(_png(SENTINEL), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
+    finally:
+        proxy.media_delivery._CONTEXT.set(None)
+    assert ctx.prompt_decision.person_id == hh.robin["id"]
+    assert ctx.prompt_decision.reason == "member_disabled"
+    item = next(item for item in _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin)) if item["asset_id"] == asset_id)
+    assert item["prompt"] is None
+    assert SENTINEL.encode() not in proxy.asset_cache_path(asset_id).read_bytes()
+
+
+@pytest.mark.parametrize("self_service", [False, True])
+def test_own_personal_key_warns_about_prompt_access(hh, self_service):
+    if self_service:
+        session = AdminSession(subject=hh.robin["id"], role="none", email=None,
+                               issued_at=1, expires_at=4_000_000_000)
+        result = mint_user_app_key(session, hh.robin_app["id"], path=hh.admin)
+        person = hh.robin["id"]
+    else:
+        app = admin_store.create_app("Owner Try", kind="personal",
+                                     owner_user_id=hh.owner["id"], path=hh.admin)
+        result = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)
+        person = hh.owner["id"]
+    assert result["prompt_memory"]["person_id"] == person
+    assert "follow your prompt-memory settings" in result["prompt_memory"]["description"]
+    assert "Anyone holding it can access your saved prompts" in result["prompt_memory"]["description"]
+    assert _ctx_for(result["api_key"], hh.admin).identity.person_id == person

@@ -587,16 +587,7 @@ class AdminSQLiteStore:
         )
         out = _sanitize_credential(record)
         out["api_key"] = api_key
-        person_id = person_for_app_credential(app, record)
-        out["prompt_memory"] = {
-            "person_id": person_id,
-            "description": (
-                "Prompts sent with this key follow your prompt-memory settings. "
-                "Anyone holding it can access your saved prompts."
-                if person_id else
-                "Prompts sent with this key are not remembered. Generated items belong to the App."
-            ),
-        }
+        out["prompt_memory"] = app_key_prompt_memory(app, record)
         return out
 
     def create_admin_automation_key(
@@ -1568,6 +1559,21 @@ def person_for_app_credential(app: Mapping[str, Any], credential: Mapping[str, A
         return None
     creator = credential.get("created_by")
     return str(owner) if creator is None or creator == owner else None
+
+
+def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe prompt access at mint time using the same rule as authentication."""
+    person_id = person_for_app_credential(app, credential)
+    return {
+        "person_id": person_id,
+        "description": (
+            "Prompts sent with this key follow your prompt-memory settings. "
+            "Anyone holding it can access your saved prompts."
+            if person_id else
+            "Prompts sent with this key are not remembered. Generated items belong to the App. "
+            "Chat requests can explicitly ask to save a conversation for up to seven days."
+        ),
+    }
 
 
 def runtime_identity_for_app_credential_hash(
