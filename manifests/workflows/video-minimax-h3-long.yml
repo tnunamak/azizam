@@ -2,6 +2,7 @@ schema_version: 1
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: video.generate.minimax-h3-long
+license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
 display_name: MiniMax H3 Long
 purpose: Long videos with sound

@@ -2,6 +2,7 @@ schema_version: 1
 min_gateway_version: '0.1'
 version: 0.1.0
 id: audio.generate.yue2-song
+license: "CC BY-NC (non-commercial use only)"
 intent: audio.generate
 capability: music
 display_name: YuE2 Song
