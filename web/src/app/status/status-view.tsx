@@ -34,6 +34,7 @@ import {
   useCapabilityViews,
 } from "@/lib/use-capability-views";
 import { askOwner, useOwnerName } from "@/lib/use-owner-name";
+import { appPlumbingCapabilities, memberTerms } from "@/lib/terms";
 import { StatusClient } from "./status-client";
 
 function usableNames(capability: MemberStatusCapability): string[] {
@@ -70,9 +71,12 @@ export function MemberStatus() {
   const refusal = activeCapRefusal(model.requests);
   // Home and Status read the same snapshot. If Home has no rows (an older
   // gateway), the Status rows go through the same model instead.
+  const memberRows = (data?.capabilities ?? []).filter(
+    (row) => !appPlumbingCapabilities.has(row.icon_key ?? row.capability),
+  );
   const capabilityViews = model.views.length
     ? model.views
-    : (data?.capabilities ?? []).map((row) =>
+    : memberRows.map((row) =>
         capabilityView(
           {
             key: row.icon_key ?? row.capability,
@@ -232,7 +236,7 @@ export function MemberStatus() {
               <section aria-labelledby="capability-status-heading">
                 <SectionHeading
                   id="capability-status-heading"
-                  title="Your capabilities"
+                  title={memberTerms.whatYouCanUse}
                 />
                 {capabilityViews.length ? (
                   <CapabilityList views={capabilityViews} columns={2} />
@@ -242,13 +246,13 @@ export function MemberStatus() {
                     description={`${askOwner(ownerName)} to connect a model and give you access.`}
                   />
                 )}
-                {data.capabilities.length ? (
+                {memberRows.length ? (
                   <details className="mt-4 text-sm">
                     <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center font-medium sm:min-h-8">
                       Model names
                     </summary>
                     <dl className="text-muted-foreground mt-2 space-y-2">
-                      {data.capabilities.map((capability) => (
+                      {memberRows.map((capability) => (
                         <div key={capability.capability}>
                           <dt className="text-foreground">
                             {capability.capability_title ?? "Capability"}

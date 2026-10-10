@@ -32,6 +32,30 @@ export const taskNames = {
   reranking: "Reranking",
 } as const;
 
+/**
+ * Capabilities apps use behind the scenes (document search, memory, routing),
+ * not tasks a member does: the Try plan keeps "Choose an option" and "Turn
+ * text into numbers" off member task pages. Member status summaries (Home,
+ * Status, the shell indicator) leave them out; owners and builders still see
+ * them. Keys as the gateway's capability rows name them.
+ */
+export const appPlumbingCapabilities: ReadonlySet<string> = new Set([
+  "embed",
+  "embeddings",
+  "decide",
+  "decisions",
+  "rerank",
+  "reranking",
+]);
+
+/** Member words for screens that list what a person can use. */
+export const memberTerms = {
+  /** A member's list of what works for them (not "Your capabilities"). */
+  whatYouCanUse: "What you can use",
+  /** One kind of request on Usage (not "capability"). */
+  task: "task",
+} as const;
+
 /** Preferred member-facing terms; protocol and stored field names stay unchanged. */
 export const preferredTerms = {
   localExecution: "Engine",

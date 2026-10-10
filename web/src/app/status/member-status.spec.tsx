@@ -253,3 +253,47 @@ describe("member Status diagnosis", () => {
     ).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("member Status leaves app plumbing out", () => {
+  it("never says 'Embeddings down' or lists decisions to a member", async () => {
+    const ready = snapshot.capabilities[0];
+    serve({
+      ...snapshot,
+      receipts: [],
+      capabilities: [
+        { ...ready, status: "ready", available: true, measured: true, reason_code: "ready" },
+        {
+          ...ready,
+          capability: "embeddings",
+          capability_title: "Embeddings",
+          icon_key: "embed",
+          intent: "text.embeddings",
+          status: "unavailable",
+          available: false,
+          measured: true,
+          reason_code: "engine_down",
+        },
+        {
+          ...ready,
+          capability: "decisions",
+          capability_title: "Decisions",
+          icon_key: "decide",
+          intent: "text.decisions",
+          status: "ready",
+          available: true,
+          measured: true,
+          reason_code: "ready",
+        },
+      ],
+    });
+    mount();
+    expect(
+      await screen.findByRole("heading", { name: "What you can use" }),
+    ).toBeVisible();
+    expect(await screen.findByText("Images", { selector: "p" })).toBeVisible();
+    expect(screen.getByRole("status")).not.toHaveTextContent(/Embeddings/i);
+    expect(document.body.textContent).not.toMatch(
+      /Embeddings|Decisions|Your capabilities/,
+    );
+  });
+});
