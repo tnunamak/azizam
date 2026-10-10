@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // A llama.cpp engine reports the GGUF file it loaded, so a model id can be a
-// directory on the gateway host. No screen may show it, to members or owners.
+// directory on the gateway host. No screen shows it outside an owner's
+// technical details.
 const GGUF =
   "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 const HOST_PATH = /\/media\/windows|AI Models|\/GGUF\/|\/home\/[a-z]+\//;
@@ -39,8 +40,19 @@ test("Usage shows no host path in the table, receipts or details", async ({ page
   await page.getByRole("button", { name: "View recent requests" }).click();
   await expectNoHostPath(page, "usage");
   await page.getByRole("button", { name: /Receipt details for Chat request/ }).click();
-  await page.getByText("Technical details", { exact: true }).click();
   await expectNoHostPath(page, "usage receipt");
+  // The owner's technical details keep the exact id for routing diagnostics.
+  // Everything outside that disclosure stays free of the path.
+  await page.getByText("Technical details", { exact: true }).click();
+  const outside = await page.evaluate(() => {
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("details").forEach((node) => node.remove());
+    return clone.innerText ?? clone.textContent ?? "";
+  });
+  expect(outside, "usage receipt: outside technical details").not.toMatch(HOST_PATH);
+  await expect(page.locator("details", { hasText: "Technical details" })).toContainText(
+    "/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+  );
 });
 
 test("Activity shows no host path in rows or details", async ({ page }) => {
