@@ -124,6 +124,7 @@ from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
+from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
@@ -15346,6 +15347,10 @@ app.include_router(create_settings_router(
     purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
+# Owner-defined categories and plans (design v3). Editing and preview only;
+# request enforcement is wired separately.
+app.include_router(create_category_router(
+    auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db"))
 app.include_router(build_setup_api_router(lambda request: {
     "owner_exists": _owner_or_admin_exists(),
     "oidc_enabled": _effective_admin_oidc_config().enabled,
