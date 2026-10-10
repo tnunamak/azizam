@@ -132,6 +132,63 @@ describe("WorkflowsPage empathy copy", () => {
     vi.restoreAllMocks();
   });
 
+  test.each(["owner", "superadmin"] as const)(
+    "%s sees the verbatim licence in the detail sheet without an engine binding",
+    async (role) => {
+      const license = "Example licence: Not For Use in restricted regions";
+      serve([{ ...workflows[0], license }]);
+      renderWorkflows({ ...owner, role });
+      fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+      const sheet = within(screen.getByRole("dialog"));
+      expect(sheet.getByText(`Licence: ${license}`)).toBeVisible();
+      expect(sheet.getByText("Licence limit")).toBeVisible();
+    },
+  );
+
+  test("non-commercial licences receive the warning badge", async () => {
+    const license = "Example terms: NON-COMMERCIAL use only";
+    serve([{ ...workflows[1], license }]);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Clean text" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText(`Licence: ${license}`)).toBeVisible();
+    expect(sheet.getByText("Licence limit")).toBeVisible();
+  });
+
+  test("non-restrictive licences are shown without a warning badge", async () => {
+    serve([{ ...workflows[0], license: "Example permissive licence" }]);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("Licence: Example permissive licence")).toBeVisible();
+    expect(sheet.queryByText("Licence limit")).toBeNull();
+  });
+
+  test.each(["member", "admin"] as const)(
+    "%s sees no licence text or badge in the row or detail sheet",
+    async (role) => {
+      const license = "Example licence: non-commercial use only";
+      serve([{ ...workflows[0], license }]);
+      renderWorkflows({ ...member, role, admin: role === "admin" });
+      await screen.findByRole("button", { name: "Details for Upscale image" });
+      expect(screen.queryByText(/Licence:/)).toBeNull();
+      expect(screen.queryByText(license, { exact: false })).toBeNull();
+      expect(screen.queryByText("Licence limit")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Details for Upscale image" }));
+      expect(screen.queryByText(/Licence:/)).toBeNull();
+      expect(screen.queryByText(license, { exact: false })).toBeNull();
+      expect(screen.queryByText("Licence limit")).toBeNull();
+    },
+  );
+
+  test("owners see no licence line or badge when metadata is absent", async () => {
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+    expect(screen.queryByText(/Licence:/)).toBeNull();
+    expect(screen.queryByText("Licence limit")).toBeNull();
+  });
+
+
   test("cards describe needs and outputs, hide technical rows and filter by capability", async () => {
     renderWorkflows();
 

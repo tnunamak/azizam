@@ -210,6 +210,8 @@ def _workflow_row(
             "execution": openapi_row.get("execution") or routes,
         },
     }
+    if "license" in record.manifest:
+        row["license"] = record.manifest["license"]
     if technical_notes:
         row["technical_notes"] = technical_notes
     return row

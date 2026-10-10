@@ -246,6 +246,24 @@ def _aliases() -> dict:
 
 
 class WorkflowsCatalogTests(unittest.TestCase):
+    def test_catalog_includes_manifest_license_verbatim(self) -> None:
+        manifest = yaml.safe_load(IMAGE_MANIFEST)
+        manifest["license"] = "Community terms: Not For Use in restricted regions"
+        registry = WorkflowRegistry()
+        registry.add_manifest(manifest, source_path="licensed.yml")
+        payload = build_workflows_catalog(
+            records=registry.records(),
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow=manifest["id"])],
+        )
+        self.assertEqual(payload["workflows"][0]["license"], manifest["license"])
+
+    def test_catalog_omits_license_when_manifest_has_none(self) -> None:
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")],
+        )
+        self.assertNotIn("license", payload["workflows"][0])
+
     def test_summary_is_preferred_without_leaking_research_notes(self) -> None:
         manifest = yaml.safe_load(IMAGE_MANIFEST)
         manifest.update(
