@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store
+from gateway import admin_store, prompt_memory
 from gateway.admin_oidc import AdminSession
 
 SessionProvider = Callable[[Request], AdminSession | None]
@@ -52,6 +52,10 @@ def create_me_prompt_memory_router(
         household = _household(request)
         member = _member_settings(person_id, path=admin_db_path)
         effective = _effective(member, household)
+        extra = dict(extra or {})
+        if prompt_memory.erasure_pending(person_id, admin_path=admin_db_path):
+            extra["prompt_purge"] = {**extra.get("prompt_purge", {}), "pending": True,
+                                     "database_pending": True, "retry_scheduled": True}
         return JSONResponse(
             {
                 "prompt_memory": {
@@ -104,31 +108,24 @@ def create_me_prompt_memory_router(
         from gateway import prompt_memory
 
         person_id = str(session.subject)
-        changed = await asyncio.to_thread(
-            admin_store.put_prompt_memory_preference,
-            person_id,
-            remember=remember,
-            retention=str(retention),
-            updated_by=person_id,
-            path=admin_db_path,
-        )
-        purge_info: dict[str, Any] = {}
-        purge_failed = False
         try:
-            await asyncio.to_thread(
-                prompt_memory.tighten_retention,
-                str(retention),
-                person_id=person_id,
-                path=prompt_memory_path,
+            changed = await asyncio.to_thread(
+                admin_store.put_prompt_memory_preference,
+                person_id, remember=remember, retention=str(retention),
+                updated_by=person_id, path=admin_db_path,
+                validate_in_transaction=(lambda _conn: prompt_memory.tighten_retention(
+                    str(retention), person_id=person_id, path=prompt_memory_path,
+                )) if remember else None,
             )
         except Exception:
-            purge_failed = True
+            return JSONResponse({"error": {"code": "prompt_erasure_unavailable",
+                                "message": "The setting wasn’t saved. Try again."}}, status_code=503)
+        purge_info: dict[str, Any] = {}
+        purge_failed = False
         if not remember:
             cutoff = int(changed["updated_at"])
             kwargs = {"path": prompt_memory_path} if prompt_memory_path is not None else {}
             try:
-                await asyncio.to_thread(prompt_memory.mark_person_erasure, person_id,
-                                        admin_path=admin_db_path, now=cutoff)
                 await asyncio.to_thread(prompt_memory.prune_person_before, person_id, cutoff, **kwargs)
             except Exception:
                 purge_failed = True
@@ -142,6 +139,11 @@ def create_me_prompt_memory_router(
                         purge_info.update(result)
                 except Exception:
                     purge_failed = True
+        if not remember and not purge_failed:
+            try:
+                await asyncio.to_thread(prompt_memory.complete_erasure, person_id, cutoff, admin_path=admin_db_path)
+            except Exception:
+                purge_failed = True
         if purge_failed or _has_pending_purge(purge_info):
             purge_info["pending"] = True
             purge_info["retry_scheduled"] = True

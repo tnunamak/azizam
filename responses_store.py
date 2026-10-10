@@ -201,6 +201,15 @@ def delete_all(path: Path = DB_PATH) -> int:
         return cur.rowcount
 
 
+def delete_all_before(cutoff: int, path: Path = DB_PATH) -> int:
+    with _conn(path) as conn:
+        conn.execute("PRAGMA secure_delete=ON")
+        cur = conn.execute("DELETE FROM responses WHERE created_at<=?", (int(cutoff),))
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return cur.rowcount
+
+
 def delete_person(person_id: str, path: Path = DB_PATH) -> int:
     """Discard one person's stored conversations without removing media."""
     return _delete_person_rows(person_id, None, path)

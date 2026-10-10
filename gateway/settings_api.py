@@ -135,7 +135,12 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         value = dict(PROMPT_MEMORY_DEFAULT)
         if record:
             value.update(_validate_prompt_memory(record["value"]))
-        purge = purge_status_provider() if purge_status_provider else {}
+        purge = dict(purge_status_provider() if purge_status_provider else {})
+        if prompt_memory.erasure_pending("*", admin_path=admin_path):
+            purge.update(pending=True, database_pending=True, retry_scheduled=True)
+        extra = dict(extra or {})
+        if purge.get("database_pending"):
+            extra["prompt_purge"] = {**extra.get("prompt_purge", {}), **purge}
         return JSONResponse(
             {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record),
              "source": "admin.db", "apply_mode": "live",
@@ -173,21 +178,27 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         if not revision:
             return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
         try:
-            await asyncio.to_thread(
+            changed = await asyncio.to_thread(
                 admin_store.put_operator_setting_with_audit,
                 PROMPT_MEMORY_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
                 audit_action="operator.prompt_memory.update", audit_actor_kind=ctx.actor_kind,
                 audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
                 audit_target_kind="operator_setting", audit_target_id=PROMPT_MEMORY_SETTING_KEY,
                 audit_metadata={"fields": sorted(body)}, path=admin_path,
+                validate_in_transaction=(lambda _conn: prompt_memory.tighten_retention(
+                    body["retention_cap"], path=prompt_memory_path,
+                )) if not body["never_keep"] else None,
             )
         except admin_store.SettingsConflictError:
             return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+        except Exception:
+            return JSONResponse({"error": {"code": "prompt_erasure_unavailable",
+                                "message": "The setting wasn’t saved. Try again."}}, status_code=503)
         purge_info: dict[str, Any] = {}
         purge_failed = False
         if body["never_keep"]:
             try:
-                await asyncio.to_thread(prompt_memory.delete_all, path=prompt_memory_path)
+                await asyncio.to_thread(prompt_memory.prune_all_before, int(changed["updated_at"]), path=prompt_memory_path)
             except Exception:
                 purge_failed = True
             if on_prompt_memory_kill is not None:
@@ -197,9 +208,9 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                         purge_info.update(result)
                 except Exception:
                     purge_failed = True
-        else:
+        if body["never_keep"] and not purge_failed:
             try:
-                await asyncio.to_thread(prompt_memory.tighten_retention, body["retention_cap"], path=prompt_memory_path)
+                await asyncio.to_thread(prompt_memory.complete_erasure, "*", int(changed["updated_at"]), admin_path=admin_path)
             except Exception:
                 purge_failed = True
         pending = purge_failed or _has_pending_purge(purge_info)

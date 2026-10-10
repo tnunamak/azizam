@@ -2175,6 +2175,8 @@ def put_operator_setting(
         conn.execute("BEGIN IMMEDIATE")
         if setting_key == "prompt_memory":
             _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
+            if value.get("never_keep"):
+                _record_prompt_erasure(conn, "*", ts)
         conn.execute(
             "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
             "VALUES (?, ?, ?, ?) "
@@ -2235,6 +2237,8 @@ def put_operator_setting_with_audit(
                 validate_in_transaction(conn)
             if setting_key == "prompt_memory":
                 _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
+                if value.get("never_keep"):
+                    _record_prompt_erasure(conn, "*", ts)
             conn.execute(
                 "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
                 "VALUES (?, ?, ?, ?) "
@@ -2505,12 +2509,27 @@ def ensure_prompt_memory_preference(
     return data
 
 
+def _record_prompt_erasure(conn: sqlite3.Connection, person_id: str, cutoff: int) -> None:
+    """Persist retry intent and the late-write fence in the setting transaction."""
+    conn.execute("CREATE TABLE IF NOT EXISTS prompt_memory_erasure_cutoffs ("
+                 "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS prompt_memory_erasure_intents ("
+                 "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)")
+    for table in ("prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents"):
+        conn.execute(
+            f"INSERT INTO {table}(person_id,cutoff_at) VALUES(?,?) "
+            "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+            (person_id, cutoff),
+        )
+
+
 def put_prompt_memory_preference(
     user_id: str,
     *,
     remember: bool,
     retention: str,
     updated_by: str | None = None,
+    validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -2520,6 +2539,11 @@ def put_prompt_memory_preference(
         raise ValueError("retention must be one of 3_months, 1_year, never")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if validate_in_transaction is not None:
+            validate_in_transaction(conn)
+        if not remember:
+            _record_prompt_erasure(conn, user_id, ts)
         conn.execute(
             "INSERT INTO prompt_memory_preferences"
             "(user_id, remember, retention, updated_at, updated_by) "

@@ -166,14 +166,18 @@ def retention_guard(admin_path: Path | None, person_id: str | None = None) -> It
         row = conn.execute("SELECT value_json FROM operator_settings WHERE key='prompt_memory'").fetchone()
         household = {**HOUSEHOLD_DEFAULTS, **(json.loads(row[0]) if row else {})}
         _ensure_erasure_cutoff_table(conn)
+        erased = conn.execute(
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'",
+        ).fetchone()
+        household_cutoff = int(erased[0]) if erased else 0
         member = None
         person_enabled = True
-        forgot_before = 0
+        forgot_before = household_cutoff
         if person_id:
             erased = conn.execute(
                 f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
             ).fetchone()
-            forgot_before = int(erased[0]) if erased else 0
+            forgot_before = max(household_cutoff, int(erased[0]) if erased else 0)
             member = conn.execute(
                 "SELECT remember, retention FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
             ).fetchone()
@@ -453,12 +457,7 @@ def mark_person_erasure(
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
-        _ensure_erasure_cutoff_table(conn)
-        conn.execute(
-            f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,cutoff_at) VALUES(?,?) "
-            "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
-            (person_id, current),
-        )
+        admin_store._record_prompt_erasure(conn, person_id, current)
         cutoff = conn.execute(
             f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
         ).fetchone()[0]
@@ -542,18 +541,55 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
 
 
 def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
-    """Return when the kill switch setting was last saved, or None when it is off."""
+    """The household fence survives turning memory back on."""
     conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
+        _ensure_erasure_cutoff_table(conn)
         row = conn.execute(
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'"
+        ).fetchone()
+        setting = conn.execute(
             "SELECT value_json, updated_at FROM operator_settings WHERE key='prompt_memory'"
         ).fetchone()
+        legacy = int(setting[1]) if setting and json.loads(setting[0]).get("never_keep") else 0
+        return max(int(row[0]) if row else 0, legacy) or None
     finally:
         conn.close()
-    if row is None or not json.loads(row[0]).get("never_keep"):
-        return None
-    return int(row[1])
+
+
+def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
+    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
+            return False
+        return conn.execute(
+            "SELECT 1 FROM prompt_memory_erasure_intents WHERE person_id IN (?, '*')", (person_id,),
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def complete_erasure(person_id: str, cutoff: int, *, admin_path: Path) -> None:
+    """An old worker must not acknowledge a newer deletion."""
+    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
+            conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=?",
+                         (person_id, int(cutoff)))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def prune_all_before(cutoff: int, *, path: Path | None = None) -> int:
+    conn = _connect(path)
+    try:
+        deleted = conn.execute("DELETE FROM asset_prompts WHERE created_at<=?", (int(cutoff),)).rowcount
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
 
 
 def prune_person_before(

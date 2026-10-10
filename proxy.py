@@ -20298,6 +20298,7 @@ def _purge_person_prompt_memory(person_id: str, *, cutoff: int | None = None) ->
     """
     cutoff = prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path, now=cutoff)
     _erase_person_prompts_before(person_id, cutoff)
+    prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     _wake_prompt_purge_drain()
     return _prompt_purge_status(person_id)
 
@@ -20313,10 +20314,13 @@ def _erase_person_prompts_before(person_id: str, cutoff: int) -> None:
 
 
 def _purge_prompt_memory_on_kill() -> dict[str, Any]:
-    media_jobs.erase_prompt_derivatives({"*"}, before=int(time.time()), path=media_jobs.DB_PATH)
-    prompt_memory.delete_all()
-    responses_store.delete_all(path=responses_store.DB_PATH)
-    _queue_prompt_purge("*", prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or int(time.time()))
+    cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path)
+    if cutoff is None:
+        cutoff = prompt_memory.mark_person_erasure("*", admin_path=ADMIN_STORE.path)
+    media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
+    prompt_memory.prune_all_before(cutoff)
+    responses_store.delete_all_before(cutoff, path=responses_store.DB_PATH)
+    _queue_prompt_purge("*", cutoff)
     _purge_queued_payloads("*")
     _wake_prompt_purge_drain()
     return _prompt_purge_status("*")
@@ -20370,22 +20374,23 @@ def _drain_prompt_purges() -> None:
 
 
 def _maintain_household_prompt_memory() -> None:
-    # Decide and delete under the settings lock: a kill switch turned off
-    # since an earlier read must not erase prompts saved after it.
+    # Retry the durable fence after re-enable, preserving newer prompts.
     with prompt_memory.retention_guard(ADMIN_STORE.path) as household:
-        cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) if household["never_keep"] else None
+        cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path)
         if cutoff is not None:
             media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
-            prompt_memory.delete_all()
-            responses_store.delete_all(path=responses_store.DB_PATH)
+            if household["never_keep"]:
+                prompt_memory.delete_all()
+                responses_store.delete_all(path=responses_store.DB_PATH)
+            else:
+                prompt_memory.prune_all_before(cutoff)
+                responses_store.delete_all_before(cutoff, path=responses_store.DB_PATH)
     if cutoff is not None:
-        # Settings are retry intent if the request's cleanup failed. Spools
-        # and files are queued once per switch-on, not on every pass.
         if cutoff > _prompt_purge_covered("*"):
             _queue_prompt_purge("*", cutoff)
             _purge_queued_payloads("*")
-    else:
-        prompt_memory.tighten_retention(household["retention_cap"])
+        prompt_memory.complete_erasure("*", cutoff, admin_path=ADMIN_STORE.path)
+    prompt_memory.tighten_retention(household["retention_cap"])
 
 
 def _maintain_person_prompt_memory(person_id: str) -> None:
@@ -20401,6 +20406,8 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
             media_jobs.erase_prompt_derivatives(owner_keys, before=cutoff, path=media_jobs.DB_PATH)
             prompt_memory.prune_person_before(person_id, cutoff)
             responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
+    if cutoff:
+        prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
         retention = policy["retention"]
     prompt_memory.tighten_retention(retention, person_id=person_id)
@@ -26447,10 +26454,12 @@ async def create_response(request: Request):
                         if store:
                             try:
                                 with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                                    if not policy["never_keep"] and (prompt_decision.person_id is None or (
+                                    if (not policy["never_keep"]
+                                        and created_at > int(policy.get("forgot_before") or 0)
+                                        and (prompt_decision.person_id is None or (
                                         policy["remember"]
                                         and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                                    )):
+                                    ))):
                                         responses_store.save(
                                             response_id,
                                             created_at=created_at,
@@ -26529,10 +26538,12 @@ async def create_response(request: Request):
             if store:
                 try:
                     with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                        if not policy["never_keep"] and (prompt_decision.person_id is None or (
+                        if (not policy["never_keep"]
+                            and created_at > int(policy.get("forgot_before") or 0)
+                            and (prompt_decision.person_id is None or (
                             policy["remember"]
                             and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
-                        )):
+                        ))):
                             responses_store.save(
                                 response_id,
                                 created_at=created_at,

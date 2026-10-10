@@ -188,3 +188,34 @@ def test_delete_reports_retry_required_when_erasure_intent_cannot_be_saved(tmp_p
     assert response.status_code == 503
     assert response.json()["prompt_purge"]["retry_scheduled"] is False
     assert response.json()["prompt_purge"]["retry_required"] is True
+
+
+def test_off_erasure_intent_survives_failure_and_reenable(tmp_path, monkeypatch):
+    admin_db, prompt_db = tmp_path / "admin.db", tmp_path / "prompts.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "maker", path=admin_db)
+    client = _client(admin_db, prompt_db, user_id=user["id"])
+    original = prompt_memory.prune_person_before
+    monkeypatch.setattr(prompt_memory, "prune_person_before", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
+    response = client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"},
+                          headers={"x-azizam-user-action": "1"})
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["database_pending"] is True
+    cutoff = prompt_memory.recorded_erasure_cutoff(user["id"], admin_path=admin_db)
+    client.put("/me/api/prompt-memory", json={"remember": True, "retention": "never"},
+               headers={"x-azizam-user-action": "1"})
+    assert prompt_memory.recorded_erasure_cutoff(user["id"], admin_path=admin_db) == cutoff
+    assert client.get("/me/api/prompt-memory").json()["prompt_purge"]["database_pending"] is True
+    monkeypatch.setattr(prompt_memory, "prune_person_before", original)
+
+
+def test_off_intent_write_failure_leaves_preference_unchanged(tmp_path, monkeypatch):
+    admin_db, prompt_db = tmp_path / "admin.db", tmp_path / "prompts.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "maker", path=admin_db)
+    client = _client(admin_db, prompt_db, user_id=user["id"])
+    monkeypatch.setattr(admin_store, "_record_prompt_erasure", lambda *a: (_ for _ in ()).throw(RuntimeError("locked")))
+    response = client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"},
+                          headers={"x-azizam-user-action": "1"})
+    assert response.status_code == 503
+    assert client.get("/me/api/prompt-memory").json()["prompt_memory"]["remember"] is True

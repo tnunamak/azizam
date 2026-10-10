@@ -487,3 +487,88 @@ def test_household_spool_retry_removes_old_partial_files_only(hh):
     proxy._purge_queued_payloads("*")
     assert not old.exists()
     assert new.exists()
+
+
+@pytest.mark.parametrize("household", [False, True])
+def test_database_erasure_retries_after_reenable_and_keeps_new_prompts(hh, monkeypatch, household):
+    from gateway.admin_api import AdminContext
+    from gateway.settings_api import create_settings_router
+
+    person = hh.robin["id"]
+    cutoff = int(time.time()) - 20
+    old_asset, fresh_asset = "img_" + "1" * 64, "img_" + "2" * 64
+    prompt_memory.put(old_asset, person, SENTINEL, kept_until=None,
+                      created_at=cutoff - 5, admin_path=hh.admin)
+    _save_response(hh, "resp_old", cutoff - 5)
+    monkeypatch.setattr(admin_store, "_now", lambda: cutoff)
+    step = "prune_all_before" if household else "prune_person_before"
+    original = getattr(prompt_memory, step)
+    monkeypatch.setattr(prompt_memory, step, lambda *a, **k: (_ for _ in ()).throw(OSError("fixture DB failure")))
+    if household:
+        app = FastAPI()
+        app.include_router(create_settings_router(
+            auth=lambda _request: AdminContext(subject="owner", roles=frozenset({"owner"}), auth_method="session", csrf_token="fixture-csrf"),
+            admin_path=hh.admin, config_provider=lambda: {}, prompt_memory_path=hh.jobs,
+            on_prompt_memory_kill=proxy._purge_prompt_memory_on_kill,
+            purge_status_provider=lambda: proxy._prompt_purge_status("*"),
+        ))
+        client = TestClient(app)
+        route = "/admin/api/settings/prompt-memory"
+        value = {"default_remember": True, "never_keep": True, "retention_cap": "never"}
+        revision = client.get(route).json()["revision"]
+        response = client.put(route, json=value, headers={"If-Match": revision, "x-azizam-csrf": "fixture-csrf"})
+    else:
+        client = _me_client(hh)
+        route = "/me/api/prompt-memory"
+        value = {"remember": False, "retention": "never"}
+        response = client.put(route, json=value)
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["database_pending"] is True
+    assert prompt_memory.get(old_asset, person) is not None
+    monkeypatch.setattr(prompt_memory, step, original)
+    monkeypatch.setattr(admin_store, "_now", lambda: cutoff + 5)
+    if household:
+        value["never_keep"] = False
+        client.put(route, json=value, headers={"If-Match": response.json()["revision"], "x-azizam-csrf": "fixture-csrf"})
+    else:
+        value["remember"] = True
+        client.put(route, json=value)
+    assert client.get(route).json()["prompt_purge"]["database_pending"] is True
+    assert prompt_memory.put(fresh_asset, person, "fresh after re-enable", kept_until=None,
+                             created_at=cutoff + 10, admin_path=hh.admin)
+    # The fence also refuses a late completion of an old request after re-enable.
+    assert not prompt_memory.put("img_late", person, SENTINEL, kept_until=None,
+                                 created_at=cutoff - 5, admin_path=hh.admin)
+    _save_response(hh, "resp_fresh", cutoff + 10)
+    monkeypatch.setattr(prompt_memory, "prune", lambda **k: 0)
+    proxy._maintain_prompt_memory()
+    assert prompt_memory.get(old_asset, person) is None
+    assert proxy.responses_store.get("resp_old", path=proxy.responses_store.DB_PATH) is None
+    assert prompt_memory.get(fresh_asset, person)["prompt_text"] == "fresh after re-enable"
+    assert proxy.responses_store.get("resp_fresh", path=proxy.responses_store.DB_PATH) is not None
+    assert not prompt_memory.erasure_pending("*" if household else person, admin_path=hh.admin)
+
+
+def test_old_delete_cannot_acknowledge_a_newer_failed_off_erasure(hh):
+    person = hh.robin["id"]
+    cutoff = int(time.time()) - 20
+
+    def delayed_delete(person_id):
+        result = proxy._purge_person_prompt_memory(person_id, cutoff=cutoff)
+        # A different request records an off intent after this delete finished
+        # its database work. Its deletion has not completed yet.
+        admin_store.put_prompt_memory_preference(person_id, remember=False,
+                                                 retention="never", now=cutoff + 10, path=hh.admin)
+        return result
+
+    app = FastAPI()
+    app.include_router(create_me_prompt_memory_router(
+        session_provider=lambda _request: AdminSession(subject=person, email=None, role="none",
+            issued_at=1, expires_at=4_000_000_000),
+        admin_db_path=hh.admin, prompt_memory_path=hh.jobs,
+        on_person_prompt_purge=delayed_delete,
+    ))
+    client = TestClient(app)
+    assert client.delete("/me/api/prompt-memory/prompts").status_code == 202
+    assert prompt_memory.erasure_pending(person, admin_path=hh.admin)
+    assert client.get("/me/api/prompt-memory").json()["prompt_purge"]["database_pending"] is True

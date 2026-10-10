@@ -310,3 +310,33 @@ def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkey
     assert response.json()["service"]["name"] == "Saved gateway"
     assert response.json()["presentation"] == {"theme_default": "dark"}
     assert "instance_presentation" not in response.text
+
+
+def test_household_erasure_intent_survives_failure_and_reenable(settings, monkeypatch):
+    client, admin_db, _ = settings
+    monkeypatch.setattr(prompt_memory, "prune_all_before", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
+    revision = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()["revision"]
+    value = {"default_remember": True, "never_keep": True, "retention_cap": "never"}
+    response = client.put("/admin/api/settings/prompt-memory", json=value, headers={**OWNER, "If-Match": revision})
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["database_pending"] is True
+    cutoff = prompt_memory.household_erasure_cutoff(admin_path=admin_db)
+    value["never_keep"] = False
+    response = client.put("/admin/api/settings/prompt-memory", json=value,
+                          headers={**OWNER, "If-Match": response.json()["revision"]})
+    assert prompt_memory.household_erasure_cutoff(admin_path=admin_db) == cutoff
+    assert response.json()["prompt_purge"]["database_pending"] is True
+
+
+def test_household_intent_failure_leaves_setting_and_revision_unchanged(settings, monkeypatch):
+    client, _, _ = settings
+    before = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
+    monkeypatch.setattr(admin_store, "_record_prompt_erasure", lambda *a: (_ for _ in ()).throw(RuntimeError("locked")))
+    response = client.put("/admin/api/settings/prompt-memory",
+                          json={**before["prompt_memory"], "never_keep": True},
+                          headers={**OWNER, "If-Match": before["revision"]})
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "prompt_erasure_unavailable"
+    after = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()
+    assert after["revision"] == before["revision"]
+    assert after["prompt_memory"] == before["prompt_memory"]
