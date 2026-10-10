@@ -25,7 +25,7 @@ import { Callout, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
-import { safeModelId } from "@/lib/model-name";
+import { useModelName } from "@/lib/use-model-name";
 
 type Receipt = {
   request_id: string;
@@ -180,6 +180,7 @@ function duration(ms?: number | null) {
 }
 
 export function Requests() {
+  const nameModel = useModelName();
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
@@ -384,7 +385,7 @@ export function Requests() {
                     {row.receipt.resolved_model || row.receipt.requested_model ? (
                       <>
                         {" · "}
-                        {safeModelId(
+                        {nameModel(
                           row.receipt.resolved_model ||
                             row.receipt.requested_model ||
                             "",
@@ -492,11 +493,15 @@ export function Requests() {
                     ["Source", record.source?.label ?? record.app_label],
                     [
                       "Requested model",
-                      safeModelId(record.receipt.requested_model || ""),
+                      record.receipt.requested_model
+                        ? nameModel(record.receipt.requested_model)
+                        : "",
                     ],
                     [
                       "Served model",
-                      safeModelId(record.receipt.resolved_model || ""),
+                      record.receipt.resolved_model
+                        ? nameModel(record.receipt.resolved_model)
+                        : "",
                     ],
                     ...(declaredFallback(record.receipt)
                       ? ([

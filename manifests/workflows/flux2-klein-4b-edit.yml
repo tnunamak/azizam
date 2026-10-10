@@ -13,9 +13,13 @@ inputs:
     type: string
     required: true
   source_image:
+    label: a picture to change
+    help: The picture you want to change.
     type: asset
     required: true
   mask:
+    label: a mask
+    help: White areas change; black areas stay as they are.
     type: asset
     description: Optional OpenAI image-edit mask. Transparent alpha edits and opaque alpha preserves; grayscale white edits and black preserves. The current Flux2 edit workflow has no native inpaint node, so the gateway applies this as a post-composite preservation mask unless a mask-bound workflow is selected.
   width:

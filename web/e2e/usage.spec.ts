@@ -86,18 +86,24 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   });
   await expect(receipt).toContainText("104 ms");
   await expect(receipt.locator("p.font-medium")).toHaveText("Chat request");
+  // The row and its tooltip show the model's display name (5524a85f).
   await expect(receipt.getByText("Demo Chat")).toHaveAttribute(
     "title",
-    "demo-chat",
+    "Demo Chat",
   );
   await receipt.first().click();
   const sheet = page.getByRole("dialog", { name: "Request receipt" });
   await expect(sheet).toBeVisible();
-  await expect(sheet).toContainText("demo-chat");
+  await expect(sheet).toContainText("Demo Chat");
   await expect(sheet).toContainText("104 ms");
   await sheet.getByText("Technical details", { exact: true }).click();
-  await expect(sheet).toContainText("request_id");
-  await expect(sheet).toContainText("requested_model");
+  // The raw model id an app sends stays in Technical details for debugging.
+  const technical = sheet.locator("details").filter({
+    hasText: "Technical details",
+  });
+  await expect(technical).toContainText("request_id");
+  await expect(technical).toContainText("requested_model");
+  await expect(technical).toContainText('"demo-chat"', { useInnerText: true });
 });
 
 test("usage omits the model line when only the capability is known", async ({
@@ -364,7 +370,7 @@ for (const theme of ["dark", "light"] as const) {
     // Every row sits inside the viewport, with no clipped left edge.
     const rows = page
       .getByRole("table")
-      .filter({ hasText: "Capability and model" })
+      .filter({ hasText: "Task and model" })
       .getByRole("row");
     for (let index = 0; index < (await rows.count()); index += 1) {
       const rowBox = await rows.nth(index).boundingBox();
@@ -391,14 +397,18 @@ test("usage model table shows names, never a path, and a consistent Cost", async
     }),
   );
   await page.goto("/ui/usage/");
-  const table = page.getByRole("table").filter({ hasText: "Capability and model" });
+  const table = page.getByRole("table").filter({ hasText: "Task and model" });
   await expect(table).toBeVisible();
   const text = await table.innerText();
   expect(text).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);
-  await expect(table).toContainText("Qwen3.8 27B Uncensored Q4 K M");
+  // A weight file reads as its model's name: no path, extension or packing
+  // tag, not even in the tooltip (5524a85f).
+  expect(text).not.toMatch(/Q4 K M|Q4_K_M/);
+  await expect(table).toContainText("Qwen3.8 27B Uncensored");
   await expect(table).toContainText("Careful choices");
   await expect(table).toContainText("Turn a recording into text");
-  await expect(table.getByTitle("Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBeVisible();
+  await expect(table.getByTitle("Qwen3.8 27B Uncensored", { exact: true })).toBeVisible();
+  await expect(table.locator('[title*="gguf" i], [title*="Q4_K_M"]')).toHaveCount(0);
 
   // Cost is never blank: Local, Unavailable or an amount.
   const rows = table.getByRole("row");

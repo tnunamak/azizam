@@ -28,14 +28,9 @@ import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
-import { taskNames } from "@/lib/terms";
-import { productApi } from "@/lib/product-api";
-import {
-  modelDisplayName,
-  safeModelId,
-  scrubModelPaths,
-  type CapabilityNameRow,
-} from "@/lib/model-name";
+import { memberTerms, taskNames } from "@/lib/terms";
+import { safeModelId, scrubModelPaths } from "@/lib/model-name";
+import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,21 +207,7 @@ export default function UsagePage() {
     retry: false,
   });
   // Display names: the catalog, else a capability's recommended name.
-  const { data: catalog } = useQuery({
-    queryKey: ["models", "catalog"],
-    queryFn: productApi.models,
-    retry: false,
-  });
-  const { data: home } = useQuery({
-    queryKey: ["account", "home"],
-    queryFn: productApi.home,
-    retry: false,
-  });
-  const nameCapabilities: CapabilityNameRow[] = Array.isArray(home?.capabilities)
-    ? home.capabilities
-    : [];
-  const nameModel = (id: string) =>
-    modelDisplayName(id, catalog, nameCapabilities);
+  const nameModel = useModelName();
   const selected = data?.receipts.find((receipt) => receipt.selectionKey === selectedReceiptKey) ?? null;
   useEffect(() => {
     if (selectedReceiptKey !== null && selected === null) setSelectedReceiptKey(null);
@@ -571,9 +552,9 @@ function DailyChart({ days }: { days: UsageDay[] }) {
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
-          Stacked by capability
+          Stacked by {memberTerms.task}
           {overfullDays > 0 &&
-            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the capability counts add to more than the recorded total; the bars show the recorded counts.`}
+            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded counts.`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -630,7 +611,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 would otherwise widen the page. */}
             <div className="sr-only">
               <table>
-                <caption>Requests by day and capability</caption>
+                <caption>Requests by day and {memberTerms.task}</caption>
                 <thead>
                   <tr>
                     <th scope="col">Date</th>
@@ -652,7 +633,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                       <td>
                         {day.total}
                         {day.countsExceedTotal !== null &&
-                          ` (capability counts add to ${day.countsExceedTotal})`}
+                          ` (${memberTerms.task} counts add to ${day.countsExceedTotal})`}
                       </td>
                     </tr>
                   ))}
@@ -709,7 +690,7 @@ function ModelTable({
               <thead className="text-muted-foreground border-b text-left">
                 <tr>
                   <th scope="col" className="py-3 pr-3 font-medium">
-                    Capability and model
+                    Task and model
                   </th>
                   <th scope="col" className="py-3 pr-3 text-right font-medium">
                     Requests
@@ -732,7 +713,7 @@ function ModelTable({
                         {name && name !== capabilityLabels[row.capability] && (
                           <p
                             className="text-muted-foreground mt-1 truncate text-xs"
-                            title={row.model}
+                            title={name}
                           >
                             {name}
                           </p>
@@ -851,7 +832,7 @@ function ReceiptsList({
                   {receipt.model && (
                     <p
                       className="text-muted-foreground mt-1 truncate text-xs"
-                      title={receipt.model}
+                      title={nameModel(receipt.model)}
                     >
                       {nameModel(receipt.model)}
                     </p>
@@ -905,6 +886,8 @@ function ReceiptSheet({
   receipt: UsageReceipt | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const nameModel = useModelName();
+  const named = (id: string | null | undefined) => (id ? nameModel(id) : id);
   return (
     <Sheet open={receipt !== null} onOpenChange={onOpenChange}>
       <SheetContent className="overflow-y-auto px-4 pb-4">
@@ -940,11 +923,11 @@ function ReceiptSheet({
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <Detail
                   label="Requested model"
-                  value={receipt.requestedModel}
+                  value={named(receipt.requestedModel)}
                 />
                 <Detail
                   label="Served model"
-                  value={receipt.servedModel}
+                  value={named(receipt.servedModel)}
                 />
                 <Detail
                   label="Declared fallback"
@@ -1421,8 +1404,11 @@ function normalizeCapability(value: unknown): UsageCapability {
   if (text.includes("video")) return "video";
   if (text.includes("rerank")) return "rerank";
   if (text.includes("embedding") || text.includes("embed")) return "embeddings";
-  if (text.includes("speech") || text.includes("audio")) return "audio";
-  if (text.includes("voice")) return "voice";
+  // Text to speech ("speech.synthesis", "audio.speech") is Read text aloud,
+  // not music or sounds.
+  if (text.includes("speech") || text.includes("voice") || text === "tts")
+    return "voice";
+  if (text.includes("audio")) return "audio";
   if (text.includes("transcrib")) return "transcribe";
   if (text.includes("decision") || text.includes("decide")) return "decide";
   if (

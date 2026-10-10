@@ -61,10 +61,10 @@ for (const theme of ["light", "dark"]) {
                     json: {
                       answers: {
                         route: {
-                          choice: "Run chat",
+                          choice: "Take a taxi",
                           probabilities: {
-                            "Run chat": 0.7,
-                            "Run embeddings": 0.3,
+                            "Take a taxi": 0.7,
+                            "Wait for the bus": 0.3,
                           },
                         },
                       },

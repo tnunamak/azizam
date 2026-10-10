@@ -22,6 +22,8 @@ inputs:
     type: string
     required: true
   source_image:
+    label: a partly clear picture
+    help: Transparent areas of the picture are redrawn.
     type: asset
     required: true
     description: RGBA image. Transparent pixels (alpha=0) mark the region to regenerate.

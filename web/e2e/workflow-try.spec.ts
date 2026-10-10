@@ -146,7 +146,10 @@ const workflowsCatalog = {
         {
           name: "source_image",
           request_field: "source",
-          type: "asset",
+          type: "string",
+          asset: true,
+          media_type: "video/*",
+          applies: "File upload",
           required: true,
           accepted: true,
         },
@@ -518,9 +521,13 @@ test("workflow multipart guided fields include file, numeric edits, and preserve
   });
 
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(
-    page.getByText("Choose a file for workflow input source."),
-  ).toBeVisible();
+  // The missing video is named on its own picker; nothing was sent.
+  const source = page.getByRole("group", { name: /Source image/ });
+  await expect(source.getByRole("alert")).toHaveText("Choose a video first");
+  expect(uploadedBody).toBe("");
+  // One picker for the one file: no second upload control, no made-up path.
+  await expect(page.locator('input[type="file"]')).toHaveCount(1);
+  await expect(page.getByText("./source.mp4")).toHaveCount(0);
 
   await page.setInputFiles('input[type="file"]', {
     name: "clip.mp4",
@@ -580,12 +587,12 @@ test("workflow guided validation blocks missing, range, enum, and invalid JSON i
   await textbox(page, "prompt", true).fill("A valid poster.");
   await spinbutton(page, "steps", true).fill("13");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("steps must be <= 12.")).toBeVisible();
+  await expect(page.getByText("Steps must be at most 12.")).toBeVisible();
 
   await spinbutton(page, "steps", true).fill("8");
   await spinbutton(page, "width", true).fill("63");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("width must be >= 64.")).toBeVisible();
+  await expect(page.getByText("Width must be at least 64.")).toBeVisible();
 
   await spinbutton(page, "width", true).fill("1024");
   await openAdvancedJson(page);

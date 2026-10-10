@@ -111,14 +111,14 @@ describe("an image-to-video workflow on Try", () => {
     expect(within(group).getByText(/up to 10 MB/)).toBeVisible();
     // The raw reference is under Advanced, not the main control.
     expect(within(group).getByText("Advanced")).toBeVisible();
-    // None of that is on the page outside the closed Technical details.
-    const technical = screen.getByText("Input details").closest("details")!;
+    // A member gets no technical mapping and no request JSON at all.
+    expect(screen.queryByText("Input details")).toBeNull();
+    expect(screen.queryByText("Advanced JSON")).toBeNull();
     const page = document.body.cloneNode(true) as HTMLElement;
     page.querySelectorAll("details").forEach((node) => node.remove());
     expect(page.textContent).not.toMatch(
-      /Request body|Writes prompt|Writes negative_prompt|Guided controls|Media input:|\bstring\b/,
+      /Request body|Writes prompt|Writes negative_prompt|Guided controls|Media input:|\bstring\b|input_reference/,
     );
-    expect(technical.textContent).toMatch(/input_reference/);
   });
 
   it("starts with an empty description and an example placeholder, not typed text", async () => {

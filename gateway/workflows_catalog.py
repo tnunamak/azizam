@@ -282,6 +282,9 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
             if optional in spec:
                 row[optional] = spec[optional]
         declared = manifest_inputs.get(name) if isinstance(manifest_inputs.get(name), Mapping) else {}
+        # Plain words for people: the manifest's one-sentence `help` line.
+        if isinstance(declared.get("help"), str) and declared["help"].strip():
+            row["help"] = " ".join(declared["help"].split())
         # The JSON schema calls an asset "string" (and flags it x-azizam-asset);
         # keep what it really is, so a page can tell a picture input from a text one.
         if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
@@ -302,7 +305,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
             "applies": "Route option",
             "request_field": extra.get("field", extra["name"]),
         }
-        for optional in ("default", "minimum", "maximum", "enum", "description"):
+        for optional in ("default", "minimum", "maximum", "enum", "description", "label"):
             if optional in extra:
                 row[optional] = extra[optional]
         rows.append(row)
@@ -323,7 +326,7 @@ def _example_request(
     selected_model = _route_model(route)
     body = _example_body(record, inputs, mode=mode, model=selected_model)
     form: dict[str, Any] = {}
-    files: dict[str, str] = {}
+    files: dict[str, dict[str, Any]] = {}
     if (route or {}).get("kind") == "media_job":
         submit = route.get("submit") if isinstance(route, Mapping) else {}
         wrapped_intent = _nested(submit or {}, "body", "intent") or record.intent
@@ -336,8 +339,12 @@ def _example_request(
         form, files = _example_multipart_parts(record, inputs, model=selected_model)
         body = {}
     binary_response = (record.intent == "audio.generate" and (route or {}).get("kind") != "media_job") or content_type == "multipart/form-data"
+    # Made-up local paths belong in the code examples only. The catalog's
+    # `files` says which input each file part carries, never a path, so no
+    # screen can show "./source-image.bin" as if it were helper text.
+    paths = {field: _example_file_for(part["input"], part.get("media_type")) for field, part in files.items()}
     curl = _curl_example(
-        url, content_type=content_type, body=body, form=form, files=files,
+        url, content_type=content_type, body=body, form=form, files=paths,
         binary_response=binary_response,
     )
     return {
@@ -349,11 +356,11 @@ def _example_request(
         "files": files,
         "curl": curl,
         "python": _python_example(
-            method, url, content_type=content_type, body=body, form=form, files=files,
+            method, url, content_type=content_type, body=body, form=form, files=paths,
             binary_response=binary_response,
         ),
         "javascript": _javascript_example(
-            method, url, content_type=content_type, body=body, form=form, files=files,
+            method, url, content_type=content_type, body=body, form=form, files=paths,
             binary_response=binary_response,
         ),
     }
@@ -403,13 +410,14 @@ def _example_multipart_parts(
     inputs: list[Mapping[str, Any]],
     *,
     model: str | None,
-) -> tuple[dict[str, Any], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     mapping = request_mapping(record, "sync")
+    rows = {str(item.get("name")): item for item in inputs}
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     form: dict[str, Any] = {}
     if model and record.intent == "image.edit":
         form["model"] = model
-    files: dict[str, str] = {}
+    files: dict[str, dict[str, Any]] = {}
     extension: dict[str, Any] = {}
     combined: dict[str, list[str]] = {}
     for name, placement in mapping.items():
@@ -423,9 +431,9 @@ def _example_multipart_parts(
             else:
                 form[field] = values[name]
         elif location == "file":
-            files[field] = _example_file_for(name)
+            files[field] = _file_part(name, rows.get(name) or {})
         elif location == "file+extension":
-            files[field] = _example_file_for(name)
+            files[field] = _file_part(name, rows.get(name) or {})
             extension[field] = {"multipart_field": field}
         elif location == "extension":
             extension[field] = values[name]
@@ -437,8 +445,24 @@ def _example_multipart_parts(
     return form, files
 
 
-def _example_file_for(name: str) -> str:
-    return f"./{name.replace('_', '-')}.bin"
+def _file_part(name: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    """One multipart file part: the input it carries and what kind of file it is."""
+    part: dict[str, Any] = {"input": name, "required": bool(row.get("required"))}
+    if row.get("media_type"):
+        part["media_type"] = row["media_type"]
+    return part
+
+
+_EXAMPLE_SUFFIX = {"image": ".png", "video": ".mp4", "audio": ".wav"}
+
+
+def _example_file_for(name: str, media_type: str | None = None) -> str:
+    """A made-up local path for the curl, Python and JavaScript examples only.
+
+    It is never a catalog value a screen could render as helper text.
+    """
+    family = str(media_type or "").split("/", 1)[0]
+    return f"./{name.replace('_', '-')}{_EXAMPLE_SUFFIX.get(family, '.bin')}"
 
 
 def _route_model(route: Mapping[str, Any] | None) -> str | None:

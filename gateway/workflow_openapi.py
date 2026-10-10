@@ -117,9 +117,12 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     for key in ("minimum", "maximum", "enum", "default"):
         if key in spec:
             out[key] = copy.deepcopy(spec[key])
-    if spec.get("description"):
+    # The plain `help` line describes the input for people and API clients
+    # alike; research provenance lives in docs/workflows/<id>.md, never here.
+    note = spec.get("help") or spec.get("description")
+    if note:
         base = out.get("description")
-        out["description"] = f"{base} {spec['description']}" if base else spec["description"]
+        out["description"] = f"{base} {note}" if base else note
     return out
 
 
@@ -252,6 +255,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
         return out
     if record.intent in ("image.generate", "image.edit"):
         out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
+                    "label": "number of results",
                     "description": "Number of images.", "in": "body", "field": "n"})
     if record.intent.startswith("video."):
         if "length" not in inputs:

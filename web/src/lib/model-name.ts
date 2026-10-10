@@ -27,14 +27,29 @@ export function safeModelId(id: string): string {
   return isPathLikeModelId(id) ? lastSegment(id.trim()) : id;
 }
 
-/** "/x/Qwen3.8-27B-Q4_K_M.gguf" -> "Qwen3.8 27B Q4 K M". */
+/**
+ * A weight file's precision or quantisation tag at the end of its name
+ * ("-Q4_K_M", "-IQ4_XS", ".f16", "_fp8_scaled"): how the file was packed,
+ * not which model it is.
+ */
+const PACKING_SUFFIX =
+  /[-_.](?:i?q\d(?:_[a-z0-9]+)*|b?f(?:p)?(?:8|16|32)(?:_[a-z0-9]+)*|int[48](?:_[a-z0-9]+)*|mxfp4|awq|gptq|exl2)$/i;
+
+/** True for a name that is a weight file's stem rather than a model's name. */
+function isFileStem(name: string): boolean {
+  return PACKING_SUFFIX.test(name.trim());
+}
+
+/** "/x/Qwen3.8-27B-Uncensored-Q4_K_M.gguf" -> "Qwen3.8 27B Uncensored". */
 function readableFileName(id: string): string {
-  return lastSegment(id.trim())
+  let stem = lastSegment(id.trim())
     .replace(MODEL_FILE_EXTENSION, "")
-    .replace(/-\d{5}-of-\d{5}$/, "")
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .join(" ");
+    .replace(/-\d{5}-of-\d{5}$/, "");
+  for (let next = stem.replace(PACKING_SUFFIX, ""); next !== stem && next; ) {
+    stem = next;
+    next = stem.replace(PACKING_SUFFIX, "");
+  }
+  return stem.split(/[-_\s]+/).filter(Boolean).join(" ");
 }
 
 /**
@@ -90,8 +105,13 @@ export function modelDisplayName(
       item.recommended_model &&
       [item.use_name, item.model, ...(item.use_names ?? [])].includes(model),
   );
-  if (capability?.recommended_model) return capability.recommended_model;
-  return isPathLikeModelId(model)
+  if (capability?.recommended_model) {
+    const name = capability.recommended_model;
+    return isPathLikeModelId(name) || isFileStem(name)
+      ? readableFileName(name)
+      : name;
+  }
+  return isPathLikeModelId(model) || isFileStem(model)
     ? readableFileName(model)
     : prettifyModelId(model);
 }

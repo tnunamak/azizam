@@ -341,7 +341,7 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Images", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Decide", exact: true }),
+        page.getByRole("heading", { name: "Choose an option", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Speech", exact: true }),
@@ -375,7 +375,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toHaveCount(0);
       await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
       const decision = page.locator("section").filter({
-        has: page.getByRole("heading", { name: "Decide", exact: true }),
+        has: page.getByRole("heading", { name: "Choose an option", exact: true }),
       });
       await decision.getByRole("button", { name: "Details" }).click();
       await expect(

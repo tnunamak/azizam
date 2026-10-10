@@ -42,6 +42,10 @@ export type WorkflowInput = {
   /** The media kind the catalog declares for an asset input, such as "image/*". */
   media_type?: string;
   accepted_media_types?: string[];
+  /** The manifest's short name for the input, as a noun ("a face photo"). */
+  label?: string;
+  /** The manifest's one plain sentence about the input. */
+  help?: string;
 };
 
 export type WorkflowInputsProps = {
@@ -53,6 +57,11 @@ export type WorkflowInputsProps = {
   outputKind?: OutputKind;
   /** Plain messages by input name, shown under the field. */
   problems?: Record<string, string>;
+  /** Files chosen for inputs that travel as multipart file parts, by request field. */
+  files?: Record<string, File | null>;
+  onFileChange?: (field: string, file: File | null) => void;
+  /** Show the technical mapping (field names, types) in a disclosure: owners only. */
+  technical?: boolean;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -106,7 +115,7 @@ export function parseWorkflowInputs(
       (typeof value === "string" && !value.trim())
     ) {
       if (input.required) {
-        throw new Error(`${input.name} is required.`);
+        throw new Error(`${named(input)} is required.`);
       }
       continue;
     }
@@ -148,6 +157,7 @@ export function workflowInputProblems(
   inputs: WorkflowInput[],
   mapping: WorkflowInputMapping = {},
   output: OutputKind = "other",
+  files: Record<string, File | null> = {},
 ): Record<string, string> {
   let values: JsonObject;
   try {
@@ -157,14 +167,14 @@ export function workflowInputProblems(
   }
   const problems: Record<string, string> = {};
   for (const input of inputs) {
-    if (
-      isFileInput(input, mapping) ||
-      input.ignored ||
-      input.accepted === false ||
-      isUnsupportedCombinedInput(input, inputs, mapping)
-    ) {
+    if (input.ignored || input.accepted === false) continue;
+    if (isFileInput(input, mapping)) {
+      if (input.required && !files[fileFieldOf(input, mapping)]) {
+        problems[input.name] = missingMessage(input, output);
+      }
       continue;
     }
+    if (isUnsupportedCombinedInput(input, inputs, mapping)) continue;
     const value = readWorkflowInputValue(values, inputs, input, mapping);
     const empty =
       value === undefined ||
@@ -189,6 +199,9 @@ export function WorkflowInputs({
   mapping = {},
   outputKind = "other",
   problems = {},
+  files = {},
+  onFileChange,
+  technical = false,
 }: WorkflowInputsProps) {
   if (!inputs.length) return null;
   const values = safeObject(json);
@@ -233,6 +246,11 @@ export function WorkflowInputs({
               isUnsupportedCombinedInput(input, inputs, mapping)
             }
             fileInput={isFileInput(input, mapping)}
+            file={files[fileFieldOf(input, mapping)] ?? null}
+            onFileChange={
+              onFileChange &&
+              ((file) => onFileChange(fileFieldOf(input, mapping), file))
+            }
             mediaInput={isMediaBodyInput(input, mapping)}
             outputKind={outputKind}
             problem={problems[input.name]}
@@ -245,6 +263,7 @@ export function WorkflowInputs({
           />
         ))}
       </div>
+      {technical && (
       <details className="border-t px-3">
         <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
           Input details
@@ -260,7 +279,7 @@ export function WorkflowInputs({
                 </span>
               </dt>
               <dd className="text-muted-foreground">
-                {inputExplanation(input, isFileInput(input, mapping))}
+                {inputExplanation(input, mapping)}
                 {input.applies ? ` ${input.applies}.` : ""}
                 {input.description ? ` ${input.description}` : ""}
               </dd>
@@ -268,6 +287,7 @@ export function WorkflowInputs({
           ))}
         </dl>
       </details>
+      )}
     </div>
   );
 }
@@ -277,6 +297,8 @@ function WorkflowInputControl({
   value,
   disabled: parentDisabled = false,
   fileInput = false,
+  file = null,
+  onFileChange,
   mediaInput = false,
   outputKind,
   problem,
@@ -287,6 +309,8 @@ function WorkflowInputControl({
   value: unknown;
   disabled?: boolean;
   fileInput?: boolean;
+  file?: File | null;
+  onFileChange?: (file: File | null) => void;
   mediaInput?: boolean;
   outputKind: OutputKind;
   problem?: string;
@@ -297,12 +321,15 @@ function WorkflowInputControl({
   const text = inputLabel(input, outputKind);
   const label = input.required ? `${text} Required` : text;
   const hint = unsupportedCombined
-    ? "This combined field is not supported by guided controls yet. Edit Advanced JSON."
-    : fileInput
-      ? "Choose this file in the upload control below."
-      : inputHint(input, outputKind);
+    ? "This setting cannot be changed here yet."
+    : inputHint(input, outputKind);
   const errorId = problem ? `${id}-error` : undefined;
-  const disabled = parentDisabled || fileInput || isUnsupportedValue(value);
+  const disabled = parentDisabled || isUnsupportedValue(value);
+  // An asset the catalog does not type is a picture, as for body inputs
+  // below; a generic file ("binary") gets a plain file chooser.
+  const kind =
+    mediaKindOf(input) ??
+    (input.asset === true || normalizedType(input) === "asset" ? "image" : null);
   const header = (
     <span className="flex items-center justify-between gap-3">
       <span className="min-w-0">
@@ -329,10 +356,45 @@ function WorkflowInputControl({
     </span>
   ) : null;
   const wrapper = `flex min-w-0 flex-col gap-2 text-sm ${
-    (input.type === "string" && !input.enum?.length) || mediaInput
+    (input.type === "string" && !input.enum?.length) || mediaInput || fileInput
       ? "md:col-span-2"
       : ""
   }`;
+
+  // One control per picture: a file part gets the same picker as a picture
+  // sent inside the request, never a text box plus a second upload control.
+  if (fileInput && onFileChange && !parentDisabled) {
+    return (
+      <div role="group" aria-labelledby={`${id}-label`} className={wrapper}>
+        {header}
+        {hintLine}
+        {kind ? (
+          <MediaInput
+            id={id}
+            label={text}
+            kind={kind}
+            file={file}
+            invalid={Boolean(problem)}
+            describedBy={errorId}
+            onFileChange={onFileChange}
+          />
+        ) : (
+          <Input
+            id={id}
+            type="file"
+            aria-labelledby={`${id}-label`}
+            aria-required={input.required || undefined}
+            aria-invalid={Boolean(problem) || undefined}
+            aria-describedby={errorId}
+            onChange={(event) =>
+              onFileChange(event.currentTarget.files?.[0] ?? null)
+            }
+          />
+        )}
+        {problemLine}
+      </div>
+    );
+  }
 
   if (mediaInput && !disabled) {
     return (
@@ -358,7 +420,7 @@ function WorkflowInputControl({
   return (
     <label className={wrapper}>
       {header}
-      {controlFor(input, id, label, value, disabled, fileInput, onChange, {
+      {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
         placeholder: inputPlaceholder(input, outputKind),
         invalid: Boolean(problem),
         describedBy: errorId,
@@ -402,15 +464,8 @@ function controlFor(
     "aria-describedby": extras.describedBy,
   };
   if (fileInput) {
-    return (
-      <Input
-        id={id}
-        disabled
-        value="Managed by the workflow file picker"
-        {...aria}
-        readOnly
-      />
-    );
+    // Only when no picker is wired up (the page always wires one).
+    return <Input id={id} disabled value="" {...aria} readOnly />;
   }
   if (isUnsupportedValue(value)) {
     return (
@@ -534,32 +589,32 @@ function validateWorkflowInputValue(
 ) {
   const type = normalizedType(input);
   if (input.enum && !input.enum.includes(value)) {
-    throw new Error(`${input.name} must be one of: ${input.enum.join(", ")}.`);
+    throw new Error(`${named(input)} must be one of: ${input.enum.join(", ")}.`);
   }
   if (type === "string" && typeof value !== "string") {
-    throw new Error(`${input.name} must be a string.`);
+    throw new Error(`${named(input)} must be text.`);
   }
   if (
     isMediaBodyInput(input, mapping) &&
     !(typeof value === "string" && isPlausibleMediaReference(value))
   ) {
-    throw new Error(`${input.name} needs a file, a link or a Library asset.`);
+    throw new Error(`${named(input)} needs a file, a link or a Library picture.`);
   }
   if (type === "boolean" && typeof value !== "boolean") {
-    throw new Error(`${input.name} must be a boolean.`);
+    throw new Error(`${named(input)} must be on or off.`);
   }
   if (type === "number" || type === "integer") {
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`${input.name} must be a number.`);
+      throw new Error(`${named(input)} must be a number.`);
     }
     if (type === "integer" && !Number.isInteger(value)) {
-      throw new Error(`${input.name} must be an integer.`);
+      throw new Error(`${named(input)} must be a whole number.`);
     }
     if (input.minimum !== undefined && value < input.minimum) {
-      throw new Error(`${input.name} must be >= ${input.minimum}.`);
+      throw new Error(`${named(input)} must be at least ${input.minimum}.`);
     }
     if (input.maximum !== undefined && value > input.maximum) {
-      throw new Error(`${input.name} must be <= ${input.maximum}.`);
+      throw new Error(`${named(input)} must be at most ${input.maximum}.`);
     }
   }
 }
@@ -656,24 +711,51 @@ function inputTarget(input: WorkflowInput, mapping: WorkflowInputMapping) {
   };
 }
 
+/** The input's name as a person reads it, for messages. */
+function named(input: WorkflowInput) {
+  return inputLabel(input, "other");
+}
+
 function normalizedType(input: WorkflowInput) {
   return input.type.toLowerCase();
 }
 
-function isFileInput(input: WorkflowInput, mapping: WorkflowInputMapping = {}) {
+/**
+ * An input that travels as a multipart file part. Whether it is a picture (or
+ * other media) at all is the shared catalog rule (`isMediaInput`: the asset
+ * flag, the declared media type, the type), never the input's name; the
+ * gateway calls an asset `type: "string"` and flags it `asset: true`. Where it
+ * travels is the route's field mapping, else the catalog's "applies" words.
+ */
+export function isFileInput(
+  input: WorkflowInput,
+  mapping: WorkflowInputMapping = {},
+) {
   const type = normalizedType(input);
   if (FILE_TYPES.has(type)) return true;
-  if (type !== "asset") return false;
   const mapped = mapping[input.name];
+  if (mapped?.in === "file" || mapped?.in === "file+extension") return true;
+  if (!isMediaInput(input)) return false;
+  if (mapped?.in) return false;
   const applies = String(input.applies ?? "").toLowerCase();
-  if (mapped?.in) return mapped.in === "file" || mapped.in === "file+extension";
+  if (applies.includes("file upload") || applies.includes("multipart")) {
+    return true;
+  }
   if (
     applies.includes("request body") ||
     applies.includes("workflow extension")
   ) {
     return false;
   }
-  return true;
+  return type === "asset";
+}
+
+/** The multipart part name a file input is sent as. */
+export function fileFieldOf(
+  input: WorkflowInput,
+  mapping: WorkflowInputMapping = {},
+): string {
+  return inputTarget(input, mapping).field;
 }
 
 /**
@@ -701,10 +783,10 @@ export function isMediaBodyInput(
 
 function inputExplanation(
   input: WorkflowInput,
-  fileInput = isFileInput(input),
+  mapping: WorkflowInputMapping = {},
 ) {
-  if (fileInput) {
-    return "Choose this file in the upload control below.";
+  if (isFileInput(input, mapping)) {
+    return `Sent as the file part ${fileFieldOf(input, mapping)}.`;
   }
   if (normalizedType(input) === "asset") {
     return "Use a data URI, http(s) URL, gateway asset id, or signed asset URL.";

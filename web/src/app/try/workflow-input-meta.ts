@@ -1,5 +1,10 @@
 import type { WorkflowInput } from "./workflow-inputs";
-import { MEDIA_DESCRIPTION } from "@/lib/workflow-media-input";
+import {
+  MEDIA_DESCRIPTION,
+  MEDIA_NOUN,
+  mediaKindOf,
+  withArticle,
+} from "@/lib/workflow-media-input";
 
 /**
  * Plain words and checks for workflow inputs on Try.
@@ -40,13 +45,33 @@ function gatewayBoilerplate(description: string | undefined) {
   return Boolean(description && MEDIA_DESCRIPTION.test(description));
 }
 
+/**
+ * The manifest's label as a field label: "a face photo" -> "Face photo". The
+ * catalog writes labels as nouns for the Workflows summary ("Needs: a face
+ * photo and text"); a form label drops the article.
+ */
+function manifestLabel(input: WorkflowInput): string | null {
+  const label = input.label?.trim().replace(/^(?:an?|the)\s+/i, "");
+  return label ? label[0].toUpperCase() + label.slice(1) : null;
+}
+
+/** A field name a person can read: "batch_size" -> "Batch size". */
+export function humanizeInputName(name: string): string {
+  const words = name.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : name;
+}
+
 export function inputLabel(input: WorkflowInput, output: OutputKind): string {
+  const declared = manifestLabel(input);
+  if (declared) return declared;
   if (input.request_field === "input_reference" || input.name === "image") {
     return "Starting picture";
   }
   switch (input.name) {
     case "prompt":
-      return output === "other" ? input.name : `Describe the ${OUTPUT_NOUN[output]}`;
+      return output === "other"
+        ? "Prompt"
+        : `Describe the ${OUTPUT_NOUN[output]}`;
     case "negative_prompt":
       return "Avoid (optional)";
     case "image_strength":
@@ -58,7 +83,8 @@ export function inputLabel(input: WorkflowInput, output: OutputKind): string {
     case "seed":
       return "Seed";
     default:
-      return input.name;
+      // Never the raw field name ("batch_size"): the words it is made of.
+      return humanizeInputName(input.name);
   }
 }
 
@@ -66,6 +92,9 @@ export function inputHint(
   input: WorkflowInput,
   output: OutputKind,
 ): string | undefined {
+  // The manifest's one plain sentence comes first; research notes and the
+  // technical description stay out of the form.
+  if (input.help?.trim()) return input.help.trim();
   if (input.request_field === "input_reference" || input.name === "image") {
     return "The picture the video starts from.";
   }
@@ -121,6 +150,8 @@ export function missingMessage(input: WorkflowInput, output: OutputKind): string
       ? "Write a prompt first"
       : `Describe the ${OUTPUT_NOUN[output]} first`;
   }
+  const media = mediaKindOf(input);
+  if (media) return `Choose ${withArticle(MEDIA_NOUN[media])} first`;
   return `Add ${inputLabel(input, output)} to continue`;
 }
 

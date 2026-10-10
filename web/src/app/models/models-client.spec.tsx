@@ -463,6 +463,31 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
+  it("names embeddings by what they do, never 'Embeddings' or 'embedding'", async () => {
+    renderModels(
+      catalog([
+        row({ id: "chat", capability: "chat", capability_title: "Chat" }),
+        row({
+          id: "embed",
+          title: "Embed",
+          display_name: "Embed",
+          capability: "embed",
+          capability_title: "Embeddings",
+          architecture: { input_modalities: ["text"], output_modalities: ["embedding"] },
+          capabilities: [{ ...row().capabilities[0], capability: "embed", label: "Embeddings" }],
+        }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "Copy model name embed" });
+    expect(
+      screen.getByRole("heading", { name: "Turn text into numbers", level: 2 }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Turn text into numbers" })).toBeVisible();
+    const facts = screen.getAllByRole("list", { name: "Model facts" });
+    expect(facts.map((list) => list.textContent).join(" ")).toMatch(/text.*numbers/);
+    expect(document.body.textContent).not.toMatch(/Embeddings|\bembedding\b/i);
+  });
+
   it("groups rows by the server classification, not by intent", async () => {
     const classified = (id: string, capability: string, label: string) =>
       row({
@@ -490,7 +515,8 @@ describe("models catalog contract distinctions", () => {
       within(chatGroup).getByRole("button", { name: "1 more Chat models" }),
     ).toBeInTheDocument();
     expect(within(chatGroup).queryByText("image", { exact: true })).toBeNull();
-    for (const label of ["Images", "Decisions", "Speech"]) {
+    // Decisions read as the task they do, the name Try uses.
+    for (const label of ["Images", "Choose an option", "Speech"]) {
       expect(
         screen.getByRole("heading", { name: label, level: 2 }),
       ).toBeVisible();

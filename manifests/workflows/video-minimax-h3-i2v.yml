@@ -25,6 +25,8 @@ inputs:
     maximum: 50
     default: 8
   image:
+    label: a starting picture
+    help: The picture the video starts from.
     type: asset
     required: true
 outputs:

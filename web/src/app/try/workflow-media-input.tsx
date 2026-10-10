@@ -42,43 +42,73 @@ function readAsDataUri(file: File): Promise<string> {
   });
 }
 
+/** A preview link for a chosen file, revoked when the file changes. */
+function useObjectUrl(file: File | null | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file || typeof URL.createObjectURL !== "function") {
+      setUrl(null);
+      return;
+    }
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url;
+}
+
+const SUBTYPE = /^[a-z]+\/([a-z0-9]+)/i;
+
 function megabytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }
 
 /**
- * Picks a media input that travels inside the request body (a data URI, a
- * link or a Library asset id). A text box that asks for "value" is not a way
- * to choose a picture, so the main path is a file or the Library; the raw
- * reference sits under Advanced.
+ * Picks a media input. It has two modes, one control either way:
+ *
+ * - **reference** (`value`/`onChange`): the media travels inside the request
+ *   body as a data URI, a link or a Library asset id. The raw reference sits
+ *   under Advanced.
+ * - **file** (`file`/`onFileChange`): the media travels as a multipart file
+ *   part. A Library picture is downloaded into a file; there is no link box.
+ *
+ * A text box that asks for "value" is not a way to choose a picture, so the
+ * main path is a file or the Library.
  */
 export function MediaInput({
   id,
   label,
   kind,
   value,
+  file,
   invalid,
   describedBy,
   onChange,
+  onFileChange,
 }: {
   id: string;
   label: string;
   kind: MediaKind;
-  value: string | undefined;
+  value?: string | undefined;
+  file?: File | null;
   invalid?: boolean;
   describedBy?: string;
-  onChange: (value: string | undefined) => void;
+  onChange?: (value: string | undefined) => void;
+  onFileChange?: (file: File | null) => void;
 }) {
   const noun = MEDIA_NOUN[kind];
+  const fileMode = onFileChange !== undefined;
   const fileInput = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
-  const preview = value ? previewSource(value) : null;
-  const dataUriChosen = Boolean(value?.startsWith("data:"));
+  const fileUrl = useObjectUrl(fileMode ? file : null);
+  const chosen = fileMode ? Boolean(file) : Boolean(value);
+  const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
+  const dataUriChosen = !fileMode && Boolean(value?.startsWith("data:"));
 
-  useEffect(() => setPreviewFailed(false), [value]);
+  useEffect(() => setPreviewFailed(false), [value, file]);
 
   async function choose(file: File | undefined) {
     if (!file) return;
@@ -95,21 +125,61 @@ export function MediaInput({
       );
       return;
     }
+    if (fileMode) {
+      onFileChange?.(file);
+      setSource(file.name);
+      return;
+    }
     try {
-      onChange(await readAsDataUri(file));
+      onChange?.(await readAsDataUri(file));
       setSource(file.name);
     } catch {
       setFileError(`Could not read that ${noun}. Try another file.`);
     }
   }
 
+  async function pickFromLibrary(assetId: string) {
+    setFileError(null);
+    setLibraryOpen(false);
+    if (!fileMode) {
+      setSource("From your Library");
+      onChange?.(assetId);
+      return;
+    }
+    // A file part needs the bytes: fetch the Library picture into a file.
+    try {
+      const response = await fetch(
+        `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+        { credentials: "same-origin" },
+      );
+      if (!response.ok) throw new Error("Library download failed");
+      const blob = await response.blob();
+      const type = blob.type || `${kind}/png`;
+      const extension = SUBTYPE.exec(type)?.[1] ?? "png";
+      onFileChange?.(new File([blob], `library-${noun}.${extension}`, { type }));
+      setSource("From your Library");
+    } catch {
+      setFileError(
+        `Could not add that ${noun} from your Library. Try another, or choose a file.`,
+      );
+    }
+  }
+
   function clear() {
     setSource(null);
     setFileError(null);
-    onChange(undefined);
+    if (fileMode) onFileChange?.(null);
+    else onChange?.(undefined);
   }
 
-  const sourceLabel = source ?? (value && !dataUriChosen ? "Added from a link" : null);
+  const sourceLabel = !chosen
+    ? null
+    : (source ??
+      (fileMode
+        ? (file?.name ?? null)
+        : dataUriChosen
+          ? null
+          : "Added from a link"));
 
   return (
     <div className="space-y-3">
@@ -117,9 +187,9 @@ export function MediaInput({
         <div
           className={`bg-muted/40 rounded-media flex size-24 shrink-0 items-center justify-center overflow-hidden border ${
             invalid ? "border-destructive" : "border-input"
-          } ${value ? "" : "border-dashed"}`}
+          } ${chosen ? "" : "border-dashed"}`}
         >
-          {value && preview && !previewFailed ? (
+          {chosen && preview && !previewFailed ? (
             kind === "video" ? (
               <video
                 src={preview}
@@ -170,7 +240,7 @@ export function MediaInput({
                 Choose from Library
               </Button>
             )}
-            {value && (
+            {chosen && (
               <Button
                 type="button"
                 variant="ghost"
@@ -210,38 +280,35 @@ export function MediaInput({
           });
         }}
       />
-      <details className="text-sm">
-        <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
-          Advanced
-        </summary>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium">
-            Link, Library link or data URI
-          </span>
-          <Input
-            value={dataUriChosen ? "" : (value ?? "")}
-            placeholder={
-              dataUriChosen ? "Using the file you chose" : "https://…"
-            }
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(event) => {
-              const next = assetIdFromPasted(event.currentTarget.value);
-              setSource(null);
-              onChange(next || undefined);
-            }}
-          />
-        </label>
-      </details>
+      {!fileMode && (
+        <details className="text-sm">
+          <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
+            Advanced
+          </summary>
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium">
+              Link, Library link or data URI
+            </span>
+            <Input
+              value={dataUriChosen ? "" : (value ?? "")}
+              placeholder={
+                dataUriChosen ? "Using the file you chose" : "https://…"
+              }
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => {
+                const next = assetIdFromPasted(event.currentTarget.value);
+                setSource(null);
+                onChange?.(next || undefined);
+              }}
+            />
+          </label>
+        </details>
+      )}
       <LibraryPicker
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
-        onPick={(assetId) => {
-          setSource("From your Library");
-          setFileError(null);
-          onChange(assetId);
-          setLibraryOpen(false);
-        }}
+        onPick={(assetId) => void pickFromLibrary(assetId)}
       />
     </div>
   );
@@ -334,7 +401,8 @@ function LibraryPicker({
           <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
             {assets.map((asset) => {
               const title =
-                asset.prompt?.trim().slice(0, 80) || "Picture from your Library";
+                asset.prompt?.trim().slice(0, 80) ||
+                "Picture from your Library";
               return (
                 <li key={asset.asset_id}>
                   <button

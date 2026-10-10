@@ -15,6 +15,7 @@ import {
 } from "@/lib/capability-state";
 import { homeApi, type HomeSnapshot } from "@/app/home/home-api";
 import { capabilityTiles } from "@/app/home/presentation";
+import { appPlumbingCapabilities } from "@/lib/terms";
 
 /** People see these names (VOICE glossary); the gateway's own titles still match. */
 const LABELS: Record<string, string> = {
@@ -188,7 +189,13 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
         }))
       : undefined;
   const requests = owner && activity.data ? requestsFromActivity(activity.data) : requestsFromHome(home);
-  const rows = home ? capabilityTiles(home.capabilities, home.aliases) : [];
+  // A member's summary covers what they use; embeddings and decisions are
+  // what their apps use behind the scenes, so they never read "Embeddings down".
+  const rows = (
+    home ? capabilityTiles(home.capabilities, home.aliases) : []
+  ).filter(
+    (row) => owner || !appPlumbingCapabilities.has(row.icon_key ?? row.capability),
+  );
   const views = rows.map((row) => {
     const key = row.icon_key ?? row.capability;
     return capabilityView(

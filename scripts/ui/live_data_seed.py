@@ -8,12 +8,14 @@ _compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
 from gateway.compat import get_env
 
 import argparse
+import contextlib
 import base64
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import struct
 import subprocess
@@ -221,7 +223,19 @@ def seed(state: Path, port: int) -> dict[str, object]:
     return manifest
 
 
-def serve(state_base: Path, port: int) -> None:
+@contextlib.contextmanager
+def _copy_state_dir():
+    """One reused directory for a copy of production data, removed on exit."""
+    state = REPO / ".ui-e2e-state" / "copy"
+    shutil.rmtree(state, ignore_errors=True)
+    state.mkdir(parents=True)
+    try:
+        yield str(state)
+    finally:
+        shutil.rmtree(state, ignore_errors=True)
+
+
+def serve(state_base: Path, port: int, copy_from: Path | None = None, restarted: bool = False) -> None:
     engine_port = port + 1
     children: list[subprocess.Popen] = []
 
@@ -230,14 +244,32 @@ def serve(state_base: Path, port: int) -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    with tempfile.TemporaryDirectory(prefix="live-data-", dir=state_base) as temp:
+    holder = _copy_state_dir() if copy_from is not None else tempfile.TemporaryDirectory(prefix="live-data-", dir=state_base)
+    with holder as temp:
         state = Path(temp)
-        manifest = seed(state, port)
-        env = dict(os.environ)
+        if copy_from is not None:
+            # Copy mode: production data, copied; the gateway runs behind the connection guard.
+            from scripts.ui import live_data_copy
+
+            manifest = live_data_copy.prepare(state, port, engine_port, source=copy_from, restarted=restarted)
+            live_data_copy.write_manifest(manifest, state)
+            env = live_data_copy.env_for(state, port, engine_port, Path(str(manifest["config"])))
+            env["UI_E2E_ALLOWED_PORTS"] = ""
+            commands = [
+                [sys.executable, "-m", "uvicorn", "scripts.ui.fake_engine:app", "--host", "127.0.0.1", "--port", str(engine_port)],
+                [sys.executable, "-m", "scripts.ui.fixture_gateway", str(port), str(engine_port)],
+            ]
+        else:
+            manifest = seed(state, port)
+            env = dict(os.environ)
+            commands = [
+                [sys.executable, "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(child_port)]
+                for module, child_port in [("scripts.ui.fake_engine:app", engine_port), ("proxy:app", port)]
+            ]
         try:
-            for module, child_port in [("scripts.ui.fake_engine:app", engine_port), ("proxy:app", port)]:
+            for command, child_port in zip(commands, (engine_port, port)):
                 log = (state / f"{child_port}.log").open("w")
-                children.append(subprocess.Popen([sys.executable, "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(child_port)], cwd=state, env=env, stdout=log, stderr=subprocess.STDOUT))
+                children.append(subprocess.Popen(command, cwd=state, env=env, stdout=log, stderr=subprocess.STDOUT))
                 log.close()
             deadline = time.monotonic() + 90
             while time.monotonic() < deadline:
@@ -274,12 +306,16 @@ def main() -> None:
     parser.add_argument("--state-root", type=Path, default=REPO / ".ui-e2e-state" / "live-data")
     parser.add_argument("--port", type=int, default=int(os.environ.get("UI_E2E_PORT", "18182")))
     parser.add_argument("--serve", action="store_true")
+    parser.add_argument("--copy-from", type=Path, help="serve a COPY of this Azizam checkout's data (sweep)")
+    parser.add_argument("--restarted", action="store_true", help="copy mode: no recent health evidence, as after a restart")
     args = parser.parse_args()
     if not 18000 <= args.port < 18998:
         raise SystemExit("port must be between 18000 and 18998")
     args.state_root.mkdir(parents=True, exist_ok=True)
+    if args.copy_from is not None and not args.serve:
+        raise SystemExit("--copy-from needs --serve")
     if args.serve:
-        serve(args.state_root, args.port)
+        serve(args.state_root, args.port, args.copy_from, args.restarted)
     else:
         seed(args.state_root, args.port)
         print(json.dumps({"seeded": True, "port": args.port}))

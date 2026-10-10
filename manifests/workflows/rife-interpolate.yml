@@ -16,10 +16,14 @@ trusted: true
 typical_seconds: 4
 inputs:
   source_video:
+    label: a video to smooth
+    help: The video to make smoother.
     type: asset
     media_type: video/*
     required: true
   multiplier:
+    label: frame multiplier
+    help: 2 doubles the frames. 3 and 4 are less tested.
     type: integer
     enum: [2, 3, 4]
     default: 2

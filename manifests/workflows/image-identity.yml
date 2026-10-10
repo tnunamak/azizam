@@ -24,6 +24,8 @@ inputs:
     required: true
     description: The new scene, poses and gaze. People are tagged automatically.
   source_image:
+    label: a reference photo
+    help: A clear photo of the people, at full size.
     type: asset
     required: true
     description: Reference photo at full resolution. Send more photos as extra image parts.

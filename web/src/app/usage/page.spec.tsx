@@ -113,7 +113,7 @@ test("USAGE-02 chart table includes each active capability and daily total", asy
     ],
   });
   const table = await screen.findByRole("table", {
-    name: "Requests by day and capability",
+    name: "Requests by day and task",
   });
   expect(
     within(table)
@@ -341,13 +341,28 @@ test("Usage model rows read as names, never as a path on the gateway host", asyn
   );
   await screen.findByText("Top models by requests");
   expect(document.body.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\//);
-  const chat = modelRow("Qwen3.8 27B Uncensored Q4 K M");
+  const chat = modelRow("Qwen3.8 27B Uncensored");
   expect(chat).toBeTruthy();
-  // The raw identifier is on demand, as the file name only.
-  expect(within(chat).getByTitle("Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBeVisible();
+  // Not even the tooltip names the weight file: it repeats the readable name.
+  expect(within(chat).getByTitle("Qwen3.8 27B Uncensored")).toBeVisible();
+  expect(document.body.innerHTML).not.toMatch(/\.gguf|Q4_K_M/);
   await waitFor(() => expect(modelRow("Careful choices")).toBeTruthy());
   expect(within(modelRow("Careful choices")).getByText("Choose an option")).toBeVisible();
   expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
+});
+
+test("Usage reads text to speech as Read text aloud, music as Make music or sounds", async () => {
+  renderUsage({
+    by_model: [
+      { model: "kokoro", capability: "speech.synthesis", requests: 9, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "tts-1", capability: "audio.speech", requests: 8, paid_requests: 0, unknown_paid_requests: 0 },
+      { model: "song-maker", capability: "audio", requests: 7, paid_requests: 0, unknown_paid_requests: 0 },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  expect(within(modelRow("Kokoro")).getByText("Read text aloud")).toBeVisible();
+  expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
+  expect(within(modelRow("Song Maker")).getByText("Make music or sounds")).toBeVisible();
 });
 
 test("Usage model Cost cell is Local, an amount or Unavailable, and the legend explains it", async () => {
@@ -382,7 +397,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
       { date: "2026-10-01", chat: 1, image: 1, transcribe: 1, decide: 1, embeddings: 1 },
     ],
   });
-  await screen.findByText("Requests by day and capability");
+  await screen.findByText("Requests by day and task");
   const legend = screen.getAllByText("Make a picture").map((node) => node.parentElement);
   expect(legend.length).toBeGreaterThan(0);
   for (const name of [
