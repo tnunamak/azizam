@@ -61,6 +61,7 @@ import {
   type TryKeepState,
 } from "@/lib/prompt-memory";
 import { taskNames } from "@/lib/terms";
+import { modelDisplayName } from "@/lib/model-name";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -667,8 +668,15 @@ function groupCatalog(payload: unknown) {
     for (const capability of capabilities) {
       const option: CatalogOption = {
         id,
-        label:
-          stringValue(record.name) ?? stringValue(record.display_name) ?? id,
+        label: modelDisplayName(id, {
+          models: [
+            {
+              id,
+              title: stringValue(record.title) ?? stringValue(record.name),
+              display_name: stringValue(record.display_name),
+            },
+          ],
+        }),
         recommended: record.recommended === true,
         capability,
         price: costLabel(record.cost),
@@ -716,7 +724,7 @@ function groupCatalog(payload: unknown) {
         return (labelCounts.get(label) ?? 0) > 1
           ? {
               ...option,
-              label: [option.label, option.provider, option.id]
+              label: [option.label, option.provider, modelDisplayName(option.id)]
                 .filter(Boolean)
                 .join(" · "),
             }
@@ -1382,7 +1390,7 @@ export default function TryPage() {
               ? [
                   {
                     id: item.id,
-                    label: item.id,
+                    label: modelDisplayName(item.id),
                     capability: "chat" as const,
                     price: "",
                     locality: "Available to this Try key",
@@ -1633,8 +1641,12 @@ export default function TryPage() {
               form.set(field, selectedFile);
             }
           }
+          const fileFields = new Set(
+            (request.files ?? []).map((file) => file.field),
+          );
           for (const [name, value] of Object.entries(request.form ?? {})) {
-            if (value === undefined || value === null) continue;
+            if (fileFields.has(name) || value === undefined || value === null)
+              continue;
             if (typeof value === "object") {
               form.set(name, JSON.stringify(value));
             } else {
@@ -2178,6 +2190,7 @@ export default function TryPage() {
                   )}
                   {tab.value === "workflow" && selectedWorkflow && (
                     <WorkflowInputs
+                      key={selectedWorkflow.id}
                       inputs={selectedWorkflow.inputs}
                       mapping={selectedWorkflow.inputMapping}
                       outputKind={workflowOutputKind}
@@ -2865,7 +2878,7 @@ function ModelSelect({
       ? [
           {
             id: value || fallbackLabel,
-            label: `${value || fallbackLabel} · Unverified model`,
+            label: `${modelDisplayName(value || fallbackLabel)} · Unverified model`,
             price: "",
             locality: "Not in the catalog",
           },

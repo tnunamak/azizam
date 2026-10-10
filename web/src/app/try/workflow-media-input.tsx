@@ -99,6 +99,10 @@ export function MediaInput({
   const noun = MEDIA_NOUN[kind];
   const fileMode = onFileChange !== undefined;
   const fileInput = useRef<HTMLInputElement>(null);
+  const selection = useRef(0);
+  useEffect(() => () => {
+    selection.current += 1;
+  }, []);
   const [source, setSource] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -112,6 +116,7 @@ export function MediaInput({
 
   async function choose(file: File | undefined) {
     if (!file) return;
+    const operation = ++selection.current;
     setFileError(null);
     if (!file.type.startsWith(`${kind}/`)) {
       setFileError(
@@ -131,14 +136,18 @@ export function MediaInput({
       return;
     }
     try {
-      onChange?.(await readAsDataUri(file));
+      const value = await readAsDataUri(file);
+      if (selection.current !== operation) return;
+      onChange?.(value);
       setSource(file.name);
     } catch {
+      if (selection.current !== operation) return;
       setFileError(`Could not read that ${noun}. Try another file.`);
     }
   }
 
   async function pickFromLibrary(assetId: string) {
+    const operation = ++selection.current;
     setFileError(null);
     setLibraryOpen(false);
     if (!fileMode) {
@@ -154,11 +163,13 @@ export function MediaInput({
       );
       if (!response.ok) throw new Error("Library download failed");
       const blob = await response.blob();
+      if (selection.current !== operation) return;
       const type = blob.type || `${kind}/png`;
       const extension = SUBTYPE.exec(type)?.[1] ?? "png";
       onFileChange?.(new File([blob], `library-${noun}.${extension}`, { type }));
       setSource("From your Library");
     } catch {
+      if (selection.current !== operation) return;
       setFileError(
         `Could not add that ${noun} from your Library. Try another, or choose a file.`,
       );
@@ -166,6 +177,7 @@ export function MediaInput({
   }
 
   function clear() {
+    selection.current += 1;
     setSource(null);
     setFileError(null);
     if (fileMode) onFileChange?.(null);
@@ -298,6 +310,7 @@ export function MediaInput({
               autoComplete="off"
               onChange={(event) => {
                 const next = assetIdFromPasted(event.currentTarget.value);
+                selection.current += 1;
                 setSource(null);
                 onChange?.(next || undefined);
               }}
