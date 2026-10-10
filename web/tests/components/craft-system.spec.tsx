@@ -10,6 +10,7 @@ import path from "node:path";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { chartColors, ChartLegend, CHART_OTHER } from "@/components/ui/charts";
 import { Input } from "@/components/ui/input";
 import { SkeletonRows } from "@/components/ui/skeleton";
@@ -226,6 +227,22 @@ describe("cards, badges and tables", () => {
       expect.arrayContaining(["h-10", "group-data-dense/table:h-9"]),
     );
     expect(classes(screen.getByText("12"))).toContain("text-right");
+  });
+});
+
+describe("overlays", () => {
+  it("keep a dialog's overlay under its content whatever the DOM order", () => {
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Go to</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+    const content = screen.getByRole("dialog", { name: "Go to" });
+    const overlay = document.querySelector("[data-slot=dialog-overlay]")!;
+    expect(overlay).toHaveClass("z-40");
+    expect(content).toHaveClass("z-50");
   });
 });
 

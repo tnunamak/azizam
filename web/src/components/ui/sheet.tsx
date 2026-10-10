@@ -32,10 +32,13 @@ function SheetOverlay({
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Overlay>) {
   return (
+    // Below its content (z-50) whatever the DOM order: reopening during the
+    // exit animation mounts the overlay after the content, and at the same
+    // z-index it covered the content and took its clicks.
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "bg-overlay data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50",
+        "bg-overlay data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-40",
         className,
       )}
       {...props}
