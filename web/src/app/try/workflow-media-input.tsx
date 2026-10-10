@@ -44,17 +44,19 @@ function readAsDataUri(file: File): Promise<string> {
 
 /** A preview link for a chosen file, revoked when the file changes. */
 function useObjectUrl(file: File | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+  const [objectUrl, setObjectUrl] = useState<{
+    file: File;
+    url: string;
+  } | null>(null);
   useEffect(() => {
     if (!file || typeof URL.createObjectURL !== "function") {
-      setUrl(null);
       return;
     }
     const next = URL.createObjectURL(file);
-    setUrl(next);
+    setObjectUrl({ file, url: next });
     return () => URL.revokeObjectURL(next);
   }, [file]);
-  return url;
+  return objectUrl && objectUrl.file === file ? objectUrl.url : null;
 }
 
 const SUBTYPE = /^[a-z]+\/([a-z0-9]+)/i;
@@ -112,7 +114,17 @@ export function MediaInput({
   const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
   const dataUriChosen = !fileMode && Boolean(value?.startsWith("data:"));
 
-  useEffect(() => setPreviewFailed(false), [value, file]);
+  const [previousPreviewInput, setPreviousPreviewInput] = useState({
+    value,
+    file,
+  });
+  if (
+    previousPreviewInput.value !== value ||
+    previousPreviewInput.file !== file
+  ) {
+    setPreviousPreviewInput({ value, file });
+    setPreviewFailed(false);
+  }
 
   async function choose(file: File | undefined) {
     if (!file) return;
@@ -350,11 +362,15 @@ function LibraryPicker({
   );
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [attempt, setAttempt] = useState(0);
+  const [previousOpen, setPreviousOpen] = useState(open);
+  if (open !== previousOpen) {
+    setPreviousOpen(open);
+    if (open) setState("loading");
+  }
 
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    setState("loading");
     fetch("/me/api/media?kind=image&limit=40&scope=me", {
       credentials: "same-origin",
       signal: controller.signal,

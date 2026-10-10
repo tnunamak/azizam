@@ -439,17 +439,15 @@ function AudioTile({
   const [error, setError] = useState<"media" | "playback" | null>(null);
 
   useEffect(() => {
-    setIsPlaying(false);
-    setMeasuredDuration(duration ?? null);
-    setError(null);
     const audio = audioRef.current;
-    if (audio) {
+    return () => {
+      if (!audio) return;
       const hadSource = audio.hasAttribute("src");
       if (hadSource) audio.pause();
       audio.removeAttribute("src");
       if (hadSource) audio.load();
-    }
-  }, [duration, src]);
+    };
+  }, []);
 
   const label = isPlaying ? `Pause ${title}` : `Play ${title}`;
   const errorText =
@@ -814,18 +812,6 @@ function Preview({
       ),
     retry: false,
   });
-
-  useEffect(() => {
-    setMediaFailed(false);
-    setPosterFailed(false);
-    setRetryKey(0);
-    setRetrySrc(null);
-    setRecovered(false);
-    setTilePlaying(false);
-    setTileStarted(false);
-    setTileBlocked(false);
-    setTileDuration(asset.duration_s);
-  }, [asset.asset_id, src, asset.poster_asset_id, asset.duration_s]);
 
   const posterUrl = poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
@@ -2549,7 +2535,7 @@ export default function LibraryPage() {
               ))}
               {storedAssets.map((asset, index) => (
                 <AssetTile
-                  key={asset.asset_id}
+                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}
@@ -2601,7 +2587,7 @@ export default function LibraryPage() {
             <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
               {goneAssets.map((asset) => (
                 <AssetTile
-                  key={asset.asset_id}
+                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}

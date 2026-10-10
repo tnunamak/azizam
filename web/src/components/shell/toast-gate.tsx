@@ -10,7 +10,7 @@ const Toaster = lazy(() =>
 );
 
 function MountedToaster() {
-  useEffect(markToasterReady, []);
+  useEffect(markToasterReady, [markToasterReady]);
   return <Toaster />;
 }
 

@@ -908,14 +908,17 @@ function CreationMedia({
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  useEffect(() => {
+  const resetKey = `${creation.asset_id}:${creation.download_url ?? ""}:${posterUrl ?? ""}`;
+  const [previousResetKey, setPreviousResetKey] = useState(resetKey);
+  if (previousResetKey !== resetKey) {
+    setPreviousResetKey(resetKey);
     setImageFailed(false);
     setPosterFailed(false);
     setVideoFailed(false);
     setAudioError(null);
     setIsPlaying(false);
     setAudioSrc(creation.download_url ?? undefined);
-  }, [creation.asset_id, creation.download_url, posterUrl]);
+  }
 
   if (creation.kind === "image" && creation.download_url && !imageFailed) {
     return (
@@ -1276,7 +1279,10 @@ function Recent({
             {recentCreations
               .slice(0, 4 - Math.min(making.length, 2))
               .map((creation) => (
-                <CreationPreview key={creation.asset_id} creation={creation} />
+                <CreationPreview
+                  key={`${creation.asset_id}:${creation.download_url ?? ""}:${creation.poster_asset_id ?? ""}`}
+                  creation={creation}
+                />
               ))}
           </ul>
         </>

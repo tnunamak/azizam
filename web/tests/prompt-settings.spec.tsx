@@ -40,7 +40,9 @@ vi.mock("@/lib/prompt-memory", async (original) => ({
     put: mocks.householdPut,
   },
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
 
 import AccountPage from "@/app/account/page";
 import { HouseholdPromptsSection } from "@/app/settings/household-prompts";
@@ -142,7 +144,7 @@ describe("Your settings: prompts", () => {
 
   it("deletes saved prompts after asking, and says how many", async () => {
     const user = userEvent.setup();
-    const { toast } = await import("sonner");
+    const { toast } = await import("@/lib/toast");
     mocks.promptMemory.mockResolvedValue(member());
     mocks.deleteSavedPrompts.mockResolvedValue({ deleted_prompts: 3 });
     wrap(<AccountPage />);
@@ -342,7 +344,7 @@ it.each(["member", "household"])(
   "keeps the %s confirmation open on failure for retry",
   async (kind) => {
     const user = userEvent.setup();
-    const { toast } = await import("sonner");
+    const { toast } = await import("@/lib/toast");
     const { ApiError } = await import("@/lib/api");
     if (kind === "member") {
       mocks.promptMemory.mockResolvedValue(member());

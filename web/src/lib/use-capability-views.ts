@@ -132,19 +132,30 @@ export interface CapabilityViewsResult {
  * engine, provider and household request evidence; members use their own.
  */
 export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
-  const homeQuery = useQuery({
+  const {
+    data: homeData,
+    isPending: homePending,
+    isError: homeError,
+    refetch: refetchHome,
+    isFetching: homeFetching,
+  } = useQuery({
     queryKey: ["account", "home"],
     queryFn: homeApi.home,
     // Readiness evidence expires after 15 minutes; refresh it while the page stays open.
     refetchInterval: 60_000,
   });
-  const statusQuery = useQuery({
+  const {
+    data: statusData,
+    isError: statusError,
+    refetch: refetchStatus,
+    isFetching: statusFetching,
+  } = useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
     enabled: owner,
     refetchInterval: 60_000,
   });
-  const registryQuery = useQuery({
+  const { data: registryData } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
     enabled: owner,
@@ -152,8 +163,8 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
   const providers = useOptionalProviderStatus(owner);
   const activity = useActivitySample(owner);
   const home =
-    homeQuery.data && homeQuery.data.authenticated
-      ? (homeQuery.data as HomeSnapshot)
+    homeData && homeData.authenticated
+      ? (homeData as HomeSnapshot)
       : undefined;
   const now = Date.now() / 1000;
   const providerIds = new Set(
@@ -166,9 +177,9 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
           .map((item) => item.id)
       : [],
   );
-  const health = statusQuery.data?.current_health;
+  const health = statusData?.current_health;
   const backendChecks = new Map(
-    (statusQuery.data?.backends ?? []).map((backend) => [
+    (statusData?.backends ?? []).map((backend) => [
       backend.service_id ?? backend.key ?? "",
       (backend as { observed_at_s?: number | null }).observed_at_s ?? null,
     ]),
@@ -177,7 +188,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
     owner && health?.observation_available
       ? health.services.map((service) => ({
           serviceId: service.service_id,
-          name: engineShortName(registryQuery.data?.services[service.service_id], service),
+          name: engineShortName(registryData?.services[service.service_id], service),
           labels: service.capability_labels ?? (service.capability_title ? [service.capability_title] : []),
           enabled: service.enabled,
           observation: unreachable.has(service.service_id) ? "down" : service.observation,
@@ -216,18 +227,18 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
     views,
     verdict: verdictFor(views),
     requests,
-    isPending: homeQuery.isPending,
-    isError: homeQuery.isError,
-    ownerHealthMissing: owner && (statusQuery.isError || !health?.observation_available),
-    ownerHealthError: owner && statusQuery.isError,
+    isPending: homePending,
+    isError: homeError,
+    ownerHealthMissing: owner && (statusError || !health?.observation_available),
+    ownerHealthError: owner && statusError,
     refetch: () => {
-      void homeQuery.refetch();
+      void refetchHome();
       if (owner) {
-        void statusQuery.refetch();
+        void refetchStatus();
         void activity.refetch();
         providers.refetch();
       }
     },
-    isFetching: homeQuery.isFetching || statusQuery.isFetching,
+    isFetching: homeFetching || statusFetching,
   };
 }
