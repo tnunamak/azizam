@@ -205,7 +205,7 @@ class UIStaticFiles(StaticFiles):
     @staticmethod
     def _is_not_modified(headers: Headers, etag: str, last_modified: str) -> bool:
         if "if-none-match" in headers:
-            return _etag_matches(headers["if-none-match"], etag)
+            return _etag_matches(", ".join(headers.getlist("if-none-match")), etag)
         if "if-modified-since" not in headers or not last_modified:
             return False
         try:

@@ -125,6 +125,13 @@ def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
     assert repeated.status_code == 304
     assert repeated.headers["cache-control"] == "no-cache"
 
+    repeated_headers = client.get("/ui/home/", headers=[
+        ("Accept-Encoding", "br"),
+        ("If-None-Match", '"stale-tag"'),
+        ("If-None-Match", first.headers["etag"]),
+    ])
+    assert repeated_headers.status_code == 304
+
     head = client.head("/ui/home/", headers={"Accept-Encoding": "br"})
     assert head.status_code == 200
     assert head.content == b""
