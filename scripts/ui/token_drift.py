@@ -89,6 +89,8 @@ SYSTEM_FILES = [
     "components/product/setting-row.tsx",
     "components/product/stat-strip.tsx",
     "components/product/status-ui.tsx",
+    # PR 2: Settings
+    "app/settings/page.tsx",
 ]
 # Overlays may lift with a shadow (menus, popovers, dialogs, sheets, toasts).
 OVERLAY_FILES = {

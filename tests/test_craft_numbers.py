@@ -65,6 +65,10 @@ def test_rows_follow_the_row_tokens_per_width():
     assert desktop == ["list-row 'b' is 45 tall", "setting row 'd' is 56 tall"]
     phone = craft_numbers.check_rows(measured(listRows=[{"kind": "table-row", "height": 48, "text": "e"}]), 390, CFG)
     assert phone == []
+    # A setting may grow on a desktop (a long label wraps) but not on a phone.
+    tall = [{"kind": "setting-row", "height": 86, "text": "f"}]
+    assert craft_numbers.check_rows(measured(listRows=tall), 1440, CFG) == []
+    assert craft_numbers.check_rows(measured(listRows=tall), 390, CFG) == ["setting row 'f' is 86 tall"]
 
 
 def test_geometry_reads_page_padding_and_section_gaps():
