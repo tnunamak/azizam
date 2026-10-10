@@ -94,9 +94,20 @@ def _choose_encoding(header: str) -> str | None:
 def _etag_matches(header: str, etag: str) -> bool:
     if not header:
         return False
+    if header.strip() == "*":
+        return True
     target = etag.removeprefix("W/")
-    return any(item.strip() == "*" or item.strip().removeprefix("W/") == target
-               for item in header.split(","))
+    items: list[str] = []
+    quoted = False
+    start = 0
+    for index, character in enumerate(header):
+        if character == '"':
+            quoted = not quoted
+        elif character == "," and not quoted:
+            items.append(header[start:index].strip())
+            start = index + 1
+    items.append(header[start:].strip())
+    return any(item.removeprefix("W/") == target for item in items)
 
 
 class UIStaticFiles(StaticFiles):

@@ -135,6 +135,11 @@ def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path, monke
     ])
     assert repeated_headers.status_code == 304
 
+    comma_in_opaque_tag = client.get("/ui/home/", headers={
+        "If-None-Match": '"other,*,tag"',
+    })
+    assert comma_in_opaque_tag.status_code == 200
+
     head = client.head("/ui/home/", headers={"Accept-Encoding": "br"})
     assert head.status_code == 200
     assert head.content == b""
