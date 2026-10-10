@@ -29,13 +29,8 @@ import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { taskNames } from "@/lib/terms";
-import { productApi } from "@/lib/product-api";
-import {
-  modelDisplayName,
-  safeModelId,
-  scrubModelPaths,
-  type CapabilityNameRow,
-} from "@/lib/model-name";
+import { safeModelId, scrubModelPaths } from "@/lib/model-name";
+import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,21 +207,7 @@ export default function UsagePage() {
     retry: false,
   });
   // Display names: the catalog, else a capability's recommended name.
-  const { data: catalog } = useQuery({
-    queryKey: ["models", "catalog"],
-    queryFn: productApi.models,
-    retry: false,
-  });
-  const { data: home } = useQuery({
-    queryKey: ["account", "home"],
-    queryFn: productApi.home,
-    retry: false,
-  });
-  const nameCapabilities: CapabilityNameRow[] = Array.isArray(home?.capabilities)
-    ? home.capabilities
-    : [];
-  const nameModel = (id: string) =>
-    modelDisplayName(id, catalog, nameCapabilities);
+  const nameModel = useModelName();
   const selected = data?.receipts.find((receipt) => receipt.selectionKey === selectedReceiptKey) ?? null;
   useEffect(() => {
     if (selectedReceiptKey !== null && selected === null) setSelectedReceiptKey(null);
@@ -732,7 +713,7 @@ function ModelTable({
                         {name && name !== capabilityLabels[row.capability] && (
                           <p
                             className="text-muted-foreground mt-1 truncate text-xs"
-                            title={row.model}
+                            title={name}
                           >
                             {name}
                           </p>
@@ -851,7 +832,7 @@ function ReceiptsList({
                   {receipt.model && (
                     <p
                       className="text-muted-foreground mt-1 truncate text-xs"
-                      title={receipt.model}
+                      title={nameModel(receipt.model)}
                     >
                       {nameModel(receipt.model)}
                     </p>
@@ -905,6 +886,8 @@ function ReceiptSheet({
   receipt: UsageReceipt | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const nameModel = useModelName();
+  const named = (id: string | null | undefined) => (id ? nameModel(id) : id);
   return (
     <Sheet open={receipt !== null} onOpenChange={onOpenChange}>
       <SheetContent className="overflow-y-auto px-4 pb-4">
@@ -940,11 +923,11 @@ function ReceiptSheet({
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <Detail
                   label="Requested model"
-                  value={receipt.requestedModel}
+                  value={named(receipt.requestedModel)}
                 />
                 <Detail
                   label="Served model"
-                  value={receipt.servedModel}
+                  value={named(receipt.servedModel)}
                 />
                 <Detail
                   label="Declared fallback"

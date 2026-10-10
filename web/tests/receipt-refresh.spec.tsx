@@ -296,7 +296,7 @@ test("Usage sorts top models by requests and model name before slicing", async (
   });
   const heading = await screen.findByRole("columnheader", { name: "Capability and model" });
   const table = heading.closest("table") as HTMLTableElement;
-  const models = () => Array.from(table.querySelectorAll("tbody [title]"), (node) => node.getAttribute("title"));
+  const models = () => Array.from(table.querySelectorAll("tbody [title]"), (node) => node.getAttribute("title")?.toLowerCase());
   const top = ["highest", "alpha", "beta", "zeta", "middle"];
   expect(models()).toEqual(top);
   fireEvent.click(screen.getByRole("button", { name: "View all 7 models" }));

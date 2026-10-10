@@ -341,10 +341,11 @@ test("Usage model rows read as names, never as a path on the gateway host", asyn
   );
   await screen.findByText("Top models by requests");
   expect(document.body.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\//);
-  const chat = modelRow("Qwen3.8 27B Uncensored Q4 K M");
+  const chat = modelRow("Qwen3.8 27B Uncensored");
   expect(chat).toBeTruthy();
-  // The raw identifier is on demand, as the file name only.
-  expect(within(chat).getByTitle("Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBeVisible();
+  // Not even the tooltip names the weight file: it repeats the readable name.
+  expect(within(chat).getByTitle("Qwen3.8 27B Uncensored")).toBeVisible();
+  expect(document.body.innerHTML).not.toMatch(/\.gguf|Q4_K_M/);
   await waitFor(() => expect(modelRow("Careful choices")).toBeTruthy());
   expect(within(modelRow("Careful choices")).getByText("Choose an option")).toBeVisible();
   expect(within(modelRow("TTS 1")).getByText("Read text aloud")).toBeVisible();
