@@ -31,7 +31,7 @@ Set `UI_E2E_PORT` to another unused port from 18000 through 18998 if needed.
 Test state and cookies stay in ignored directories. Screenshots are saved to
 `test-results/screens/`; the HTML report is in `test-results/report/`.
 
-`npm run test:browser` retains the older browser fixture suite.
+`npm run test:all` runs the component tests and then the production journey.
 `/ui/design/` is the component reference; `/ui/gallery/` links to it.
 
 For local development, `npm run dev` starts Next. Its default development-only

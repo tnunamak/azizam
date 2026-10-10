@@ -22,8 +22,7 @@ is absent. `UI_E2E_STATE_ROOT` can select another disk-backed temporary parent.
 
 Screenshots: `web/test-results/screens/`, named by route, theme and width.
 Failures include traces under `web/test-results/artifacts/`. All artifacts and
-browser cookies are ignored by Git. The legacy fixture browser suite is retained
-in `playwright.legacy.config.ts` and can run with that explicit configuration.
+browser cookies are ignored by Git.
 
 The container packaging check builds the UI from source, then proves Home,
 sign-in, owner claim, the admin redirect and Status against fresh private state:
