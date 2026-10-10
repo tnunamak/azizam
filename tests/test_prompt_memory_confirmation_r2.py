@@ -16,7 +16,6 @@ from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
 from tests.test_settings_api import settings, OWNER
-from tests.test_media_provenance import NativeWorkflowRunTests as _NativeWorkflowRunTests
 
 FORGET = {prompt_memory.NAMESPACE: {"mode": "forget"}}
 
@@ -34,7 +33,8 @@ def test_identity_rejects_malformed_extensions_clearly(route, extensions):
 
 
 def test_video_edit_accepts_json_extensions_field(household):
-    response, raw = asyncio.run(_NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
+    from tests.test_media_provenance import NativeWorkflowRunTests
+    response, _raw = asyncio.run(NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
     assert response.status_code == 200, response.body
     assert response.media_type == "video/mp4"
     assert not proxy.media_metadata.read_media_tags(response.body, ".mp4")
@@ -63,7 +63,8 @@ def test_queued_outer_forget_reaches_execution_and_never_hits_disk(household, in
 
 @pytest.mark.parametrize("mode", ["forget", "member-off"])
 @pytest.mark.parametrize("route", [identity_api.IDENTITY_PATH, identity_api.LIKENESS_PATH])
-def test_multipart_identity_privacy_succeeds_without_prompt_storage(household, mode, route):
+@pytest.mark.parametrize("encoding", ["json", "bracket"])
+def test_multipart_identity_privacy_succeeds_without_prompt_storage(household, mode, route, encoding):
     hh = household
     if mode == "member-off":
         prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
@@ -72,21 +73,20 @@ def test_multipart_identity_privacy_succeeds_without_prompt_storage(household, m
         return None
     async def render(*args):
         return GOOD
-    def note(auth, body):
-        proxy._begin_media_delivery(auth)
-        return proxy._note_media_metadata_body(body)
     def store(request, auth, content, fmt):
         asset = proxy.store_asset_bytes(content, kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
         return {"asset_id": asset}
     identity_api.register_identity_routes(app, identity_api.IdentityApiDeps(
         authenticate=lambda *_: hh.auth, enforce_policy=lambda *_: None,
         ensure_face_service=ready, face_client=FakeClient, run_workflow=render,
-        template=lambda: (TEMPLATE, BINDING), store_image=store, models=("buffalo_l",), note_delivery=note,
+        template=lambda: (TEMPLATE, BINDING), store_image=store, models=("buffalo_l",), note_delivery=proxy._identity_note_delivery,
     ))
     files = [("image", ("p.png", PHOTO, "image/png"))] if route == identity_api.IDENTITY_PATH else [
         ("reference", ("p.png", PHOTO, "image/png")), ("candidate", ("c.png", GOOD, "image/png"))]
+    controls = {"extensions": json.dumps(FORGET)} if encoding == "json" else {
+        f"extensions[{prompt_memory.NAMESPACE}][mode]": "forget"}
     result = TestClient(app).post(route, files=files, data={"prompt": "multipart private sentinel",
-                                "mode": "sync", "attempts": "1", "extensions": json.dumps(FORGET)})
+                                "mode": "sync", "attempts": "1", **controls})
     assert result.status_code == 200, result.text
     assert not prompt_memory.get_person_prompts(hh.robin["id"])
     assert b"multipart private sentinel" not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
@@ -173,3 +173,15 @@ def test_delete_failure_after_durable_intent_reports_retrying(household):
     assert result.json()["prompt_purge"]["retry_scheduled"] is True
     assert result.json()["prompt_purge"]["database_pending"] is True
     assert not result.json()["prompt_purge"].get("retry_required")
+
+
+def test_forgotten_image_job_cannot_reuse_a_remembered_idempotency_result(household):
+    hh = household
+    body = {"prompt": "same request"}
+    remembered = proxy._image_media_job_request_id(body=body, auth_context=hh.auth,
+        idempotency_key="same-client-key", fallback_request_id="one")
+    forgotten = proxy._image_media_job_request_id(body={**body, "extensions": FORGET}, auth_context=hh.auth,
+        idempotency_key="same-client-key", fallback_request_id="two")
+    assert remembered[0] != forgotten[0]
+    assert forgotten == proxy._image_media_job_request_id(body={**body, "extensions": FORGET}, auth_context=hh.auth,
+        idempotency_key="same-client-key", fallback_request_id="three")
