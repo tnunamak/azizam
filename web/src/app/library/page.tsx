@@ -1140,16 +1140,34 @@ function AssetTile({
   day?: string | null;
 }) {
   const { ref: visibilityRef, visible } = usePreviewVisible();
+  const [makerTooltip, setMakerTooltip] = useState(false);
   const playableAudio =
     asset.kind === "audio" && asset.download_url && asset.available !== false;
   return (
-    <article className="group relative min-w-0">
+    <article
+      className="group relative min-w-0"
+      onMouseEnter={() => setMakerTooltip(true)}
+      onMouseLeave={(event) =>
+        setMakerTooltip(event.currentTarget.contains(document.activeElement))
+      }
+      onFocus={() => setMakerTooltip(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setMakerTooltip(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setMakerTooltip(false);
+      }}
+    >
       <button
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
         className="rounded-media absolute inset-0 z-10"
         aria-label={`Open ${assetTitle(asset)}`}
+        aria-describedby={
+          everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
+        }
       />
       <div
         ref={visibilityRef}
@@ -1191,6 +1209,15 @@ function AssetTile({
             label={person}
             className="ring-media-badge absolute top-2 right-2 z-20 ring-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
           />
+        ) : null}
+        {everyone && person && makerTooltip ? (
+          <span
+            id={`maker-${asset.asset_id}`}
+            role="tooltip"
+            className="bg-media-badge text-media-badge-foreground text-badge pointer-events-none absolute top-8 right-2 z-30 max-w-full rounded-badge px-2 py-1"
+          >
+            Made by {person}
+          </span>
         ) : null}
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
@@ -2122,6 +2149,15 @@ export default function LibraryPage() {
     confirmedGone(asset.unavailable_reason),
   );
   const [goneOpen, setGoneOpen] = useState(false);
+  const visiblePeople = instanceView
+    ? Array.from(
+        new Set(
+          [...storedAssets, ...(goneOpen ? goneAssets : [])]
+            .map(personFor)
+            .filter((person): person is string => Boolean(person)),
+        ),
+      )
+    : [];
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2388,6 +2424,20 @@ export default function LibraryPage() {
             <Search aria-hidden="true" />
           </Button>
           <div className="contents max-sm:hidden">{personPicker("row")}</div>
+          {visiblePeople.length > 1 ? (
+            <div
+              role="group"
+              aria-label="Creation makers"
+              className="text-muted-foreground text-badge flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full"
+            >
+              {visiblePeople.map((person) => (
+                <span key={person} className="inline-flex items-center gap-1.5">
+                  <PersonMark name={person} size="2xs" label={person} />
+                  {person}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <MoreFilters
             model={model}
             setModel={setModel}

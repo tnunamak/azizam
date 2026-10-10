@@ -1024,6 +1024,78 @@ describe("Library media identity and tile playback", () => {
     vi.unstubAllGlobals();
   });
 
+  test("names every tile maker and explains the mark on hover and keyboard focus", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([
+          picture("maker-image", "Maker picture", { owner_name: "Sam" }),
+          { ...audioAsset, prompt: "Maker audio", owner_name: "Sam" },
+          { ...picture("maker-video", "Maker video"), kind: "video", owner_name: "Alex" },
+        ])
+      : undefined);
+    renderLibrary();
+    await screen.findByRole("button", { name: "Open Maker picture" });
+    for (const [title, person] of [["Maker picture", "Sam"], ["Maker audio", "Sam"], ["Maker video", "Alex"]]) {
+      const open = screen.getByRole("button", { name: `Open ${title}` });
+      const tile = open.closest("article")!;
+      expect(within(tile).getByRole("img", { name: person })).toHaveAttribute("data-slot", "person-mark");
+      expect(within(tile).queryByRole("tooltip")).toBeNull();
+      await userEvent.hover(tile);
+      expect(within(tile).getByRole("tooltip")).toHaveTextContent(`Made by ${person}`);
+      await userEvent.unhover(tile);
+      expect(within(tile).queryByRole("tooltip")).toBeNull();
+      open.focus();
+      await waitFor(() => expect(within(tile).getByRole("tooltip")).toHaveTextContent(`Made by ${person}`));
+      await userEvent.keyboard("{Escape}");
+      expect(within(tile).queryByRole("tooltip")).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      open.blur();
+    }
+  });
+
+  test("shows a one-line key for distinct visible makers and hides it when a filter leaves one", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    const assets = [
+      picture("sam-image", "Sam image", { owner_name: "Sam" }),
+      picture("sam-image-2", "Another Sam image", { owner_name: "Sam" }),
+      { ...audioAsset, prompt: "Alex audio", owner_name: "Alex" },
+    ];
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
+    renderLibrary();
+    const key = await screen.findByRole("group", { name: "Creation makers" });
+    expect(within(key).getAllByRole("img")).toHaveLength(2);
+    for (const name of ["Sam", "Alex"]) {
+      expect(within(key).getByRole("img", { name })).toHaveAttribute("data-slot", "person-mark");
+      expect(within(key).getByText(name)).toBeVisible();
+    }
+    expect(key).toHaveClass("whitespace-nowrap");
+    expect(key.closest("section")).toHaveAccessibleName("Library filters");
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Open Sam image" })).toBeVisible();
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "All" }));
+    expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
+    await choosePerson("Alex (you)");
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
+  });
+
+  test("counts unavailable makers in the key only while their creations are expanded", async () => {
+    session.viewer = { role: "owner", name: "Alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([
+          picture("stored", "Stored picture", { owner_name: "Sam" }),
+          picture("gone", "Gone picture", { owner_name: "Alex", available: false }),
+        ])
+      : undefined);
+    renderLibrary();
+    await screen.findByRole("button", { name: "Open Stored picture" });
+    expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull();
+    fireEvent.click(screen.getByText("Show them"));
+    expect(await screen.findByRole("group", { name: "Creation makers" })).toBeVisible();
+    fireEvent.click(screen.getByText("Show them"));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
+  });
+
   test("shows real audio titles and lengths with stable per-item cover variation", async () => {
     const assets = [
       { ...audioAsset, asset_id: "cover-a", prompt: "Morning birds", duration_s: 12 },
