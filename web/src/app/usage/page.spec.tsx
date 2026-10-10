@@ -396,7 +396,7 @@ test.each(["owner", "member"] as const)("Workflows use readable recent models an
     models: [{ id: GGUF, title: "Picture maker" }],
   }, role, WorkflowsPage);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Details" }));
+  await user.click(await screen.findByRole("button", { name: "Details for Picture workflow" }));
   const sheet = screen.getByRole("dialog");
   const jobs = within(sheet).getByRole("region", { name: "Recent jobs" });
   expect(await within(jobs).findByText("Picture maker")).toBeVisible();
