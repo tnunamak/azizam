@@ -128,6 +128,14 @@ beforeEach(() => {
       overrides: { revisions: { media_job_admission_overrides: "7" } },
     },
     "/admin/api/extensions": { extension_packages: { packages: {} } },
+    "/admin/api/settings/prompt-memory": {
+      prompt_memory: {
+        default_remember: true,
+        never_keep: false,
+        retention_cap: "never",
+      },
+      revision: "7",
+    },
     "/admin/api/people/morgan/reset": {
       url: "/ui/sign-in/#reset=fixture",
       expires_at: invite.expires_at,
@@ -224,6 +232,7 @@ describe("People and Settings red-team regressions", () => {
       "/admin/api/settings/instance",
       "/admin/api/settings/defaults",
       "/admin/api/operator/sign-in",
+      "/admin/api/settings/prompt-memory",
     ])
       responses[path] = new ApiError("owner_required", "Owner required", 403);
     mount(<SettingsPage />, "admin");
@@ -683,7 +692,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
   });
   it("wraps long instance names and URLs in the settings summary", async () => {
     responses["/admin/api/settings/instance"] = {

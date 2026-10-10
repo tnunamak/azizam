@@ -89,6 +89,10 @@ export function HouseholdPromptsSection() {
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-3/4" />
           </div>
+        ) : error instanceof ApiError && error.status === 403 ? (
+          <p role="alert" className="text-muted-foreground text-meta p-4">
+            Only the owner can change this.
+          </p>
         ) : isError || !data ? (
           <div className="p-4">
             <ErrorState
