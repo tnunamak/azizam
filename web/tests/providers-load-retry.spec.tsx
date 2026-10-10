@@ -211,6 +211,26 @@ async function renderProviderRegression(checkResponse: unknown, existing = false
   return { client, fetchMock };
 }
 
+it("finds a provider in the named list and its models in a table", async () => {
+  const { client } = await renderProviderRegression({ ok: true }, true);
+  try {
+    const list = screen.getByRole("list", { name: "Providers" });
+    const row = within(list).getByRole("listitem");
+    expect(within(row).getByRole("heading", { name: "Test provider" })).toBeVisible();
+    fireEvent.click(within(row).getByText("Manage"));
+    const table = within(row).getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Model" })).toBeVisible();
+    expect(within(table).getByRole("columnheader", {
+      name: "Input: USD per 1 million tokens",
+    })).toBeVisible();
+    expect(within(table).getByRole("columnheader", {
+      name: "Output: USD per 1 million tokens",
+    })).toBeVisible();
+  } finally {
+    client.clear();
+  }
+});
+
 async function checkRegressionProvider() {
   fireEvent.click(screen.getAllByRole("button", { name: "Add provider" })[0]);
   const dialog = within(screen.getByRole("dialog"));

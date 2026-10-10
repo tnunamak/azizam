@@ -62,6 +62,7 @@ import {
   UptimeBar,
 } from "@/components/product/uptime-bar";
 import { PageHeader } from "@/components/product/page-header";
+import { KeyValueList } from "@/components/product/key-value";
 import { PersonMark } from "@/components/product/person-mark";
 import {
   isInFlight,
@@ -233,7 +234,7 @@ function EngineSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-5 px-4 pb-6 font-normal">
-          <dl className="space-y-3 text-sm">
+          <dl className="space-y-3 text-meta">
             {[
               ["Role", engine.role],
               ...(engine.endpoint ? [["Endpoint", engine.endpoint]] : []),
@@ -257,10 +258,10 @@ function EngineSheet({
             </Link>
           </Button>
           <details>
-            <summary className="min-h-11 cursor-pointer py-3 text-sm">
+            <summary className="min-h-8 max-sm:min-h-11 cursor-pointer py-3 text-meta">
               Technical fields
             </summary>
-            <pre className="bg-muted rounded-control max-h-96 overflow-auto p-3 text-xs">
+            <pre className="bg-muted rounded-control max-h-96 overflow-auto p-3 text-meta">
               {JSON.stringify(engine.service, null, 2)}
             </pre>
           </details>
@@ -573,14 +574,14 @@ function engineProblems(
       if (story.current || series?.length)
         history = (
           <div className="space-y-2">
-            <h4 className="text-muted-foreground text-sm font-medium">
+            <h4 className="text-muted-foreground text-meta font-medium">
               Last 24 hours
             </h4>
             {story.current ? (
-              <p className="text-base font-semibold">{story.current}</p>
+              <p className="text-body font-semibold">{story.current}</p>
             ) : null}
             {story.day || relation ? (
-              <p className="text-muted-foreground text-base">
+              <p className="text-muted-foreground text-body">
                 {[story.day, relation].filter(Boolean).join(" ")}
               </p>
             ) : null}
@@ -824,14 +825,17 @@ function ProblemCard({
       headingLevel={3}
       severity={problem.severity}
       title={problem.title}
-      facts={problem.facts}
       evidence={problem.evidence}
       history={problem.history}
       actions={
         problem.href || problem.disk ? (
           <>
             {problem.href ? (
-              <Button asChild variant={primary ? "default" : "outline"}>
+              <Button
+                asChild
+                size={primary ? "md" : "sm"}
+                variant={primary ? "default" : "outline"}
+              >
                 <Link href={problem.href}>
                   {problem.action ?? "Open"}
                   <ChevronRight aria-hidden="true" />
@@ -839,7 +843,11 @@ function ProblemCard({
               </Button>
             ) : null}
             {problem.disk ? (
-              <Button variant="outline" onClick={onDiskHelp}>
+              <Button
+                size={primary ? "md" : "sm"}
+                variant="outline"
+                onClick={onDiskHelp}
+              >
                 Free disk space
               </Button>
             ) : null}
@@ -847,6 +855,9 @@ function ProblemCard({
         ) : null
       }
     >
+      {problem.facts.length ? (
+        <KeyValueList items={problem.facts} className="font-normal" />
+      ) : null}
       {problem.body?.map((line) => (
         <p key={line}>{line}</p>
       ))}
@@ -881,14 +892,14 @@ function EngineRow({
         <EngineSheet engine={engine} open={open} onOpenChange={setOpen}>
           <button
             type="button"
-            className="block max-w-full min-w-0 truncate text-left text-sm font-medium hover:underline max-sm:min-h-11"
+            className="block max-w-full min-w-0 truncate text-left text-meta font-medium hover:underline max-sm:min-h-11"
             title={engine.name}
           >
             {engine.shortName}
           </button>
         </EngineSheet>
         {engine.label ? (
-          <span className="text-muted-foreground hidden truncate text-sm sm:block">
+          <span className="text-muted-foreground hidden truncate text-meta sm:block">
             {engine.label}
           </span>
         ) : null}
@@ -904,7 +915,7 @@ function EngineRow({
           />
         ) : null}
       </td>
-      <td className="figures text-muted-foreground hidden py-2.5 pr-4 text-right align-middle text-sm sm:table-cell">
+      <td className="figures text-muted-foreground hidden py-2.5 pr-4 text-right align-middle text-meta sm:table-cell">
         {engine.service.enabled && checked ? `${up}/${checked} h up` : ""}
       </td>
       <td className="py-2.5 align-middle">
@@ -945,16 +956,16 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
         scope="row"
         className="py-2.5 pr-4 text-left align-middle font-normal"
       >
-        <span className="block truncate text-sm font-medium">
+        <span className="block truncate text-meta font-medium">
           {provider.name}
         </span>
-        <span className="text-muted-foreground hidden text-sm sm:block">
+        <span className="text-muted-foreground hidden text-meta sm:block">
           Remote provider
         </span>
       </th>
       <td className="hidden py-2.5 pr-3 align-middle sm:table-cell" colSpan={2}>
         {spent ? (
-          <span className="flex items-center gap-3 text-sm">
+          <span className="flex items-center gap-3 text-meta">
             {share != null ? (
               <span
                 role="img"
@@ -981,18 +992,18 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
             </span>
           </span>
         ) : !/not measured|unknown/i.test(provider.spendText) ? (
-          <span className="figures text-sm">
+          <span className="figures text-meta">
             {provider.spendText.replace(/\$(\d)/g, "USD $1")}
           </span>
         ) : (
-          <span className="text-muted-foreground text-sm">
+          <span className="text-muted-foreground text-meta">
             Spend not recorded
           </span>
         )}
       </td>
       <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
-        <span className="text-muted-foreground block text-xs">
+        <span className="text-muted-foreground block text-meta">
           {provider.checkedAt ? (
             <>
               Checked <RelativeTime ts={provider.checkedAt} fallback="" />
@@ -1411,7 +1422,7 @@ export function StatusClient() {
   // table is folded: an error is not healthy detail (principle 7).
   const providerError =
     providers.state === "error" ? (
-      <div role="alert" className="text-destructive text-sm">
+      <div role="alert" className="text-destructive text-meta">
         Provider status couldn’t load: {providers.message}{" "}
         <button
           type="button"
@@ -1434,7 +1445,7 @@ export function StatusClient() {
     // 900 px), so facts and actions stay within one eye span.
     // D1.5b: one column at every width, problem or not; no side column
     // to stand empty (Linear and incident.io incident pages).
-    <div className="max-w-4xl min-w-0">
+    <div className="page-read min-w-0">
       <PageHeader
         title="Status"
         actions={
@@ -1488,7 +1499,7 @@ export function StatusClient() {
       {/* While a card explains a problem, a wide screen keeps the card in a
           reading column and puts the rest of the system beside it (D1.3:
           the right third stood empty). */}
-      <div className="flex min-w-0 flex-col gap-10">
+      <div className="flex min-w-0 flex-col gap-(--space-section)">
         {statusIsPending && registryIsPending ? (
           <div aria-busy="true" className="space-y-4">
             <Skeleton className="rounded-panel h-40 w-full" />
@@ -1534,7 +1545,7 @@ export function StatusClient() {
                     return (
                       <li
                         key={record.receipt?.request_id}
-                        className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b py-2 text-sm"
+                        className="grid min-h-8 max-sm:min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-b py-2 text-meta"
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           {record.person_label ? (
@@ -1557,7 +1568,7 @@ export function StatusClient() {
               </section>
             ) : null}
 
-            <div className="flex min-w-0 flex-col gap-10 xl:contents">
+            <div className="flex min-w-0 flex-col gap-(--space-section) xl:contents">
               {/* Capability states lean on engine checks; without a current
               check they cannot vouch for anything, so they stay hidden. */}
               {health && modelReady ? (
@@ -1614,7 +1625,7 @@ export function StatusClient() {
                     <table className="w-full table-fixed">
                       <caption className="sr-only">Engine status</caption>
                       <thead>
-                        <tr className="text-subtle-foreground border-b text-left text-xs">
+                        <tr className="text-subtle-foreground border-b text-left text-meta">
                           <th scope="col" className="py-2 font-normal sm:w-52">
                             Engine
                           </th>
@@ -1653,7 +1664,7 @@ export function StatusClient() {
                       <div className="border-t py-3">{providerError}</div>
                     ) : providers.state === "ready" && !providerList.length ? (
                       // The provider layer's empty state, with its next action.
-                      <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-sm">
+                      <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-meta">
                         <span>No remote providers are configured.</span>
                         <Link
                           href="/engines"
@@ -1669,7 +1680,7 @@ export function StatusClient() {
                     <button
                       type="button"
                       onClick={() => setShowAll(true)}
-                      className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
+                      className="bg-card hover:border-input rounded-panel flex min-h-8 max-sm:min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-meta"
                     >
                       <span className="grid min-w-0 gap-0.5">
                         {summaryLines.length
@@ -1708,7 +1719,7 @@ export function StatusClient() {
                 Check the largest storage areas first.
               </SheetDescription>
             </SheetHeader>
-            <ul className="list-disc space-y-3 px-8 py-4 text-sm">
+            <ul className="list-disc space-y-3 px-8 py-4 text-meta">
               <li>
                 Review old filesystem snapshots and remove only snapshots you no
                 longer need.

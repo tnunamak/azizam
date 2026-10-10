@@ -36,11 +36,12 @@ import {
   OverflowMenu,
   OverflowMenuItem,
   OverflowMenuSeparator,
-  SectionActionHeader,
   Skeleton,
-  StatusDotLabel,
   toast,
 } from "@/components/ui";
+import { PageHeader } from "@/components/product/page-header";
+import { StateBadge } from "@/components/product/status-ui";
+import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -276,7 +277,7 @@ function EditEngineDialog({
         <div ref={formRef} className="space-y-6 px-4 pb-4">
           <label
             htmlFor={`engine-enabled-${service.id}`}
-            className="flex min-h-11 items-center gap-3 text-sm"
+            className="flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta"
           >
             <Switch
               id={`engine-enabled-${service.id}`}
@@ -288,7 +289,7 @@ function EditEngineDialog({
             Enabled
           </label>
           {connectionChanged && (
-            <p role="status" className="text-vf-small text-vf-muted">
+            <p role="status" className="text-meta text-muted-foreground">
               Save configuration changes before testing or detecting models.
             </p>
           )}
@@ -345,30 +346,30 @@ function EditEngineDialog({
               />
             </Field>
             <details>
-              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+              <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
                 Connection and models
               </summary>
               <dl className="grid gap-3 py-2">
                 <div>
-                  <dt className="text-vf-micro text-vf-subtle">
+                  <dt className="text-meta text-muted-foreground">
                     Models served
                   </dt>
-                  <dd className="text-vf-small">{modelNames(service)}</dd>
+                  <dd className="text-meta">{modelNames(service)}</dd>
                 </div>
                 <div>
-                  <dt className="text-vf-micro text-vf-subtle">Capabilities</dt>
-                  <dd className="text-vf-small">
+                  <dt className="text-meta text-muted-foreground">Capabilities</dt>
+                  <dd className="text-meta">
                     {service.capabilities.map(humanCapability).join(", ")}
                   </dd>
                 </div>
               </dl>
             </details>
             <details>
-              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+              <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
                 Advanced fields
               </summary>
               {service.editable === false ? (
-                <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
+                <pre className="text-meta rounded-control mt-3 max-h-72 overflow-auto bg-muted p-3 font-mono">
                   {JSON.stringify(service.config, null, 2)}
                 </pre>
               ) : (
@@ -525,39 +526,44 @@ function EnginesContents() {
     ).join(", ");
     const title = displayName(service);
     return (
-      <article
+      <TableRow
         key={service.id}
         data-engine-id={service.id}
-        className={`rounded-vf-lg border bg-[var(--vf-surface)] px-3 py-2 ${
-          service.id === selectedServiceId
-            ? "border-[var(--vf-accent)] ring-2 ring-[var(--vf-accent)]/20"
-            : "border-[var(--vf-border)]"
-        }`}
+        data-state={service.id === selectedServiceId ? "selected" : undefined}
         aria-current={service.id === selectedServiceId ? "true" : undefined}
       >
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <TableCell className="h-(--row-2) min-w-0 max-sm:h-(--row-phone-2)">
           <button
             type="button"
-            className="min-h-11 min-w-0 text-left"
+            className="min-h-8 max-sm:min-h-11 min-w-0 text-left"
             onClick={() => openEditor(service)}
           >
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="text-vf-body text-vf-text truncate font-semibold">
+              <h3 className="text-body text-foreground truncate font-medium">
                 {title}
               </h3>
               {serviceState.label && serviceState.label !== "Ready" && (
-                <StatusDotLabel
-                  tone={serviceState.tone}
-                  label={serviceState.label}
+                <StateBadge
+                  state={
+                    serviceState.label === "Disabled" ? "off"
+                      : ["Busy", "Starting"].includes(serviceState.label) ? "busy"
+                      : serviceState.tone === "bad" ? "down"
+                      : serviceState.tone === "warn" ? "degraded"
+                      : ["Ready to start", "Standby, stopped"].includes(serviceState.label) ? "ready"
+                      : "unknown"
+                  }
+                  word={serviceState.label}
                 />
               )}
             </div>
             {serves && (
-              <p className="text-vf-small text-vf-muted mt-1 truncate">
+              <p className="text-meta text-muted-foreground mt-0.5 truncate">
                 {serves}
               </p>
             )}
           </button>
+        </TableCell>
+        <TableCell className="w-12 text-right">
           <OverflowMenu label={`Actions for ${title}`}>
             <OverflowMenuItem onSelect={() => openEditor(service)}>
               Edit engine
@@ -580,15 +586,15 @@ function EnginesContents() {
               </>
             )}
           </OverflowMenu>
-        </div>
-      </article>
+        </TableCell>
+      </TableRow>
     );
   }
 
   if (registryIsPending) {
     return (
       <div className="flex flex-col gap-6" aria-busy="true">
-        <SectionActionHeader as="h1" title="Engines" />
+        <PageHeader title="Engines" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-72 w-full" />
       </div>
@@ -598,7 +604,7 @@ function EnginesContents() {
   if (registryIsError) {
     return (
       <div className="flex flex-col gap-6">
-        <SectionActionHeader as="h1" title="Engines" />
+        <PageHeader title="Engines" />
         <IncidentBanner
           tone="bad"
           title="Engine list could not be loaded"
@@ -614,122 +620,131 @@ function EnginesContents() {
   }
 
   return (
-    <div className="flex max-w-[1120px] flex-col gap-8">
-      <SectionActionHeader
-        as="h1"
+    <div className="max-w-(--content-max)">
+      <PageHeader
         title="Engines"
-        action={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
+        actions={
+          <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
             Add engine
           </Button>
         }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <label
-          htmlFor="show-not-in-use-engines"
-          className="flex min-h-11 items-center gap-3 text-sm"
-        >
-          <Switch
-            id="show-not-in-use-engines"
-            checked={showNotInUse}
-            onCheckedChange={setShowNotInUse}
-            aria-label="Show not in use"
-          />
-          Show not in use ({hiddenCount})
-        </label>
-      </div>
+      <div className="space-y-(--space-section)">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label
+            htmlFor="show-not-in-use-engines"
+            className="flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta"
+          >
+            <Switch
+              id="show-not-in-use-engines"
+              checked={showNotInUse}
+              onCheckedChange={setShowNotInUse}
+              aria-label="Show not in use"
+            />
+            Show not in use ({hiddenCount})
+          </label>
+        </div>
 
-      {statusIsError && (
-        <IncidentBanner
-          tone="warn"
-          title="Live status unavailable"
-          detail={errorMessage(statusError)}
-          actions={
-            <Button size="sm" onClick={() => void refetchStatus()}>
-              Retry
-            </Button>
-          }
-        />
-      )}
-
-      <section className="flex flex-col gap-3">
-        {selectedServiceId && !selectedService && (
+        {statusIsError && (
           <IncidentBanner
             tone="warn"
-            title="Selected engine not found"
-            detail={`No service record has id ${selectedServiceId}.`}
-          />
-        )}
-        {visibleCount === 0 && infrastructure.length === 0 ? (
-          <EmptyOperationalState
-            title={
-              services.length === 0
-                ? "No engines configured"
-                : "No engines in use"
-            }
-            detail={
-              services.length === 0
-                ? "Add an engine from a preset, then test its connection and detect served models."
-                : "Turn on Show not in use to review engines that are disabled or not configured."
-            }
-            action={
-              <Button variant="primary" onClick={() => setAddOpen(true)}>
-                Add engine
+            title="Live status unavailable"
+            detail={errorMessage(statusError)}
+            actions={
+              <Button size="sm" onClick={() => void refetchStatus()}>
+                Retry
               </Button>
             }
           />
-        ) : (
-          <div className="grid gap-3">
-            {groups.map((group) => (
-              <section
-                key={group.capability}
-                className="flex flex-col gap-3"
-                aria-label={`${group.capability} engines`}
-              >
-                <h2 className="text-vf-title font-semibold">
-                  {group.capability}
-                </h2>
-                {group.entries.map(({ service, alternatives }) => (
-                  <div key={service.id} className="min-w-0">
-                    {renderEngine(service)}
-                    {alternatives.length > 0 && (
-                      <details
-                        className="mt-2"
-                        open={
-                          alternatives.some(
-                            (engine) => engine.id === selectedServiceId,
-                          ) || undefined
-                        }
-                      >
-                        <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-                          Standby and fallback engines ({alternatives.length})
-                        </summary>
-                        <div className="mt-2 grid gap-3">
-                          {alternatives.map(renderEngine)}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                ))}
-              </section>
-            ))}
-          </div>
         )}
-      </section>
 
-      {infrastructure.length > 0 && (
-        <details
-          open={infrastructureIds.has(selectedServiceId ?? "") || undefined}
-        >
-          <summary className="flex min-h-11 cursor-pointer items-center text-sm">
-            Show infrastructure
-          </summary>
-          <div className="grid gap-3 pt-2">
-            {infrastructure.map(renderEngine)}
-          </div>
-        </details>
-      )}
+        <section className="flex flex-col gap-3">
+          {selectedServiceId && !selectedService && (
+            <IncidentBanner
+              tone="warn"
+              title="Selected engine not found"
+              detail={`No service record has id ${selectedServiceId}.`}
+            />
+          )}
+          {visibleCount === 0 && infrastructure.length === 0 ? (
+            <EmptyOperationalState
+              title={
+                services.length === 0
+                  ? "No engines configured"
+                  : "No engines in use"
+              }
+              detail={
+                services.length === 0
+                  ? "Add an engine from a preset, then test its connection and detect served models."
+                  : "Turn on Show not in use to review engines that are disabled or not configured."
+              }
+              action={
+                <Button variant="primary" onClick={() => setAddOpen(true)}>
+                  Add engine
+                </Button>
+              }
+            />
+          ) : (
+            <div className="grid gap-3">
+              {groups.map((group) => (
+                <section
+                  key={group.capability}
+                  className="flex flex-col gap-3"
+                  aria-label={`${group.capability} engines`}
+                >
+                  <h2 className="text-heading font-semibold">
+                    {group.capability}
+                  </h2>
+                  {group.entries.map(({ service, alternatives }) => (
+                    <div key={service.id} className="min-w-0">
+                      <div className="bg-card rounded-panel overflow-hidden border">
+                        <Table aria-label={`${displayName(service)} engine`}>
+                          <TableBody>{renderEngine(service)}</TableBody>
+                        </Table>
+                      </div>
+                      {alternatives.length > 0 && (
+                        <details
+                          className="mt-2"
+                          open={
+                            alternatives.some(
+                              (engine) => engine.id === selectedServiceId,
+                            ) || undefined
+                          }
+                        >
+                          <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
+                            Standby and fallback engines ({alternatives.length})
+                          </summary>
+                          <div className="bg-card rounded-panel mt-2 overflow-hidden border">
+                            <Table aria-label="Standby and fallback engines">
+                              <TableBody>{alternatives.map(renderEngine)}</TableBody>
+                            </Table>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </section>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {infrastructure.length > 0 && (
+          <details
+            open={infrastructureIds.has(selectedServiceId ?? "") || undefined}
+          >
+            <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta">
+              Show infrastructure
+            </summary>
+            <div className="bg-card rounded-panel mt-2 overflow-hidden border">
+              <Table aria-label="Infrastructure engines">
+                <TableBody>{infrastructure.map(renderEngine)}</TableBody>
+              </Table>
+            </div>
+          </details>
+        )}
+      </div>
       <AddServiceDialog
         open={addOpen}
         onOpenChange={setAddOpen}
@@ -786,7 +801,7 @@ export default function Page() {
     <Suspense
       fallback={
         <div className="flex flex-col gap-6" aria-busy="true">
-          <SectionActionHeader as="h1" title="Engines" />
+          <PageHeader title="Engines" />
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>

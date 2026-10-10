@@ -146,6 +146,9 @@ async function openEndpointEditor(baseUrl: string) {
   const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
   mountHealthErrorPage(<EnginesPage />);
   fireEvent.click(await screen.findByText("Show infrastructure"));
+  const table = screen.getByRole("table", { name: "Infrastructure engines" });
+  const row = within(table).getByRole("row");
+  expect(within(row).getAllByRole("button", { name: /Endpoint regression engine/ }).length).toBeGreaterThan(0);
   fireEvent.click(screen.getByText("Endpoint regression engine").closest("button")!);
   await screen.findByRole("button", { name: "Save engine" });
   return edit;

@@ -24,7 +24,16 @@ import {
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
+import { ListCard } from "@/components/product/list-card";
 import { StatusPill } from "@/components/product/status-pill";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -544,7 +553,7 @@ async function jsonFetch(path: string, init?: RequestInit) {
 
 function Logo({ value }: { value: string }) {
   return (
-    <span className="bg-primary text-primary-foreground inline-flex size-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold">
+    <span className="bg-muted text-muted-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-panel text-meta font-semibold">
       {value.slice(0, 2).toUpperCase()}
     </span>
   );
@@ -616,7 +625,7 @@ function SpendBar({
         : spent > 0 ? 100 : 0;
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3 text-sm">
+      <div className="flex items-center justify-between gap-3 text-meta">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-medium">
           {money(spent)}
@@ -624,7 +633,7 @@ function SpendBar({
         </span>
       </div>
       {pct == null ? (
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground text-meta">
           {/* A blank cap means no cap (SE-22), so only spend can be unknown. */}
           {[spent == null ? "Spend unknown" : null, cap == null ? "No cap set" : null]
             .filter(Boolean)
@@ -718,17 +727,17 @@ function DetailCard({
     );
   }
   return (
-    <article className="border-border bg-card min-w-0 overflow-hidden rounded-xl border shadow-xs">
+    <li className="min-w-0">
       <details className="group">
         <summary className="list-none marker:hidden">
-          <div className="grid cursor-pointer gap-3 p-4 sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:px-5">
+          <div className="grid min-h-(--row-2) cursor-pointer gap-3 px-4 py-1.5 max-sm:min-h-(--row-phone-2) sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
             <div className="flex min-w-0 gap-3 sm:items-center">
               <Logo value={provider.name} />
               <div className="min-w-0">
-                <h2 className="truncate text-base font-semibold">
+                <h2 className="truncate text-body font-medium">
                   {provider.name}
                 </h2>
-                <span className="border-border bg-muted text-muted-foreground mt-1 inline-flex min-h-6 items-center rounded-full border px-2 text-xs">
+                <span className="text-muted-foreground mt-0.5 block truncate text-meta">
                   <ProviderKeySummary provider={provider} />
                 </span>
               </div>
@@ -742,17 +751,17 @@ function DetailCard({
                   cap={provider.capMonthly}
                 />
               ) : provider.capMonthly != null ? (
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-meta">
                   Monthly cap: {money(provider.capMonthly)}
                 </p>
               ) : null}
               {provider.capDaily != null && (
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-meta">
                   Daily cap: {money(provider.capDaily)}
                 </p>
               )}
             </div>
-            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors">
+            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-control border px-3 text-meta font-medium transition-colors">
               Manage
             </span>
           </div>
@@ -771,13 +780,13 @@ function DetailCard({
                 cap={provider.capMonthly}
               />
               {provider.needsReconciliation && (
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-meta">
                   Totals include estimated charges that are not final bills.
                 </p>
               )}
             </div>
-            <div className="rounded-lg border p-3">
-              <h3 className="text-sm font-medium">Enabled models</h3>
+            <div className="rounded-panel border p-3">
+              <h3 className="text-meta font-medium">Enabled models</h3>
               <div className="mt-3 flex min-w-0 flex-wrap gap-2">
                 {enabledModels.length ? (
                   enabledModels.map((model) => (
@@ -790,12 +799,12 @@ function DetailCard({
                     </Badge>
                   ))
                 ) : (
-                  <span className="text-muted-foreground text-sm">
+                  <span className="text-muted-foreground text-meta">
                     No models enabled
                   </span>
                 )}
               </div>
-              <h3 className="mt-4 text-sm font-medium">Access plans</h3>
+              <h3 className="mt-4 text-meta font-medium">Access plans</h3>
               <div className="mt-3 flex flex-wrap gap-2">
                 {plans
                   .filter((plan) => provider.plans.includes(plan.id))
@@ -805,33 +814,33 @@ function DetailCard({
                     </Badge>
                   ))}
                 {!provider.plans.length && (
-                  <span className="text-muted-foreground text-sm">
+                  <span className="text-muted-foreground text-meta">
                     No access plans can use this provider
                   </span>
                 )}
               </div>
             </div>
           </div>
-          <details className="mt-3 text-sm">
-            <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
+          <details className="mt-3 text-meta">
+            <summary className="text-muted-foreground min-h-8 max-sm:min-h-11 cursor-pointer content-center">
               Provider details
             </summary>
-            <p className="text-muted-foreground pb-3 text-xs break-all">
+            <p className="text-muted-foreground pb-3 text-meta break-all">
               Provider ID: {provider.id}
             </p>
           </details>
           {provider.recommendation && (
-            <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-lg border p-3 text-sm">
+            <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-panel border p-3 text-meta">
               {provider.recommendation}
             </div>
           )}
           {provider.reachable === true && provider.checkedAt != null && (
-            <p className="text-muted-foreground mt-3 text-xs">
+            <p className="text-muted-foreground mt-3 text-meta">
               Reachability checked <RelativeTime ts={provider.checkedAt} />.
             </p>
           )}
           {provider.needsReconciliation && (
-            <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
+            <div className="border-warning/30 bg-warning/10 mt-4 rounded-panel border p-3 text-meta">
               <div className="font-medium">
                 {reconciliationLabel(provider.pendingReconciliationCount)}
               </div>
@@ -852,42 +861,42 @@ function DetailCard({
             </div>
           )}
           <div
-            className="mt-5 max-w-full overflow-x-auto rounded-lg border"
+            className="mt-5 max-w-full overflow-x-auto rounded-panel border"
             tabIndex={0}
             aria-label={`${provider.name} models`}
           >
-            <table className="w-full min-w-0 table-fixed text-sm">
-              <thead className="bg-muted/40 text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Model</th>
-                  <th className="px-3 py-2 text-left font-medium">
+            <Table className="min-w-0 table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="whitespace-normal">Model</TableHead>
+                  <TableHead numeric className="whitespace-normal">
                     Input: USD per 1 million tokens
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium">
+                  </TableHead>
+                  <TableHead numeric className="whitespace-normal">
                     Output: USD per 1 million tokens
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium">State</th>
-                </tr>
-              </thead>
-              <tbody>
+                  </TableHead>
+                  <TableHead className="whitespace-normal">State</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {provider.models.map((model) => (
-                  <tr key={model.id} className="border-t">
-                    <td className="px-3 py-2 font-medium break-words">
+                  <TableRow key={model.id}>
+                    <TableCell className="text-body font-medium break-words whitespace-normal">
                       {model.id}
-                    </td>
-                    <td className="px-3 py-2 break-words">
+                    </TableCell>
+                    <TableCell numeric className="break-words whitespace-normal">
                       {model.priceInput || "Unknown"}
-                    </td>
-                    <td className="px-3 py-2 break-words">
+                    </TableCell>
+                    <TableCell numeric className="break-words whitespace-normal">
                       {model.priceOutput || "Unknown"}
-                    </td>
-                    <td className="px-3 py-2 break-words">
+                    </TableCell>
+                    <TableCell className="break-words whitespace-normal">
                       {model.enabled ? "Enabled" : "Disabled"}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
             <Button
@@ -982,14 +991,14 @@ function DetailCard({
             </DropdownMenu>
           </div>
           {editing === "models" && (
-            <div className="mt-4 space-y-3 rounded-lg border p-3">
-              <h3 className="text-sm font-medium">Edit models and prices</h3>
+            <div className="mt-4 space-y-3 rounded-panel border p-3">
+              <h3 className="text-meta font-medium">Edit models and prices</h3>
               {modelDraft.map((model) => (
                 <div
                   key={model.id}
-                  className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_auto]"
+                  className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
                 >
-                  <label className="flex items-start gap-3 text-sm">
+                  <label className="flex items-start gap-3 text-meta">
                     <Checkbox
                       checked={model.enabled}
                       onCheckedChange={(checked) =>
@@ -1045,8 +1054,8 @@ function DetailCard({
             </div>
           )}
           {editing === "caps" && (
-            <div className="mt-4 grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]">
-              <label className="space-y-2 text-sm font-medium">
+            <div className="mt-4 grid gap-3 rounded-panel border p-3 sm:grid-cols-[1fr_1fr_auto]">
+              <label className="space-y-2 text-meta font-medium">
                 Daily cap (USD){" "}
                 <Input
                   aria-label={`${provider.name} daily cap (USD)`}
@@ -1059,7 +1068,7 @@ function DetailCard({
                   }
                 />
               </label>
-              <label className="space-y-2 text-sm font-medium">
+              <label className="space-y-2 text-meta font-medium">
                 Monthly cap (USD){" "}
                 <Input
                   aria-label={`${provider.name} monthly cap (USD)`}
@@ -1085,17 +1094,17 @@ function DetailCard({
             </div>
           )}
           {editing === "plans" && (
-            <div className="mt-4 space-y-3 rounded-lg border p-3">
-              <h3 className="text-sm font-medium">Edit access plans</h3>
+            <div className="mt-4 space-y-3 rounded-panel border p-3">
+              <h3 className="text-meta font-medium">Edit access plans</h3>
               {planDraft.length === 0 && (
-                <p className="text-muted-foreground text-sm">
+                <p className="text-muted-foreground text-meta">
                   No plans selected. Paid requests will be denied.
                 </p>
               )}
               {plans.map((plan) => (
                 <label
                   key={plan.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+                  className="flex items-center justify-between gap-3 rounded-panel border p-3 text-meta"
                 >
                   <span>{plan.name}</span>
                   <Switch
@@ -1122,7 +1131,7 @@ function DetailCard({
           )}
         </div>
       </details>
-    </article>
+    </li>
   );
 }
 
@@ -1174,11 +1183,11 @@ function ReconciliationDialog({
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (
-          <div role="status" className="text-muted-foreground text-sm">
+          <div role="status" className="text-muted-foreground text-meta">
             Loading reconciliation rows…
           </div>
         ) : isError ? (
-          <div role="alert" className="text-danger text-sm">
+          <div role="alert" className="text-danger text-meta">
             {error instanceof Error
               ? error.message
               : "Reconciliation rows could not be loaded."}
@@ -1193,7 +1202,7 @@ function ReconciliationDialog({
             </Button>
           </div>
         ) : rows.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-meta">
             No pending provider charges need reconciliation.
           </p>
         ) : (
@@ -1202,9 +1211,9 @@ function ReconciliationDialog({
               const value = amounts[row.id] ?? "";
               const valid = decimalInputValid(value);
               return (
-                <div key={row.id} className="rounded-lg border p-3">
-                  <h3 className="text-sm font-medium">Charge #{row.id}</h3>
-                  <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div key={row.id} className="rounded-panel border p-3">
+                  <h3 className="text-meta font-medium">Charge #{row.id}</h3>
+                  <div className="mt-3 grid gap-2 text-meta sm:grid-cols-2">
                     <div>
                       <span className="text-muted-foreground">Estimate</span>
                       <div className="font-medium">
@@ -1217,7 +1226,7 @@ function ReconciliationDialog({
                     </div>
                     <div>
                       <span className="text-muted-foreground">Request ID</span>
-                      <div className="font-mono text-xs break-all">
+                      <div className="font-mono text-meta break-all">
                         {formatIdentity(row.requestId)}
                       </div>
                     </div>
@@ -1225,13 +1234,13 @@ function ReconciliationDialog({
                       <span className="text-muted-foreground">
                         Generation ID
                       </span>
-                      <div className="font-mono text-xs break-all">
+                      <div className="font-mono text-meta break-all">
                         {formatIdentity(row.generationId)}
                       </div>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Access plan</span>
-                      <div className="font-mono text-xs break-all">
+                      <div className="font-mono text-meta break-all">
                         {formatIdentity(row.profileId)}
                       </div>
                     </div>
@@ -1247,7 +1256,7 @@ function ReconciliationDialog({
                     </div>
                   </div>
                   <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
-                    <label className="space-y-2 text-sm font-medium">
+                    <label className="space-y-2 text-meta font-medium">
                       Verified actual charge in USD
                       <Input
                         inputMode="decimal"
@@ -1278,7 +1287,7 @@ function ReconciliationDialog({
           </div>
         )}
         {settle.error && (
-          <div role="alert" className="text-danger text-sm">
+          <div role="alert" className="text-danger text-meta">
             {settle.error instanceof Error
               ? settle.error.message
               : "Reconciliation failed."}
@@ -1519,7 +1528,7 @@ function AddProviderDialog({
                     testResult?.ok !== true)
                 }
                 className={cn(
-                  "rounded-lg border px-3 py-2 text-left text-sm capitalize",
+                  "rounded-panel border px-3 py-2 text-left text-meta capitalize",
                   step === item && "border-primary bg-primary/10 text-link",
                 )}
               >
@@ -1541,7 +1550,7 @@ function AddProviderDialog({
         ) : metadataError ? (
           <div
             role="alert"
-            className="border-danger/30 bg-danger/10 text-danger rounded-lg border p-4 text-sm"
+            className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
           >
             <p>
               {metadataError instanceof Error
@@ -1581,7 +1590,7 @@ function AddProviderDialog({
                   type="button"
                   onClick={() => chooseProvider(provider)}
                   className={cn(
-                    "hover:border-primary rounded-xl border p-4 text-left transition",
+                    "hover:border-primary rounded-panel border p-4 text-left transition",
                     selected?.id === provider.id &&
                       "border-primary bg-primary/10",
                   )}
@@ -1596,7 +1605,7 @@ function AddProviderDialog({
                         />
                         {provider.name}
                       </div>
-                      <div className="text-muted-foreground mt-1 text-sm break-words">
+                      <div className="text-muted-foreground mt-1 text-meta break-words">
                         {provider.protocol} · {provider.baseUrl}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1">
@@ -1615,9 +1624,9 @@ function AddProviderDialog({
         )}
         {!metadataUnavailable && step === "credentials" && selected && (
           <div className="space-y-4">
-            <div className="rounded-lg border p-4">
+            <div className="rounded-panel border p-4">
               <div className="font-medium">{selected.name}</div>
-              <label className="mt-3 block space-y-2 text-sm font-medium">
+              <label className="mt-3 block space-y-2 text-meta font-medium">
                 Provider base URL
                 <Input
                   aria-label="Provider base URL"
@@ -1628,7 +1637,7 @@ function AddProviderDialog({
               </label>
               {selected.keyUrl && (
                 <a
-                  className="text-link mt-2 inline-flex items-center gap-1 text-sm"
+                  className="text-link mt-2 inline-flex items-center gap-1 text-meta"
                   href={selected.keyUrl}
                 >
                   Get key <ExternalLink className="size-3" />
@@ -1692,7 +1701,7 @@ function AddProviderDialog({
                 Check provider connection
               </Button>
               {testConnection.error && (
-                <p role="alert" className="text-danger text-sm">
+                <p role="alert" className="text-danger text-meta">
                   {testConnection.error instanceof Error
                     ? testConnection.error.message
                     : "Provider connection check failed. Check the provider settings and try again."}
@@ -1701,7 +1710,7 @@ function AddProviderDialog({
               {testResult && (
                 <span
                   className={cn(
-                    "inline-flex items-center gap-2 text-sm",
+                    "inline-flex items-center gap-2 text-meta",
                     testResult.ok ? "text-success" : "text-danger",
                   )}
                 >
@@ -1728,7 +1737,7 @@ function AddProviderDialog({
               models.map((model) => (
                 <div
                   key={model.id}
-                  className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_120px_120px_80px]"
+                  className="grid gap-3 rounded-panel border p-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
                 >
                   <label className="flex items-start gap-3">
                     <Checkbox
@@ -1740,7 +1749,7 @@ function AddProviderDialog({
                     />
                     <span>
                       <span className="block font-medium">{model.id}</span>
-                      <span className="text-muted-foreground text-sm">
+                      <span className="text-muted-foreground text-meta">
                         {model.context || "Context not reported"}
                       </span>
                     </span>
@@ -1780,7 +1789,7 @@ function AddProviderDialog({
         {!metadataUnavailable && step === "limits" && (
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="space-y-2 text-sm font-medium">
+              <label className="space-y-2 text-meta font-medium">
                 Daily cap (USD){" "}
                 <Input
                   aria-label="Daily cap (USD)"
@@ -1788,7 +1797,7 @@ function AddProviderDialog({
                   onChange={(e) => setDailyCap(e.target.value)}
                 />
               </label>
-              <label className="space-y-2 text-sm font-medium">
+              <label className="space-y-2 text-meta font-medium">
                 Monthly cap (USD){" "}
                 <Input
                   aria-label="Monthly cap (USD)"
@@ -1798,9 +1807,9 @@ function AddProviderDialog({
               </label>
             </div>
             <div className="space-y-3">
-              <h3 className="text-sm font-medium">Access plans</h3>
+              <h3 className="text-meta font-medium">Access plans</h3>
               {allowedPlans.length === 0 && (
-                <p className="text-muted-foreground rounded-lg border p-3 text-sm">
+                <p className="text-muted-foreground rounded-panel border p-3 text-meta">
                   No plans selected. Paid requests will be denied until an owner
                   allows a plan.
                 </p>
@@ -1808,11 +1817,11 @@ function AddProviderDialog({
               {plans.map((plan) => (
                 <label
                   key={plan.id}
-                  className="flex items-start justify-between gap-3 rounded-lg border p-3"
+                  className="flex items-start justify-between gap-3 rounded-panel border p-3"
                 >
                   <span>
                     <span className="block font-medium">{plan.name}</span>
-                    <span className="text-muted-foreground text-sm">
+                    <span className="text-muted-foreground text-meta">
                       {plan.description ||
                         (plan.paidAllowed
                           ? "Paid providers allowed"
@@ -1834,7 +1843,7 @@ function AddProviderDialog({
               ))}
             </div>
             {saveProvider.error && (
-              <div role="alert" className="text-danger text-sm">
+              <div role="alert" className="text-danger text-meta">
                 {saveProvider.error instanceof Error
                   ? saveProvider.error.message
                   : "Save failed."}
@@ -1905,16 +1914,16 @@ function AddProviderDialog({
 
 function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="border-border bg-card rounded-xl border p-5">
+    <div className="border-border bg-card rounded-panel border p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 gap-3">
-          <div className="bg-primary/10 text-link relative flex size-12 shrink-0 items-center justify-center rounded-xl">
+          <div className="bg-primary/10 text-link relative flex size-12 shrink-0 items-center justify-center rounded-panel">
             <Fish className="size-9" aria-hidden="true" />
             <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
           </div>
           <div>
             <p className="font-medium">No providers yet</p>
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-meta">
               Add one provider, then choose its models, access plans and USD
               caps before it can receive paid requests.
             </p>
@@ -1944,22 +1953,22 @@ function GlobalCapsEditor({
     global.capMonthly == null ? "" : String(global.capMonthly),
   );
   return (
-    <section className="rounded-xl border p-4">
+    <section className="rounded-panel border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-medium">Global spend cap</h2>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="text-muted-foreground mt-1 text-meta">
             {capSummary(global.capDaily, global.capMonthly)}
           </p>
         </div>
         <details className="group">
           <summary className="list-none marker:hidden">
-            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors">
+            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 max-sm:min-h-11 cursor-pointer items-center justify-center rounded-control border px-3 text-meta font-medium transition-colors">
               Edit
             </span>
           </summary>
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-            <label className="space-y-2 text-sm font-medium">
+            <label className="space-y-2 text-meta font-medium">
               Daily cap (USD){" "}
               <Input
                 aria-label="Global daily provider cap (USD)"
@@ -1967,7 +1976,7 @@ function GlobalCapsEditor({
                 onChange={(event) => setDaily(event.target.value)}
               />
             </label>
-            <label className="space-y-2 text-sm font-medium">
+            <label className="space-y-2 text-meta font-medium">
               Monthly cap (USD){" "}
               <Input
                 aria-label="Global monthly provider cap (USD)"
@@ -1987,7 +1996,7 @@ function GlobalCapsEditor({
         </details>
       </div>
       {global.needsReconciliation && (
-        <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
+        <div className="border-warning/30 bg-warning/10 mt-4 rounded-panel border p-3 text-meta">
           <div className="font-medium">
             {reconciliationLabel(global.pendingReconciliationCount)}
           </div>
@@ -2192,7 +2201,7 @@ export default function ProvidersPage() {
           )
         }
       />
-      <div className="pb-20 sm:pb-0">
+      <div className="max-w-(--content-max) pb-20 sm:pb-0">
         {loading ? (
           <div
             role="status"
@@ -2212,7 +2221,7 @@ export default function ProvidersPage() {
         ) : loadFailed ? (
           <div
             role="alert"
-            className="border-danger/30 bg-danger/10 text-danger rounded-lg border p-4 text-sm"
+            className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
           >
             <p>
               {loadError instanceof Error
@@ -2232,7 +2241,7 @@ export default function ProvidersPage() {
         ) : records.length === 0 && !globalState.needsReconciliation ? (
           <ProviderEmptyState onAdd={() => setAddOpen(true)} />
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-(--space-section)">
             <GlobalCapsEditor
               global={globalState}
               busy={busy}
@@ -2240,7 +2249,7 @@ export default function ProvidersPage() {
                 saveGlobalCaps.mutate({ daily, monthly })
               }
             />
-            <div className="space-y-3">
+            <ListCard label="Providers">
               {records.map((provider) => (
                 <DetailCard
                   key={provider.id}
@@ -2275,9 +2284,9 @@ export default function ProvidersPage() {
                   }
                 />
               ))}
-            </div>
+            </ListCard>
             {latestError && (
-              <div role="alert" className="text-danger text-sm">
+              <div role="alert" className="text-danger text-meta">
                 <AlertCircle className="mr-1 inline size-4" />
                 {latestError instanceof Error
                   ? latestError.message

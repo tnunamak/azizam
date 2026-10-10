@@ -217,15 +217,15 @@ export function EngineChecks({
       {rows && (
         <section
           aria-label={`Detected models for ${service.name}`}
-          className="min-w-0 border-t border-[var(--vf-border)] pt-4"
+          className="min-w-0 border-t border-border pt-4"
         >
-          <h3 className="text-vf-body font-semibold">
+          <h3 className="text-body font-semibold">
             Preview detected models
           </h3>
-          <p className="text-vf-small text-vf-muted mt-1 break-all">
+          <p className="text-meta text-muted-foreground mt-1 break-all">
             Detected models: {rows.map((row) => row.upstream).join(", ")}
           </p>
-          <p className="text-vf-small text-vf-muted mt-1">
+          <p className="text-meta text-muted-foreground mt-1">
             Choose the names clients will send. Existing mappings and request
             policies are kept.
           </p>
@@ -235,7 +235,7 @@ export function EngineChecks({
                 key={row.upstream}
                 className="grid min-w-0 gap-2 sm:grid-cols-2 sm:items-center"
               >
-                <label className="flex min-h-11 min-w-0 items-center gap-3 text-sm">
+                <label className="flex min-h-8 max-sm:min-h-11 min-w-0 items-center gap-3 text-meta">
                   <input
                     type="checkbox"
                     checked={row.selected}
@@ -273,12 +273,12 @@ export function EngineChecks({
             ))}
           </div>
           <div className="mt-4">
-            <p className="text-vf-small text-vf-muted">
+            <p className="text-meta text-muted-foreground">
               Access plans with unrestricted or wildcard model access may
               include these names immediately. Restricted plans need an existing
               matching grant. No access plan is edited here.
             </p>
-            <label className="mt-2 flex min-h-11 items-center gap-3 text-sm">
+            <label className="mt-2 flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta">
               <input
                 type="checkbox"
                 checked={accessConfirmed}
@@ -289,7 +289,7 @@ export function EngineChecks({
             </label>
             <a
               href="/ui/people/?tab=plans"
-              className="text-vf-small text-vf-muted inline-flex min-h-11 items-center underline underline-offset-4"
+              className="text-meta text-muted-foreground inline-flex min-h-8 max-sm:min-h-11 items-center underline underline-offset-4"
             >
               Review access plans in People
             </a>
@@ -297,13 +297,13 @@ export function EngineChecks({
           {applyError && (
             <p
               role="alert"
-              className="text-vf-small text-vf-bad mt-3 break-words"
+              className="text-meta text-danger mt-3 break-words"
             >
               {applyError}
             </p>
           )}
           {service.editable === false ? (
-            <p className="text-vf-small text-vf-muted mt-3">
+            <p className="text-meta text-muted-foreground mt-3">
               This engine is managed by the gateway. Model mappings cannot be
               edited here.
             </p>

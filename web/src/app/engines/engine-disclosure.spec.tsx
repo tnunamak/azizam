@@ -68,8 +68,8 @@ describe("engine progressive disclosure", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Available presets")).not.toBeInTheDocument();
     expect(presets).not.toHaveBeenCalled();
-    const article = primary.closest("article")!;
-    const rowButton = within(article).getByRole("button", {
+    const row = primary.closest("tr")!;
+    const rowButton = within(row).getByRole("button", {
       name: /^primary\b/,
     });
     expect(rowButton).toBeVisible();

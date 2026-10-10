@@ -75,7 +75,7 @@ it.each([
   client.setQueryData(["providers", "catalog"], []);
   client.setQueryData(["providers", "plans"], []);
   render(<QueryClientProvider client={client}><ProvidersPage /></QueryClientProvider>);
-  const provider = screen.getByText("Provider ID: cost-provider").closest("article")!;
+  const provider = screen.getByText("Provider ID: cost-provider").closest("li")!;
   expect(provider.querySelector('[role="progressbar"]')).toBeNull();
   expect(provider.textContent).toContain(label);
 });
@@ -92,7 +92,7 @@ it("SE-25 distinguishes positive spend over a zero cap from recorded zero spend"
   client.setQueryData(["providers", "catalog"], []);
   client.setQueryData(["providers", "plans"], []);
   render(<QueryClientProvider client={client}><ProvidersPage /></QueryClientProvider>);
-  const provider = screen.getByText("Provider ID: cost-provider").closest("article")!;
+  const provider = screen.getByText("Provider ID: cost-provider").closest("li")!;
   expect(provider.querySelector('[aria-label="Today spend"]')).toHaveAttribute("aria-valuenow", "0");
   const monthly = provider.querySelectorAll('[aria-label="This month spend"]');
   expect(monthly).toHaveLength(2);

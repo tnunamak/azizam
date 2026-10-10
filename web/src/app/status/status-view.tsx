@@ -131,7 +131,7 @@ export function MemberStatus() {
       : modelVerdict.checkedAt;
 
   return (
-    <div className="min-w-0">
+    <div className="page-read min-w-0">
       <PageHeader
         title="Status"
         actions={
@@ -160,7 +160,7 @@ export function MemberStatus() {
           }
         />
       </PageHeader>
-      <div className="flex min-w-0 flex-col gap-10">
+      <div className="flex min-w-0 flex-col gap-(--space-section)">
         {isPending ? (
           <div
             role="status"
@@ -197,8 +197,8 @@ export function MemberStatus() {
             retrying={isFetching}
           />
         ) : data ? (
-          <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
-            <div className="min-w-0 space-y-10">
+          <div className="grid items-start gap-(--space-section)">
+            <div className="min-w-0 space-y-(--space-section)">
               {refusal ? (
                 <CapNotice
                   warning={
@@ -218,7 +218,7 @@ export function MemberStatus() {
                   actions={
                     <a
                       href={unresolved.href}
-                      className="text-link inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline sm:min-h-0"
+                      className="text-link inline-flex min-h-8 max-sm:min-h-11 items-center text-meta font-medium underline-offset-4 hover:underline sm:min-h-0"
                     >
                       Open receipt
                     </a>
@@ -247,8 +247,8 @@ export function MemberStatus() {
                   />
                 )}
                 {memberRows.length ? (
-                  <details className="mt-4 text-sm">
-                    <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center font-medium sm:min-h-8">
+                  <details className="mt-4 text-meta">
+                    <summary className="text-muted-foreground hover:text-foreground flex min-h-8 max-sm:min-h-11 w-fit cursor-pointer items-center font-medium sm:min-h-8">
                       Model names
                     </summary>
                     <dl className="text-muted-foreground mt-2 space-y-2">
@@ -268,7 +268,7 @@ export function MemberStatus() {
                               <span className="sr-only">
                                 Names you can use:{" "}
                               </span>
-                              <span className="font-mono text-xs break-all">
+                              <span className="font-mono text-meta break-all">
                                 {usableNames(capability).join(", ")}
                               </span>
                             </dd>
@@ -308,7 +308,7 @@ export function MemberStatus() {
                           href={receipt.href}
                           aria-label="View request receipt"
                           aria-describedby={describedBy}
-                          className="group flex min-h-11 items-center gap-3 py-2.5"
+                          className="group flex min-h-(--row-1) max-sm:min-h-(--row-phone-1) items-center gap-3 py-1.5"
                         >
                           <Icon
                             aria-hidden="true"
@@ -318,13 +318,13 @@ export function MemberStatus() {
                             id={describedBy}
                             className="flex min-w-0 flex-1 items-center gap-3"
                           >
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:underline">
+                            <span className="min-w-0 flex-1 truncate text-meta font-medium group-hover:underline">
                               {capability ? meta.label : "Request"}
                             </span>
                             {state ? (
                               <StateWord tone={state.tone} word={state.word} />
                             ) : null}
-                            <span className="text-muted-foreground shrink-0 text-xs">
+                            <span className="text-muted-foreground shrink-0 text-meta">
                               <RelativeTime
                                 ts={receipt.created_at}
                                 fallback=""
@@ -337,14 +337,14 @@ export function MemberStatus() {
                   })}
                 </ul>
               ) : (
-                <p className="text-muted-foreground text-sm">
+                <p className="text-muted-foreground text-meta">
                   No requests yet.
                 </p>
               )}
               {/* The next step follows the failure shown (red team round 2):
                   a spending limit is the owner's to lift, a gateway problem
                   is not the member's connection. */}
-              <p className="text-muted-foreground mt-4 text-sm">
+              <p className="text-muted-foreground mt-4 text-meta">
                 {refusal ? (
                   `${askOwner(ownerName)} if you need paid models before the limit resets.`
                 ) : modelVerdict.problems.length ? (
