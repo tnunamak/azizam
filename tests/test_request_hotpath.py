@@ -313,6 +313,52 @@ class RequestHotpathTests(unittest.TestCase):
         self.assertTrue(all(identities))
         self.assertEqual(len(seen), 2)
 
+    def _traced_resolution(self, key_hash: str) -> tuple[object, list[str]]:
+        statements: list[str] = []
+        original_scope = admin_store.runtime_auth_connection
+
+        @contextmanager
+        def traced_scope(path=admin_store.DB_PATH):
+            with original_scope(path) as connection:
+                connection.set_trace_callback(statements.append)
+                try:
+                    yield connection
+                finally:
+                    connection.set_trace_callback(None)
+
+        with patch.object(admin_store, "runtime_auth_connection", traced_scope), patch.object(
+            admin_store, "touch_credential_last_used", return_value=False
+        ):
+            identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        return identity, [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+
+    def test_session_app_guard_adds_no_query_to_identity_resolution(self) -> None:
+        profile = admin_store.create_profile("guard", _profile("guard", ["openai.chat"]), path=self.db)
+        _, credential = self._credential(profile_id=profile["id"])
+        identity, selects = self._traced_resolution(credential["hash"])
+        self.assertIsNotNone(identity)
+        # The credential (with its session-App flag), its App, and its profile.
+        self.assertEqual(len(selects), 3, selects)
+
+    def test_a_session_app_credential_still_never_authenticates(self) -> None:
+        import sqlite3
+
+        user = admin_store.upsert_oidc_user("issuer", "guarded", email="g@example.test", path=self.db)
+        app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=self.db)
+        conn = sqlite3.connect(self.db)
+        try:  # A key written before the guard existed.
+            conn.execute("DROP TRIGGER IF EXISTS credentials_never_on_session_apps")
+            conn.execute(
+                "INSERT INTO credentials(id, subject_kind, subject_id, app_id, hash, prefix, created_at) "
+                "VALUES ('cred_legacy', 'app', ?, ?, 'legacy-session-hash', 'opk_legacy', 1)",
+                (app["id"], app["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        identity, _ = self._traced_resolution("legacy-session-hash")
+        self.assertIsNone(identity)
+
 
 if __name__ == "__main__":
     unittest.main()

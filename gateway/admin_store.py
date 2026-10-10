@@ -1589,6 +1589,25 @@ def find_credential_by_hash(
     return _credential_row_to_dict(row) if row else None
 
 
+def find_runtime_credential_by_hash(
+    hash: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any] | None:
+    """Look up a credential and, in the same query, whether its App is a
+    session App (``on_session_app``)."""
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
+        row = conn.execute(
+            "SELECT credentials.*, EXISTS(SELECT 1 FROM session_apps WHERE session_apps.app_id = "
+            "COALESCE(NULLIF(credentials.app_id, ''), credentials.subject_id)) AS on_session_app "
+            "FROM credentials WHERE hash = ?", (hash,)
+        ).fetchone()
+    if row is None:
+        return None
+    credential = _credential_row_to_dict(row)
+    credential["on_session_app"] = bool(credential["on_session_app"])
+    return credential
+
+
 def list_active_credentials(
     *,
     subject_kind: str | None = None,
@@ -2719,6 +2738,7 @@ __all__ = [
     "revoke_credential",
     "get_credential",
     "find_credential_by_hash",
+    "find_runtime_credential_by_hash",
     "list_credentials",
     "list_active_credentials",
     "assign_admin_role",

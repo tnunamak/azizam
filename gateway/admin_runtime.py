@@ -1596,10 +1596,13 @@ def runtime_identity_for_app_credential_hash(
     admin keys remain control-plane-only.
     """
     with admin_store.runtime_auth_connection(path) as connection:
-        credential = admin_store.find_credential_by_hash(key_hash, path=path, connection=connection)
+        credential = admin_store.find_runtime_credential_by_hash(key_hash, path=path, connection=connection)
         if credential is None or not _credential_active(credential):
             return None
         if credential.get("subject_kind") != "app":
+            return None
+        # A session App acts only through its person's browser session.
+        if credential["on_session_app"]:
             return None
 
         # Record that this key was just used so the portal can show real "used N
@@ -1619,9 +1622,6 @@ def runtime_identity_for_app_credential_hash(
 
         app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
         if not app_id:
-            return None
-        # A session App acts only through its person's browser session.
-        if admin_store.is_session_app(app_id, path=path, connection=connection):
             return None
         app = admin_store.get_app(app_id, path=path, connection=connection)
         profile = _runtime_app_profile(
@@ -1657,7 +1657,7 @@ def runtime_identity_for_session_app(
     with admin_store.runtime_auth_connection(path) as connection:
         app = admin_store.get_app(app_id, path=path, connection=connection)
         if (app is None or app.get("owner_user_id") != person_id
-                or not admin_store.is_session_app(app_id, path=path)):
+                or not admin_store.is_session_app(app_id, path=path, connection=connection)):
             return None
         profile = _runtime_app_profile(
             app, None, inherited_profile_id_for_app=inherited_profile_id_for_app,
