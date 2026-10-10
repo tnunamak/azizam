@@ -116,6 +116,20 @@ export function tryKeepState(
   return "choice";
 }
 
+/**
+ * The one line on prompts in a new person's welcome card, or null when the
+ * setting could not be read (the card then claims nothing).
+ */
+export function welcomePromptNote(state: TryKeepState): string | null {
+  if (state === "choice")
+    return "Azizam remembers what you type so you can find things again. Only you can see it. Change this in Your settings.";
+  if (state === "member-off")
+    return "Azizam doesn’t keep what you type. Change this in Your settings.";
+  if (state === "household-off")
+    return "This gateway doesn’t keep what you type.";
+  return null;
+}
+
 /** The request extension that tells the gateway not to keep one prompt. */
 export const FORGET_EXTENSION = "com.azizam.prompts";
 

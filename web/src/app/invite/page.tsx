@@ -15,6 +15,12 @@ import {
 import { type ProfilePolicyDocument } from "@/lib/api";
 import { authFetch, continueTo, type SignInOptions } from "../sign-in/auth-api";
 import { planSummary } from "../people/people-api";
+import { accountApi } from "@/lib/account-api";
+import {
+  promptMemoryKey,
+  tryKeepState,
+  welcomePromptNote,
+} from "@/lib/prompt-memory";
 interface Invitation {
   plan: {
     id: string;
@@ -96,6 +102,16 @@ export default function InvitePage() {
       window.history.replaceState(null, "", window.location.pathname);
     },
   });
+  // Accepting signs the new person in, so their prompt setting is readable.
+  const { data: promptMemory } = useQuery({
+    queryKey: promptMemoryKey,
+    queryFn: accountApi.promptMemory,
+    enabled: Boolean(accept.data),
+    retry: false,
+  });
+  const promptNote = welcomePromptNote(
+    tryKeepState(promptMemory?.prompt_memory),
+  );
   return (
     <section className="mx-auto w-full max-w-md py-12 sm:py-16">
       <div className="bg-card rounded-xl border p-6 sm:p-8">
@@ -114,6 +130,9 @@ export default function InvitePage() {
                 ? `Next time, sign in with ${optionsData?.oidc_label || "your identity provider"}.`
                 : "Next time, sign in with your email and password. The API key is not a sign-in password."}
             </p>
+            {promptNote ? (
+              <p className="text-muted-foreground text-sm">{promptNote}</p>
+            ) : null}
             <SecretReveal
               secret={accept.data.credential.api_key}
               onSaved={() => {
