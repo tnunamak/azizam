@@ -73,11 +73,15 @@ const forgotten = {
 // details download, Robin as maker.
 const othersView = { ...forgotten, asset_id: "img_others" };
 
-function renderWith(assets: unknown[]) {
+function renderWith(assets: unknown[], promptMemory?: unknown) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/me/api/prompt-memory"))
+        return promptMemory
+          ? Response.json(promptMemory)
+          : Response.json({ error: { code: "x" } }, { status: 500 });
       if (url.includes("/download"))
         return Response.json({ download_url: PICTURE });
       return Response.json({ assets, models: [], next_cursor: null });
@@ -155,6 +159,44 @@ describe("the prompt in the viewer", () => {
     expect(
       within(dialog).queryByRole("button", { name: "Copy prompt" }),
     ).toBeNull();
+  });
+
+  test("the maker is told why, when their settings explain it", async () => {
+    const user = userEvent.setup();
+    const household = {
+      default_remember: true,
+      never_keep: false,
+      retention_cap: "never",
+    };
+    renderWith([forgotten], {
+      prompt_memory: {
+        remember: false,
+        retention: "never",
+        effective_remember: false,
+        effective_retention: "never",
+        household,
+      },
+    });
+    const dialog = await openOnly(user);
+    expect(
+      await within(dialog).findByText("Prompt not saved. You turned it off."),
+    ).toBeVisible();
+    cleanup();
+    renderWith([forgotten], {
+      prompt_memory: {
+        remember: true,
+        retention: "never",
+        effective_remember: false,
+        effective_retention: "never",
+        household: { ...household, never_keep: true },
+      },
+    });
+    const again = await openOnly(user);
+    expect(
+      await within(again).findByText(
+        "Prompt not saved. This gateway doesn’t keep prompts.",
+      ),
+    ).toBeVisible();
   });
 
   test("someone else gets no hint that a prompt exists", async () => {

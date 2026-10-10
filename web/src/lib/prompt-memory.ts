@@ -130,6 +130,25 @@ export function welcomePromptNote(state: TryKeepState): string | null {
   return null;
 }
 
+/**
+ * Why the maker's item has no prompt, when today's settings explain it: the
+ * person or the household turned memory off, which also deleted earlier
+ * prompts. Otherwise null; the gateway does not record why one prompt is
+ * missing (forgotten on one request, deleted, expired, or made before
+ * prompts were kept), so the Library does not guess.
+ */
+export function promptNotSavedReason(
+  state: TryKeepState,
+  owner: boolean,
+): string | null {
+  if (state === "member-off") return "You turned it off.";
+  if (state === "household-off")
+    return owner
+      ? "You turned it off for everyone."
+      : "This gateway doesn’t keep prompts.";
+  return null;
+}
+
 /** The request extension that tells the gateway not to keep one prompt. */
 export const FORGET_EXTENSION = "com.azizam.prompts";
 

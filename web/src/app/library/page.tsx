@@ -82,6 +82,12 @@ import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
 import { api } from "@/lib/api";
+import { accountApi } from "@/lib/account-api";
+import {
+  promptMemoryKey,
+  promptNotSavedReason,
+  tryKeepState,
+} from "@/lib/prompt-memory";
 import {
   MAKING_COPY,
   dayMarks,
@@ -1352,13 +1358,25 @@ function CreationViewer({
       ),
     retry: false,
   });
+  const prompt = asset.prompt?.trim() ?? "";
+  // The maker of an item with no prompt learns why, when their settings say.
+  const viewer = useViewer();
+  const { data: promptMemory } = useQuery({
+    queryKey: promptMemoryKey,
+    queryFn: accountApi.promptMemory,
+    enabled: maker && !prompt,
+    retry: false,
+  });
+  const notSavedReason = promptNotSavedReason(
+    tryKeepState(promptMemory?.prompt_memory),
+    Boolean(viewer.admin),
+  );
   // Only where the browser has a share sheet (phones, mostly).
   const [canShare, setCanShare] = useState(false);
   useEffect(() => setCanShare(typeof navigator.share === "function"), []);
   const created = toDateValue(asset.created_at);
   const model = asset.model ? nameModel(asset.model) : "";
   const title = shortTitle(asset);
-  const prompt = asset.prompt?.trim() ?? "";
   // The gateway offers the file with details only to its maker, while the
   // prompt is kept.
   const detailsDownload =
@@ -1636,7 +1654,9 @@ function CreationViewer({
                 // is told a prompt ever existed.
                 <p className="text-muted-foreground text-meta flex items-center gap-1.5">
                   <EyeOff aria-hidden="true" className="size-4 shrink-0" />
-                  Prompt not saved
+                  {notSavedReason
+                    ? `Prompt not saved. ${notSavedReason}`
+                    : "Prompt not saved"}
                 </p>
               ) : null}
               <details className="group">
