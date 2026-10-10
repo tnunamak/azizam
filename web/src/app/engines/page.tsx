@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,7 +40,8 @@ import {
   toast,
 } from "@/components/ui";
 import { PageHeader } from "@/components/product/page-header";
-import { StateBadge } from "@/components/product/status-ui";
+import { StateBadge, StateWord } from "@/components/product/status-ui";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -406,6 +407,8 @@ function EnginesContents() {
   const searchParams = useSearchParams();
   const selectedServiceId = searchParams.get("service");
   const [showNotInUse, setShowNotInUse] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showInfrastructure, setShowInfrastructure] = useState<boolean>();
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
   const editInvoker = useRef<HTMLElement | null>(null);
@@ -525,6 +528,20 @@ function EnginesContents() {
       health?.capability_labels ?? humanCapabilities(service.capabilities)
     ).join(", ");
     const title = displayName(service);
+    const stateKey =
+      !service.enabled || serviceState.label === "Disabled" ? "off"
+        : ["Ready", "Ready to start", "Standby, stopped"].includes(serviceState.label) ? "ready"
+        : ["Busy", "Starting"].includes(serviceState.label) ? "busy"
+        : serviceState.tone === "bad" ? "down"
+        : serviceState.tone === "warn" ? "degraded"
+        : "unknown";
+    // Use the poller's record time, never the payload generation time.
+    const observedAt = (backend as { observed_at_s?: number | null } | undefined)
+      ?.observed_at_s;
+    const checkedAt =
+      typeof observedAt === "number" && Number.isFinite(observedAt) && observedAt > 0
+        ? observedAt
+        : null;
     return (
       <TableRow
         key={service.id}
@@ -542,23 +559,24 @@ function EnginesContents() {
               <h3 className="text-body text-foreground truncate font-medium">
                 {title}
               </h3>
-              {serviceState.label && serviceState.label !== "Ready" && (
+              {stateKey === "ready" && serviceState.label === "Ready" ? (
+                <StateWord tone="ok" word="Ready" />
+              ) : (
                 <StateBadge
-                  state={
-                    serviceState.label === "Disabled" ? "off"
-                      : ["Busy", "Starting"].includes(serviceState.label) ? "busy"
-                      : serviceState.tone === "bad" ? "down"
-                      : serviceState.tone === "warn" ? "degraded"
-                      : ["Ready to start", "Standby, stopped"].includes(serviceState.label) ? "ready"
-                      : "unknown"
-                  }
-                  word={serviceState.label}
+                  state={stateKey}
+                  word={stateKey === "off" ? undefined : serviceState.label || undefined}
                 />
               )}
             </div>
-            {serves && (
+            {(serves || checkedAt !== null) && (
               <p className="text-meta text-muted-foreground mt-0.5 truncate">
                 {serves}
+                {serves && checkedAt !== null ? " · " : null}
+                {checkedAt !== null ? (
+                  <>
+                    Last checked <RelativeTime ts={checkedAt} fallback="" />
+                  </>
+                ) : null}
               </p>
             )}
           </button>
@@ -686,64 +704,70 @@ function EnginesContents() {
               }
             />
           ) : (
-            <div className="grid gap-3">
-              {groups.map((group) => (
-                <section
-                  key={group.capability}
-                  className="flex flex-col gap-3"
-                  aria-label={`${group.capability} engines`}
-                >
-                  <h2 className="text-heading font-semibold">
-                    {group.capability}
-                  </h2>
-                  {group.entries.map(({ service, alternatives }) => (
-                    <div key={service.id} className="min-w-0">
-                      <div className="bg-card rounded-panel overflow-hidden border">
-                        <Table aria-label={`${displayName(service)} engine`}>
-                          <TableBody>{renderEngine(service)}</TableBody>
-                        </Table>
-                      </div>
-                      {alternatives.length > 0 && (
-                        <details
-                          className="mt-2"
-                          open={
-                            alternatives.some(
-                              (engine) => engine.id === selectedServiceId,
-                            ) || undefined
-                          }
+            <div className="bg-card rounded-panel overflow-hidden border">
+              <Table aria-label="Engines">
+                {groups.map((group) => (
+                  <TableBody key={group.capability} aria-label={`${group.capability} engines`}>
+                    <TableRow>
+                      <TableCell colSpan={2} className="h-9">
+                        <h2 className="text-label text-subtle-foreground font-medium">
+                          {group.capability}
+                        </h2>
+                      </TableCell>
+                    </TableRow>
+                    {group.entries.map(({ service, alternatives }) => {
+                      const open = expanded[service.id] ??
+                        alternatives.some((engine) => engine.id === selectedServiceId);
+                      return (
+                        <Fragment key={service.id}>
+                          {renderEngine(service)}
+                          {alternatives.length > 0 && (
+                            <TableRow>
+                              <TableCell colSpan={2}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-expanded={open}
+                                  onClick={() => setExpanded((current) => ({
+                                    ...current, [service.id]: !open,
+                                  }))}
+                                >
+                                  Standby and fallback engines ({alternatives.length})
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {open && alternatives.map(renderEngine)}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                ))}
+                {infrastructure.length > 0 && (
+                  <TableBody aria-label="Infrastructure engines">
+                    <TableRow>
+                      <TableCell colSpan={2}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-expanded={showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")}
+                          onClick={() => setShowInfrastructure(
+                            !(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")),
+                          )}
                         >
-                          <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
-                            Standby and fallback engines ({alternatives.length})
-                          </summary>
-                          <div className="bg-card rounded-panel mt-2 overflow-hidden border">
-                            <Table aria-label="Standby and fallback engines">
-                              <TableBody>{alternatives.map(renderEngine)}</TableBody>
-                            </Table>
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  ))}
-                </section>
-              ))}
+                          Show infrastructure
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")) &&
+                      infrastructure.map(renderEngine)}
+                  </TableBody>
+                )}
+              </Table>
             </div>
           )}
         </section>
 
-        {infrastructure.length > 0 && (
-          <details
-            open={infrastructureIds.has(selectedServiceId ?? "") || undefined}
-          >
-            <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta">
-              Show infrastructure
-            </summary>
-            <div className="bg-card rounded-panel mt-2 overflow-hidden border">
-              <Table aria-label="Infrastructure engines">
-                <TableBody>{infrastructure.map(renderEngine)}</TableBody>
-              </Table>
-            </div>
-          </details>
-        )}
       </div>
       <AddServiceDialog
         open={addOpen}

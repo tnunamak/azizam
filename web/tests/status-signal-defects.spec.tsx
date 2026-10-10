@@ -5,6 +5,8 @@ import { ApiError, api, type StatusPayload } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
 import * as session from "@/components/shell/session";
 import EnginesPage from "@/app/engines/page";
+import * as healthPresentation from "@/lib/health-presentation";
+import { Button } from "@/components/ui/button";
 import { MemberStatus } from "@/app/status/status-view";
 import type { ProviderStatusView } from "@/lib/provider-status";
 import { StatusClient } from "@/app/status/status-client";
@@ -14,7 +16,7 @@ const state = vi.hoisted(() => ({ providers: [] as ProviderStatusView[] }));
 vi.mock("@/lib/provider-status", () => ({
   useOptionalProviderStatus: () => ({ state: "ready", providers: state.providers, refetch: vi.fn() }),
 }));
-vi.mock("next/link", () => ({ default: ({ children, href }: React.ComponentProps<"a">) => <a href={href}>{children}</a> }));
+vi.mock("next/link", () => ({ default: ({ children, href, ...props }: React.ComponentProps<"a">) => <a href={href} {...props}>{children}</a> }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); state.providers = []; });
 function mount(signals: NonNullable<StatusPayload["current_health"]>["signals"]) {
   vi.spyOn(api.services, "registry").mockResolvedValue({ schema_version: 1, services: {} });
@@ -146,8 +148,8 @@ async function openEndpointEditor(baseUrl: string) {
   const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
   mountHealthErrorPage(<EnginesPage />);
   fireEvent.click(await screen.findByText("Show infrastructure"));
-  const table = screen.getByRole("table", { name: "Infrastructure engines" });
-  const row = within(table).getByRole("row");
+  const table = screen.getByRole("table", { name: "Engines" });
+  const row = within(table).getByText("Endpoint regression engine").closest("tr")!;
   expect(within(row).getAllByRole("button", { name: /Endpoint regression engine/ }).length).toBeGreaterThan(0);
   fireEvent.click(screen.getByText("Endpoint regression engine").closest("button")!);
   await screen.findByRole("button", { name: "Save engine" });
@@ -200,4 +202,85 @@ it.each(["ftp://other.example/v1", "ws://other.example/v1"])("rejects a changed 
   fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
   expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.")).toBeVisible();
   expect(edit).not.toHaveBeenCalled();
+});
+
+function mockEngineRows() {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
+  // Isolate row presentation from the unchanged health classification helper.
+  vi.spyOn(healthPresentation, "engineHealthPresentation").mockImplementation(
+    (enabled, observationAvailable, health) => ({
+      label: !enabled ? "Disabled" : !observationAvailable || !health ? "Unknown" : health.service_id === "degraded" ? "Degraded" : "Ready",
+      tone: !enabled || !observationAvailable || !health ? "neutral" : health.service_id === "degraded" ? "warn" : "ok",
+    }) as ReturnType<typeof healthPresentation.engineHealthPresentation>,
+  );
+  const services = Object.fromEntries([
+    ["ready", "Chat", ["chat"], true],
+    ["degraded", "Images", ["image"], true],
+    ["off", "Video", ["video"], false],
+    ["unknown", "Voice", ["speech"], true],
+    ["infrastructure", "Infrastructure", [], true],
+  ].map(([id, name, capabilities, enabled]) => [String(id), {
+    id, name, capabilities, enabled, kind: "openai-compatible", editable: true,
+    source: id === "infrastructure" ? "provisioned" : "ui",
+    role: "primary", priority: 1, config: { host: "localhost", port: 18123 },
+  }]));
+  vi.spyOn(api.services, "registry").mockResolvedValue({
+    schema_version: 1, services,
+  } as unknown as Awaited<ReturnType<typeof api.services.registry>>);
+  const checkedAt = Math.floor(Date.now() / 1000) - 120;
+  vi.spyOn(api, "status").mockResolvedValue({
+    generated_at: checkedAt + 120,
+    backends: [{ service_id: "ready", observed_at_s: checkedAt }],
+    current_health: {
+      observation_available: true, signals: [],
+      services: ["ready", "degraded", "off", "infrastructure"].map((id) => ({
+        service_id: id, in_use: true,
+      })),
+    },
+  } as unknown as StatusPayload);
+}
+
+it("shows Ready, Degraded, Off and Unknown with only recorded engine check times", async () => {
+  mockEngineRows();
+  mountHealthErrorPage(<EnginesPage />);
+  await screen.findByRole("switch", { name: "Show not in use" });
+  fireEvent.click(screen.getByRole("switch", { name: "Show not in use" }));
+  await waitFor(() => {
+    for (const [id, word] of [["ready", "Ready"], ["degraded", "Degraded"], ["off", "Off"], ["unknown", "Unknown"]]) {
+      const row = document.querySelector(`[data-engine-id="${id}"]`);
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText(word)).toBeVisible();
+    }
+  });
+  const ready = document.querySelector('[data-engine-id="ready"]') as HTMLElement;
+  expect(within(ready).getByText(/Last checked/)).toBeVisible();
+  for (const id of ["degraded", "off", "unknown"]) {
+    const row = document.querySelector(`[data-engine-id="${id}"]`) as HTMLElement;
+    expect(within(row).queryByText(/Last checked/)).toBeNull();
+  }
+});
+
+it("keeps capability and infrastructure engines in one compact table", async () => {
+  mockEngineRows();
+  mountHealthErrorPage(<EnginesPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Show infrastructure" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Show not in use" }));
+  const table = screen.getByRole("table", { name: "Engines" });
+  expect(screen.getAllByRole("table")).toHaveLength(1);
+  await waitFor(() => expect(table.querySelectorAll("[data-engine-id]")).toHaveLength(5));
+  for (const row of table.querySelectorAll("[data-engine-id]")) {
+    expect(row.querySelector("td")).toHaveClass("h-(--row-2)", "max-sm:h-(--row-phone-2)!");
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Show infrastructure" }));
+  expect(table.querySelector('[data-engine-id="infrastructure"]')).toBeNull();
+  expect(screen.getAllByRole("table")).toHaveLength(1);
+});
+
+it("uses a secondary outline Inspect action on the primary engine problem", async () => {
+  mockEngineRows();
+  mountHealthErrorPage(<StatusClient />);
+  const inspect = await screen.findByRole("link", { name: /Inspect/ });
+  expect(inspect).toHaveAttribute("href", "/engines/?service=degraded");
+  render(<Button variant="outline" size="md">Outline reference</Button>);
+  expect(inspect.className).toBe(screen.getByRole("button", { name: "Outline reference" }).className);
 });

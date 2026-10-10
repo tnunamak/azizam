@@ -62,7 +62,10 @@ describe("engine progressive disclosure", () => {
     mount();
     const primary = await screen.findByRole("heading", { name: "primary" });
     expect(screen.getByRole("heading", { name: "Chat" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "standby" })).not.toBeVisible();
+    // Fallback engines are rows of the one Engines table, rendered only once opened.
+    expect(
+      screen.queryByRole("heading", { name: "standby" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "disabled" }),
     ).not.toBeInTheDocument();

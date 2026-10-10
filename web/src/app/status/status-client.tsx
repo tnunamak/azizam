@@ -834,7 +834,11 @@ function ProblemCard({
               <Button
                 asChild
                 size={primary ? "md" : "sm"}
-                variant={primary ? "default" : "outline"}
+                variant={
+                  primary && !problem.action?.startsWith("Inspect ")
+                    ? "default"
+                    : "outline"
+                }
               >
                 <Link href={problem.href}>
                   {problem.action ?? "Open"}
