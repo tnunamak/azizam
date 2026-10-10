@@ -6,6 +6,7 @@ build context are fresh; authentication and registry edits use HTTP only.
 from contextlib import ExitStack
 from pathlib import Path
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -21,6 +22,27 @@ import httpx
 from fake_engine import ANSWER, MODEL
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def free_docker_subnet():
+    """Pick a /24 that no existing Docker network overlaps.
+
+    docker-compose.yml defaults to 172.30.251.0/24; any other network that
+    covers it (an unrelated 172.30.0.0/16 project network, say) makes Compose
+    fail with "Pool overlaps with other one on this address space".
+    """
+    ids = subprocess.run(["docker", "network", "ls", "-q"], capture_output=True,
+                         text=True, check=True).stdout.split()
+    used = []
+    if ids:
+        listed = subprocess.run(["docker", "network", "inspect", "-f",
+                                 "{{range .IPAM.Config}}{{.Subnet}} {{end}}", *ids],
+                                capture_output=True, text=True, check=True).stdout.split()
+        used = [ipaddress.ip_network(subnet, strict=False) for subnet in listed if "." in subnet]
+    for candidate in ipaddress.ip_network("10.213.0.0/16").subnets(new_prefix=24):
+        if not any(candidate.overlaps(network) for network in used):
+            return candidate
+    raise RuntimeError("no free /24 in 10.213.0.0/16 for the Compose journey")
 
 
 def reserve_port(stack):
@@ -227,6 +249,9 @@ def run(compose):
                     "restart": "no"}
             }}))
             env["AZIZAM_PORT"] = str(gateway_port)
+            subnet = free_docker_subnet()
+            env["AZIZAM_DOCKER_SUBNET"] = str(subnet)
+            env["AZIZAM_DOCKER_GATEWAY"] = str(next(subnet.hosts()))
             command = ["docker", "compose", "--project-name", project, "--project-directory", str(source),
                        "-f", str(source / "docker-compose.yml"), "-f", str(override)]
 
