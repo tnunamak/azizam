@@ -6947,6 +6947,9 @@ class _MakePublishGate:
 
     Publication (``store_asset_bytes``, which also keeps the prompt) and
     cancel take the same lock, so a job never does both.
+
+    Cancel also stops the job's work on its event loop: the task, while it
+    still waits for a turn (``waiter``), or the route call once it runs.
     """
 
     def __init__(self) -> None:
@@ -6954,6 +6957,7 @@ class _MakePublishGate:
         self.canceled = False
         self.published = False
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.waiter: asyncio.Task | None = None
         self.call: asyncio.Future | None = None
 
     def cancel(self) -> bool:
@@ -6962,10 +6966,18 @@ class _MakePublishGate:
             if self.published:
                 return False
             self.canceled = True
-            loop, call = self.loop, self.call
-        if loop is not None and call is not None:
-            loop.call_soon_threadsafe(call.cancel)
+            loop = self.loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):  # A closed loop runs nothing.
+                loop.call_soon_threadsafe(self._stop)
         return True
+
+    def _stop(self) -> None:
+        # On the job's loop, which also clears ``waiter`` when the job starts.
+        if self.waiter is not None:
+            self.waiter.cancel()
+        elif self.call is not None:
+            self.call.cancel()
 
 
 _MAKE_PUBLISH_GATE: contextvars.ContextVar[_MakePublishGate | None] = contextvars.ContextVar(
@@ -14427,13 +14439,29 @@ class _SessionMakeRuntime:
         if job_id in _image_media_job_scheduled:
             return
         _image_media_job_scheduled.add(job_id)
-        self._gates.setdefault(job_id, _MakePublishGate())
+        gate = self._gates.setdefault(job_id, _MakePublishGate())
 
         async def bounded() -> None:
-            async with _image_media_job_semaphore:
-                await run()
+            try:
+                async with _image_media_job_semaphore:
+                    gate.waiter = None
+                    await run()
+                    return
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                # Shutdown, or any cancel after the job's turn began, still stops it.
+                if gate.waiter is None or not gate.canceled or current is None or current.uncancel() > 0:
+                    raise
+            # Canceled while it waited for a turn: settle it now, without a
+            # turn. ``execute`` refuses a canceled job, so no backend runs.
+            gate.waiter = None
+            await run()
 
-        task = asyncio.get_running_loop().create_task(bounded())
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(bounded())
+        # A cancel while the job waits for a turn drops the task at once, so
+        # only queued or running jobs hold a task and a gate.
+        gate.loop, gate.waiter = loop, task
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:

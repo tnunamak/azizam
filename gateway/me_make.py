@@ -219,13 +219,15 @@ def add_make_routes(
             finished = _MakeError("job_finished", "This job has already finished", 409)
             if job.get("status") in media_jobs.TERMINAL_STATUSES:
                 raise finished
-            if runtime is not None and not runtime.request_cancel(job_id):
-                raise _MakeError("job_finishing", "This job has already made its picture", 409)
             try:  # A job that has not started stops here.
                 media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error=_CANCELED,
                                          expected_status=media_jobs.STATUS_QUEUED, path=jobs_path)
                 _event(job_id, "canceled", media_jobs.STATUS_CANCELED, jobs_path)
+                if runtime is not None:  # It also gives up its place in the queue.
+                    runtime.request_cancel(job_id)
             except ValueError:
+                if runtime is not None and not runtime.request_cancel(job_id):
+                    raise _MakeError("job_finishing", "This job has already made its picture", 409) from None
                 try:  # A running job stops in the background and then settles as canceled.
                     media_jobs.update_status(
                         job_id, media_jobs.STATUS_RUNNING,
@@ -453,7 +455,12 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
         return
     payload = runtime.load_payload(job_id)
     if payload is None:
-        _fail(job_id, "This job's input is no longer available", jobs_path)
+        # Cancel marks the job before it drops the payload, so read it again.
+        current = media_jobs.get(job_id, path=jobs_path) or {}
+        if (current.get("metadata") or {}).get("cancel_requested_at"):
+            _settle_canceled(job_id, jobs_path)
+        else:
+            _fail(job_id, "This job's input is no longer available", jobs_path)
         return
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=5,

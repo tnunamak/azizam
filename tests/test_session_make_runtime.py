@@ -223,6 +223,96 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         asyncio.run(main())
         self.assertEqual(peak, 2)
 
+    def test_canceled_queued_jobs_leave_the_scheduler_at_once(self) -> None:
+        # Review repro: while the image semaphore is busy, repeated submit + cancel
+        # left one waiting task and gate per canceled job, none counted outstanding.
+        jobs_db = media_jobs.DB_PATH
+        executed: list[str] = []
+
+        async def execute(payload):
+            executed.append(payload["job_id"])
+            return [{"asset_id": OUTPUT, "media_type": "image/png"}]
+
+        def submit(job_id: str) -> None:
+            media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id=f"req_{job_id}",
+                                                  app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                              path=jobs_db)
+            self.runtime.keep_payload(job_id, {**self._payload("image.generate"), "job_id": job_id})
+            self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
+
+        def cancel(job_id: str) -> None:  # What the cancel route does, on its worker thread.
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester",
+                                     expected_status=media_jobs.STATUS_QUEUED, path=jobs_db)
+            self.assertTrue(self.runtime.request_cancel(job_id))
+            self.runtime.drop_payload(job_id)
+
+        def outstanding() -> int:
+            return sum(len(media_jobs.recent(500, status=status, path=jobs_db))
+                       for status in (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING))
+
+        async def main() -> tuple[int, int, int]:
+            busy = asyncio.Semaphore(1)
+            with patch.object(proxy, "_image_media_job_semaphore", busy), \
+                    patch.object(self.runtime, "execute", execute):
+                await busy.acquire()  # Another job holds the only slot.
+                submit("mj_kept")
+                for index in range(60):
+                    submit(f"mj_cycle_{index}")
+                    await asyncio.to_thread(cancel, f"mj_cycle_{index}")
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                retained = (len(proxy._image_media_job_tasks), len(self.runtime._gates),
+                            len(proxy._image_media_job_scheduled))
+                busy.release()
+                await asyncio.gather(*list(proxy._image_media_job_tasks))
+            return retained
+
+        tasks, gates, scheduled = asyncio.run(main())
+        self.assertEqual((tasks, gates, scheduled), (1, 1, 1), "only the job still waiting is retained")
+        self.assertEqual(executed, ["mj_kept"], "a canceled job never runs")
+        self.assertEqual(outstanding(), 0)
+        canceled = media_jobs.recent(500, status=media_jobs.STATUS_CANCELED, path=jobs_db)
+        self.assertEqual(len(canceled), 60)
+        self.assertEqual((proxy._image_media_job_tasks, self.runtime._gates), (set(), {}))
+
+    def test_a_resumed_job_canceled_while_it_waits_settles_as_canceled(self) -> None:
+        # After a restart a job resumes as running but still waits for a turn.
+        jobs_db = media_jobs.DB_PATH
+        job_id = "mj_resumed"
+        media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id="req_resumed",
+                                              app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                          path=jobs_db)
+        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=jobs_db)
+        self.runtime.keep_payload(job_id, {**self._payload("image.generate"), "job_id": job_id})
+
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a canceled job never reaches the backend")
+
+        def cancel() -> None:  # The cancel route's path for a job that is not queued.
+            self.assertTrue(self.runtime.request_cancel(job_id))
+            try:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_RUNNING,
+                                         metadata_patch={"cancel_requested_at": 1}, path=jobs_db)
+            except ValueError:  # It already settled.
+                pass
+            self.runtime.drop_payload(job_id)
+
+        async def main() -> int:
+            busy = asyncio.Semaphore(1)
+            with patch.object(proxy, "_image_media_job_semaphore", busy), \
+                    patch.object(proxy, "proxy_comfy_request", never):
+                await busy.acquire()
+                self.runtime.schedule(job_id, me_make.run_job(job_id, runtime=self.runtime, jobs_path=jobs_db))
+                await asyncio.sleep(0)
+                await asyncio.to_thread(cancel)
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                return len(proxy._image_media_job_tasks)
+
+        self.assertEqual(asyncio.run(main()), 0, "it does not wait for a turn it will not use")
+        self.assertEqual(media_jobs.get(job_id, path=jobs_db)["status"], media_jobs.STATUS_CANCELED)
+        self.assertIsNone(self.runtime.load_payload(job_id))
+
     def test_outstanding_limit_holds_under_concurrent_submits(self) -> None:
         import threading
 
