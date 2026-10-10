@@ -101,9 +101,6 @@ it.each(["Cancel", "Escape"])(
   async (dismiss) => {
     vi.spyOn(api.services, "registry").mockResolvedValue(registry);
     vi.spyOn(api, "status").mockResolvedValue({});
-    const toggle = vi
-      .spyOn(api.services, "toggleEnabled")
-      .mockResolvedValue(registry);
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
     const user = userEvent.setup();
     mount();
@@ -112,7 +109,6 @@ it.each(["Cancel", "Escape"])(
     expect(
       screen.getByRole("switch", { name: "Toggle primary" }),
     ).not.toBeChecked();
-    expect(toggle).not.toHaveBeenCalled();
     expect(edit).not.toHaveBeenCalled();
     if (dismiss === "Escape") await user.keyboard("{Escape}");
     else await user.click(screen.getByRole("button", { name: "Cancel" }));

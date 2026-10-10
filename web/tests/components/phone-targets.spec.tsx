@@ -4,10 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import { Button as ModernButton } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import {
-  Button as LegacyButton,
-  Switch as LegacySwitch,
-} from "@/components/ui";
+import { Button as LegacyButton } from "@/components/ui";
 import { Switch as ModernSwitch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -78,25 +75,6 @@ describe("phone target contracts", () => {
     expect(control).not.toBeChecked();
     expect(control.querySelector('[data-slot="switch-track"]')).not.toBeNull();
     expect(screen.getAllByRole("switch")).toHaveLength(1);
-  });
-
-  it("keeps legacy switch state and disabled handling on the root", async () => {
-    const user = userEvent.setup();
-    render(
-      <>
-        <LegacySwitch aria-label="Show disabled" />
-        <LegacySwitch aria-label="Locked service" disabled />
-      </>,
-    );
-
-    const enabled = screen.getByRole("switch", { name: "Show disabled" });
-    const disabled = screen.getByRole("switch", { name: "Locked service" });
-    await user.click(enabled);
-    expect(enabled).toBeChecked();
-    expect(disabled).toBeDisabled();
-    await user.click(disabled);
-    expect(disabled).not.toBeChecked();
-    expect(enabled.querySelector('[data-slot="switch-track"]')).not.toBeNull();
   });
 
   it("preserves tab keyboard navigation and disabled state", async () => {

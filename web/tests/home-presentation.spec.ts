@@ -7,8 +7,6 @@ import HomePage from "@/app/home/page";
 import {
   capabilitySummary,
   capabilityTiles,
-  greetingName,
-  requestLabel,
 } from "@/app/home/presentation";
 import type { HomeAlias, HomeCapability } from "@/app/home/home-api";
 
@@ -102,18 +100,6 @@ const alias = (
 });
 
 describe("Home presentation", () => {
-  it("greets by first display name and never invents a name from an email", () => {
-    const user = {
-      id: "person",
-      role: "member",
-      email: "tim@example.test",
-      name: "  Tim Nunamak  ",
-    };
-    expect(greetingName(user)).toBe("Tim");
-    expect(greetingName({ ...user, name: user.email })).toBe("there");
-    expect(greetingName({ ...user, name: "" })).toBe("there");
-  });
-
   it("uses alias-map generation entries instead of ready analysis or edit workflows", () => {
     const tiles = capabilityTiles(
       [
@@ -187,40 +173,6 @@ describe("Home presentation", () => {
       "No tasks are available to your account yet.",
     );
   });
-});
-
-it("labels receipts from their capability or path, never from an opaque workflow ID", () => {
-  expect(
-    requestLabel(
-      {
-        request_id: "image-receipt",
-        intent: "image.analyze",
-        requested_model: "image.analyze.face-likeness",
-      },
-      [],
-    ),
-  ).toBe("Image request");
-  expect(
-    requestLabel(
-      {
-        request_id: "video-receipt",
-        path: "/v1/videos/generations",
-        requested_model: "video.edit.bernini-r-remix",
-      },
-      [],
-    ),
-  ).toBe("Video request");
-  expect(
-    requestLabel({ request_id: "chat-receipt", requested_model: "household" }, [
-      alias("household", "chat"),
-    ]),
-  ).toBe("Chat request");
-  expect(
-    requestLabel(
-      { request_id: "unknown", requested_model: "opaque-routing-id" },
-      [],
-    ),
-  ).toBe("Request");
 });
 
 it("keeps the decision capability from the decisions alias operation", () => {

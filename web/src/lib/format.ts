@@ -116,18 +116,6 @@ export function formatNumber(n: number): string {
   return numberFormat.format(n);
 }
 
-/** Split a key prefix like "opk_AbC123xY…" into the parts SecretMask renders:
- * scheme ("opk_") + last 4 visible chars. */
-export function splitSecretPrefix(prefix: string): {
-  scheme: string;
-  last4: string;
-} {
-  const underscore = prefix.indexOf("_");
-  const scheme = underscore >= 0 ? prefix.slice(0, underscore + 1) : "";
-  const rest = underscore >= 0 ? prefix.slice(underscore + 1) : prefix;
-  return { scheme, last4: rest.slice(-4) };
-}
-
 /** Default scalar formatting for DataTable cells without a custom renderer.
  * Returns a plain string; nullish values map to an em dash so empty cells
  * read as deliberate. Epoch-second numbers are NOT handled here — DataTable

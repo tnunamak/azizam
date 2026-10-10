@@ -52,6 +52,36 @@ function hasHeader(
 // ---------------------------------------------------------------------------
 // Error envelope
 
+export type CredentialSubjectKind = "app" | "service_account" | "user";
+
+export interface Credential {
+  id: string;
+  subject_kind: CredentialSubjectKind;
+  subject_id: string;
+  app_id: string | null;
+  profile_id: string | null;
+  /** First 18 chars of the full key — render via <SecretMask> only. */
+  prefix: string;
+  display_name: string;
+  scopes: string[];
+  created_at: number;
+  created_by?: string | null;
+  expires_at: number | null;
+  revoked_at: number | null;
+  last_used_at: number | null;
+}
+
+/** Mint responses carry the full key exactly once. Reveal-once: show in the
+ * reveal dialog, never log, never refetchable. */
+export interface MintedCredential extends Credential {
+  api_key: string;
+  role?: string;
+  service_account?: string;
+  /** Whose prompts this key carries: a person, or none (service and
+   * someone else's Apps), with the gateway's own description. */
+  prompt_memory?: { person_id: string | null; description?: string };
+}
+
 export interface ApiErrorEnvelope {
   error: { code: string; message: string };
 }
@@ -93,22 +123,6 @@ export interface Session {
   actor: SessionActor;
 }
 
-export type AppKind = "service" | "personal";
-
-export interface App {
-  id: string;
-  kind: AppKind;
-  name: string;
-  owner_user_id: string | null;
-  owner_service_account_id: string | null;
-  default_profile_id: string | null;
-  created_at: number;
-  disabled_at: number | null;
-  effective_profile_id: string;
-  effective_profile_name: string;
-  effective_profile_source: "app_default" | "fallback";
-}
-
 export interface User {
   id: string;
   issuer: string;
@@ -119,36 +133,6 @@ export interface User {
   created_at: number;
   last_login_at: number | null;
   roles: string[];
-}
-
-export type CredentialSubjectKind = "app" | "service_account" | "user";
-
-export interface Credential {
-  id: string;
-  subject_kind: CredentialSubjectKind;
-  subject_id: string;
-  app_id: string | null;
-  profile_id: string | null;
-  /** First 18 chars of the full key — render via <SecretMask> only. */
-  prefix: string;
-  display_name: string;
-  scopes: string[];
-  created_at: number;
-  created_by?: string | null;
-  expires_at: number | null;
-  revoked_at: number | null;
-  last_used_at: number | null;
-}
-
-/** Mint responses carry the full key exactly once. Reveal-once: show in the
- * reveal dialog, never log, never refetchable. */
-export interface MintedCredential extends Credential {
-  api_key: string;
-  role?: string;
-  service_account?: string;
-  /** Whose prompts this key carries: a person, or none (service and
-   * someone else's Apps), with the gateway's own description. */
-  prompt_memory?: { person_id: string | null; description?: string };
 }
 
 export interface Profile {
@@ -381,31 +365,6 @@ export interface UserAccessDefaults {
   auto_create_personal_app: boolean;
 }
 
-export type RuntimeMappingSourceKind = string;
-
-export interface RuntimeProfileMapping {
-  id: string;
-  source_kind: RuntimeMappingSourceKind;
-  source_value: string;
-  profile_id: string;
-  created_at: number;
-  created_by: string;
-  disabled_at: number | null;
-}
-
-export interface AttentionItem {
-  kind: string;
-  severity: "problem" | "attention";
-  title: string;
-  detail: string;
-  /** Compatibility-only. The client derives links from the canonical tuple. */
-  href?: string;
-  target_kind?: string | null;
-  target_id?: string | null;
-  /** Display only; never use this value to resolve a route. */
-  target_name?: string | null;
-}
-
 export interface AuditEntry {
   id: string;
   created_at: number;
@@ -485,25 +444,6 @@ export interface AuditQueryParams {
   show_automated?: boolean;
   /** Keyset cursor from a prior next_cursor. */
   before?: string;
-}
-
-export interface Overview {
-  actor: Omit<SessionActor, "csrf_token">;
-  counts: {
-    users: number;
-    apps: number;
-    profiles: number;
-    runtime_profile_mappings: number;
-    credentials: number;
-    active_credentials: number;
-    services_total?: number;
-    services_enabled?: number;
-    /** Non-human control-plane principals; distinct from people/users. */
-    service_principals?: number;
-  };
-  attention: AttentionItem[];
-  current_health: CurrentHealth;
-  runtime_profile_mappings: Record<string, string>;
 }
 
 export interface StatusSeriesPoint extends Array<number> {
@@ -835,85 +775,12 @@ export async function adminRegistryMutation<T>(
 // ---------------------------------------------------------------------------
 // Typed endpoints (the Apps & Keys contract)
 
-export interface CreateAppInput {
-  name: string;
-  kind: AppKind;
-  profile_id?: string;
-  owner_user_id?: string;
-}
-
-export interface UpdateAppInput {
-  name?: string;
-  default_profile_id?: string;
-}
-
-export interface MintKeyInput {
-  label?: string;
-  profile_id?: string;
-  scopes?: string[];
-}
-
-export interface CreateAdminKeyInput {
-  name: string;
-  role: "admin" | "owner";
-}
-
 export const api = {
   session: () => fetchSession(),
-
-  apps: {
-    list: () =>
-      adminFetch<{ apps: App[] }>("/admin/api/apps").then((r) => r.apps),
-    create: (input: CreateAppInput) =>
-      adminFetch<{ app: App }>("/admin/api/apps", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.app),
-    update: (appId: string, input: UpdateAppInput) =>
-      adminFetch<{ app: App }>(`/admin/api/apps/${appId}`, {
-        method: "PATCH",
-        body: input,
-      }).then((r) => r.app),
-    /** DELETE disables (soft); the contract has no hard delete. */
-    disable: (appId: string) =>
-      adminFetch<{ app: App }>(`/admin/api/apps/${appId}`, {
-        method: "DELETE",
-      }).then((r) => r.app),
-    /** POST /admin/api/apps/{id}/enable clears disabled_at (undo for disable). */
-    enable: (appId: string) =>
-      adminFetch<{ app: App }>(`/admin/api/apps/${appId}/enable`, {
-        method: "POST",
-      }).then((r) => r.app),
-    mintKey: (appId: string, input: MintKeyInput = {}) =>
-      adminFetch<{ credential: MintedCredential }>(
-        `/admin/api/apps/${appId}/keys`,
-        { method: "POST", body: input },
-      ).then((r) => r.credential),
-  },
 
   users: {
     list: () =>
       adminFetch<{ users: User[] }>("/admin/api/users").then((r) => r.users),
-  },
-
-  credentials: {
-    list: () =>
-      adminFetch<{ credentials: Credential[] }>("/admin/api/credentials").then(
-        (r) => r.credentials,
-      ),
-    revoke: (credentialId: string) =>
-      adminFetch<{ credential: Credential }>(
-        `/admin/api/credentials/${credentialId}`,
-        { method: "DELETE" },
-      ).then((r) => r.credential),
-  },
-
-  adminKeys: {
-    create: (input: CreateAdminKeyInput) =>
-      adminFetch<{ credential: MintedCredential }>("/admin/api/admin-keys", {
-        method: "POST",
-        body: input,
-      }).then((r) => r.credential),
   },
 
   profiles: {
@@ -961,27 +828,6 @@ export const api = {
       ).then((r) => r.user_access_defaults),
   },
 
-  runtimeProfileMappings: {
-    list: () =>
-      adminFetch<{ mappings: RuntimeProfileMapping[] }>(
-        "/admin/api/runtime-profile-mappings",
-      ).then((r) => r.mappings),
-    create: (input: {
-      source_kind: string;
-      source_value: string;
-      profile_id: string;
-    }) =>
-      adminFetch<{ mapping: RuntimeProfileMapping }>(
-        "/admin/api/runtime-profile-mappings",
-        { method: "POST", body: input },
-      ).then((r) => r.mapping),
-    disable: (mappingId: string) =>
-      adminFetch<{ mapping: RuntimeProfileMapping }>(
-        `/admin/api/runtime-profile-mappings/${mappingId}`,
-        { method: "DELETE" },
-      ).then((r) => r.mapping),
-  },
-
   services: {
     registry: () =>
       adminFetch<ServiceRegistryResponse>(
@@ -1007,11 +853,6 @@ export const api = {
         `/admin/api/operator/services/${serviceId}`,
         { method: "DELETE" },
       ).then((r) => r.service_registry),
-    toggleEnabled: (serviceId: string, enabled: boolean) =>
-      adminRegistryMutation<ServiceRegistryResponse>(
-        `/admin/api/operator/services/${serviceId}/enabled`,
-        { method: "POST", body: { enabled } },
-      ).then((r) => r.service_registry),
     testConnection: (input: Record<string, unknown>) =>
       adminFetch<{
         probe: {
@@ -1031,19 +872,8 @@ export const api = {
         method: "POST",
         body: input,
       }).then((r) => r.detected),
-    litellmConfig: () =>
-      adminFetch<{
-        litellm_config: {
-          model_list: Array<{
-            model_name: string;
-            litellm_params: Record<string, unknown>;
-          }>;
-          general_settings?: Record<string, unknown>;
-        };
-      }>("/admin/api/operator/litellm-config").then((r) => r.litellm_config),
   },
 
-  overview: () => adminFetch<Overview>("/admin/api/overview"),
   status: () =>
     adminFetch<StatusResponse>("/admin/api/status").then((r) => r.status),
 
@@ -1062,10 +892,6 @@ export const api = {
       const qs = q.toString();
       return adminFetch<AuditPage>(`/admin/api/audit${qs ? `?${qs}` : ""}`);
     },
-    get: (eventId: string) =>
-      adminFetch<{ event: AuditEntry }>(
-        `/admin/api/audit/${encodeURIComponent(eventId)}`,
-      ).then((r) => r.event),
   },
 };
 

@@ -1,8 +1,6 @@
 import type {
   HomeAlias,
   HomeCapability,
-  HomeReceipt,
-  HomeSnapshot,
   SetupProgress,
 } from "./home-api";
 
@@ -74,13 +72,6 @@ function representativeAlias(capability: string, aliases: HomeAlias[]) {
     if (alias) return alias;
   }
   return null;
-}
-
-export function greetingName(user: HomeSnapshot["user"]): string {
-  const name = user.name?.trim();
-  return name && !name.includes("@") && name !== user.email
-    ? name.split(/\s+/)[0]
-    : "there";
 }
 
 /** A capability tile describes a generation alias, never an incidental workflow. */
@@ -187,59 +178,10 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
   return summary.charAt(0).toUpperCase() + summary.slice(1);
 }
 
-/** Receipts keep opaque routing identifiers as detail, beside a human request type. */
-export function requestLabel(
-  receipt: HomeReceipt,
-  aliases: HomeAlias[],
-): string {
-  const alias = aliases.find((item) => item.id === receipt.requested_model);
-  const operation = receipt.intent || alias?.operation || "";
-  const capability = Object.entries(operations).find(([, intents]) =>
-    intents.includes(operation),
-  )?.[0];
-  const requestTypes: Array<[string, RegExp, RegExp]> = [
-    ["image", /^image\./, /\/images\//],
-    ["video", /^video\./, /\/videos/],
-    ["transcribe", /transcri/, /\/audio\/transcriptions/],
-    ["voice", /^speech\.|^audio\.speech/, /\/audio\/speech/],
-    ["audio", /^audio\./, /\/audio\/generations/],
-    ["decide", /^(decision|systemone)/, /\/(systemone|decisions)/],
-    ["embed", /embedding/, /\/embeddings/],
-    ["rerank", /rerank/, /\/rerank/],
-    [
-      "chat",
-      /^(chat\.|responses\.|text\.completions)/,
-      /\/(chat\/completions|responses|completions)/,
-    ],
-  ];
-  const kind =
-    capability ||
-    requestTypes.find(
-      ([, intent, path]) =>
-        intent.test(operation) || path.test(receipt.path || ""),
-    )?.[0];
-  const labels: Record<string, string> = {
-    chat: "Chat request",
-    image: "Image request",
-    video: "Video request",
-    voice: "Voice request",
-    transcribe: "Transcription request",
-    decide: "Decision request",
-    embed: "Embedding request",
-    rerank: "Rerank request",
-    audio: "Audio request",
-  };
-  return kind ? labels[kind] : "Request";
-}
-
 /** Server observations and explicit confirmations remain distinct milestones. */
 export function setupSteps(progress: SetupProgress) {
   const steps = progress.steps.filter((step) => step.id !== "claim_owner");
   return steps;
-}
-
-export function hasEstablishedTraffic(home: HomeSnapshot): boolean {
-  return home.receipts.some((receipt) => Boolean(receipt.request_id));
 }
 
 export function needsSetup(progress: SetupProgress): boolean {
@@ -248,13 +190,6 @@ export function needsSetup(progress: SetupProgress): boolean {
     (!progress.complete ||
       setupSteps(progress).some((step) => !step.optional && !step.done))
   );
-}
-
-export function shouldShowSetup(
-  progress: SetupProgress,
-  home: HomeSnapshot,
-): boolean {
-  return needsSetup(progress) && !hasEstablishedTraffic(home);
 }
 
 /** Which limit a refusal names: the gateway's warning says "daily", "monthly" or both. */

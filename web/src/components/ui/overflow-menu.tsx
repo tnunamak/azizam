@@ -61,7 +61,7 @@ export function OverflowMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        "rounded-md text-sm flex min-h-[44px] cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
+        "rounded-md text-sm flex min-h-11 cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         danger
           ? "text-danger data-[highlighted]:bg-danger/15"
