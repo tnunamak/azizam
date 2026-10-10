@@ -9,11 +9,105 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import TryPage from "@/app/try/page";
 import { WorkflowInputs } from "@/app/try/workflow-inputs";
 import { MediaInput } from "@/app/try/workflow-media-input";
 import catalog from "./fixtures/workflows-ltx-i2v.json";
+
+
+describe("media prop changes before passive effects", () => {
+  it("resets a failed reference preview on the first value-change commit", () => {
+    const commits: Array<string | null> = [];
+    let capture = false;
+    const onCommit = () => {
+      if (capture) commits.push(screen.queryByRole("img", { name: "Chosen picture" })?.getAttribute("src") ?? null);
+    };
+    const view = (value: string) => (
+      <Profiler id="reference" onRender={onCommit}>
+        <MediaInput id="reference" label="Picture" kind="image" value={value} onChange={() => {}} />
+      </Profiler>
+    );
+    const { rerender } = render(view("https://example.test/old.png"));
+    fireEvent.error(screen.getByRole("img", { name: "Chosen picture" }));
+    expect(screen.queryByRole("img", { name: "Chosen picture" })).toBeNull();
+    capture = true;
+    rerender(view("https://example.test/new.png"));
+    expect(commits[0]).toBe("https://example.test/new.png");
+  });
+
+  it("never commits stale file URLs when replacing or reselecting files and revokes every URL", () => {
+    const create = vi.fn()
+      .mockReturnValueOnce("blob:first")
+      .mockReturnValueOnce("blob:second")
+      .mockReturnValueOnce("blob:third");
+    const revoke = vi.fn();
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
+    const commits: Array<string | null> = [];
+    let capture = false;
+    const onCommit = () => {
+      if (capture) commits.push(screen.queryByRole("img", { name: "Chosen picture" })?.getAttribute("src") ?? null);
+    };
+    const view = (file: File | null) => (
+      <Profiler id="file" onRender={onCommit}>
+        <MediaInput id="file" label="Picture" kind="image" file={file} onFileChange={() => {}} />
+      </Profiler>
+    );
+    try {
+      const { rerender, unmount } = render(view(PNG));
+      expect(screen.getByRole("img", { name: "Chosen picture" })).toHaveAttribute("src", "blob:first");
+      capture = true;
+      rerender(view(new File(["second"], "second.png", { type: "image/png" })));
+      expect(commits.length).toBeGreaterThan(0);
+      expect(commits).not.toContain("blob:first");
+      expect(screen.getByRole("img", { name: "Chosen picture" })).toHaveAttribute("src", "blob:second");
+      expect(revoke).toHaveBeenCalledWith("blob:first");
+      rerender(view(null));
+      expect(screen.queryByRole("img", { name: "Chosen picture" })).toBeNull();
+      expect(revoke).toHaveBeenCalledWith("blob:second");
+      commits.length = 0;
+      rerender(view(PNG));
+      expect(commits).not.toContain("blob:first");
+      expect(commits).not.toContain("blob:second");
+      expect(screen.getByRole("img", { name: "Chosen picture" })).toHaveAttribute("src", "blob:third");
+      unmount();
+      expect(revoke).toHaveBeenCalledWith("blob:third");
+      expect(revoke).toHaveBeenCalledTimes(3);
+    } finally {
+      if (originalCreate) Object.defineProperty(URL, "createObjectURL", originalCreate);
+      else Reflect.deleteProperty(URL, "createObjectURL");
+      if (originalRevoke) Object.defineProperty(URL, "revokeObjectURL", originalRevoke);
+      else Reflect.deleteProperty(URL, "revokeObjectURL");
+    }
+  });
+
+  it("reopens Library in loading state on its first commit", async () => {
+    let capture = false;
+    const commits: boolean[] = [];
+    render(
+      <Profiler id="picker" onRender={() => {
+        if (capture) {
+          const dialog = screen.queryByRole("dialog");
+          if (dialog) commits.push(dialog.querySelector("[aria-busy='true']") !== null);
+        }
+      }}>
+        <MediaInput id="picker" label="Picture" kind="image" onChange={() => {}} />
+      </Profiler>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    capture = true;
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits[0]).toBe(true);
+    expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+  });
+});
 
 // The page is driven by the real catalog row the gateway builds for
 // "LTX 2.5 Distilled I2V" (an image-to-video workflow): its picture input

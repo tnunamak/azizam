@@ -438,10 +438,18 @@ function AudioTile({
   );
   const [error, setError] = useState<"media" | "playback" | null>(null);
 
-  useEffect(() => {
+  const [previousAudio, setPreviousAudio] = useState({ src, duration });
+  if (
+    previousAudio.src !== src ||
+    !Object.is(previousAudio.duration, duration)
+  ) {
+    setPreviousAudio({ src, duration });
     setIsPlaying(false);
     setMeasuredDuration(duration ?? null);
     setError(null);
+  }
+
+  useEffect(() => {
     const audio = audioRef.current;
     if (audio) {
       const hadSource = audio.hasAttribute("src");
@@ -815,7 +823,24 @@ function Preview({
     retry: false,
   });
 
-  useEffect(() => {
+  const [previousMedia, setPreviousMedia] = useState({
+    assetId: asset.asset_id,
+    src,
+    posterId: asset.poster_asset_id,
+    duration: asset.duration_s,
+  });
+  if (
+    previousMedia.assetId !== asset.asset_id ||
+    previousMedia.src !== src ||
+    previousMedia.posterId !== asset.poster_asset_id ||
+    !Object.is(previousMedia.duration, asset.duration_s)
+  ) {
+    setPreviousMedia({
+      assetId: asset.asset_id,
+      src,
+      posterId: asset.poster_asset_id,
+      duration: asset.duration_s,
+    });
     setMediaFailed(false);
     setPosterFailed(false);
     setRetryKey(0);
@@ -825,7 +850,7 @@ function Preview({
     setTileStarted(false);
     setTileBlocked(false);
     setTileDuration(asset.duration_s);
-  }, [asset.asset_id, src, asset.poster_asset_id, asset.duration_s]);
+  }
 
   const posterUrl = poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;

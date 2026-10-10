@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement, Profiler } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import HomePage from "@/app/home/page";
 import {
   capabilitySummary,
   capabilityTiles,
@@ -6,6 +11,67 @@ import {
   requestLabel,
 } from "@/app/home/presentation";
 import type { HomeAlias, HomeCapability } from "@/app/home/home-api";
+
+vi.mock("@/components/shell/session", () => ({
+  useViewer: () => ({ role: "member", admin: false, name: "Alex" }),
+}));
+vi.mock("@/lib/use-capability-views", () => ({
+  useCapabilityViews: () => ({
+    views: [],
+    requests: [],
+    verdict: { tone: "off", text: "No tasks available", problems: [], checkedAt: null, unconfirmed: false },
+  }),
+}));
+
+afterEach(cleanup);
+
+it("resets a failed Home image on the first source-change commit", async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  client.setQueryData(["account", "home"], {
+    authenticated: true,
+    user: { id: "alex", role: "member", name: "Alex", email: "alex@example.test" },
+    apps: [],
+    capabilities: [],
+    aliases: [],
+    receipts: [],
+    api_base_url: "https://example.test/v1",
+    public_base_url: "https://example.test",
+  });
+  const creation = {
+    asset_id: "home-image",
+    kind: "image",
+    prompt: "Reset Home image",
+    download_url: "/home-old.png",
+    available: true,
+  };
+  client.setQueryData(["library", "home-recent-creations"], { assets: [creation] });
+  let capture = false;
+  const commits: Array<string | null> = [];
+  render(
+    createElement(QueryClientProvider, { client },
+      createElement(Profiler, {
+        id: "home-media",
+        onRender: () => {
+          if (capture) commits.push(screen.queryByRole("img", { name: "Reset Home image" })?.getAttribute("src") ?? null);
+        },
+      }, createElement(HomePage)),
+    ),
+  );
+  fireEvent.error(screen.getByRole("img", { name: "Reset Home image" }));
+  expect(screen.queryByRole("img", { name: "Reset Home image" })).toBeNull();
+  // Let the page's other queries settle so the first captured commit is the source change.
+  await waitFor(() => expect(client.isFetching()).toBe(0));
+  capture = true;
+  act(() => {
+    client.setQueryData(["library", "home-recent-creations"], {
+      assets: [{ ...creation, download_url: "/home-new.png" }],
+    });
+  });
+  await waitFor(() => expect(commits.length).toBeGreaterThan(0));
+  expect(commits[0]).toBe("/home-new.png");
+});
 
 const row = (
   capability: string,

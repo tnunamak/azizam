@@ -1,6 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
+import { Profiler } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -100,18 +102,23 @@ const audioAsset = {
   duration_s: 125,
 };
 
-function renderLibrary() {
+function renderLibrary(onCommit: () => void = () => {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <LibraryPage />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <Profiler id="library" onRender={onCommit}>
+          <LibraryPage />
+        </Profiler>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("LibraryPage batch J provenance", () => {
@@ -134,6 +141,71 @@ describe("LibraryPage batch J provenance", () => {
   afterEach(() => {
     cleanup();
   });
+
+  test("resets failed media on the first source-change commit", async () => {
+    const commits: Array<string | null> = [];
+    let capture = false;
+    const { queryClient } = renderLibrary(() => {
+      if (capture) {
+        commits.push(screen.queryByRole("img", { name: /^Picture/ })?.getAttribute("src") ?? null);
+      }
+    });
+    const image = await screen.findByRole("img", { name: /^Picture/ });
+    fireEvent.error(image);
+    expect(screen.queryByRole("img", { name: /^Picture/ })).toBeNull();
+    capture = true;
+    act(() => {
+      queryClient.setQueriesData(
+        { predicate: (query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object" },
+        { pages: [{ assets: [{ ...assetWithReceipt, download_url: "/new-picture.png" }], models: ["image"], next_cursor: null }], pageParams: [null] },
+      );
+    });
+    await waitFor(() => expect(commits.length).toBeGreaterThan(0));
+    expect(commits[0]).toBe("/new-picture.png");
+  });
+
+  test.each(["playing", "error"] as const)(
+    "resets audio %s and measured duration on the first source-change commit",
+    async (state) => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        Response.json({ assets: [{ ...audioAsset, prompt: "Reset audio" }], models: [], next_cursor: null }),
+      );
+      const commits: Array<{ label: string | null; text: string; error: boolean }> = [];
+      let capture = false;
+      const { queryClient, container } = renderLibrary(() => {
+        if (capture) {
+          const button = document.querySelector("[data-tile-cue='playback']");
+          commits.push({
+            label: button?.getAttribute("aria-label") ?? null,
+            text: button?.textContent ?? "",
+            error: screen.queryByText("Audio unavailable") !== null,
+          });
+        }
+      });
+      await screen.findByRole("button", { name: "Play Reset audio" });
+      const audio = container.querySelector("audio")!;
+      Object.defineProperty(audio, "duration", { configurable: true, value: 333 });
+      fireEvent.loadedMetadata(audio);
+      if (state === "playing") {
+        fireEvent.play(audio);
+        expect(screen.getByRole("button", { name: "Pause Reset audio" })).toBeVisible();
+      } else {
+        fireEvent.error(audio);
+        expect(screen.getByText("Audio unavailable")).toBeVisible();
+      }
+      capture = true;
+      act(() => {
+        queryClient.setQueriesData(
+          { predicate: (query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object" },
+          { pages: [{ assets: [{ ...audioAsset, prompt: "Reset audio", download_url: "/new-audio.wav", duration_s: 45 }], models: [], next_cursor: null }], pageParams: [null] },
+        );
+      });
+      await waitFor(() => expect(commits.length).toBeGreaterThan(0));
+      expect(commits[0]).toMatchObject({ label: "Play Reset audio", error: false });
+      expect(commits[0].text).toContain("0:45");
+      expect(commits[0].text).not.toContain("5:33");
+    },
+  );
 
   test("links the request receipt and omits an absent prompt", async () => {
     renderLibrary();
