@@ -2428,7 +2428,7 @@ export default function LibraryPage() {
             <div
               role="group"
               aria-label="Creation makers"
-              className="text-muted-foreground text-badge flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full"
+              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full"
             >
               {visiblePeople.map((person) => (
                 <span key={person} className="inline-flex items-center gap-1.5">
