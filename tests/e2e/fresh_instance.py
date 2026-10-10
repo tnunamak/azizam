@@ -233,7 +233,9 @@ def run(compose):
             return process
 
         if compose:
-            project = root.name
+            # mkdtemp suffixes may contain '_', and 'name_-gateway' is not a valid
+            # Docker image reference; keep only lowercase letters, digits and '-'.
+            project = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-")
             override = root / "compose.json"
             override.write_text(json.dumps({"services": {
                 "gateway": {"build": {"context": str(source)}, "image": f"{project}-gateway",
