@@ -1109,6 +1109,33 @@ describe("Library media identity and tile playback", () => {
     expect(await screen.findByRole("dialog")).toBeVisible();
   });
 
+  test("poster video tile sets its source once, so a reload cannot abort the first play", async () => {
+    routeFetch((path) => path.includes("/poster-once/download")
+      ? Response.json({ download_url: "/poster.png" })
+      : path.startsWith("/me/api/media?")
+        ? list([{ ...picture("video-once", "Once film"), kind: "video", download_url: "/once.mp4", duration_s: 9, poster_asset_id: "poster-once" }])
+        : undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    renderLibrary();
+    const button = await screen.findByRole("button", { name: "Play Once film" });
+    const video = button.closest("article")!.querySelector("video")!;
+    expect(video).not.toHaveAttribute("src");
+    // Setting src again, even to the same value, restarts the media load and aborts play().
+    let writes = 0;
+    const observer = new MutationObserver((records) => {
+      writes += records.filter((record) => record.attributeName === "src").length;
+    });
+    observer.observe(video, { attributes: true });
+    await userEvent.click(button);
+    await screen.findByRole("button", { name: "Pause Once film" });
+    observer.takeRecords().forEach((record) => {
+      if (record.attributeName === "src") writes += 1;
+    });
+    observer.disconnect();
+    expect(video).toHaveAttribute("src", expect.stringContaining("/once.mp4"));
+    expect(writes).toBe(1);
+  });
+
   test("video tile retries rejected playback and updates its measured length", async () => {
     routeFetch((path) => path.startsWith("/me/api/media?")
       ? list([{ ...picture("retry-video", "Retry film"), kind: "video", download_url: "/retry.mp4" }])

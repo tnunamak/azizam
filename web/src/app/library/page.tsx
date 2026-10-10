@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import NextImage from "next/image";
+import { flushSync } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   useMutation,
@@ -949,8 +950,9 @@ function Preview({
               setTilePlaying(false);
               return;
             }
-            if (!video.hasAttribute("src"))
-              video.setAttribute("src", `${currentSrc}#t=0.1`);
+            // React owns the source. Setting it here as well would write src
+            // twice, and the second write reloads the media and aborts play().
+            if (!tileStarted) flushSync(() => setTileStarted(true));
             if (mediaFailed) video.load();
             try {
               video.muted = false;
