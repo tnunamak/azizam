@@ -16,7 +16,7 @@ from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
 from tests.test_settings_api import settings, OWNER
-from tests.test_video_workflow_execution import VideoWorkflowExecutionTests, _Request, _Form, _Upload
+from tests.test_video_workflow_execution import VideoWorkflowExecutionTests as _VideoWorkflowExecutionTests, _Request, _Form
 
 FORGET = {prompt_memory.NAMESPACE: {"mode": "forget"}}
 
@@ -42,7 +42,7 @@ def test_video_edit_accepts_json_extensions_field(household):
     async def form(self):
         return Form()
     with patch.object(_Request, "form", form):
-        asyncio.run(VideoWorkflowExecutionTests("test_manifest_video_workflow_runs_against_fake_comfyui").test_manifest_video_workflow_runs_against_fake_comfyui())
+        asyncio.run(_VideoWorkflowExecutionTests("test_manifest_video_workflow_runs_against_fake_comfyui").test_manifest_video_workflow_runs_against_fake_comfyui())
 
 
 @pytest.mark.parametrize("intent,extract", [
