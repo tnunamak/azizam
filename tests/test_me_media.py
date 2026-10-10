@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -186,6 +187,7 @@ class MeMediaRouterTests(unittest.TestCase):
         requested_model: str | None = "image",
         resolved_model: str | None = "local-image",
         cost_class: str | None = None,
+        status: str = "succeeded",
         owner_key_hash: str | None = None,
     ) -> None:
         receipt = RouteReceipt(
@@ -196,7 +198,7 @@ class MeMediaRouterTests(unittest.TestCase):
             app_id=app_id,
             requested_model=requested_model,
             resolved_model=resolved_model,
-            status="succeeded",
+            status=status,
             owner_key_hash=owner_key_hash,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
@@ -565,6 +567,69 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertFalse(me_media._job_in_scope(record, scope))
         self._receipt(self.app_b["id"], "req_conflicting_owner", owner_key_hash=self.cred_a["hash"])
         self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 0)
+
+    def test_usage_failed_requests_counts_period_before_receipt_limit(self) -> None:
+        now = datetime.now(timezone.utc)
+        start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+        for index, status in enumerate(("failed", "refused", "timed_out", "error", "backend_failed", "rejected")):
+            self._receipt(self.app_a["id"], f"req_failure_{index}", status=status, created_at=start)
+        self._receipt(self.app_a["id"], "req_old_failure", status="failed", created_at=start - 1)
+        for index in range(55):
+            self._receipt(self.app_a["id"], f"req_success_{index}", created_at=start + 1)
+
+        response = self.client.get("/me/api/usage/summary")
+        self.assertEqual(response.status_code, 200, response.text)
+        summary = response.json()
+        self.assertEqual(summary["requests"], 61)
+        self.assertEqual(summary["failed_requests"], 6)
+        self.assertEqual(len(summary["receipts"]), 50)
+        self.assertTrue(all(row["status"] == "succeeded" for row in summary["receipts"]))
+
+    def test_usage_failed_requests_respects_member_owner_person_and_source(self) -> None:
+        self._receipt(self.app_a["id"], "req_alice_failed", status="failed")
+        self._receipt(None, "req_alice_key_failed", status="timed_out", owner_key_hash="sha256:alice")
+        self._receipt(self.app_b["id"], "req_bob_failed", status="refused")
+        self._receipt(self.app_b["id"], "req_conflicting_failed", status="failed", owner_key_hash="sha256:alice")
+        self._receipt(None, "req_network_failed", status="timed_out")
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["failed_requests"], 2)
+        self.assertEqual(self.client.get(f"/me/api/usage/summary?person={self.bob['id']}").status_code, 403)
+        self.current_user = self.owner
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["failed_requests"], 5)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=all").json()["failed_requests"], 5)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=self").json()["failed_requests"], 0)
+        self.assertEqual(self.client.get(f"/me/api/usage/summary?person={self.alice['id']}").json()["failed_requests"], 2)
+        self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").json()["failed_requests"], 2)
+        self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").json()["failed_requests"], 1)
+
+    def test_usage_failed_requests_is_null_when_outcomes_are_not_computable(self) -> None:
+        self._receipt(self.app_a["id"], "req_known_failure", status="failed")
+        self._receipt(self.app_a["id"], "req_unknown_outcome")
+        for status in (None, "", "incomplete", "stale_incomplete", "unrecognized"):
+            with self.subTest(status=status):
+                with sqlite3.connect(str(self.receipts_db)) as conn:
+                    conn.execute(
+                        "UPDATE receipts SET receipt_json = json_set(receipt_json, '$.status', ?) WHERE request_id = ?",
+                        (status, "req_unknown_outcome"),
+                    )
+                response = self.client.get("/me/api/usage/summary")
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["requests"], 2)
+                self.assertIsNone(response.json()["failed_requests"])
+        with sqlite3.connect(str(self.receipts_db)) as conn:
+            conn.execute(
+                "UPDATE receipts SET receipt_json = json_remove(receipt_json, '$.status') WHERE request_id = ?",
+                ("req_unknown_outcome",),
+            )
+        self.assertIsNone(self.client.get("/me/api/usage/summary").json()["failed_requests"])
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["failed_requests"], 0)
+
+    def test_usage_failed_requests_is_zero_for_known_nonfailed_outcomes(self) -> None:
+        for index, status in enumerate(("succeeded", "success", "ok", "accepted", "running", "in_progress", "cancelled", "disconnected")):
+            self._receipt(self.app_a["id"], f"req_nonfailure_{index}", status=status)
+        response = self.client.get("/me/api/usage/summary")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["failed_requests"], 0)
 
     def test_usage_summary_scopes_by_user_and_owner_person_all(self) -> None:
         self._receipt(self.app_a["id"], "req_alice", cost=0.25)

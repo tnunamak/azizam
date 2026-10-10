@@ -60,6 +60,53 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test.each(["owner", "member"] as const)("Usage shows full-period failures in the fourth summary figure for %s", async (role) => {
+  renderUsage({
+    requests: 150,
+    failed_requests: 3,
+    receipts: Array.from({ length: 50 }, (_, index) => ({ request_id: `recent-${index}`, status: "succeeded" })),
+  }, undefined, {}, role);
+  const label = await screen.findByText("Failed", { selector: "dt" });
+  const stat = label.closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("3 · 2%")).toBeVisible();
+  const strip = label.closest('[data-slot="stat-strip"]')!;
+  expect(strip.querySelectorAll('[data-slot="stat"]')).toHaveLength(4);
+  expect(strip.lastElementChild).toBe(stat);
+  expect(screen.queryByRole("button", { name: /Receipt details for/ })).not.toBeInTheDocument();
+});
+
+test.each([undefined, null])("Usage keeps absent failure totals Unknown despite recent receipts: %s", async (failed) => {
+  renderUsage({
+    failed_requests: failed,
+    receipts: [{ request_id: "recent-failure", status: "failed" }],
+  });
+  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("Unknown")).toBeVisible();
+  expect(within(stat).queryByText("0 · 0%")).not.toBeInTheDocument();
+});
+
+test("Usage marks a failure count above zero with the warning badge", async () => {
+  renderUsage({ requests: 20, failed_requests: 2 });
+  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("2 · 10%")).toBeVisible();
+  const badge = stat.querySelector('[data-slot="badge"]');
+  expect(badge).toHaveTextContent("Failed");
+  expect(badge).toHaveAttribute("data-state-key", "degraded");
+});
+
+test("Usage keeps zero failures quiet", async () => {
+  renderUsage({ failed_requests: 0 });
+  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("0 · 0%")).toBeVisible();
+  expect(stat.querySelector('[data-slot="badge"]')).toBeNull();
+});
+
+test("Usage does not divide a failure share by zero", async () => {
+  renderUsage({ requests: 0, media_count: 1, failed_requests: 0 });
+  const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(stat).getByText("0 · Unknown")).toBeVisible();
+});
+
 test.each([0, 4])(
   "USAGE-01 keeps unknown paid spend visible with %i settled paid requests",
   async (paidRequests) => {

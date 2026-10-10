@@ -59,7 +59,7 @@ import {
 import { Stat, StatStrip } from "@/components/product/stat-strip";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Callout, StatusLine } from "@/components/product/status-ui";
+import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
 import {
   CapabilityIcon,
   CodeBlock,
@@ -113,6 +113,7 @@ interface UsagePerson {
 
 interface UsageSummary {
   requests: number;
+  failedRequests: number | null;
   mediaCount: number;
   remoteSpendUsd: number | null;
   spendMeasured: boolean;
@@ -430,6 +431,16 @@ function PersonFilter({
   );
 }
 
+/** "count · share", or "Unknown" when the gateway cannot say how requests ended. */
+function failedFigure(summary: UsageSummary): string {
+  if (summary.failedRequests === null) return "Unknown";
+  const share =
+    summary.requests > 0
+      ? `${Math.round((summary.failedRequests / summary.requests) * 1000) / 10}%`
+      : "Unknown";
+  return `${formatNumber(summary.failedRequests)} · ${share}`;
+}
+
 function SummaryRow({ summary }: { summary: UsageSummary }) {
   const noPaidRequests =
     summary.paidRequests === 0 && summary.unknownPaidRequests === 0 &&
@@ -473,6 +484,15 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         label="Media made"
         value={formatNumber(summary.mediaCount)}
         note="Images, video and audio"
+      />
+      <Stat
+        label="Failed"
+        value={failedFigure(summary)}
+        note={
+          summary.failedRequests ? (
+            <StateBadge state="degraded" word="Failed" />
+          ) : null
+        }
       />
     </StatStrip>
   );
@@ -1174,6 +1194,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
     : null;
   return {
     requests: number(data.requests ?? data.request_count, receipts.length),
+    failedRequests: nullableNumber(data.failed_requests),
     mediaCount: number(data.media_count ?? data.mediaCount, 0),
     remoteSpendUsd,
     spendMeasured: remoteSpendAvailable || remoteSpendUsd !== null,

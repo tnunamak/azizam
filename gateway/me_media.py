@@ -1178,7 +1178,19 @@ def _usage_summary(
     measured = 0
     paid_requests = 0
     unknown_paid_requests = 0
+    failed_requests = 0
+    outcomes_known = True
     for receipt in receipts:
+        status = receipt.get("status")
+        if not isinstance(status, str):
+            status = None
+        if status in {"failed", "error", "backend_failed", "refused", "rejected", "timed_out"}:
+            failed_requests += 1
+        elif status not in {
+            "success", "succeeded", "ok", "accepted", "running", "in_progress",
+            "cancelled", "disconnected",
+        }:
+            outcomes_known = False
         day = datetime.fromtimestamp(receipt["_stored_at"], timezone.utc).strftime("%Y-%m-%d")
         capability = _capability(receipt)
         daily = by_day.setdefault(day, {"date": day})
@@ -1259,6 +1271,7 @@ def _usage_summary(
         "schema_version": 1, "period": "month", "scope": scope_label,
         "source": source_filter, "sources": sources,
         "requests": len(receipts), "media_count": len(made),
+        "failed_requests": failed_requests if outcomes_known else None,
         "remote_spend": round(spend, 6), "remote_spend_available": measured > 0,
         "remote_spend_source": "receipt costs" if measured else "not_available",
         "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
