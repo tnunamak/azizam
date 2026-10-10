@@ -7,7 +7,6 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { ErrorState } from "@/components/product/error-state";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -79,11 +78,6 @@ export function HouseholdPromptsSection() {
         id="prompts"
         title="Prompts"
         description="Each person’s prompts are visible only to them."
-        action={
-          <Button asChild variant="ghost">
-            <Link href="/account">Your own prompts</Link>
-          </Button>
-        }
       >
         {isPending ? (
           <div
@@ -117,7 +111,15 @@ export function HouseholdPromptsSection() {
       </SettingsSection>
       <p className="text-muted-foreground text-meta mt-3">
         No Azizam screen shows anyone’s prompts to anyone else, you included.
-        You run this gateway, so you could still read its files.
+        You run this gateway, so you could still read its files. Your own choice
+        is in{" "}
+        <Link
+          href="/account"
+          className="text-foreground underline underline-offset-4"
+        >
+          Your settings
+        </Link>
+        .
       </p>
       {data ? (
         <ConfirmDialog
