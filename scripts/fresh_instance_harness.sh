@@ -134,10 +134,9 @@ admin:
       secure: false
 
 backends:
-  # tabby entry must be present with managed: false to prevent the gateway
-  # from trying to spawn a TabbyAPI subprocess (TABBY_MANAGED defaults to true
-  # when the key is absent). The host/port are placeholders; the backend will
-  # be unreachable but the gateway starts and serves all non-LLM routes.
+  # Tabby is an external service; the gateway no longer spawns TabbyAPI.
+  # TABBY_MANAGED defaults to false. The host/port are placeholders; the
+  # backend will be unreachable, but the gateway serves all non-LLM routes.
   tabby:
     name: TabbyAPI (harness placeholder -- not started)
     native_passthrough: true

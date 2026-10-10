@@ -3,8 +3,7 @@
 LiteLLM 1.86.2 runs as a separate sidecar process, so a client abort at the
 outer gateway does not by itself stop the sidecar's outbound call to a
 backend, nor the internal gateway hop behind it (see
-``docs/GATEWAY_STREAM_LIVENESS_AUDIT_2026-07-13.md`` and
-``/home/tnunamak/.tmp/gateway-reliability-0714/litellm-cancellation.md``).
+``docs/GATEWAY_STREAM_LIVENESS_AUDIT_2026-07-13.md``).
 LiteLLM's own non-stream disconnect canceller is dead code in this version,
 so this module does not rely on it.
 
