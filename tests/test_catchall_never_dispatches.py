@@ -27,6 +27,7 @@ from gateway.user_runtime import mint_user_app_key
 
 BYPASS_QUERIES = [
     "mapped_route=true",
+    "mapped%5Froute=true",
     "mapped_route=1",
     "mapped_route=yes",
     "mapped_route=on",
@@ -41,6 +42,10 @@ UNMATCHED_ROUTES = [
     ("POST", "/v1/model/load"),
     ("POST", "/v1/chat/completions/"),  # prefix match started the model loader
     ("POST", "/v1/completions/extra"),
+    ("PUT", "/v1/model/load"),
+    ("PATCH", "/not-a-route"),
+    ("DELETE", "/v1/model/unload"),
+    ("OPTIONS", "/v1/model/list"),
 ]
 
 # Known OpenAI routes behind a prefix that is not a configured path token.
@@ -154,7 +159,7 @@ def _receipt_count(gateway) -> int:
 
 def _send(gateway, method, path, *, headers=None, query=""):
     url = f"{path}?{query}" if query else path
-    kwargs = {"json": CHAT_BODY} if method == "POST" else {}
+    kwargs = {"json": CHAT_BODY} if method in {"POST", "PUT", "PATCH"} else {}
     return gateway.client.request(method, url, headers=headers or {}, **kwargs)
 
 
