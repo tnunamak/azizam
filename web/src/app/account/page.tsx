@@ -179,7 +179,11 @@ function PromptsSection() {
             <SettingRow
               label="Remember what I type"
               htmlFor="remember-prompts"
-              description="Saved with what you make."
+              description={
+                memory.remember
+                  ? "Turning it off deletes saved prompts."
+                  : "Nothing you type is kept."
+              }
               control={
                 <Switch
                   id="remember-prompts"
@@ -200,7 +204,7 @@ function PromptsSection() {
               description={
                 cap === "never"
                   ? "Creations stay in Library."
-                  : `Up to ${capLabel[cap].toLowerCase()} on this gateway.`
+                  : `Up to ${capLabel[cap].toLowerCase()} here.`
               }
               control={
                 <Select
@@ -239,7 +243,7 @@ function PromptsSection() {
               // One line on a phone too: the label truncates before the
               // control wraps under it (DESIGN: phone rows are 64).
               className="max-sm:flex-nowrap"
-              description="Removes every saved prompt now."
+              description="Deletes all of them now."
               control={
                 <Button
                   variant="outline"

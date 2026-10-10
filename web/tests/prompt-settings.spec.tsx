@@ -115,6 +115,10 @@ describe("Your settings: prompts", () => {
       name: "Remember what I type",
     });
     expect(toggle).toBeChecked();
+    // The row says what turning it off does before anyone touches it.
+    expect(
+      screen.getByText("Turning it off deletes saved prompts."),
+    ).toBeVisible();
     await user.click(toggle);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Your saved prompts are deleted now");
@@ -140,6 +144,7 @@ describe("Your settings: prompts", () => {
     mocks.promptMemory.mockResolvedValue(member());
     mocks.deleteSavedPrompts.mockResolvedValue({ deleted_prompts: 3 });
     wrap(<AccountPage />);
+    expect(await screen.findByText("Deletes all of them now.")).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "Delete…" }));
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", {
@@ -184,9 +189,7 @@ describe("Your settings: prompts", () => {
       ),
     );
     wrap(<AccountPage />);
-    expect(
-      await screen.findByText("Up to 3 months on this gateway."),
-    ).toBeVisible();
+    expect(await screen.findByText("Up to 3 months here.")).toBeVisible();
     const select = screen.getByRole("combobox", {
       name: "Forget prompts after",
     });
@@ -235,6 +238,13 @@ describe("Settings: the household's prompt rules", () => {
       revision: "r2",
     });
     wrap(<HouseholdPromptsSection />);
+    // The kill switch's row leads with the deletion: on a phone the rest
+    // of the line truncates.
+    expect(
+      await screen.findByText(
+        "Deletes saved prompts and wins over everyone’s own choice.",
+      ),
+    ).toBeVisible();
     await user.click(
       await screen.findByRole("switch", { name: "Never keep prompts" }),
     );

@@ -496,9 +496,7 @@ test.describe("Settings: the household's rules", () => {
 
     const member = await as(browser, seed.member_email, baseURL!);
     await member.page.goto("/ui/account/");
-    await expect(
-      member.page.getByText("Up to 3 months on this gateway."),
-    ).toBeVisible();
+    await expect(member.page.getByText("Up to 3 months here.")).toBeVisible();
     await member.page
       .getByRole("combobox", { name: "Forget prompts after" })
       .click();

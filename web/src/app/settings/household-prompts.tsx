@@ -177,7 +177,7 @@ function Rows({
       <SettingRow
         label="Never keep prompts"
         htmlFor="never-keep-prompts"
-        description="Overrides everyone’s choice and deletes saved prompts."
+        description="Deletes saved prompts and wins over everyone’s own choice."
         control={
           <Switch
             id="never-keep-prompts"
@@ -194,7 +194,7 @@ function Rows({
       <SettingRow
         label="Remember prompts for new people"
         htmlFor="default-remember-prompts"
-        description="Their starting choice. They can change it."
+        description="They can change it later."
         control={
           <Switch
             id="default-remember-prompts"
