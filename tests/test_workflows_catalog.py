@@ -371,7 +371,8 @@ class WorkflowsCatalogTests(unittest.TestCase):
         if face_record.manifest.get("summary"):
             self.assertNotIn("technical_notes", face)
         else:
-            self.assertIn("Objective likeness check", face["technical_notes"])
+            self.assertEqual(face["technical_notes"], face_record.manifest["description"])
+            self.assertNotIn("ArcFace", face["technical_notes"])
 
     def test_asset_inputs_and_outputs_carry_the_meaning_the_manifest_declares(self) -> None:
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
