@@ -110,10 +110,10 @@ describe("catalog polish", () => {
     ]);
     expect(await screen.findByRole("heading", { name: "Fast" })).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Images", level: 2 }),
+      screen.getByRole("heading", { name: "Make a picture", level: 2 }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("heading", { name: "Images", level: 3 }),
+      screen.queryByRole("heading", { name: "Make a picture", level: 3 }),
     ).toBeNull();
     expect(
       screen.getByRole("button", { name: "Copy model name fast" }),
@@ -239,7 +239,7 @@ describe("catalog polish", () => {
   it("omits a cost line for local catalog rows", async () => {
     renderCatalog([row("local-image", "image.generate")]);
 
-    const card = await screen.findByRole("heading", { name: "Images", level: 2 });
+    const card = await screen.findByRole("heading", { name: "Make a picture", level: 2 });
     const rowArticle = card.closest("tr");
     expect(within(rowArticle!).queryByText("Free (your hardware)")).toBeNull();
     expect(within(rowArticle!).queryByText("No provider charge")).toBeNull();

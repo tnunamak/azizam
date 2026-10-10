@@ -269,7 +269,7 @@ describe("models visible-text search", () => {
       target: { value: query },
     });
     expect(screen.getByRole("heading", { name: "Lantern" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Conversation", level: 2 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Chat", level: 2 })).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy model name opaque-17" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Copy model name default" })).toBeNull();
   });
@@ -435,7 +435,7 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
     expect(
-      await screen.findByRole("heading", { name: "Audio", level: 2 }),
+      await screen.findByRole("heading", { name: "Make music or sounds", level: 2 }),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "Speech" })).toBeNull();
   });
@@ -516,7 +516,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeInTheDocument();
     expect(within(chatGroup).queryByText("image", { exact: true })).toBeNull();
     // Decisions read as the task they do, the name Try uses.
-    for (const label of ["Images", "Choose an option", "Speech"]) {
+    for (const label of ["Make a picture", "Choose an option", "Read text aloud"]) {
       expect(
         screen.getByRole("heading", { name: label, level: 2 }),
       ).toBeVisible();
@@ -809,8 +809,8 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    expect(await screen.findByRole("heading", { name: "Music" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Speech" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Make music" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Read text aloud" })).toBeVisible();
     expect(screen.queryByText("Music (ACE-Step XL Turbo)")).toBeNull();
     expect(screen.queryByText("Chatterbox (speech)")).toBeNull();
   });
@@ -839,7 +839,7 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    expect(await screen.findByRole("heading", { name: "Audio" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Make music or sounds" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Speech" })).toBeNull();
   });
 
@@ -1594,5 +1594,114 @@ describe("models query-string deep links", () => {
     expect(screen.getByRole("button", { name: "All models" })).toHaveAttribute(
       "aria-expanded", "true",
     );
+  });
+});
+
+
+describe("task-first catalog rows", () => {
+  it("hides wholly empty cost and status columns and explains local cost once", async () => {
+    renderModels(catalog([row(), row({ id: "fast" })]));
+    const table = within(await screen.findByRole("table", { name: "Available model aliases" }));
+    expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
+    expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
+    expect(table.queryByRole("columnheader", { name: "Use" })).toBeNull();
+    expect(table.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+    expect(screen.getAllByText("Local models without a listed cost: Free (runs here)")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+    expect(screen.getAllByText("Local models without a listed cost: Free (runs here)")).toHaveLength(1);
+    expect(table.getAllByRole("button", { name: "Details" })).toHaveLength(2);
+  });
+
+  it("keeps mixed cost and status columns aligned and removes them after filtering", async () => {
+    renderModels(catalog([
+      row(),
+      row({
+        id: "remote-paid",
+        locality: "remote",
+        cost: { kind: "paid", price: "$1" },
+        availability: { ...row().availability, status: "busy" },
+      }),
+    ]));
+    const table = within(await screen.findByRole("table", { name: "Available model aliases" }));
+    expect(table.getByRole("columnheader", { name: "Cost" })).toBeInTheDocument();
+    expect(table.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+    const rows = table.getAllByRole("row");
+    expect(within(rows[1]).getAllByRole("cell")).toHaveLength(6);
+    expect(within(rows[2]).getAllByRole("cell")).toHaveLength(6);
+    expect(within(rows[2]).getByText("Paid · $1")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
+    expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
+    expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
+  });
+
+  it.each(["unknown", "not_measured"] as const)(
+    "hides empty %s summary status in aliases and exact models without claiming local cost",
+    async (status) => {
+      const remote = row({
+        locality: "remote",
+        availability: { ...row().availability, measured: false, status: status as CatalogRow["availability"]["status"] },
+      });
+      renderModels(catalog([remote], [{ ...remote, id: "exact", alias: false, object: "model_catalog.model" }]));
+      await screen.findByRole("button", { name: "Copy model name chat" });
+      fireEvent.click(screen.getByRole("button", { name: "All models" }));
+      for (const name of ["Available model aliases", "All models"]) {
+        const table = within(screen.getByRole("table", { name }));
+        expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
+        expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
+      }
+      expect(screen.queryByText("Local models without a listed cost: Free (runs here)")).toBeNull();
+    },
+  );
+
+  it("leads primary, alternative and exact rows with shared task names above the alias", async () => {
+    const speech = row({
+      id: "voice",
+      title: "Voice",
+      capability: "speech",
+      capability_title: "Speech",
+    });
+    renderModels(catalog([speech, { ...speech, id: "voice-fast" }], [
+      { ...speech, id: "voice-exact", alias: false, object: "model_catalog.model" },
+    ]));
+    await screen.findByRole("button", { name: "Copy model name voice" });
+    fireEvent.click(screen.getByRole("button", { name: "1 more Speech models" }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    for (const id of ["voice", "voice-fast", "voice-exact"]) {
+      const copy = screen.getByRole("button", { name: `Copy model name ${id}` });
+      const firstCell = copy.closest("tr")!.querySelector("td")!;
+      expect(firstCell).toContainElement(copy);
+      expect(firstCell).toHaveTextContent("Read text aloud");
+      expect(firstCell).toHaveTextContent(id);
+    }
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: "Read text aloud" },
+    });
+    expect(screen.getByRole("button", { name: "Copy model name voice" })).toBeVisible();
+  });
+
+  it("uses two phone lines with inline cost and status in every catalog row", async () => {
+    const paid = row({
+      locality: "remote",
+      cost: { kind: "paid", price: "$1" },
+      availability: { ...row().availability, status: "busy" },
+    });
+    renderModels(catalog([paid, { ...paid, id: "alternative" }], [
+      { ...paid, id: "exact", alias: false, object: "model_catalog.model" },
+    ]));
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    for (const id of ["chat", "alternative", "exact"]) {
+      const copy = screen.getByRole("button", { name: `Copy model name ${id}` });
+      const modelRow = copy.closest("tr")!;
+      expect(modelRow).toHaveClass("max-sm:grid", "max-sm:grid-rows-2", "max-sm:h-(--row-phone-2)");
+      expect(copy.closest("td")).toHaveClass("max-sm:contents");
+      expect(copy.parentElement).toHaveClass("max-sm:row-start-2");
+      expect(within(modelRow).getByText("Paid · $1")).toHaveClass("max-sm:row-start-2");
+      const cells = within(modelRow).getAllByRole("cell");
+      expect(cells[cells.length - 2]).toHaveClass("max-sm:row-start-2");
+      expect(within(modelRow).getByRole("button", { name: "Details" })).toBeInTheDocument();
+    }
   });
 });

@@ -191,11 +191,32 @@ const tagLabels: Record<ModelTag, string> = {
   "file-input": "File input",
 };
 
-// On a phone a catalog row is a wrapped group of its cells, not seven columns
-// that scroll sideways: the name, its copy button and its actions stay in view.
+// The same cells form a task line and an inline alias/cost/status line on phones.
 const phoneRowClass =
-  "max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-1 max-sm:px-3 max-sm:py-2";
-const phoneCellClass = "max-sm:h-auto! max-sm:p-0! max-sm:empty:hidden";
+  "max-sm:relative max-sm:has-[input]:h-auto max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] max-sm:grid-rows-2 max-sm:h-(--row-phone-2) max-sm:items-center max-sm:gap-x-2 max-sm:px-4 max-sm:py-2";
+const phoneCellClass = "max-sm:h-auto! max-sm:p-0! max-sm:min-w-0";
+const phoneTaskClass = "flex min-w-0 items-center gap-3 max-sm:col-span-3 max-sm:row-start-1 max-sm:pr-24";
+const phoneCostClass = "max-sm:col-start-2 max-sm:row-start-2 max-sm:truncate max-sm:text-left";
+const phoneStatusClass = "max-sm:col-start-3 max-sm:row-start-2";
+const phoneActionsClass = "max-sm:absolute max-sm:right-2 max-sm:top-0";
+
+const rowTaskNames: Record<ProductCapability, string> = {
+  chat: taskNames.chat,
+  image: taskNames.image,
+  video: taskNames.video,
+  music: taskNames.music,
+  sfx: taskNames.sound_effects,
+  speech: taskNames.speech,
+  audio: taskNames.audio,
+  transcribe: taskNames.transcribe,
+  decide: taskNames.decisions,
+  embed: taskNames.embeddings,
+  rerank: taskNames.reranking,
+};
+
+function rowTaskName(row: CatalogRow): string {
+  return rowTaskNames[primaryCapability(row)] ?? primaryCapabilityLabel(row);
+}
 
 // Inputs -> outputs and the chat capability tags /v1/models reports.
 function ModelFacts({
@@ -356,6 +377,11 @@ function availabilityState(row: CatalogRow): AvailabilityState {
   return row.availability.available ? "ready" : "unavailable";
 }
 
+// Quiet summary states render no status value in catalog rows.
+function hasSummaryStatus(row: CatalogRow): boolean {
+  return !["ready", "unknown", "not_measured"].includes(availabilityState(row));
+}
+
 function evidenceLabel(row: CatalogRow): string | undefined {
   const source = row.availability.evidence?.source;
   if (row.availability.measured) {
@@ -437,7 +463,15 @@ function CopyModelName({ row }: { row: CatalogRow }) {
     }
   }
   return (
-    <div className="min-w-0">
+    <div className={cn(
+      "min-w-0 max-sm:col-start-1",
+      copyError
+        ? "max-sm:col-span-3 max-sm:row-start-3"
+        : "max-sm:row-start-2",
+      !copyError && !costLabel(row) && (
+        hasSummaryStatus(row) ? "max-sm:col-span-2" : "max-sm:col-span-3"
+      ),
+    )}>
       <button
         type="button"
         onClick={(event) => {
@@ -445,7 +479,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
           void copyName();
         }}
         aria-label={`Copy model name ${row.id}`}
-        className="bg-muted hover:bg-muted/80 flex h-8 max-sm:min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-control px-3 text-left font-mono text-meta transition"
+        className="text-muted-foreground bg-muted hover:bg-muted/80 flex h-8 max-sm:min-h-11 sm:-my-1 max-sm:-my-3 max-sm:bg-transparent max-sm:px-0 max-w-full min-w-0 items-center justify-between gap-2 rounded-control px-3 text-left font-mono text-meta transition"
       >
         <code className="truncate">{row.id}</code>
         {copied ? (
@@ -483,6 +517,7 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     titleFor(row),
     descriptionFor(row),
     primaryCapabilityLabel(row),
+    rowTaskName(row),
     ...(row.use_names ?? []),
     row.recommended_model,
     row.provider,
@@ -563,28 +598,36 @@ function Availability({
 function AliasOptionRow({
   row,
   onDetail,
+  showCost,
+  showStatus,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
+  showCost: boolean;
+  showStatus: boolean;
 }) {
   return (
     <TableRow onClick={() => onDetail(row)} className={cn("cursor-pointer", phoneRowClass)}>
-      <TableCell className="h-(--row-2) py-1! max-sm:hidden" />
-      <TableCell className={cn("h-(--row-2) py-1!", phoneCellClass, "max-sm:w-full")}>
+      <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
+        <h3 className={cn("text-body font-medium", phoneTaskClass)} title={rowTaskName(row)}>
+          <span className="truncate">{rowTaskName(row)}</span>
+        </h3>
+        <CopyModelName row={row} />
+      </TableCell>
+      <TableCell className={cn("h-(--row-2) py-1!", phoneCellClass, "max-sm:hidden")}>
         <h3 className="text-body font-medium">{titleFor(row) ?? ""}</h3>
         <p className="text-muted-foreground text-meta mt-0.5 max-w-80 truncate" title={descriptionFor(row)}>
           {descriptionFor(row)}
         </p>
       </TableCell>
-      <TableCell className={cn("py-1!", phoneCellClass)}><ModelFacts row={row} /></TableCell>
-      <TableCell className={cn("py-1!", phoneCellClass)}><CopyModelName row={row} /></TableCell>
-      <TableCell numeric className={cn("py-1!", phoneCellClass)}>{costLabel(row) ?? ""}</TableCell>
-      <TableCell className={cn("py-1!", phoneCellClass)}>
-        {availabilityState(row) !== "ready" && (
+      <TableCell className="py-1! max-sm:hidden"><ModelFacts row={row} /></TableCell>
+      {showCost && <TableCell numeric title={costLabel(row)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(row)}</TableCell>}
+      {showStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
+        {hasSummaryStatus(row) && (
           <Availability row={row} showReason={false} />
         )}
-      </TableCell>
-      <TableCell className={cn("py-1!", phoneCellClass, "max-sm:ml-auto")}>
+      </TableCell>}
+      <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
         <Button
           variant="ghost"
           size="icon"
@@ -605,10 +648,14 @@ function CapabilityRow({
   rows,
   onDetail,
   searching,
+  showCost,
+  showStatus,
 }: {
   rows: CatalogRow[];
   onDetail: (row: CatalogRow) => void;
   searching: boolean;
+  showCost: boolean;
+  showStatus: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   // An unmarked catalog has a neutral first option, never an inferred recommendation.
@@ -618,28 +665,28 @@ function CapabilityRow({
   const alternativesId = `model-alternatives-${primaryCapability(primary)}`;
   return (
     <>
-    <TableBody aria-label={`${primaryCapabilityLabel(primary)} models`}>
+    <TableBody className="max-sm:block" aria-label={`${primaryCapabilityLabel(primary)} models`}>
       <TableRow className={cn("cursor-pointer", phoneRowClass)} onClick={() => onDetail(primary)}>
-        <TableCell className={cn("py-1!", phoneCellClass)}>
-          <div className="flex items-center gap-3">
+        <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
+          <div className={phoneTaskClass}>
             <CatalogIcon row={primary} />
-            <h2 className="text-body font-medium">
-              {primaryCapabilityLabel(primary)}
+            <h2 className="text-body truncate font-medium" title={rowTaskName(primary)}>
+              {rowTaskName(primary)}
             </h2>
           </div>
+          <CopyModelName row={primary} />
         </TableCell>
-        <TableCell className={cn("py-1!", phoneCellClass)}>
+        <TableCell className="py-1! max-sm:hidden">
           <h3 className="text-body font-medium">{titleFor(primary)}</h3>
         </TableCell>
-        <TableCell className={cn("py-1!", phoneCellClass)}><ModelFacts row={primary} /></TableCell>
-        <TableCell className={cn("py-1!", phoneCellClass)}><CopyModelName row={primary} /></TableCell>
-        <TableCell numeric className={cn("py-1!", phoneCellClass)}>{costLabel(primary)}</TableCell>
-        <TableCell className={cn("py-1!", phoneCellClass)}>
-          {availabilityState(primary) !== "ready" && (
+        <TableCell className="py-1! max-sm:hidden"><ModelFacts row={primary} /></TableCell>
+        {showCost && <TableCell numeric title={costLabel(primary)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(primary)}</TableCell>}
+        {showStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
+          {hasSummaryStatus(primary) && (
             <Availability row={primary} showReason={false} />
           )}
-        </TableCell>
-        <TableCell className={cn("py-1!", phoneCellClass, "max-sm:ml-auto")}>
+        </TableCell>}
+        <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
           <div className="flex items-center justify-end gap-2">
             {alternatives.length > 0 && (
               <Button
@@ -653,7 +700,7 @@ function CapabilityRow({
                   setExpanded((value) => !value);
                 }}
               >
-                {alternatives.length} more
+                <span className="max-sm:sr-only">{alternatives.length} more</span>
                 <ChevronDown
                   aria-hidden="true"
                   className={cn("size-4 transition", open && "rotate-180")}
@@ -676,9 +723,9 @@ function CapabilityRow({
       </TableRow>
     </TableBody>
       {open && alternatives.length > 0 && (
-        <TableBody id={alternativesId} className="bg-muted/20">
+        <TableBody id={alternativesId} className="bg-muted/20 max-sm:block">
           {alternatives.map((row) => (
-            <AliasOptionRow key={row.id} row={row} onDetail={onDetail} />
+            <AliasOptionRow key={row.id} row={row} onDetail={onDetail} showCost={showCost} showStatus={showStatus} />
           ))}
         </TableBody>
       )}
@@ -950,6 +997,14 @@ export default function ModelsClient() {
       ),
     }))
     .filter((group) => group.rows.length > 0);
+  const aliasRows = groupedAliases.flatMap((group) => group.rows);
+  const aliasHasCost = aliasRows.some((row) => Boolean(costLabel(row)));
+  const aliasHasStatus = aliasRows.some((row) => hasSummaryStatus(row));
+  const modelHasCost = modelRows.some((row) => Boolean(costLabel(row)));
+  const modelHasStatus = modelRows.some(hasSummaryStatus);
+  const showLocalCostNote = [...aliasRows, ...(tableOpen ? modelRows : [])].some(
+    (row) => row.locality === "local" && !costLabel(row),
+  );
 
   return (
     <div className="space-y-(--space-section)">
@@ -1047,6 +1102,9 @@ export default function ModelsClient() {
               </div>
             </div>
           </section>
+          {showLocalCostNote && (
+            <p className="text-muted-foreground text-meta">Local models without a listed cost: Free (runs here)</p>
+          )}
           {groupedAliases.length === 0 ? (
             <EmptyState
               icon={Search}
@@ -1086,16 +1144,15 @@ export default function ModelsClient() {
               aria-label="Available model aliases"
               className="bg-card overflow-hidden rounded-panel border"
             >
-              <Table aria-label="Available model aliases">
+              <Table aria-label="Available model aliases" className="max-sm:block">
                 <TableHeader className="max-sm:hidden">
                   <TableRow>
-                    <TableHead>Capability</TableHead>
+                    <TableHead>Task and model name</TableHead>
                     <TableHead>Model</TableHead>
                     <TableHead>Model facts</TableHead>
-                    <TableHead>Model name</TableHead>
-                    <TableHead numeric>Cost</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Use</TableHead>
+                    {aliasHasCost && <TableHead numeric>Cost</TableHead>}
+                    {aliasHasStatus && <TableHead>Status</TableHead>}
+                    <TableHead><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 {groupedAliases.map((group) => (
@@ -1104,6 +1161,8 @@ export default function ModelsClient() {
                     rows={group.rows}
                     onDetail={selectDetail}
                     searching={Boolean(query.trim())}
+                    showCost={aliasHasCost}
+                    showStatus={aliasHasStatus}
                   />
                 ))}
               </Table>
@@ -1126,45 +1185,44 @@ export default function ModelsClient() {
             </button>
             {tableOpen && (
               <div className="overflow-x-auto rounded-panel border">
-                <Table aria-label="All models">
-                  <TableHeader>
+                <Table aria-label="All models" className="max-sm:block">
+                  <TableHeader className="max-sm:hidden">
                     <TableRow>
-                      <TableHead>Model</TableHead>
+                      <TableHead>Task and model name</TableHead>
                       <TableHead>Capability</TableHead>
                       <TableHead>Engine or provider</TableHead>
-                      <TableHead numeric>Cost</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Use</TableHead>
+                      {modelHasCost && <TableHead numeric>Cost</TableHead>}
+                      {modelHasStatus && <TableHead>Status</TableHead>}
+                      {modelRows.length > 0 && <TableHead><span className="sr-only">Actions</span></TableHead>}
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
+                  <TableBody className="max-sm:block">
                     {modelRows.map((row) => (
                       <TableRow
                         key={row.id}
                         className={cn(
-                          "cursor-pointer max-sm:h-(--row-phone-1)",
-                          (row.tags?.length || (row.architecture?.input_modalities?.length && row.architecture?.output_modalities?.length))
-                            ? "h-(--row-2) max-sm:h-(--row-phone-2)"
-                            : "h-(--row-1)",
+                          "cursor-pointer h-(--row-2)",
+                          phoneRowClass,
                         )}
                         onClick={() => selectDetail(row)}
                       >
-                        <TableCell className="text-body py-1! font-medium">
-                          <div className="flex items-center gap-3">
-                            {titleFor(row) && <span>{titleFor(row)}</span>}
-                            <CopyModelName row={row} />
+                        <TableCell className={cn("py-1! max-sm:contents", phoneCellClass)}>
+                          <div className={phoneTaskClass}>
+                            <span className="text-body truncate font-medium" title={rowTaskName(row)}>{rowTaskName(row)}</span>
                           </div>
+                          <CopyModelName row={row} />
                         </TableCell>
-                        <TableCell className="py-1!">
-                          {primaryCapabilityLabel(row)}
+                        <TableCell className="py-1! max-sm:hidden">
+                          {titleFor(row) && <><span>{titleFor(row)}</span>{" · "}</>}
+                          <span>{primaryCapabilityLabel(row)}</span>
                           <ModelFacts row={row} className="mt-1" />
                         </TableCell>
-                        <TableCell className="py-1!">{summaryEngineLabel(row)}</TableCell>
-                        <TableCell numeric className="py-1!">{costLabel(row)}</TableCell>
-                        <TableCell className="py-1!">
-                          <Availability row={row} showReason={false} />
-                        </TableCell>
-                        <TableCell className="py-1!">
+                        <TableCell className="py-1! max-sm:hidden">{summaryEngineLabel(row)}</TableCell>
+                        {modelHasCost && <TableCell numeric title={costLabel(row)} className={cn("py-1!", phoneCellClass, phoneCostClass)}>{costLabel(row)}</TableCell>}
+                        {modelHasStatus && <TableCell className={cn("py-1!", phoneCellClass, phoneStatusClass)}>
+                          {hasSummaryStatus(row) && <Availability row={row} showReason={false} />}
+                        </TableCell>}
+                        <TableCell className={cn("py-1!", phoneCellClass, phoneActionsClass)}>
                           <Button
                             variant="outline"
                             size="sm"
