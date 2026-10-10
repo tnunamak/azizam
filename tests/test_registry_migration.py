@@ -3,7 +3,6 @@
 Covers:
 - _is_chat_capable_native_backend: filtering criteria
 - _build_llm_backend_hosts (via LLM_BACKEND_HOSTS derivation)
-- backend_for_host: registry fallback instead of literal "kobold"
 - _highest_priority_chat_backend: priority ordering
 - vision_capable_llm_backends: membership + ordering
 - check_service_health: reads health_endpoint from config["backends"]
@@ -280,31 +279,6 @@ class TestVisionCapableLlmBackends(unittest.TestCase):
         result = self._call(backends)
         self.assertIn("tabby", result)
         self.assertNotIn("kobold", result)
-
-
-# ---------------------------------------------------------------------------
-# backend_for_host
-# ---------------------------------------------------------------------------
-
-class TestBackendForHost(unittest.TestCase):
-    """backend_for_host returns the service id for a known host URL, else None."""
-
-    def _call(self, host: str, llm_hosts: dict) -> str | None:
-        with patch.object(proxy, "LLM_BACKEND_HOSTS", llm_hosts):
-            return proxy.backend_for_host(host)
-
-    def test_tabby_host_returns_tabby(self) -> None:
-        hosts = {"tabby": "http://127.0.0.1:5050", "kobold": "http://127.0.0.1:5051"}
-        self.assertEqual(self._call("http://127.0.0.1:5050", hosts), "tabby")
-
-    def test_kobold_host_returns_kobold(self) -> None:
-        hosts = {"tabby": "http://127.0.0.1:5050", "kobold": "http://127.0.0.1:5051"}
-        self.assertEqual(self._call("http://127.0.0.1:5051", hosts), "kobold")
-
-    def test_unknown_host_returns_none(self) -> None:
-        hosts = {"tabby": "http://127.0.0.1:5050"}
-        result = self._call("http://127.0.0.1:9999", hosts)
-        self.assertIsNone(result)
 
 
 # ---------------------------------------------------------------------------

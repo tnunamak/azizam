@@ -506,11 +506,6 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "not_found")
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
-    def test_backend_model_passthrough_is_classified_as_unmapped(self) -> None:
-        self.assertTrue(proxy._should_return_not_found_before_backend("/v1/model"))
-        self.assertTrue(proxy._should_return_not_found_before_backend("/v1/model/load"))
-        self.assertTrue(proxy._should_return_not_found_before_backend("/tabby/v1/model"))
-
     def test_unmapped_non_v1_path_returns_404_not_backend_passthrough(self) -> None:
         with patch.object(proxy, "AUTH_ENABLED", False):
             response = self.client.get("/tabby/v1/model")

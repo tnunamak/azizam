@@ -1443,6 +1443,8 @@ auth:
   #
   # 3) Per-device path tokens — the URL path IS the credential, e.g. base URL
   #    https://host/tok_livingroom/v1 . Each token is independently revocable.
+  #    NOT ROUTED: no public route accepts a token prefix, so every
+  #    /<token>/... request authenticates and then gets 404. Use an App key.
   #      path_tokens:
   #        tok_livingroom: living-room-speaker
   #        tok_workshop: workshop-pi

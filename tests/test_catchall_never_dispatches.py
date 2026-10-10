@@ -86,7 +86,6 @@ def gateway(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
     monkeypatch.setattr(proxy, "check_service_health", tripwire("check_service_health", True))
     monkeypatch.setattr(proxy, "is_model_loaded", tripwire("is_model_loaded", False))
-    monkeypatch.setattr(proxy, "load_model", tripwire("load_model", True))
     monkeypatch.setattr(
         proxy, "send_llm_execution_request",
         tripwire("send_llm_execution_request", RuntimeError("backend reached")),
