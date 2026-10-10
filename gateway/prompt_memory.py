@@ -465,6 +465,39 @@ def mark_person_erasure(
         conn.close()
 
 
+def _recorded_erasure_cutoff(conn: sqlite3.Connection, person_id: str) -> int:
+    changes = [0]
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (ERASURE_CUTOFF_TABLE,)).fetchone():
+        row = conn.execute(f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?",
+                           (person_id,)).fetchone()
+        if row:
+            changes.append(int(row[0]))
+    preference = conn.execute(
+        "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
+    ).fetchone()
+    if preference is not None and not preference[0]:
+        changes.append(int(preference[1] or 0))
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+        access = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?",
+                              (person_id,)).fetchone()
+        changes.extend(int(value) for value in (access or ()) if value is not None)
+    return max(changes)
+
+
+def recorded_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> int:
+    """Read durable erasure intent, including settings whose cleanup has not started."""
+    if not person_id:
+        raise ValueError("person_id is required")
+    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+                           timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        conn.execute("BEGIN")
+        return _recorded_erasure_cutoff(conn, person_id)
+    finally:
+        conn.close()
+
+
 def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> int:
     """Return the person's cutoff after raising it to when memory went off.
 
@@ -485,21 +518,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
             f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
         ).fetchone()
         current = int(row[0]) if row else 0
-        changes = []
-        # A missing row means no prompt was ever written: put() creates it first.
-        preference = conn.execute(
-            "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
-        ).fetchone()
-        if preference is not None and not preference[0]:
-            changes.append(int(preference[1] or 0))
-        if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
-        ).fetchone() is not None:
-            access = conn.execute(
-                "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
-            ).fetchone()
-            changes.extend(int(value) for value in (access or ()) if value is not None)
-        cutoff = max([current, *changes])
+        cutoff = _recorded_erasure_cutoff(conn, person_id)
         if cutoff > current:
             conn.execute(
                 f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,cutoff_at) VALUES(?,?) "

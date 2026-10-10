@@ -20125,8 +20125,7 @@ def _prompt_purge_status(person_id: str) -> dict[str, Any]:
         if person_id == "*":
             cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path) or 0
         else:
-            with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
-                cutoff = policy["forgot_before"]
+            cutoff = prompt_memory.recorded_erasure_cutoff(person_id, admin_path=ADMIN_STORE.path)
         if cutoff > _prompt_purge_covered(person_id):
             return {"pending": True, "retry_scheduled": True,
                     "metadata_stripping": {"status": "retrying", "last_error": "cleanup_not_queued"}}

@@ -437,17 +437,18 @@ def test_spool_failure_keeps_get_pending_and_retries_after_reenable(hh, monkeypa
     assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
 
 
-def test_get_reports_unqueued_erasure_intent(hh, monkeypatch):
+@pytest.mark.parametrize("failed_step", ["prune_person_before", "mark_person_erasure"])
+def test_get_reports_unqueued_erasure_intent(hh, monkeypatch, failed_step):
     person = hh.robin["id"]
     _legacy_file(hh)
-    real_prune = prompt_memory.prune_person_before
-    monkeypatch.setattr(prompt_memory, "prune_person_before", lambda *_a, **_k: (_ for _ in ()).throw(OSError("fixture DB failure")))
+    real_step = getattr(prompt_memory, failed_step)
+    monkeypatch.setattr(prompt_memory, failed_step, lambda *_a, **_k: (_ for _ in ()).throw(OSError("fixture DB failure")))
     client = _me_client(hh)
     assert client.put("/me/api/prompt-memory", json={"remember": False, "retention": "never"}).status_code == 202
     status = client.get("/me/api/prompt-memory").json()["prompt_purge"]
     assert status["pending"] is True
     assert status["metadata_stripping"]["last_error"] == "cleanup_not_queued"
-    monkeypatch.setattr(prompt_memory, "prune_person_before", real_prune)
+    monkeypatch.setattr(prompt_memory, failed_step, real_step)
     proxy._maintain_prompt_memory()
     assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
 
