@@ -2,7 +2,7 @@
 
 Workflow `video.generate.minimax-h3-long` (manifest `manifests/workflows/video-minimax-h3-long.yml`).
 
-## Notes moved from the manifest — 2026-10-10
+## Notes moved from the manifest (2026-10-10)
 
 ### Description
 

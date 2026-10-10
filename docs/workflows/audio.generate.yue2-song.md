@@ -2,7 +2,7 @@
 
 Workflow `audio.generate.yue2-song` (manifest `manifests/workflows/yue2-song.yml`).
 
-## Notes moved from the manifest — 2026-10-10
+## Notes moved from the manifest (2026-10-10)
 
 ### Description
 

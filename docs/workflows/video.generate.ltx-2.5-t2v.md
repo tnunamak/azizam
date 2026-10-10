@@ -2,7 +2,7 @@
 
 Workflow `video.generate.ltx-2.5-t2v` (manifest `manifests/workflows/video-ltx-2.5-t2v.yml`).
 
-## Notes moved from the manifest — 2026-10-10
+## Notes moved from the manifest (2026-10-10)
 
 ### Description
 

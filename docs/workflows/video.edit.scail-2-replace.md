@@ -2,7 +2,7 @@
 
 Workflow `video.edit.scail-2-replace` (manifest `manifests/workflows/video-scail-2-replace.yml`).
 
-## Notes moved from the manifest — 2026-10-10
+## Notes moved from the manifest (2026-10-10)
 
 ### Description
 

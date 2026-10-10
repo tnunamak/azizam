@@ -5,8 +5,7 @@ id: video.edit.bernini-r-remix
 intent: video.edit
 display_name: Bernini-R Remix
 purpose: Edit a video from an instruction
-description: >-
-  Prompt-driven video editing (remix): source video + edit instruction -> edited video (Wan 2.2 14B Bernini-R, Q4_K_M GGUF high+low, lightx2v turbo 6 steps). Approximate edit, not frame-exact. 3.4 s 832x480 = ~460 s warm. Apache-2.0.
+description: Change a video by describing the edit you want. The result is close to your request, not exact.
 source: local
 trusted: true
 typical_seconds: 480

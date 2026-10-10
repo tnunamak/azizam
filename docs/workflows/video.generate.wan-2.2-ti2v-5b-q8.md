@@ -2,7 +2,7 @@
 
 Workflow `video.generate.wan-2.2-ti2v-5b-q8` (manifest `manifests/workflows/video-wan-2.2-ti2v-5b-q8.yml`).
 
-## Notes moved from the manifest — 2026-10-10
+## Notes moved from the manifest (2026-10-10)
 
 ### Description
 
