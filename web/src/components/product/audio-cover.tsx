@@ -160,6 +160,8 @@ export function DayChip({
  */
 export function AudioFace({
   peaksKey,
+  coverSeed,
+  title,
   src,
   visible,
   center,
@@ -167,6 +169,9 @@ export function AudioFace({
   className,
 }: {
   peaksKey: string;
+  /** Decorative identity only; never presented as measured audio peaks. */
+  coverSeed?: string;
+  title?: string;
   src?: string | null;
   visible: boolean;
   center?: ReactNode;
@@ -175,15 +180,34 @@ export function AudioFace({
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
+  let seed = 2166136261;
+  for (const character of coverSeed ?? "") {
+    seed = Math.imul(seed ^ character.charCodeAt(0), 16777619) >>> 0;
+  }
+  const cover = coverSeed === undefined
+    ? null
+    : Array.from({ length: 24 }, () => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return 0.2 + (seed / 4294967296) * 0.8;
+      });
   return (
     <div
       className={cn(
         "bg-muted text-muted-foreground relative flex size-full items-center justify-center",
+        title && "px-3 pt-8 pb-12",
         className,
       )}
     >
-      {peaks ? (
-        <Waveform peaks={peaks} className="h-1/4 w-3/4 flex-none" />
+      {title ? (
+        <p className="text-foreground text-body pointer-events-none relative z-10 line-clamp-2 w-full">
+          {title}
+        </p>
+      ) : null}
+      {peaks || cover ? (
+        <Waveform
+          peaks={cover ?? peaks}
+          className={cn("w-3/4 flex-none", title ? "absolute h-1/2 opacity-20" : "h-1/4")}
+        />
       ) : (
         <AudioLines aria-hidden="true" className="size-8" />
       )}

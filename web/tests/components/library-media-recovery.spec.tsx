@@ -261,7 +261,8 @@ describe("Library media recovery", () => {
     expect(
       await screen.findByRole("img", { name: "Saved video" }),
     ).toHaveAttribute("src", expect.stringContaining("/poster.png"));
-    expect(container.querySelector("video")).toBeNull();
+    // The tile video exists for keyboard play but loads no media until played.
+    expect(container.querySelector("video")).not.toHaveAttribute("src");
   });
   it("HL-05 retains previous results when a replacement search fails", async () => {
     vi.stubGlobal(

@@ -54,7 +54,6 @@ import {
   audioKind,
   DayChip,
   MediaBadge,
-  PlayDisc,
   playDiscButton,
   Waveform,
 } from "@/components/product/audio-cover";
@@ -388,10 +387,14 @@ function pauseOtherAudio(current: HTMLAudioElement) {
 
 /**
  * An audio creation has no picture, so its tile is a calm neutral face with
- * its waveform (D1.5), the play disc in the middle and its type and length
- * bottom left (D1.6). On a wide screen the disc plays the clip in place; a
- * phone opens it in the viewer instead (a 44 px target on a 125 px tile).
+ * its own cover and title. One persistent control groups play, type and
+ * length, leaving room for the day chip without adding another overlay.
  */
+const tilePlayButton = cn(
+  playDiscButton,
+  "absolute bottom-2 left-2 h-10 w-auto gap-1 rounded-badge px-2 max-sm:min-h-11 [&_svg]:translate-x-0",
+);
+
 function AudioTile({
   assetId,
   src,
@@ -443,68 +446,66 @@ function AudioTile({
     <>
       <AudioFace
         peaksKey={assetId}
+        coverSeed={assetId}
+        title={captionTitle(title, title, 56)}
         src={src}
         visible={visible}
         status={errorText ? <span role="status">{errorText}</span> : null}
-        center={
-          <>
-            <audio
-              ref={audioRef}
-              preload="none"
-              onLoadedMetadata={(event) => {
-                setError(null);
-                setMeasuredDuration(event.currentTarget.duration);
-              }}
-              onPlay={(event) => {
-                pauseOtherAudio(event.currentTarget);
-                setError(null);
-                setIsPlaying(true);
-              }}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-              onError={() => {
-                setIsPlaying(false);
-                setError("media");
-              }}
-            />
-            <button
-              type="button"
-              className={cn(playDiscButton, "max-sm:hidden")}
-              aria-label={label}
-              onClick={async (event) => {
-                event.stopPropagation();
-                const audio = audioRef.current;
-                if (!audio) return;
-                if (isPlaying) {
-                  audio.pause();
-                  setIsPlaying(false);
-                  return;
-                }
-                if (audio.getAttribute("src") !== src) {
-                  audio.setAttribute("src", src);
-                }
-                if (error === "media") {
-                  audio.load();
-                }
-                try {
-                  await audio.play();
-                  setError(null);
-                  setIsPlaying(true);
-                } catch {
-                  setIsPlaying(false);
-                  setError(audio.error ? "media" : "playback");
-                }
-              }}
-            >
-              {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-            </button>
-            <PlayDisc className="sm:hidden" />
-          </>
-        }
       />
-      <MediaBadge icon={AudioLines} className="absolute bottom-2 left-2 z-20">
-        {durationText}
-      </MediaBadge>
+      <audio
+        ref={audioRef}
+        preload="none"
+        onLoadedMetadata={(event) => {
+          setError(null);
+          setMeasuredDuration(event.currentTarget.duration);
+        }}
+        onPlay={(event) => {
+          pauseOtherAudio(event.currentTarget);
+          setError(null);
+          setIsPlaying(true);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+        onError={() => {
+          setIsPlaying(false);
+          setError("media");
+        }}
+      />
+      <button
+        type="button"
+        data-tile-cue="playback"
+        className={tilePlayButton}
+        aria-label={label}
+        onClick={async (event) => {
+          event.stopPropagation();
+          const audio = audioRef.current;
+          if (!audio) return;
+          if (isPlaying) {
+            audio.pause();
+            setIsPlaying(false);
+            return;
+          }
+          if (audio.getAttribute("src") !== src) {
+            audio.setAttribute("src", src);
+          }
+          if (error === "media") {
+            audio.load();
+          }
+          try {
+            await audio.play();
+            setError(null);
+            setIsPlaying(true);
+          } catch {
+            setIsPlaying(false);
+            setError(audio.error ? "media" : "playback");
+          }
+        }}
+      >
+        {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
+        <MediaBadge icon={AudioLines} className="bg-transparent">
+          {durationText}
+        </MediaBadge>
+      </button>
     </>
   );
 }
@@ -769,6 +770,11 @@ function Preview({
   const [retryKey, setRetryKey] = useState(0);
   const [retrySrc, setRetrySrc] = useState<string | null>(null);
   const [recovered, setRecovered] = useState(false);
+  const tileVideoRef = useRef<HTMLVideoElement>(null);
+  const [tilePlaying, setTilePlaying] = useState(false);
+  const [tileStarted, setTileStarted] = useState(false);
+  const [tileBlocked, setTileBlocked] = useState(false);
+  const [tileDuration, setTileDuration] = useState(asset.duration_s);
   const {
     data: poster,
     isPending: posterPending,
@@ -790,7 +796,11 @@ function Preview({
     setRetryKey(0);
     setRetrySrc(null);
     setRecovered(false);
-  }, [asset.asset_id, src, asset.poster_asset_id]);
+    setTilePlaying(false);
+    setTileStarted(false);
+    setTileBlocked(false);
+    setTileDuration(asset.duration_s);
+  }, [asset.asset_id, src, asset.poster_asset_id, asset.duration_s]);
 
   const posterUrl = poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
@@ -872,8 +882,7 @@ function Preview({
   if (
     asset.kind === "video" &&
     currentSrc &&
-    (!asset.poster_asset_id || !waitingForPoster) &&
-    (large || posterUnavailable)
+    (!asset.poster_asset_id || !waitingForPoster)
   )
     return large ? (
       <LargeVideoPlayer
@@ -884,27 +893,93 @@ function Preview({
         onFailed={() => setMediaFailed(true)}
       />
     ) : (
-      // No poster (the gateway records none for real video jobs): load
-      // metadata only and show the frame at 0.1 s. The media fragment asks
-      // Safari for that frame too, which ignores the seek below until played;
-      // the server never sees a fragment. The stage colour keeps a blank frame
-      // reading as media, not as a missing file.
-      <video
-        key={`video-${asset.asset_id}-${retryKey}`}
-        src={visible ? `${currentSrc}#t=0.1` : undefined}
-        preload="metadata"
-        muted
-        playsInline
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
-          if (Number.isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = Math.min(0.1, video.duration / 2);
-          }
-        }}
-        onError={() => setMediaFailed(true)}
-        className="bg-media-stage h-full w-full object-cover"
-        aria-label={assetTitle(asset)}
-      />
+      <>
+        <video
+          ref={tileVideoRef}
+          key={`video-${asset.asset_id}-${retryKey}`}
+          src={tileStarted || (visible && !effectivePosterUrl) ? `${currentSrc}#t=0.1` : undefined}
+          poster={effectivePosterUrl}
+          preload="metadata"
+          muted
+          playsInline
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (Number.isFinite(video.duration) && video.duration >= 0) {
+              setTileDuration(video.duration);
+              if (!effectivePosterUrl && !tileStarted && video.duration > 0)
+                video.currentTime = Math.min(0.1, video.duration / 2);
+            }
+          }}
+          onPlay={(event) => {
+            pauseOtherAudio(event.currentTarget);
+            setTilePlaying(true);
+            setTileStarted(true);
+            setTileBlocked(false);
+          }}
+          onPause={() => setTilePlaying(false)}
+          onEnded={() => setTilePlaying(false)}
+          onError={() => {
+            setTilePlaying(false);
+            setMediaFailed(true);
+            setTileBlocked(true);
+          }}
+          className="bg-media-stage h-full w-full object-cover"
+          aria-label={assetTitle(asset)}
+        />
+        {effectivePosterUrl && !tileStarted ? (
+          <NextImage
+            unoptimized
+            width={asset.width ?? 1024}
+            height={asset.height ?? 768}
+            src={effectivePosterUrl}
+            alt={assetTitle(asset)}
+            onError={() => setPosterFailed(true)}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        ) : null}
+        <button
+          type="button"
+          data-tile-cue="playback"
+          className={tilePlayButton}
+          aria-label={`${tilePlaying ? "Pause" : "Play"} ${assetTitle(asset)}`}
+          onClick={async (event) => {
+            event.stopPropagation();
+            const video = tileVideoRef.current;
+            if (!video) return;
+            if (tilePlaying) {
+              video.pause();
+              setTilePlaying(false);
+              return;
+            }
+            if (!video.hasAttribute("src"))
+              video.setAttribute("src", `${currentSrc}#t=0.1`);
+            if (mediaFailed) video.load();
+            try {
+              video.muted = false;
+              await video.play();
+              setTileStarted(true);
+              setTilePlaying(true);
+              setTileBlocked(false);
+              setMediaFailed(false);
+            } catch {
+              setTilePlaying(false);
+              setTileBlocked(true);
+            }
+          }}
+        >
+          {tilePlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
+          <MediaBadge icon={Video} className="bg-transparent">
+            {tileDuration != null && Number.isFinite(tileDuration) && tileDuration >= 0
+              ? formatDuration(tileDuration)
+              : null}
+          </MediaBadge>
+        </button>
+        {tileBlocked ? (
+          <p role="status" className="bg-media-badge text-media-badge-foreground text-badge absolute inset-x-2 top-10 z-30 rounded-badge px-2">
+            {mediaFailed ? "Preview unavailable" : "Playback didn't start. Try again."}
+          </p>
+        ) : null}
+      </>
     );
   if (asset.kind === "video" && effectivePosterUrl)
     return (
@@ -1067,36 +1142,21 @@ function AssetTile({
             visible={visible}
           />
         )}
-        {/* At most two cues always on a tile (craft PR 5; Apple Photos shows
-            only a video's length): the type and length badge and, with
-            Everyone shown, the maker's 16 px mark. The day chip on the first
-            tile of each day is the one exception (round 6, "no dates"). A
-            video's play disc joins the title on hover or focus, since its
-            badge already says video; audio keeps its disc (it has no
-            picture). */}
-        {asset.kind === "video" && asset.available !== false ? (
-          <>
-            <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100">
-              <PlayDisc />
-            </span>
-            <MediaBadge icon={Video} className="absolute bottom-2 left-2 z-20">
-              {asset.duration_s != null && Number.isFinite(asset.duration_s)
-                ? formatDuration(asset.duration_s)
-                : null}
-            </MediaBadge>
-          </>
-        ) : null}
+        {/* Play, type and duration form one control; the day is the second
+            persistent overlay. Maker and supplemental facts remain on focus. */}
         {/* D1.6: the day on the first tile of each day, and the maker when
             the whole household is shown; the grid stays continuous. */}
         {day ? (
-          <DayChip className="absolute top-2 left-2 z-20">{day}</DayChip>
+          <span data-tile-cue="day" className="pointer-events-none absolute top-2 left-2 z-20">
+            <DayChip>{day}</DayChip>
+          </span>
         ) : null}
         {everyone && person ? (
           <PersonMark
             name={person}
             size="2xs"
             label={person}
-            className="ring-media-badge absolute top-2 right-2 z-20 ring-2"
+            className="ring-media-badge absolute top-2 right-2 z-20 ring-2 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
           />
         ) : null}
         {/* D1.4: always-on captions were cut to two or three words and the
@@ -1106,11 +1166,16 @@ function AssetTile({
             carries the full prompt for screen readers. */}
         <div
           aria-hidden="true"
-          className="dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden"
+          className={cn(
+            "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+            asset.kind === "image" ? "bottom-0" : "bottom-14",
+          )}
         >
-          <p className="text-badge line-clamp-2">
-            {captionTitle(asset.prompt, untitledName(asset), 56)}
-          </p>
+          {!playableAudio ? (
+            <p className="text-badge line-clamp-2">
+              {captionTitle(asset.prompt, untitledName(asset), 56)}
+            </p>
+          ) : null}
           <p className="text-foreground/80 text-badge mt-0.5 font-normal">
             {[
               everyone ? person : null,
