@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
+import { HouseholdPromptsSection } from "./household-prompts";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
@@ -1471,6 +1472,7 @@ export default function SettingsPage() {
       <InstanceSection />
       <SignInSection />
       <DefaultsSection />
+      <HouseholdPromptsSection />
       <MediaSection />
       <ExtensionsSection />
       <AdvancedSection />
