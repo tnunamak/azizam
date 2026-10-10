@@ -9436,13 +9436,19 @@ def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, A
     only moves forward, so keep a high-water mark per job. Terminal states
     report 100 and are left alone.
     """
-    if payload.get("azizam_status") not in ("queued", "running"):
+    status = payload.get("azizam_status")
+    entry = _video_progress.setdefault(prompt_id, {})
+    if status in ("succeeded", "failed"):
+        entry["status"] = status
+        entry["updated_at"] = payload.get("updated_at") or int(time.time())
         return payload
-    entry = _video_progress.get(prompt_id)
-    if entry is None:
+    if status not in ("queued", "running"):
         return payload
     high = max(int(entry.get("reported_progress", 0)), int(payload.get("progress") or 0))
+    if high > int(entry.get("reported_progress", 0)):
+        entry["updated_at"] = payload.get("updated_at") or int(time.time())
     entry["reported_progress"] = high
+    entry["status"] = status
     payload["progress"] = high
     return payload
 
@@ -17713,6 +17719,10 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
     for prompt_id, record in list(_video_job_records.items()):
         if record.get("completed_at") is not None or record.get("deleted_at") is not None:
             continue
+        media_job_id = record.get("media_job_id")
+        video_job = media_jobs.get(media_job_id, audience="internal", path=media_jobs.DB_PATH) if media_job_id else None
+        if video_job and video_job.get("status") in media_jobs.TERMINAL_STATUSES:
+            continue
         created = record.get("created_at") or now
         if now - int(created) > max_age_s:
             continue
@@ -17722,6 +17732,16 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
             continue
         status = (_video_progress.get(prompt_id) or {}).get("status")
         if status in ("succeeded", "failed"):
+            continue
+        progress = _video_progress.get(prompt_id) or {}
+        expected = record.get("actual_seconds") or record.get("seconds") or 0
+        try:
+            expected_seconds = max(0, float(expected))
+        except (TypeError, ValueError):
+            expected_seconds = 0
+        last_progress = progress.get("updated_at") or created
+        stall_after = min(1800, max(300, expected_seconds + 300))
+        if now - int(last_progress) > stall_after:
             continue
         count += 1
     return count
@@ -20273,7 +20293,15 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                 job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
                 if job and job.get("status") not in media_jobs.TERMINAL_STATUSES and payload is not None and isinstance(payload.get("body"), dict):
                     payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
-                    _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                    try:
+                        _store_ephemeral_media_job_payload(job_id, payload)
+                    except EphemeralMediaPayloadCapacityError:
+                        media_jobs.update_status(
+                            job_id,
+                            media_jobs.STATUS_FAILED,
+                            error="Privacy cleanup exceeded temporary payload capacity",
+                            path=media_jobs.DB_PATH,
+                        )
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
@@ -20406,7 +20434,9 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
     # The cutoff only rises to when memory went off, read in the same
     # transaction, so prompts saved after switching back on survive.
     cutoff = prompt_memory.settle_erasure_cutoff(person_id, admin_path=ADMIN_STORE.path)
-    if cutoff:
+    pending = prompt_memory.erasure_pending(person_id, admin_path=ADMIN_STORE.path)
+    needs_cleanup = cutoff > 0 and (pending or cutoff > _prompt_purge_covered(person_id))
+    if needs_cleanup:
         if cutoff > _prompt_purge_covered(person_id):
             # Retry a request whose cleanup stopped before it was queued.
             _erase_person_prompts_before(person_id, cutoff)
@@ -20415,7 +20445,7 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
             media_jobs.erase_prompt_derivatives(owner_keys, before=cutoff, path=media_jobs.DB_PATH)
             prompt_memory.prune_person_before(person_id, cutoff)
             responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
-    if cutoff:
+    if needs_cleanup:
         prompt_memory.complete_erasure(person_id, cutoff, admin_path=ADMIN_STORE.path)
     with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
         retention = policy["retention"]
@@ -20478,7 +20508,51 @@ async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
+_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES: dict[str, int] = {}
 _MEDIA_PAYLOAD_LOCK = threading.RLock()
+_EPHEMERAL_MEDIA_JOB_MAX_COUNT = 256
+_EPHEMERAL_MEDIA_JOB_MAX_BYTES = 64 * 1024 * 1024
+
+
+class EphemeralMediaPayloadCapacityError(RuntimeError):
+    """A forget payload cannot be retained safely in the bounded memory store."""
+
+
+def _ephemeral_media_payload_size(payload: Mapping[str, Any]) -> int:
+    return len(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+
+def _ephemeral_media_payload_busy_response() -> Response:
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": "The gateway is busy retaining private media jobs. Retry shortly.",
+                "type": "service_unavailable",
+                "code": "media_payload_capacity",
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
+def _release_ephemeral_media_job_payload(job_id: str) -> None:
+    _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+    _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.pop(job_id, None)
+
+
+def _store_ephemeral_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
+    payload_size = _ephemeral_media_payload_size(payload)
+    current_size = sum(_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.values())
+    replacing_size = _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES.get(job_id, 0)
+    projected_count = len(_EPHEMERAL_MEDIA_JOB_PAYLOADS) + (
+        0 if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS else 1
+    )
+    if (projected_count > _EPHEMERAL_MEDIA_JOB_MAX_COUNT
+            or current_size - replacing_size + payload_size > _EPHEMERAL_MEDIA_JOB_MAX_BYTES):
+        raise EphemeralMediaPayloadCapacityError("ephemeral media payload capacity reached")
+    _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+    _EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES[job_id] = payload_size
 
 
 def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) -> dict[str, Any] | None:
@@ -20527,8 +20601,9 @@ def _persist_image_media_job_payload(
             if not durable:
                 extensions = payload["body"].setdefault("extensions", {})
                 extensions[prompt_memory.NAMESPACE] = {"mode": "forget"}
-                _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                _store_ephemeral_media_job_payload(job_id, payload)
                 return
+            _release_ephemeral_media_job_payload(job_id)
             IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
             path = _image_media_job_payload_path(job_id)
             tmp = path.with_suffix(".json.tmp")
@@ -20558,7 +20633,7 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
 
 def _delete_image_media_job_payload(job_id: str) -> None:
     with _MEDIA_PAYLOAD_LOCK:
-        _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+        _release_ephemeral_media_job_payload(job_id)
         for path in (_image_media_job_payload_path(job_id),
                      _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
             try:
@@ -20571,14 +20646,17 @@ def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
     with _MEDIA_PAYLOAD_LOCK:
         """Remove old or terminal request spools left by an interrupted worker."""
         removed = 0
+        cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
-                _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+            payload = _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
+            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
+                    or job.get("status") == "stale"
+                    or int(payload.get("created_at") or 0) < cutoff):
+                _release_ephemeral_media_job_payload(job_id)
                 removed += 1
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             return removed
-        cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
         for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
             job_id = path.name.split(".json", 1)[0]
@@ -21711,6 +21789,9 @@ async def _submit_audio_media_job(
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except EphemeralMediaPayloadCapacityError:
+        _delete_audio_media_job_payload(job.job_id)
+        return _ephemeral_media_payload_busy_response()
     except Exception as exc:  # noqa: BLE001
         _delete_audio_media_job_payload(job.job_id)
         return Response(
@@ -22001,6 +22082,11 @@ async def _run_video_media_job(job_id: str) -> None:
             )
             return
 
+        prompt_id = _prompt_id_from_video_id(video_id)
+        if prompt_id and prompt_id in _video_job_records:
+            _video_job_records[prompt_id]["media_job_id"] = job_id
+            _persist_video_record(prompt_id)
+
         media_jobs.update_status(
             job_id,
             media_jobs.STATUS_RUNNING,
@@ -22258,6 +22344,9 @@ async def _submit_video_media_job(
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except EphemeralMediaPayloadCapacityError:
+        _delete_video_media_job_payload(job.job_id)
+        return _ephemeral_media_payload_busy_response()
     except Exception as exc:  # noqa: BLE001
         _delete_video_media_job_payload(job.job_id)
         return Response(
@@ -22491,6 +22580,11 @@ async def gateway_image_generations_media_job(request: Request):
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
+    except EphemeralMediaPayloadCapacityError:
+        _delete_image_media_job_payload(job.job_id)
+        response = _ephemeral_media_payload_busy_response()
+        finish_image_route_receipt(receipt, response)
+        return response
     except Exception as exc:  # noqa: BLE001
         _delete_image_media_job_payload(job.job_id)
         response = Response(
