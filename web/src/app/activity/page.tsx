@@ -150,10 +150,10 @@ export default function ActivityPage() {
   return (
     <div className="space-y-8">
       <PageHeader title="Activity" subtitle="Changes and request outcomes" />
-      <Tabs defaultValue="audit">
+      <Tabs defaultValue="requests">
         <TabsList>
-          <TabsTrigger value="audit">Changes</TabsTrigger>
           <TabsTrigger value="requests">Requests</TabsTrigger>
+          <TabsTrigger value="audit">Changes</TabsTrigger>
         </TabsList>
         <TabsContent value="audit" className="mt-6 space-y-6">
           <div className="flex flex-wrap items-end gap-4">

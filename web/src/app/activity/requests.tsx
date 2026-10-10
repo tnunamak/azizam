@@ -220,7 +220,8 @@ export function Requests() {
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refetch]);
-  const rows = data?.pages.flatMap((page) => page.records) ?? [];
+  const rows = (data?.pages.flatMap((page) => page.records) ?? [])
+    .sort((a, b) => b.created_at - a.created_at);
   const keys = receiptSelectionKeys(
     rows.map((row) => row.receipt),
     rows.map((row) => ({
@@ -368,11 +369,11 @@ export function Requests() {
                       <button
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
-                        className="focus-visible:outline-ring flex min-h-(--row-1) w-full min-w-0 items-center gap-3 px-3 text-left focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
+                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 text-left focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
                         onClick={() => setSelectedReceiptKey(keys[index])}
                       >
-                        <div className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-                          <p className="min-w-0 truncate text-body font-medium sm:shrink-0">
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <p className="min-w-0 truncate text-body font-medium">
                             {requestSummary(row.receipt)}
                             {row.receipt.parent_request_id && (
                               <span className="text-muted-foreground ml-2 text-meta font-normal">
@@ -382,7 +383,7 @@ export function Requests() {
                           </p>
                           <p className="text-muted-foreground truncate text-meta">
                             <span title={`${row.person_label} · ${row.app_label}`}>
-                              {row.source?.label ?? `${row.person_label} · ${row.app_label}`}
+                              {row.person_label} · {row.app_label}
                             </span>
                             {row.receipt.resolved_model || row.receipt.requested_model ? (
                               <>
@@ -394,10 +395,9 @@ export function Requests() {
                                 )}
                               </>
                             ) : null}
-                            {row.created_at ? <> · <RelativeTime ts={row.created_at} /></> : null}
                           </p>
                         </div>
-                        <div className="flex shrink-0 flex-col items-end sm:flex-row sm:items-center sm:gap-3">
+                        <div className="flex min-w-0 max-w-1/2 shrink-0 flex-col items-end gap-0.5">
                           {["failed", "error", "backend_failed"].includes(row.receipt.status ?? "") ? (
                             <StateBadge state="down" word={outcome(row.receipt.status)} />
                           ) : ["running", "in_progress"].includes(row.receipt.status ?? "") ? (
@@ -407,8 +407,10 @@ export function Requests() {
                           ) : (
                             <span className="text-foreground">{outcome(row.receipt.status)}</span>
                           )}
-                          <p className="text-muted-foreground figures">
-                            {duration(row.receipt.latency_ms)}
+                          <p className="text-muted-foreground figures max-w-full truncate text-meta">
+                            {row.created_at ? <RelativeTime ts={row.created_at} /> : "Time not recorded"}
+                            {" · "}
+                            {duration(row.receipt.latency_ms) || "Duration not recorded"}
                           </p>
                         </div>
                         <ArrowRight

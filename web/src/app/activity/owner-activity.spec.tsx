@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   within,
@@ -28,7 +29,11 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function mount(auditResult?: () => ReturnType<typeof api.audit.list>) {
+function mount(
+  auditResult?: () => ReturnType<typeof api.audit.list>,
+  showChanges = true,
+) {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
   vi.spyOn(api.users, "list").mockResolvedValue([
     {
       id: "person-beyond-audit-window",
@@ -56,6 +61,12 @@ function mount(auditResult?: () => ReturnType<typeof api.audit.list>) {
       <Activity />
     </QueryClientProvider>,
   );
+  if (showChanges) {
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Changes" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+  }
   return audit;
 }
 it("offers human names from the people source beyond the recent audit window", async () => {
@@ -125,6 +136,10 @@ it("shows people lookup errors with a retry action", async () => {
       <Activity />
     </QueryClientProvider>,
   );
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Changes" }), {
+    button: 0,
+    ctrlKey: false,
+  });
   expect(
     await screen.findByText(
       "Recent activity names are still available.",
@@ -246,4 +261,78 @@ it("retries the next changes page without discarding the loaded page", async () 
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ before: "older" }));
   expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
+});
+
+it("opens Requests first by default and keeps Changes reachable", async () => {
+  const user = userEvent.setup();
+  mount(undefined, false);
+  const tabs = screen.getAllByRole("tab");
+  expect(tabs.map((tab) => tab.textContent)).toEqual(["Requests", "Changes"]);
+  expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByLabelText("Loading requests")).toBeVisible();
+  await user.click(tabs[1]);
+  expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+  await screen.findByText("No changes yet");
+  await user.click(tabs[0]);
+  expect(screen.getByLabelText("Loading requests")).toBeVisible();
+});
+
+it("shows newest receipts first with person and app despite a source label, and opens the matching receipt", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      records: [
+        {
+          receipt: { request_id: "older", intent: "speech", status: "success", latency_ms: 0 },
+          person_label: "Sam", app_label: "Reader", created_at: 100,
+        },
+        {
+          receipt: { request_id: "newer", intent: "image", status: "failed", latency_ms: 1250 },
+          person_label: "Alex", app_label: "Studio", created_at: 200,
+          source: { label: "Shared device", kind: "app" },
+        },
+      ],
+      next_cursor: null, people: [], sources: [],
+    }),
+  }));
+  mountRequests();
+  const table = await screen.findByRole("table", { name: "Request receipts" });
+  const buttons = within(table).getAllByRole("button");
+  expect(buttons[0]).toHaveAccessibleName("Request details: Images request by Alex");
+  expect(buttons[1]).toHaveAccessibleName("Request details: Speech request by Sam");
+  expect(within(buttons[0]).getByText("Alex · Studio")).toBeVisible();
+  expect(within(buttons[0]).getByText("Failed")).toBeVisible();
+  expect(buttons[0]).toHaveTextContent("1.3 s");
+  expect(within(buttons[0]).getByText(/1\.3 s/)).toHaveTextContent(
+    /^.+ · 1\.3 s$/,
+  );
+  expect(buttons[0]).toHaveClass("min-h-(--row-2)", "max-sm:min-h-(--row-phone-2)");
+  expect(buttons[1]).toHaveTextContent("0 ms");
+  await user.click(buttons[0]);
+  const receipt = await screen.findByRole("dialog");
+  expect(within(receipt).getByText("newer")).toBeVisible();
+  expect(within(receipt).getByText("Studio")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await user.click(buttons[1]);
+  expect(within(await screen.findByRole("dialog")).getByText("older")).toBeVisible();
+});
+
+it("labels unrecorded time and duration without inventing a zero duration", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      records: [{
+        receipt: { request_id: "unknown", intent: "speech" },
+        person_label: "Sam", app_label: "Reader", created_at: 0,
+      }],
+      next_cursor: null, people: [], sources: [],
+    }),
+  }));
+  mountRequests();
+  const row = await screen.findByRole("button", { name: "Request details: Speech request by Sam" });
+  expect(row).toHaveTextContent("Outcome not recorded");
+  expect(row).toHaveTextContent("Time not recorded · Duration not recorded");
+  expect(row).not.toHaveTextContent("0 ms");
 });
