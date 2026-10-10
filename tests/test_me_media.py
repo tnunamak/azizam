@@ -979,3 +979,349 @@ class MeMediaRouterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Make API acceptance contract (future feature; intentionally red at this pin).
+# Run with pytest tests/test_me_media.py -k MeMakeApiAcceptanceTests, or
+# python -m unittest tests.test_me_media.MeMakeApiAcceptanceTests.
+# This section is appended after the original __main__ block, so discovery/
+# module loading is required; direct execution of this file keeps its old suite.
+#
+# Proposed wire contract, not an observed implementation:
+# POST/GET /me/api/make/jobs; GET /{job_id}; POST /{job_id}/cancel.
+# POST JSON: intent, model, prompt, optional source_asset_id/source_job_id,
+# and azizam.prompt_memory="forget". Responses: {"job": {...}} / {"jobs": [...]}.
+# First submissions return 202; repeat submissions may return 200 or 202.
+# Receipt attribution is checked through the existing durable receipt + App
+# records rather than inventing public receipt/person field names.
+# ---------------------------------------------------------------------------
+
+
+class MeMakeApiAcceptanceTests(unittest.TestCase):
+    # Reuse the exact existing session/router/storage fixtures without
+    # inheriting (and therefore rerunning) every existing test method.
+    setUp = MeMediaRouterTests.setUp
+    tearDown = MeMediaRouterTests.tearDown
+    _session = MeMediaRouterTests._session
+    _mutation_validator = MeMediaRouterTests._mutation_validator
+    _asset_path = MeMediaRouterTests._asset_path
+    _meta_path = MeMediaRouterTests._meta_path
+    _asset_metadata = MeMediaRouterTests._asset_metadata
+    _catalog = MeMediaRouterTests._catalog
+    _delete_unshared = MeMediaRouterTests._delete_unshared
+    _write_asset = MeMediaRouterTests._write_asset
+
+    make_url = "/me/api/make/jobs"
+
+    def _make_headers(self, key: str) -> dict:
+        return {
+            "Idempotency-Key": key,
+            "x-azizam-user-action": "1",
+            "x-azizam-csrf": "valid-csrf",
+        }
+
+    def _picture(self, **overrides) -> dict:
+        body = {"intent": "image.generate", "model": "image",
+                "prompt": "a blue bird on a yellow branch"}
+        body.update(overrides)
+        return body
+
+    def _submit_make(self, key: str, **overrides):
+        response = self.client.post(
+            self.make_url, json=self._picture(**overrides),
+            headers=self._make_headers(key),
+        )
+        self.assertNotIn("authorization", response.request.headers)
+        self.assertIn(response.status_code, (200, 202), response.text)
+        job = response.json()["job"]
+        self.assertTrue(job["job_id"].startswith("mj_"), job)
+        self.assertIsNotNone(media_jobs.get(job["job_id"], path=self.jobs_db))
+        return response, job
+
+    def _make_list(self, **params) -> list:
+        response = self.client.get(self.make_url, params=params)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()["jobs"]
+
+    def _foreign_job(self) -> dict:
+        self.current_user = self.bob
+        _, job = self._submit_make("bob-private-job")
+        self.current_user = self.alice
+        return job
+
+    def test_make_member_picture_has_person_and_azizam_receipt(self) -> None:
+        # Criterion 1: neither fixture-created App is named Azizam.
+        self.assertFalse(any(
+            app["name"] == "Azizam"
+            for app in admin_store.list_apps(path=self.admin_db)
+        ))
+        response, job = self._submit_make("alice-first-picture")
+        self.assertEqual(response.status_code, 202, response.text)
+        stored = media_jobs.get(job["job_id"], path=self.jobs_db)
+        self.assertEqual(stored["intent"], "image.generate")
+        receipt = receipt_store.get(
+            stored["request_id"], audience="internal", path=self.receipts_db,
+        )
+        self.assertIsNotNone(receipt, "Submission must persist a route receipt")
+        self.assertEqual(receipt["app_id"], stored["app_id"])
+        app = admin_store.get_app(receipt["app_id"], path=self.admin_db)
+        self.assertEqual(app["name"], "Azizam")
+        self.assertEqual(app["kind"], "personal")
+        self.assertEqual(app["owner_user_id"], self.alice["id"])
+        own = self.client.get(f"{self.make_url}/{job['job_id']}")
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["job"]["job_id"], job["job_id"])
+
+        _, second = self._submit_make("alice-second-picture")
+        self.assertEqual(
+            media_jobs.get(second["job_id"], path=self.jobs_db)["app_id"],
+            app["id"], "Repeated use must reuse the person's Azizam App",
+        )
+        self.current_user = self.bob
+        _, bob = self._submit_make("bob-first-picture")
+        bob_app = admin_store.get_app(
+            media_jobs.get(bob["job_id"], path=self.jobs_db)["app_id"],
+            path=self.admin_db,
+        )
+        self.assertEqual(bob_app["name"], "Azizam")
+        self.assertEqual(bob_app["owner_user_id"], self.bob["id"])
+        self.assertNotEqual(bob_app["id"], app["id"])
+
+    def test_make_idempotency_reuses_job_only_for_same_person_and_key(self) -> None:
+        # Criterion 2, also exercising own list and optional status filtering.
+        _, first = self._submit_make("same-key")
+        _, again = self._submit_make("same-key")
+        _, different = self._submit_make("different-key")
+        self.assertEqual(first["job_id"], again["job_id"])
+        self.assertNotEqual(first["job_id"], different["job_id"])
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 2)
+        media_jobs.update_status(
+            first["job_id"], media_jobs.STATUS_RUNNING, path=self.jobs_db,
+        )
+        own_ids = {job["job_id"] for job in self._make_list()}
+        self.assertEqual(own_ids, {first["job_id"], different["job_id"]})
+        running = self._make_list(status=media_jobs.STATUS_RUNNING)
+        self.assertEqual([job["job_id"] for job in running], [first["job_id"]])
+        self.assertTrue(all(job["status"] == media_jobs.STATUS_RUNNING for job in running))
+        self.current_user = self.bob
+        _, bob = self._submit_make("same-key")
+        self.assertNotIn(bob["job_id"], own_ids)
+        self.assertEqual([job["job_id"] for job in self._make_list()], [bob["job_id"]])
+
+    def test_make_cannot_read_another_person_job(self) -> None:
+        # Criterion 3: a successful owner submission prevents missing-route
+        # 404s from accidentally satisfying this negative authorization test.
+        foreign = self._foreign_job()
+        _, own = self._submit_make("alice-visible")
+        response = self.client.get(f"{self.make_url}/{foreign['job_id']}")
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self.assertEqual([job["job_id"] for job in self._make_list()], [own["job_id"]])
+
+    def test_make_cannot_cancel_another_person_job(self) -> None:
+        # Criterion 3.
+        foreign = self._foreign_job()
+        before = media_jobs.get(foreign["job_id"], path=self.jobs_db)
+        response = self.client.post(
+            f"{self.make_url}/{foreign['job_id']}/cancel",
+            headers=self._make_headers("forbidden-cancel"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self.assertEqual(media_jobs.get(foreign["job_id"], path=self.jobs_db), before)
+
+    def test_make_cannot_use_another_person_asset_as_source(self) -> None:
+        # Criterion 3: same valid edit shape succeeds with an owned asset.
+        own_asset, foreign_asset = "img_" + "a1" * 32, "img_" + "b1" * 32
+        self._write_asset(own_asset, ["sha256:alice"])
+        self._write_asset(foreign_asset, ["sha256:bob"])
+        self._submit_make("own-edit", intent="image.edit", source_asset_id=own_asset)
+        before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(
+            self.make_url,
+            json=self._picture(intent="image.edit", source_asset_id=foreign_asset),
+            headers=self._make_headers("foreign-asset-edit"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), before)
+
+    def test_make_cannot_use_another_person_job_as_source(self) -> None:
+        # Criterion 3. source_job_id is a proposed convenience input contract.
+        foreign = self._foreign_job()
+        foreign_asset = "img_" + "b2" * 32
+        self._write_asset(foreign_asset, ["sha256:bob"])
+        media_jobs.update_status(
+            foreign["job_id"], media_jobs.STATUS_SUCCEEDED,
+            add_assets=[{"asset_id": foreign_asset, "media_type": "image/png"}],
+            path=self.jobs_db,
+        )
+        _, own = self._submit_make("own-source")
+        own_asset = "img_" + "a2" * 32
+        self._write_asset(own_asset, ["sha256:alice"])
+        media_jobs.update_status(
+            own["job_id"], media_jobs.STATUS_SUCCEEDED,
+            add_assets=[{"asset_id": own_asset, "media_type": "image/png"}],
+            path=self.jobs_db,
+        )
+        self._submit_make("own-job-edit", intent="image.edit", source_job_id=own["job_id"])
+        before = media_jobs.count(path=self.jobs_db)
+        response = self.client.post(
+            self.make_url,
+            json=self._picture(intent="image.edit", source_job_id=foreign["job_id"]),
+            headers=self._make_headers("foreign-job-edit"),
+        )
+        self.assertIn(response.status_code, (403, 404), response.text)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), before)
+
+    def test_make_durable_edit_survives_response_disconnect_and_reaches_library(self) -> None:
+        # Criterion 4: drop the connection before the response body reaches the
+        # caller. Complete the persisted work using the observed store API,
+        # which stands in for an independent worker; no live backend is needed.
+        import asyncio
+
+        source = "img_" + "c1" * 32
+        output = "img_" + "c2" * 32
+        self._write_asset(source, ["sha256:alice"])
+        body = json.dumps(self._picture(intent="image.edit", source_asset_id=source)).encode()
+        sent_status = []
+        disconnected = []
+
+        async def invoke_with_disconnect():
+            consumed = False
+
+            async def receive():
+                nonlocal consumed
+                if not consumed:
+                    consumed = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            async def send(message):
+                if message["type"] == "http.response.start":
+                    sent_status.append(message["status"])
+                elif message["type"] == "http.response.body":
+                    disconnected.append(True)
+                    raise ConnectionError("synthetic browser disconnect before body delivery")
+
+            headers = {"content-type": "application/json",
+                       "content-length": str(len(body)),
+                       **self._make_headers("disconnected-edit")}
+            scope = {
+                "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+                "http_version": "1.1", "method": "POST", "scheme": "http",
+                "path": self.make_url, "raw_path": self.make_url.encode(),
+                "query_string": b"", "root_path": "",
+                "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+                "client": ("127.0.0.1", 12345), "server": ("testserver", 80),
+            }
+            try:
+                await self.client.app(scope, receive, send)
+            except ConnectionError:
+                pass
+
+        asyncio.run(invoke_with_disconnect())
+        self.assertEqual(sent_status, [202])
+        self.assertEqual(disconnected, [True])
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 1)
+        stored = media_jobs.recent(path=self.jobs_db)[0]
+        self.assertEqual(stored["intent"], "image.edit")
+        self.assertIn(stored["status"], (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING))
+        self.assertEqual(stored["assets"], [])
+        self.client.close()
+        media_jobs.update_status(stored["job_id"], media_jobs.STATUS_RUNNING, path=self.jobs_db)
+        # An output file with no cache owner cannot make the Library assertion
+        # pass on cache ownership alone; attribution must come from this job.
+        self._asset_path(output).write_bytes(PNG_1X1)
+        media_jobs.update_status(
+            stored["job_id"], media_jobs.STATUS_SUCCEEDED,
+            add_assets=[{"asset_id": output, "media_type": "image/png"}],
+            path=self.jobs_db,
+        )
+        with TestClient(self.client.app) as reconnected:
+            polled = reconnected.get(f"{self.make_url}/{stored['job_id']}")
+            self.assertEqual(polled.status_code, 200, polled.text)
+            self.assertEqual(polled.json()["job"]["status"], media_jobs.STATUS_SUCCEEDED)
+            library = reconnected.get("/me/api/media")
+            self.assertEqual(library.status_code, 200, library.text)
+            asset = next(item for item in library.json()["assets"] if item["asset_id"] == output)
+            self.assertEqual(asset["provenance"]["job_id"], stored["job_id"])
+            self.assertEqual(asset["source"]["label"], "Azizam")
+
+    def test_make_responses_never_expose_key_material(self) -> None:
+        # Criterion 5: all four endpoints, replay, and authorization failures.
+        response, job = self._submit_make("no-secret")
+        repeat, _ = self._submit_make("no-secret")
+        responses = [
+            response, repeat,
+            self.client.get(self.make_url),
+            self.client.get(f"{self.make_url}/{job['job_id']}"),
+            self.client.post(f"{self.make_url}/{job['job_id']}/cancel",
+                             headers=self._make_headers("cancel-no-secret")),
+            self.client.post(self.make_url, json=self._picture()),
+        ]
+        self.assertEqual([item.status_code for item in responses[2:4]], [200, 200])
+        self.assertIn(responses[4].status_code, (200, 202), responses[4].text)
+        self.assertEqual(responses[5].status_code, 403, responses[5].text)
+        forbidden = {"api_key", "key_secret", "secret", "credential", "credentials",
+                     "authorization", "access_token", "refresh_token", "owner_key_hash",
+                     "password", "credential_hash"}
+
+        def check_keys(value):
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    self.assertNotIn(key.lower().replace("-", "_"), forbidden)
+                    check_keys(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    check_keys(nested)
+
+        for item in responses:
+            with self.subTest(method=item.request.method, url=str(item.request.url)):
+                check_keys(item.json())
+                check_keys(dict(item.headers))
+                wire = item.text + json.dumps(dict(item.headers))
+                for marker in ("sha256:alice", "sha256:bob", "test_alice", "test_bob",
+                               "Bearer ", "sk-", "azk_"):
+                    self.assertNotIn(marker, wire)
+
+    def test_make_submit_and_cancel_require_both_mutation_headers(self) -> None:
+        # Criterion 6: missing each header independently, plus neither header.
+        _, job = self._submit_make("csrf-control")
+        for omitted in (("x-azizam-user-action",), ("x-azizam-csrf",),
+                        ("x-azizam-user-action", "x-azizam-csrf")):
+            headers = self._make_headers("csrf-rejected")
+            for key in omitted:
+                headers.pop(key)
+            for url in (self.make_url, f"{self.make_url}/{job['job_id']}/cancel"):
+                with self.subTest(omitted=omitted, url=url):
+                    before = media_jobs.get(job["job_id"], path=self.jobs_db)
+                    count = media_jobs.count(path=self.jobs_db)
+                    response = self.client.post(url, json=self._picture(), headers=headers)
+                    self.assertEqual(response.status_code, 403, response.text)
+                    expected = ("user_action_header_required" if "x-azizam-user-action" in omitted
+                                else "user_csrf_required")
+                    self.assertEqual(response.json()["error"]["code"], expected)
+                    self.assertEqual(media_jobs.count(path=self.jobs_db), count)
+                    self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db), before)
+
+    def test_make_forget_extension_keeps_prompt_out_of_durable_storage(self) -> None:
+        # Criterion 7: inspect internal state and all tables in the isolated
+        # jobs/prompt database, not just the redacted public response.
+        import sqlite3
+
+        prompt = "forget-canary-7b3e-private-blue-heron"
+        response, job = self._submit_make(
+            "forget-picture", prompt=prompt, azizam={"prompt_memory": "forget"},
+        )
+        stored = media_jobs.get(job["job_id"], audience="internal", path=self.jobs_db)
+        self.assertIsNotNone(stored)
+        events = media_jobs.events(job["job_id"], audience="internal", path=self.jobs_db)
+        self.assertNotIn(prompt, json.dumps(stored))
+        self.assertNotIn(prompt, json.dumps(events))
+        with sqlite3.connect(self.jobs_db) as conn:
+            self.assertNotIn(prompt, "\n".join(conn.iterdump()))
+        receipt = receipt_store.get(stored["request_id"], audience="internal", path=self.receipts_db)
+        self.assertIsNotNone(receipt)
+        self.assertNotIn(prompt, json.dumps(receipt))
+        detail = self.client.get(f"{self.make_url}/{job['job_id']}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertNotIn(prompt, response.text + detail.text)
