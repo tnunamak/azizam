@@ -5,12 +5,7 @@ id: image.edit.seedvr2-upscale
 intent: image.edit
 display_name: SeedVR2 7B Sharp Upscale
 purpose: Upscale and restore an image
-description: >-
-  One-step image upscale/restore via SeedVR2 7B Sharp (int8_convrot, Apache-2.0, ICLR 2026). Verified
-  at 2x (1024->2048) and 4x (1024->4096): both sharp, no grid/halo artifacts, genuinely enhanced
-  fine detail (tested on food photography with fine scallion/noodle texture). steps=1, cfg=1 is the
-  official template default -- SeedVR2 is a one-step flow-matching refine, not a traditional
-  multi-step diffusion upscaler, so this is intentional rather than under-configured.
+description: Make a picture larger and sharper, with finer detail.
 source: local
 trusted: true
 typical_seconds: 3

@@ -6,7 +6,7 @@ intent: image.generate
 display_name: Flux2 Klein 4B Seamless Tile
 task: texture-tile
 purpose: Create seamless tiling textures
-description: Gateway-composed seamless texture generation. The proxy generates with Flux2, circularly offsets the image, masks the centered seam cross, repairs it with the Flux2 inpaint workflow, then offsets the result back.
+description: Make a texture from a description that repeats smoothly, with no visible seams when tiled.
 source: local
 trusted: true
 inputs:

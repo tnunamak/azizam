@@ -5,16 +5,7 @@ id: image.edit.image-identity
 intent: image.edit
 display_name: Identity Scene (real people into a new scene)
 purpose: Place real people in a new scene
-description: >-
-  Put the real people from one or more reference photos into a new scene or pose and return the best
-  of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL
-  photo (never a tiny face tile), tags every input <imageN> for Qwen-Image 2.1 multi-reference edit, runs
-  up to `attempts` seeds, scores each result with ArcFace (buffalo_l + antelopev2, CPU) against the real
-  faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed; async media job by default, sync with mode=sync, JSON with
-  `likeness`) and at POST /v1/images/edits with model=image-identity (options in
-  extensions["com.azizam.workflow"]). Infant faces are scored but flagged reliability=low: the score
-  only ranks candidates, so verify a baby by eye. Measured on a family photo: 0.60 adult, 0.48 infant
-  (docs/IDENTITY_LIKENESS.md).
+description: Put the people from your photos into a new scene you describe, and keep the best result.
 source: local
 trusted: true
 typical_seconds: 100
