@@ -49,7 +49,12 @@ const appears = (locator: ReturnType<Page["locator"]>, timeout = CONTROL_MS) =>
 
 const click = (name: RegExp | string, role: "button" | "tab" | "link" | "switch" = "button"): StateAction =>
   async (page) => {
-    const control = page.locator("main, [role=dialog]").getByRole(role, { name, exact: typeof name === "string" }).first();
+    // The first visible match: a closed fold can hold hidden copies of the same control.
+    const control = page
+      .locator("main, [role=dialog]")
+      .getByRole(role, { name, exact: typeof name === "string" })
+      .filter({ visible: true })
+      .first();
     if (!(await appears(control))) return `no ${role} named ${name}`;
     await control.scrollIntoViewIfNeeded();
     await control.click();
@@ -58,7 +63,7 @@ const click = (name: RegExp | string, role: "button" | "tab" | "link" | "switch"
 
 /** Open the first overflow / row action menu in main, to check popover placement. */
 const firstMenu: StateAction = async (page) => {
-  const trigger = page.locator('main [aria-haspopup="menu"]').first();
+  const trigger = page.locator('main [aria-haspopup="menu"]').filter({ visible: true }).first();
   if (!(await appears(trigger))) return "no row menu in main";
   await trigger.scrollIntoViewIfNeeded();
   await trigger.click();
