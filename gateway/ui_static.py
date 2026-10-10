@@ -131,7 +131,7 @@ class UIStaticFiles(StaticFiles):
         response_headers["vary"] = self._merge_vary(
             response_headers.get("vary"), "Accept-Encoding"
         )
-        accept_encoding = request_headers.get("accept-encoding", "")
+        accept_encoding = ", ".join(request_headers.getlist("accept-encoding"))
         if compressible:
             encoding = (
                 ("identity" if _identity_quality(accept_encoding) > 0 else None)

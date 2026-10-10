@@ -88,6 +88,15 @@ def test_hashed_chunk_is_brotli_compressed_and_immutable(tmp_path):
     )
     assert spaced_identity_refused.status_code == 406
 
+    duplicate_headers_refused = client.get(
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers=[
+            ("Accept-Encoding", "gzip;q=0"),
+            ("Accept-Encoding", "identity;q=0, br;q=0"),
+        ],
+    )
+    assert duplicate_headers_refused.status_code == 406
+
     image = tmp_path / "image.png"
     image.write_bytes(b"image bytes")
     image_refused = client.get("/ui/image.png", headers={"Accept-Encoding": "*;q=0"})
