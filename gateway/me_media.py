@@ -624,6 +624,7 @@ def _media_items(
             continue
         if receipt is None and not _job_in_scope(job, scope):
             continue
+        job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
             if not asset_id or asset_id in seen or asset_id in deleted:
@@ -647,7 +648,9 @@ def _media_items(
                 embedded.get("workflow_id"),
                 embedded.get("workflow"),
             )
-            source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids)
+            if job_source is None:
+                job_source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids)
+            source = job_source
             makers = sidecar.get("maker_person_ids")
             if makers and len(makers) == 1:
                 user = admin_store.get_user(makers[0], path=admin_db_path)
@@ -1274,11 +1277,14 @@ def _usage_summary(
             row["unknown_paid_requests"] += 1
     hashes = owner_keys
     made: set[str] = set()
-    receipt_ids = {str(r["request_id"]) for r in receipts}
+    # Retain first-match semantics without scanning the month's receipts per job.
+    receipts_by_id: dict[str, Mapping[str, Any]] = {}
+    for receipt in receipts:
+        receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
     for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
                                  status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
         request_id = str(job.get("request_id") or "")
-        job_receipt = next((r for r in receipts if str(r.get("request_id")) == request_id), None)
+        job_receipt = receipts_by_id.get(request_id)
         if job_receipt is None and request_id:
             job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
             if job_receipt is not None:
