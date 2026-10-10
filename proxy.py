@@ -20186,7 +20186,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
                 path.unlink(missing_ok=True)
             # A partial spool cannot be resumed or reliably attributed.
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
-                if person_id is None and before is None:
+                if person_id is None and (before is None or int(path.stat().st_mtime) <= before):
                     path.unlink(missing_ok=True)
         for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
             if not isinstance(payload.get("body"), dict) or spared(payload):

@@ -470,3 +470,19 @@ def test_delayed_off_callback_preserves_new_prompt_chat_and_spool(hh, monkeypatc
     assert prompt_memory.get("img_" + "d" * 64, person)["prompt_text"] == "fresh prompt"
     assert proxy.responses_store.get("resp_fresh", path=proxy.responses_store.DB_PATH) is not None
     assert proxy._image_media_job_payload_path("mj_fresh").exists()
+
+
+def test_household_spool_retry_removes_old_partial_files_only(hh):
+    import os
+    cutoff = int(time.time()) - 20
+    directory = proxy.IMAGE_MEDIA_JOB_PAYLOAD_DIR
+    directory.mkdir()
+    old = directory / "mj_old.json.tmp"
+    new = directory / "mj_new.json.tmp"
+    for path, written_at in ((old, cutoff - 5), (new, cutoff + 5)):
+        path.write_text(SENTINEL)
+        os.utime(path, (written_at, written_at))
+    proxy._queue_prompt_purge("*", cutoff)
+    proxy._purge_queued_payloads("*")
+    assert not old.exists()
+    assert new.exists()
