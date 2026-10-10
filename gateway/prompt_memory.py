@@ -236,9 +236,15 @@ def decide_for_person(
 ) -> Decision:
     """Resolve memory policy for an authenticated person independent of App."""
     path = admin_path or admin_store.DB_PATH
-    member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
+    try:
+        member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
+        household = household_settings(admin_path=path)
+    except sqlite3.OperationalError:
+        # Missing legacy preference or a busy database cannot fail inference.
+        requested_mode(body)
+        return Decision(person_id, False, "storage_unavailable")
     return decide(
-        person_id=person_id, member=member, household=household_settings(admin_path=path),
+        person_id=person_id, member=member, household=household,
         request_body=body, responses_store=responses_store,
     )
 
@@ -481,7 +487,8 @@ def _recorded_erasure_cutoff(conn: sqlite3.Connection, person_id: str) -> int:
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
         access = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?",
                               (person_id,)).fetchone()
-        changes.extend(int(value) for value in (access or ()) if value is not None)
+        if access and access[1] is not None:
+            changes.append(int(access[1]))
     return max(changes)
 
 
@@ -637,7 +644,7 @@ def prune(*, path: Path | None = None, now: int | None = None,
             "(asset_id LIKE 'video\\_%' ESCAPE '\\' AND created_at<=?)",
         ]
         args: list[Any] = [current_time, current_time - VIDEO_PROMPT_RETENTION_SECONDS]
-        if available_asset_ids is not None:
+        if available_asset_ids:
             ids = tuple(str(value) for value in available_asset_ids)
             orphan_clause = "(asset_id NOT LIKE 'video\\_%' ESCAPE '\\'"
             if ids:
