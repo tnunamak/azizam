@@ -84,7 +84,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
+        "hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-accent border-b transition-colors",
         className,
       )}
       {...props}
@@ -113,13 +113,19 @@ function TableHead({
 function TableCell({
   className,
   numeric = false,
+  rowName = false,
   ...props
-}: React.ComponentProps<"td"> & { numeric?: boolean }) {
+}: React.ComponentProps<"td"> & {
+  numeric?: boolean;
+  /** The first column's name uses the shared row-name role. */
+  rowName?: boolean;
+}) {
   return (
     <td
       data-slot="table-cell"
       className={cn(
-        "h-10 px-3 py-1.5 align-middle whitespace-nowrap group-data-dense/table:h-9 [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "h-10 max-sm:h-12 px-3 py-1.5 align-middle whitespace-nowrap sm:group-data-dense/table:h-9 [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        rowName && "text-body font-medium",
         numeric && tableNumeric,
         className,
       )}

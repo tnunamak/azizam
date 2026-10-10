@@ -86,7 +86,7 @@
     outline-color: var(--chrome-accent);
   }
   .shell-nav-link {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-11 items-center gap-2.5 px-2.5 text-sm transition-colors duration-(--motion-fast) lg:min-h-8;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-8 max-sm:min-h-11 items-center gap-2.5 px-2.5 text-sm transition-colors duration-(--motion-fast);
   }
   .shell-nav-link[aria-current="page"] {
     @apply bg-chrome-raised text-chrome-foreground font-medium;
@@ -110,7 +110,7 @@
     @apply lg:pt-3;
   }
   .shell-nav-footer {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-11 min-w-11 items-center gap-2.5 px-2.5 text-sm lg:min-h-8;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-8 min-w-8 max-sm:min-h-11 max-sm:min-w-11 items-center gap-2.5 px-2.5 text-sm;
   }
   /* Page padding 32 beside the sidebar, 24 at 640–1023 and 20 on a phone;
      the title 32 from the top (24 on a phone). Values in tokens.css. */
@@ -126,7 +126,7 @@
     margin-top: var(--space-section);
   }
   .sheet-nav .shell-nav-link {
-    @apply text-muted-foreground hover:bg-muted hover:text-foreground min-h-11;
+    @apply text-muted-foreground hover:bg-muted hover:text-foreground min-h-8 max-sm:min-h-11;
   }
   .sheet-nav .shell-nav-link[aria-current="page"] {
     @apply bg-accent text-accent-foreground;

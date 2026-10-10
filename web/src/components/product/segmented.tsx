@@ -18,6 +18,7 @@ export interface SegmentOption<T extends string> {
  * semibold weight, the same "you are here" as the sidebar, so the choice
  * reads without colour too. Each segment is a pressed button. DESIGN
  * "Controls": a 32 group of 28 segments; 44 segments below 640 px.
+ * Inset the focus outline so the scrolling group never clips it.
  */
 export function Segmented<T extends string>({
   label,
@@ -49,7 +50,7 @@ export function Segmented<T extends string>({
             type="button"
             aria-pressed={value === option.value}
             onClick={() => onChange(option.value)}
-            className="text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground rounded-control text-meta flex shrink-0 items-center gap-1.5 px-2.5 font-medium sm:h-7 whitespace-nowrap transition-colors duration-(--motion-fast) aria-pressed:font-semibold max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center max-sm:px-2"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground rounded-control text-meta focus-visible:-outline-offset-4 flex shrink-0 items-center gap-1.5 px-2.5 font-medium sm:h-7 whitespace-nowrap transition-colors duration-(--motion-fast) aria-pressed:font-semibold max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center max-sm:px-2"
           >
             {/* No room for icons in four phone segments; the words carry it. */}
             {Icon ? (

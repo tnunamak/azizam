@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { capabilityMeta } from "./readiness";
+import { KeyValueList } from "./key-value";
 
 /* One icon, one colour and one word per state tone. */
 const toneIcon: Record<StateTone, LucideIcon> = {
@@ -263,26 +264,12 @@ export function Callout({
   const Icon = severityIcon[severity];
   const Heading = headingLevel === 2 ? "h2" : "h3";
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const rows = (items: Array<[string, ReactNode]>) =>
-    items.map(([label, value]) => (
-      <div key={label} className="contents">
-        <dt className="text-muted-foreground max-sm:font-medium">
-          {label}
-        </dt>
-        <dd className="min-w-0 max-sm:mb-1">{value}</dd>
-      </div>
-    ));
-  // One column on a phone, the label above its value (D1.5: the squeezed
-  // two-column card wrapped the evidence mid-phrase); 14 px values on wide
-  // screens.
-  const factGrid =
-    "grid grid-cols-1 gap-y-1 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-2 sm:text-base";
   if (variant === "incident")
     return (
       <Tag
         role={severity === "critical" && Tag === "div" ? "alert" : undefined}
         className={cn(
-          "bg-card rounded-panel min-w-0 border p-4 sm:p-5",
+          "bg-card rounded-panel min-w-0 border p-4 sm:p-6",
           className,
         )}
       >
@@ -298,10 +285,10 @@ export function Callout({
             ) : null}
           </div>
         </div>
-        <div className="mt-4 min-w-0 space-y-5 sm:pl-8">
-          {facts?.length ? <dl className={factGrid}>{rows(facts)}</dl> : null}
+        <div className="mt-4 min-w-0 space-y-4 sm:pl-8">
+          {facts?.length ? <KeyValueList items={facts} /> : null}
           {children || actions ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {children ? (
                 <div className="text-foreground text-body space-y-1 font-medium">
                   {children}
@@ -333,7 +320,7 @@ export function Callout({
                 {evidenceOpen ? "Hide details" : "Show details"}
               </button>
               {evidenceOpen ? (
-                <dl className={factGrid}>{rows(evidence)}</dl>
+                <KeyValueList items={evidence} />
               ) : null}
             </div>
           ) : null}
@@ -344,7 +331,7 @@ export function Callout({
     <Tag
       role={severity === "critical" && Tag === "div" ? "alert" : undefined}
       className={cn(
-        "bg-card rounded-panel min-w-0 border p-4 sm:p-5",
+        "bg-card rounded-panel min-w-0 border p-4 sm:p-6",
         className,
       )}
     >
@@ -376,14 +363,10 @@ export function Callout({
           {/* A phone reads: title, scope and history (facts), the
               instruction, its button, then evidence on request (D1.4). */}
           {facts?.length ? (
-            <dl
-              className={cn(
-                factGrid,
-                "max-sm:order-1 max-sm:-ml-8 sm:col-span-2",
-              )}
-            >
-              {rows(facts)}
-            </dl>
+            <KeyValueList
+              items={facts}
+              className="max-sm:order-1 max-sm:-ml-8 sm:col-span-2"
+            />
           ) : null}
           {evidence?.length ? (
             <div className="space-y-2 max-sm:order-4 max-sm:-ml-8 sm:col-span-2">
@@ -403,9 +386,10 @@ export function Callout({
                 />
                 {evidenceOpen ? "Hide details" : "Show details"}
               </button>
-              <dl className={cn(factGrid, !evidenceOpen && "max-sm:hidden")}>
-                {rows(evidence)}
-              </dl>
+              <KeyValueList
+                items={evidence}
+                className={cn(!evidenceOpen && "max-sm:hidden")}
+              />
             </div>
           ) : null}
           {actions ? (
@@ -497,7 +481,7 @@ export function CapabilityChips({ views }: { views: CapabilityView[] }) {
             tone={view.tone}
             label={view.state === "ready" ? view.word : undefined}
           />
-          <span className="min-w-0 flex-1 truncate font-medium">
+          <span className="text-body min-w-0 flex-1 truncate font-medium">
             {view.label}
           </span>
           {view.state !== "ready" ? (

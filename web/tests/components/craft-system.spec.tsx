@@ -13,6 +13,7 @@ import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { chartColors, ChartLegend, CHART_OTHER } from "@/components/ui/charts";
 import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import {
   Table,
@@ -102,6 +103,39 @@ describe("controls", () => {
     );
   });
 
+  it("leaves the select's focus to the shared outline, with no ring or reset of its own", () => {
+    render(
+      <Select>
+        <SelectTrigger aria-label="Source">
+          <SelectValue placeholder="All sources" />
+        </SelectTrigger>
+      </Select>,
+    );
+    const trigger = classes(screen.getByRole("combobox", { name: "Source" }));
+    expect(trigger).toContain("focus-visible:border-ring");
+    for (const gone of ["outline-none", "focus-visible:ring-[3px]", "focus-visible:ring-ring/50"])
+      expect(trigger).not.toContain(gone);
+  });
+
+  it("keeps xs and icon-xs at 32 and lg at 40 on desktop, 44 on a phone", () => {
+    render(
+      <>
+        <Button size="xs">Tiny</Button>
+        <Button size="icon-xs" aria-label="Dot" />
+        <Button size="lg">Wide</Button>
+        <Button size="icon-lg" aria-label="Big" />
+      </>,
+    );
+    expect(classes(screen.getByRole("button", { name: "Tiny" }))).toContain("h-8");
+    expect(classes(screen.getByRole("button", { name: "Dot" }))).toContain("size-8");
+    expect(classes(screen.getByRole("button", { name: "Wide" }))).toEqual(
+      expect.arrayContaining(["h-10", "max-sm:h-11"]),
+    );
+    expect(classes(screen.getByRole("button", { name: "Big" }))).toEqual(
+      expect.arrayContaining(["size-10", "max-sm:size-11"]),
+    );
+  });
+
   it("gives a form's submit the md height unless it names a size", () => {
     render(
       <form>
@@ -134,16 +168,28 @@ describe("controls", () => {
     );
   });
 
-  it("lets a caller's own height or minimum replace the field defaults", () => {
+  it("keeps the size's desktop height and lets a caller change only the phone height", () => {
     render(
       <>
-        <Input aria-label="Tall" className="h-12" />
+        <Input aria-label="Tall" size="sm" className="h-12 sm:h-14 !h-16 w-40" />
+        <Input aria-label="Phone" className="max-sm:h-12" />
+      </>,
+    );
+    const tall = classes(screen.getByRole("textbox", { name: "Tall" }));
+    expect(tall).toEqual(expect.arrayContaining(["sm:h-8", "max-sm:h-11", "w-40"]));
+    for (const dropped of ["h-12", "sm:h-14", "!h-16"])
+      expect(tall).not.toContain(dropped);
+    expect(classes(screen.getByRole("textbox", { name: "Phone" }))).toEqual(
+      expect.arrayContaining(["sm:h-10", "max-sm:h-12"]),
+    );
+  });
+
+  it("lets a textarea's own minimum replace the field defaults", () => {
+    render(
+      <>
         <Textarea aria-label="Notes" />
         <Textarea aria-label="JSON" className="min-h-36 font-mono text-xs" />
       </>,
-    );
-    expect(classes(screen.getByRole("textbox", { name: "Tall" }))).not.toContain(
-      "sm:h-10",
     );
     expect(classes(screen.getByRole("textbox", { name: "Notes" }))).toEqual(
       expect.arrayContaining(["min-h-20", "max-sm:min-h-24", "text-body"]),
@@ -224,9 +270,33 @@ describe("cards, badges and tables", () => {
       expect.arrayContaining(["text-right", "figures"]),
     );
     expect(classes(screen.getByText("Default"))).toEqual(
-      expect.arrayContaining(["h-10", "group-data-dense/table:h-9"]),
+      expect.arrayContaining(["h-10", "sm:group-data-dense/table:h-9"]),
     );
     expect(classes(screen.getByText("12"))).toContain("text-right");
+  });
+
+  it("gives table rows 48 on a phone, the dense 36 only from 640 px, and a name role on request", () => {
+    render(
+      <Table dense>
+        <TableBody>
+          <TableRow data-state="selected">
+            <TableCell rowName>Default</TableCell>
+            <TableCell>Plain</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    const name = classes(screen.getByText("Default"));
+    expect(name).toEqual(
+      expect.arrayContaining(["max-sm:h-12", "text-body", "font-medium"]),
+    );
+    expect(name).not.toContain("group-data-dense/table:h-9");
+    const plain = classes(screen.getByText("Plain"));
+    expect(plain).toContain("max-sm:h-12");
+    expect(plain).not.toContain("font-medium");
+    expect(classes(screen.getByRole("row"))).toContain(
+      "data-[state=selected]:bg-accent",
+    );
   });
 });
 

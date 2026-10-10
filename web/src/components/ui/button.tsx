@@ -9,7 +9,7 @@ import { Slot } from "radix-ui";
  * Run and a dialog's primary. A submit button with no size is `md`, so a form
  * keeps its 40 action beside its 40 fields. Below 640 px every size is at
  * least 44 × 44.
- * `lg` (44) is for full-width phone actions only.
+ * `lg` and `icon-lg` are 40 on desktop and 44 on phones.
  */
 const buttonVariants = cva(
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-meta font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max-sm:min-w-11 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -28,15 +28,15 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
-        xs: "h-7 gap-1 px-2 text-badge has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        xs: "h-8 gap-1 px-2 text-badge has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
         md: "h-10 px-4 text-body has-[>svg]:px-3.5",
-        // craft-allow: lg is the full-width phone action (DESIGN "Controls").
-        lg: "h-11 px-5 text-body has-[>svg]:px-4",
+        // Large actions use the form height on desktop; 44 is phone-only.
+        lg: "h-10 max-sm:h-11 px-5 text-body has-[>svg]:px-4",
         icon: "size-8",
-        "icon-xs": "size-7 [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-xs": "size-8 [&_svg:not([class*='size-'])]:size-3.5",
         "icon-sm": "size-8",
-        "icon-lg": "size-11",
+        "icon-lg": "size-10 max-sm:size-11",
       },
     },
     defaultVariants: {
