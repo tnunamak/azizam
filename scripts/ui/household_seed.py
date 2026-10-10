@@ -57,6 +57,10 @@ APP_WEIGHTS = {
     "sam": 3, "robin": 3, "alex": 2, "zoe": 1.5, "webui": 2, "home": 3, "codex": 2.5,
 }
 FIXTURES = Path(__file__).parent / "fixtures" / "household"
+# Workflows the household's plans allow by their short id (the workflow
+# capability's model). A picture-edit workflow keeps a form that takes a
+# picture in front of the sweep and the browser tests.
+PLAN_WORKFLOWS = ("qwen-image-2.1-edit",)
 # Engine and model knowledge is fixture DATA, authored through registry contracts.
 MODEL_GROUPS = {
     "household-chat": [
@@ -362,7 +366,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]
     )
     plans = {}
-    all_models = [mid for group in MODEL_GROUPS.values() for mid, _, _ in group]
+    all_models = [mid for group in MODEL_GROUPS.values() for mid, _, _ in group] + list(PLAN_WORKFLOWS)
     for name, paid in [("Everyone", True), ("Teen", False), ("Builder", True)]:
         doc = {
             "id": name.lower(),

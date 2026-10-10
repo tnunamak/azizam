@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 
@@ -176,19 +176,19 @@ describe("workflow input helpers", () => {
   it("throws useful validation errors", () => {
     expect(() =>
       parseWorkflowInputs(JSON.stringify({ steps: 12 }), inputs),
-    ).toThrow("prompt is required.");
+    ).toThrow("Prompt is required.");
     expect(() =>
       parseWorkflowInputs(JSON.stringify({ text: "x", steps: 12.5 }), inputs),
-    ).toThrow("steps must be an integer.");
+    ).toThrow("Steps must be a whole number.");
     expect(() =>
       parseWorkflowInputs(JSON.stringify({ text: "x", guidance: 11 }), inputs),
-    ).toThrow("guidance must be <= 10.");
+    ).toThrow("Guidance must be at most 10.");
     expect(() =>
       parseWorkflowInputs(
         JSON.stringify({ text: "x", size: "128x128" }),
         inputs,
       ),
-    ).toThrow("size must be one of: 512x512, 1024x1024.");
+    ).toThrow("Size must be one of: 512x512, 1024x1024.");
   });
 
   it("writes real route mappings including size and workflow extensions", () => {
@@ -269,7 +269,7 @@ describe("workflow input helpers", () => {
 
   it("validates and edits required asset strings in JSON requests", () => {
     expect(() => parseWorkflowInputs("{}", assetBodyInputs)).toThrow(
-      "reference_image is required.",
+      "Reference image is required.",
     );
 
     const body = {};
@@ -327,7 +327,7 @@ describe("WorkflowInputs", () => {
     }
     const user = userEvent.setup();
     render(<Form />);
-    const prompt = screen.getByRole("textbox", { name: "prompt" });
+    const prompt = screen.getByRole("textbox", { name: "Prompt" });
     await user.click(prompt);
     await user.keyboard("{Enter}");
     expect(submitted).toHaveBeenCalledTimes(1);
@@ -368,19 +368,19 @@ describe("WorkflowInputs", () => {
     }
     const user = userEvent.setup();
     render(<ControlledInputs />);
-    const prompt = screen.getByRole("textbox", { name: "prompt" });
+    const prompt = screen.getByRole("textbox", { name: "Prompt" });
     await user.click(prompt);
     await user.keyboard("ab");
-    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(screen.getByRole("textbox", { name: "Prompt" })).toBe(prompt);
     expect(prompt).toHaveFocus();
     expect(prompt).toHaveValue("x".repeat(79) + "ab");
     expect((prompt as HTMLTextAreaElement).selectionStart).toBe(81);
     await user.keyboard("{Backspace}{Backspace}");
-    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(screen.getByRole("textbox", { name: "Prompt" })).toBe(prompt);
     expect(prompt).toHaveFocus();
     expect((prompt as HTMLTextAreaElement).selectionStart).toBe(79);
     await user.paste("long pasted text");
-    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(screen.getByRole("textbox", { name: "Prompt" })).toBe(prompt);
     expect(prompt).toHaveFocus();
     expect(prompt).toHaveValue("x".repeat(79) + "long pasted text");
     expect((prompt as HTMLTextAreaElement).selectionStart).toBe(95);
@@ -400,7 +400,7 @@ describe("WorkflowInputs", () => {
       />,
     );
 
-    const prompt = screen.getByRole("textbox", { name: /prompt Required/ });
+    const prompt = screen.getByRole("textbox", { name: /Prompt Required/ });
     fireEvent.change(prompt, { target: { value: "new" } });
 
     const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
@@ -417,23 +417,31 @@ describe("WorkflowInputs", () => {
         inputs={inputs}
         json={JSON.stringify(workflowDefaults(inputs), null, 2)}
         onChange={() => undefined}
+        onFileChange={() => undefined}
+        technical
       />,
     );
 
-    expect(screen.getByRole("spinbutton", { name: "steps" })).toHaveAttribute(
+    expect(screen.getByRole("spinbutton", { name: "Steps" })).toHaveAttribute(
       "max",
       "50",
     );
     expect(screen.getByText("Sampling steps.")).toBeVisible();
     expect(
-      screen.getByRole("checkbox", { name: "transparent_background" }),
+      screen.getByRole("checkbox", { name: "Transparent background" }),
     ).toBeInTheDocument();
+    // A file input gets the picture picker itself, not a text box.
+    const picture = screen.getByRole("group", { name: /Source image/ });
     expect(
-      screen.getAllByText("Choose this file in the upload control below.")[0],
+      within(picture).getByRole("button", { name: "Choose a file" }),
     ).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: /Source image/ })).toBeNull();
+    expect(
+      document.querySelector('[data-technical-input="source_image"]'),
+    ).toHaveTextContent("Sent as the file part source_image.");
     // An ignored input is not a control; it is explained under Input details.
-    expect(screen.queryByRole("textbox", { name: "seed" })).toBeNull();
-    expect(screen.queryByRole("spinbutton", { name: "seed" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Seed" })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: "Seed" })).toBeNull();
     const technical = document.querySelector('[data-technical-input="seed"]')!;
     expect(technical).toHaveTextContent(
       "Known input, but this route ignores it for the selected workflow.",
@@ -471,7 +479,7 @@ describe("WorkflowInputs", () => {
       screen.getByText("Workflow inputs must be a JSON object."),
     ).toBeVisible();
     expect(
-      screen.getByRole("textbox", { name: /prompt Required/ }),
+      screen.getByRole("textbox", { name: /Prompt Required/ }),
     ).toBeDisabled();
   });
 
@@ -490,7 +498,7 @@ describe("WorkflowInputs", () => {
         "extensions must be valid JSON before using guided controls.",
       ),
     ).toBeVisible();
-    expect(screen.getByRole("spinbutton", { name: "steps" })).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "Steps" })).toBeDisabled();
   });
 
   it("explains unsupported combined controls instead of editing them", () => {
@@ -502,10 +510,10 @@ describe("WorkflowInputs", () => {
       />,
     );
 
-    expect(screen.getByRole("spinbutton", { name: "left" })).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "Left" })).toBeDisabled();
     expect(
       screen.getAllByText(
-        "This combined field is not supported by guided controls yet. Edit Advanced JSON.",
+        "This setting cannot be changed here yet.",
       ),
     ).toHaveLength(2);
   });
@@ -519,10 +527,10 @@ describe("WorkflowInputs", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "metadata" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "Metadata" })).toHaveValue(
       '{\n  "keep": true\n}',
     );
-    expect(screen.getByRole("textbox", { name: "metadata" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Metadata" })).toBeDisabled();
   });
 });
 
@@ -564,11 +572,11 @@ describe("TM-12 optional inputs can return to unset", () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     expect(screen.getByText("Disabled")).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Clear transparent_background" }));
+    await userEvent.click(screen.getByRole("button", { name: "Clear Transparent background" }));
     const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
     expect(last).not.toHaveProperty("transparent_background");
     expect(screen.getByText("Not set")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Clear transparent_background" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear Transparent background" })).toBeNull();
   });
 
   it("omits an optional enum set to Not set; a required enum has no Not set", async () => {
@@ -582,7 +590,7 @@ describe("TM-12 optional inputs can return to unset", () => {
     const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
     expect(last).not.toHaveProperty("size");
     expect(last.mode).toBe("fast");
-    const mode = screen.getByRole("combobox", { name: /mode Required/ });
+    const mode = screen.getByRole("combobox", { name: /Mode Required/ });
     mode.focus();
     fireEvent.keyDown(mode, { key: "Enter" });
     expect(await screen.findByRole("option", { name: "best" })).toBeInTheDocument();

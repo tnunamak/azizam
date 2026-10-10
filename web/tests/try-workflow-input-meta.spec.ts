@@ -3,6 +3,7 @@ import catalog from "./fixtures/workflows-ltx-i2v.json";
 import {
   assetIdFromPasted,
   inputHint,
+  missingMessage,
   inputLabel,
   inputPlaceholder,
   isPlausibleMediaReference,
@@ -79,11 +80,41 @@ describe("member-facing words for workflow inputs", () => {
     ).toBe("Avoid (optional)");
   });
 
-  it("keeps an unknown input's own name rather than inventing one", () => {
+  it("keeps an unknown input's own words rather than inventing a name", () => {
     expect(inputLabel({ name: "guidance", type: "number" }, "image")).toBe(
-      "guidance",
+      "Guidance",
     );
-    expect(inputLabel(prompt, "other")).toBe("prompt");
+    // Never the raw field name a developer typed.
+    expect(inputLabel({ name: "batch_size", type: "integer" }, "image")).toBe(
+      "Batch size",
+    );
+    expect(inputLabel(prompt, "other")).toBe("Prompt");
+  });
+
+  it("uses the manifest's label and help first", () => {
+    const steps = {
+      name: "steps",
+      type: "integer",
+      label: "number of steps",
+      help: "More steps add detail but take longer.",
+      description: "Turbo model; 8-12 steps is the community sweet spot.",
+    };
+    expect(inputLabel(steps, "image")).toBe("Number of steps");
+    expect(inputHint(steps, "image")).toBe(
+      "More steps add detail but take longer.",
+    );
+    expect(
+      inputLabel({ name: "reference", type: "string", asset: true, label: "a face photo" }, "other"),
+    ).toBe("Face photo");
+  });
+
+  it("asks for a missing picture by what it is", () => {
+    expect(
+      missingMessage(
+        { name: "source_image", type: "string", asset: true, media_type: "image/*" },
+        "image",
+      ),
+    ).toBe("Choose a picture first");
   });
 
   it("gives a helper line with no developer words", () => {

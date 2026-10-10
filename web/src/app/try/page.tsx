@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import {
   WorkflowInputs,
+  fileFieldOf,
+  isFileInput,
   parseWorkflowInputs,
   workflowDefaults,
   workflowInputProblems,
@@ -94,7 +96,8 @@ type RequestInfo = {
 };
 type WorkflowExampleFile = {
   field: string;
-  placeholder: string;
+  /** A made-up local path for the code examples only; never helper text. */
+  examplePath: string;
   type?: string;
   required?: boolean;
   selected?: boolean;
@@ -129,7 +132,6 @@ type WorkflowOption = {
     content_type?: string;
     body?: Record<string, unknown>;
     form?: Record<string, unknown>;
-    files?: WorkflowExampleFile[];
     curl?: string;
     python?: string;
     javascript?: string;
@@ -473,7 +475,7 @@ function codeSnippets(request: RequestInfo) {
     const form = request.form ?? { model };
     const files = request.files?.filter(
       (file) => file.required !== false || file.selected,
-    ) ?? [{ field: "file", placeholder: "sample.wav" }];
+    ) ?? [{ field: "file", examplePath: "sample.wav" }];
     const fields = Object.entries(form)
       .filter(([, value]) => value !== undefined && value !== null)
       .map(([name, value]) => [
@@ -486,12 +488,12 @@ function codeSnippets(request: RequestInfo) {
     );
     const curlFiles = files.map(
       (file) =>
-        `  -F ${shellQuote(`${file.field}=@${file.placeholder}${file.type ? `;type=${file.type}` : ""}`)}`,
+        `  -F ${shellQuote(`${file.field}=@${file.examplePath}${file.type ? `;type=${file.type}` : ""}`)}`,
     );
     const pythonFiles = files
       .map(
         (file) =>
-          `    ${JSON.stringify(file.field)}: (${JSON.stringify(file.placeholder)}, stack.enter_context(open(${JSON.stringify(file.placeholder)}, "rb")), ${JSON.stringify(file.type ?? "application/octet-stream")}),`,
+          `    ${JSON.stringify(file.field)}: (${JSON.stringify(file.examplePath)}, stack.enter_context(open(${JSON.stringify(file.examplePath)}, "rb")), ${JSON.stringify(file.type ?? "application/octet-stream")}),`,
       )
       .join("\n");
     const jsFields = fields
@@ -503,7 +505,7 @@ function codeSnippets(request: RequestInfo) {
     const jsFiles = files
       .map(
         (file) =>
-          `form.set(${JSON.stringify(file.field)}, new Blob([await fs.readFile(${JSON.stringify(file.placeholder)})], {type: ${JSON.stringify(file.type ?? "application/octet-stream")}}), ${JSON.stringify(file.placeholder)});`,
+          `form.set(${JSON.stringify(file.field)}, new Blob([await fs.readFile(${JSON.stringify(file.examplePath)})], {type: ${JSON.stringify(file.type ?? "application/octet-stream")}}), ${JSON.stringify(file.examplePath)});`,
       )
       .join("\n");
     return [
@@ -796,55 +798,39 @@ function workflowExampleRequest(
       typeof record.form === "object" && record.form !== null
         ? (record.form as Record<string, unknown>)
         : undefined,
-    files: workflowExampleFiles(record.files),
     curl: stringValue(record.curl) ?? undefined,
     python: stringValue(record.python) ?? undefined,
     javascript: stringValue(record.javascript) ?? undefined,
   };
 }
 
-function workflowExampleFiles(value: unknown): WorkflowExampleFile[] {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return [];
-  }
-  return Object.entries(value as Record<string, unknown>)
-    .map(([field, placeholder]) => ({
-      field,
-      placeholder: String(placeholder ?? ""),
-      required: true,
-    }))
-    .filter((file) => file.field);
-}
+const EXAMPLE_SUFFIX: Record<string, string> = {
+  image: "png",
+  video: "mp4",
+  audio: "wav",
+};
 
+/**
+ * The multipart file parts a workflow's request carries: one per file input,
+ * by the same rule the form uses to give that input its picker, so each
+ * picture has exactly one control.
+ */
 function workflowFileSpecs(workflow: WorkflowOption): WorkflowExampleFile[] {
-  const files = [...(workflow.example_request?.files ?? [])];
-  if (requestIsMultipart(workflow)) {
-    for (const input of workflow.inputs) {
-      const mapping = workflow.inputMapping?.[input.name];
-      const location = mapping?.in ?? input.applies?.toLowerCase();
-      if (input.ignored || input.accepted === false) continue;
-      if (
-        location?.includes("file") ||
-        (!location && ["asset", "file", "binary"].includes(input.type))
-      ) {
-        const field = mapping?.field ?? input.request_field ?? input.name;
-        if (!files.some((file) => file.field === field))
-          files.push({ field, placeholder: `./${field}.bin` });
-      }
-    }
+  if (!requestIsMultipart(workflow)) return [];
+  const specs: WorkflowExampleFile[] = [];
+  for (const input of workflow.inputs) {
+    if (input.ignored || input.accepted === false) continue;
+    if (!isFileInput(input, workflow.inputMapping)) continue;
+    const field = fileFieldOf(input, workflow.inputMapping);
+    if (specs.some((spec) => spec.field === field)) continue;
+    const family = input.media_type?.split("/")[0] ?? "";
+    specs.push({
+      field,
+      examplePath: `./${input.name.replace(/_/g, "-")}.${EXAMPLE_SUFFIX[family] ?? "bin"}`,
+      required: input.required === true,
+    });
   }
-  return files.map((file) => {
-    const input = workflow.inputs.find(
-      (item) =>
-        item.name === file.field ||
-        item.request_field === file.field ||
-        workflow.inputMapping?.[item.name]?.field === file.field,
-    );
-    return {
-      ...file,
-      required: input ? input.required === true : file.required !== false,
-    };
-  });
+  return specs;
 }
 
 function stringValue(value: unknown) {
@@ -1057,9 +1043,16 @@ export default function TryPage() {
             selectedWorkflow.inputs,
             selectedWorkflow.inputMapping,
             workflowOutputKind,
+            workflowFiles,
           )
         : {},
-    [workflowChecked, selectedWorkflow, prompt.workflow, workflowOutputKind],
+    [
+      workflowChecked,
+      selectedWorkflow,
+      prompt.workflow,
+      workflowOutputKind,
+      workflowFiles,
+    ],
   );
   useEffect(() => {
     mounted.current = true;
@@ -1448,7 +1441,7 @@ export default function TryPage() {
         form: formBody,
         files: workflowFileSpecs(selectedWorkflow).map((file) => ({
           ...file,
-          placeholder: workflowFiles[file.field]?.name ?? file.placeholder,
+          examplePath: workflowFiles[file.field]?.name ?? file.examplePath,
           type: workflowFiles[file.field]?.type || file.type,
           selected: Boolean(workflowFiles[file.field]),
         })),
@@ -1471,6 +1464,7 @@ export default function TryPage() {
         selectedWorkflow.inputs,
         selectedWorkflow.inputMapping,
         workflowOutputKind,
+        workflowFiles,
       );
       const first = selectedWorkflow.inputs.find((input) => problems[input.name]);
       setWorkflowChecked(true);
@@ -1512,7 +1506,7 @@ export default function TryPage() {
             const field = fileSpec.field;
             const selectedFile = workflowFiles[field];
             if (!selectedFile && fileSpec.required !== false) {
-              throw new Error(`Choose a file for workflow input ${field}.`);
+              throw new Error("Choose every picture this workflow needs first.");
             }
             if (selectedFile) {
               form.set(field, selectedFile);
@@ -2063,21 +2057,18 @@ export default function TryPage() {
                       onChange={(json) =>
                         setPrompt((current) => ({ ...current, workflow: json }))
                       }
-                    />
-                  )}
-                  {tab.value === "workflow" && selectedWorkflow && (
-                    <WorkflowFileInputs
-                      workflow={selectedWorkflow}
                       files={workflowFiles}
-                      onChange={(field, nextFile) =>
+                      onFileChange={(field, nextFile) =>
                         setWorkflowFiles((current) => ({
                           ...current,
                           [field]: nextFile,
                         }))
                       }
+                      technical={owner}
                     />
                   )}
-                  {tab.value === "workflow" && (
+                  {/* The request body is a builder's tool: owners only, folded away. */}
+                  {tab.value === "workflow" && owner && (
                     <details className="border-t pt-3">
                       <summary className="min-h-11 cursor-pointer text-sm font-medium">
                         Advanced JSON
@@ -2508,45 +2499,6 @@ function ResultView({
         </summary>
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </details>
-    </div>
-  );
-}
-
-function WorkflowFileInputs({
-  workflow,
-  files,
-  onChange,
-}: {
-  workflow: WorkflowOption;
-  files: Record<string, File | null>;
-  onChange: (field: string, file: File | null) => void;
-}) {
-  const fileSpecs = workflowFileSpecs(workflow);
-  if (!fileSpecs.length) return null;
-  return (
-    <div className="space-y-3">
-      {fileSpecs.map((fileSpec) => (
-        <label key={fileSpec.field} className="block space-y-2">
-          <span className="text-sm font-medium">
-            {fileSpec.field}
-            {fileSpec.required !== false && (
-              <span className="text-destructive ml-1">*</span>
-            )}
-          </span>
-          <Input
-            type="file"
-            accept={fileSpec.type}
-            onChange={(event) =>
-              onChange(fileSpec.field, event.target.files?.[0] ?? null)
-            }
-          />
-          <span className="text-muted-foreground text-xs">
-            {files[fileSpec.field]?.name ??
-              fileSpec.placeholder ??
-              "Choose a file for this workflow input."}
-          </span>
-        </label>
-      ))}
     </div>
   );
 }
