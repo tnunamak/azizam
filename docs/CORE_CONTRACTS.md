@@ -572,14 +572,20 @@ Receipts are not full request logs. They should avoid raw prompts, raw files,
 secrets, downstream credentials, and large payloads by default.
 
 Generated-media prompts have a separate store keyed by asset and maker person.
-The maker is the authenticated browser user (`users.id`) or the recorded human
-creator of the App key (`credentials.created_by`). App ownership grants media
-access; it does not grant another person's identity or prompt access. An owner
-key minted on a member's App acts as the owner. Its outputs belong to the owner
-in the Library. A key with an unknown creator has no person identity. Existing
-keys are not assigned an inferred creator during upgrade; replace them to use
-personal prompt memory. Giving someone your key delegates your person identity,
-including access to your saved prompts and full workflow downloads.
+A request counts as a person only when it is authenticated as that person
+(session/OIDC), or uses a personal App key created by that App's own owner.
+A key minted by anyone on a service App, or by the owner on someone else's
+App, has no person: prompts are not remembered and maker-only metadata is
+unavailable. Generated items still belong to the App for Library visibility
+and receipts. Library item visibility does not depend on the key's creator.
+
+At read time, a pre-upgrade key with no recorded creator (`created_by IS NULL`)
+on a personal App is treated as created by that App's owner. This preserves
+existing keys and applies the owner's prompt-memory setting. Service App keys
+remain no-person. New keys minted by non-human administrators record an empty
+creator, which explicitly excludes them from the legacy fallback. Sharing your
+own personal App key delegates your person identity, including access to your
+saved prompts and full workflow downloads.
 
 A retained prompt has an optional expiry. Receipts and media-job metadata
 reject raw prompt fields. New cache writes strip embedded prompts and workflows.

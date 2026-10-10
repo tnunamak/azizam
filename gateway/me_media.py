@@ -573,8 +573,6 @@ def _media_items(
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
             sidecar = dict(asset_metadata_reader(asset_id) or {}) if asset_metadata_reader else {}
-            if "maker_person_ids" in sidecar and scope.app_ids is not None and scope.person_id not in sidecar["maker_person_ids"]:
-                continue
             prompt_record = prompts.get(asset_id)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
             model = _string_first(
@@ -627,8 +625,6 @@ def _media_items(
             if not asset_id or asset_id in seen or asset_id in deleted:
                 continue
             metadata = dict(asset_metadata_reader(asset_id) or {})
-            if "maker_person_ids" in metadata and scope.app_ids is not None and scope.person_id not in metadata["maker_person_ids"]:
-                continue
             owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
             if credential_hashes is not None and not (owners & credential_hashes):
                 continue

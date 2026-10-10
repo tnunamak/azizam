@@ -2126,7 +2126,7 @@ NO_AUTH_CONTEXT = AuthContext()
 
 
 def _auth_person_id(auth_context: AuthContext | None) -> str | None:
-    """Trusted credential creator; never infer a person from App ownership."""
+    """Person resolved by session auth or the personal-App credential rule."""
     person_id = getattr(getattr(auth_context, "identity", None), "person_id", None)
     return person_id if isinstance(person_id, str) and person_id else None
 
@@ -6973,7 +6973,8 @@ def store_asset_bytes(
         makers = set(metadata_sidecar.get("maker_person_ids") or [])
         if person_id:
             makers.add(person_id)
-        metadata_sidecar["maker_person_ids"] = sorted(makers)
+        if makers:
+            metadata_sidecar["maker_person_ids"] = sorted(makers)
         _write_asset_metadata(asset_id, metadata_sidecar)
     if decision is not None and decision.keep and text:
         saved = prompt_memory.safe_put(

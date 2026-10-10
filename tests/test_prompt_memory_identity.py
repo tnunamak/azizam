@@ -76,7 +76,7 @@ def test_responses_legacy_name_only_rows_are_hidden():
     assert not proxy._responses_row_visible({"api_key_name": "Try"}, auth)
 
 
-def test_key_creator_is_the_person_even_when_app_belongs_to_someone_else(tmp_path):
+def test_personal_key_must_be_minted_by_its_own_app_owner(tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     member = admin_store.upsert_oidc_user("test", "member", path=path)
@@ -91,15 +91,15 @@ def test_key_creator_is_the_person_even_when_app_belongs_to_someone_else(tmp_pat
     service_key = store.create_credential(app_id=app["id"], data={}, actor=AdminContext(
         subject="service", actor_kind="service_account", roles=frozenset({"owner"}),
     ))
-    for key, expected in ((member_key, member["id"]), (owner_key, owner["id"]), (service_key, None)):
+    for key, expected, creator in ((member_key, member["id"], member["id"]), (owner_key, None, owner["id"]), (service_key, None, "")):
         identity = runtime_identity_for_app_credential_hash(hash_api_key(key["api_key"]), path=path)
         assert identity.app_id == app["id"]
         assert identity.person_id == expected
         credential = admin_store.get_credential(key["id"], path=path)
-        assert credential["created_by"] == expected
+        assert credential["created_by"] == creator
     legacy = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
         hash=hash_api_key("legacy-key"), prefix="legacy", path=path)
-    assert runtime_identity_for_app_credential_hash(legacy["hash"], path=path).person_id is None
+    assert runtime_identity_for_app_credential_hash(legacy["hash"], path=path).person_id == member["id"]
 
 
 def test_new_output_from_owner_key_is_not_saved_as_the_app_owner(tmp_path, monkeypatch):
@@ -109,12 +109,16 @@ def test_new_output_from_owner_key_is_not_saved_as_the_app_owner(tmp_path, monke
     owner = admin_store.upsert_oidc_user("test", "owner", path=path)
     app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], path=path)
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
-    context = proxy._begin_media_delivery(_auth(app["id"], owner["id"], "sha256:owner"))
+    key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(
+        subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
+    ))
+    identity = runtime_identity_for_app_credential_hash(hash_api_key(key["api_key"]), path=path)
+    context = proxy._begin_media_delivery(proxy.AuthContext(identity=identity))
     try:
         assert proxy._note_media_metadata_body({"prompt": "owner-input"}) is None
-        assert context.prompt_decision.keep
-        assert context.prompt_decision.person_id == owner["id"]
-        assert context.person_id == owner["id"]
+        assert not context.prompt_decision.keep
+        assert context.prompt_decision.person_id is None
+        assert context.person_id is None
     finally:
         proxy.media_delivery._CONTEXT.set(None)
 
@@ -272,7 +276,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
             media_jobs_path=jobs_db, receipts_path=receipts_db, prompt_memory_path=jobs_db,
         )
     assert library(member["id"])[0]["prompt"] == "video-full-secret"
-    assert library(owner["id"]) == []
+    assert library(owner["id"])[0]["prompt"] is None
 
 
 def test_delete_person_removes_only_that_persons_responses(tmp_path):
@@ -302,15 +306,15 @@ def test_delete_person_before_preserves_later_and_other_person_responses(tmp_pat
     assert proxy.responses_store.delete_person_before("robin", 10, path=tmp_path / "absent.db") == 0
 
 
-def test_native_home_identity_uses_session_person_but_key_keeps_its_creator(tmp_path):
+def test_home_identity_uses_session_person_or_personal_app_owner_key(tmp_path):
     from gateway.home_api import _identity
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     native = _identity({}, None, None, path, person_id="native-person")
     assert native.person_id == "native-person"
-    other_creator = _identity({"id": "member-app"}, {"created_by": "owner", "hash": "sha256:key"},
+    other_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"created_by": "owner", "hash": "sha256:key"},
                               None, path, person_id="native-person")
-    assert other_creator.person_id == "owner"
-    unknown_creator = _identity({"id": "member-app"}, {"hash": "sha256:old"},
+    assert other_creator.person_id is None
+    unknown_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"hash": "sha256:old"},
                                 None, path, person_id="native-person")
-    assert unknown_creator.person_id is None
+    assert unknown_creator.person_id == "native-person"

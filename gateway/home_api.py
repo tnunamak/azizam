@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, providers
 from gateway.admin_api import AdminAuthError
+from gateway.admin_runtime import person_for_app_credential
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
 from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
@@ -61,7 +62,7 @@ def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
     return RuntimeIdentity(name=str(app.get("name") or "Your access"),
                            key_hash=str((credential or {}).get("hash") or ""),
                            profile=profile, app_id=app.get("id"),
-                           person_id=credential.get("created_by") if credential is not None else person_id)
+                           person_id=person_for_app_credential(app, credential) if credential is not None else person_id)
 
 
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:

@@ -30,7 +30,7 @@ authenticated maker on an API content route. Old signed URLs with `md=full`
 must fail closed. The `full` profile default still governs the direct response
 to the maker's own authenticated API request.
 
-No-key LAN calls and credentials created without a human have no person. Their media prompts are not saved:
+No-key LAN calls, service-App keys and keys minted for someone else have no person. Their media prompts are not saved:
 there is no defensible maker-only viewer or retention setting for them. They
 still receive their generated media. Existing owner instance views retain
 metadata about these calls, without prompt-derived content.
@@ -60,16 +60,26 @@ records; their prompt redaction guards remain strict. A record is read only
 if its `person_id` equals the current authenticated person and it has not
 expired. An absent row means `prompt: null` and a non-prompt title.
 
-The request maker is the authenticated browser person or the recorded human
-creator of the calling credential (`credentials.created_by`). App owner and
-maker are independent facts. An owner-created key on a member's App acts as the
-owner and cannot read that member's prompts or full workflow files. New cache
-sidecars record maker person IDs for Library ownership separately from the App
-media access boundary. Unknown legacy credential creators fail closed; mint a
-replacement key to use personal prompt memory. A shared key delegates the
-creator's identity, prompt access and attribution to whoever holds it. The owner
-can read the database or issue a reset link to sign in as a member. Privacy in
-the UI/API does not protect against that server authority.
+The request maker is the authenticated session/OIDC person, or the owner of a
+personal App when its key was created by that same person. Keys on service
+Apps and keys an administrator creates on someone else's App have no person.
+Their media remains App-attributed in the Library and receipts, with no saved
+prompt or maker-only workflow export. Library visibility uses App access,
+independent of creator metadata.
+
+Legacy personal-App keys with NULL `credentials.created_by` use the App owner
+at read time; legacy service keys remain no-person. Newly minted non-human
+keys record an empty creator, so they cannot use that fallback. Sharing an
+own personal-App key delegates the owner's identity and prompt access.
+The owner can read databases or issue a reset link to sign in as a member.
+Privacy in the UI/API does not protect against that server authority.
+
+The key-minting API returns `prompt_memory.person_id` and
+`prompt_memory.description`. For service Apps or someone else's App the copy
+is: "Prompts sent with this key are not remembered. Generated items belong to
+the App." For an own personal-App key it says prompts follow your settings
+and anyone holding the key can access your saved prompts. The web key form
+must show this description when its frontend work ships.
 
 Member preferences live in a new `admin.db` table keyed by `users.id`:
 `remember` (explicit snapshot of the household default at rollout or user creation) and `retention` (`never`, `3_months`,
