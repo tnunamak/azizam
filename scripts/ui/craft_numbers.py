@@ -13,7 +13,7 @@ styles) against the household fixture and checks each measured route at 1440 and
   type      every text size is in the type table, and a page uses at most 4 sizes
             plus badge text (10 only for a person mark's initial)
   rows      ListRows and table body rows are 36, 40 or 60 on desktop and 48 or 64
-            on a phone; setting rows are at least 64
+            on a phone; setting rows are at least 64 (exactly 64 on a phone)
   geometry  page padding 32 at 1440 and 20 at 390; sections 32 apart
   cards     cards have radius 8 and no shadow
   colour    at 1440, coloured pixels outside media and charts are at most 2 % of
@@ -115,7 +115,10 @@ def check_rows(data: dict, width: int, cfg: dict) -> list[str]:
     problems = []
     for row in data.get("listRows", []):
         if row["kind"] == "setting-row":
-            if row["height"] + rule["tolerance"] < rule["setting_min"]:
+            too_short = row["height"] + rule["tolerance"] < rule["setting_min"]
+            # On a phone a setting is one line of label and one of detail: 64.
+            too_tall = width != cfg["desktop_width"] and row["height"] - rule["tolerance"] > rule["setting_phone_max"]
+            if too_short or too_tall:
                 problems.append(f"setting row {row['text'][:30]!r} is {row['height']:g} tall")
         elif not near(row["height"], allowed, rule["tolerance"]):
             problems.append(f"{row['kind']} {row['text'][:30]!r} is {row['height']:g} tall")

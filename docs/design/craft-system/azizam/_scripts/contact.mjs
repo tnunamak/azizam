@@ -1,5 +1,6 @@
 // Viewport captures for a before/after contact sheet: 8 surfaces x 2 widths x 2 themes.
 // Usage: node contact.mjs <manifest.json> <outdir>   (household server must already be running)
+// Env: CONTACT_SURFACES=settings,people (default: the eight surfaces of MEASUREMENTS.md).
 // Writes <surface>-<width>-<theme>.jpg (quality 80). Compose with contact_sheet.py.
 import { createRequire } from "node:module";
 import { readFile, mkdir } from "node:fs/promises";
@@ -14,11 +15,14 @@ const [manifestPath, outDir] = process.argv.slice(2);
 const seed = JSON.parse(await readFile(manifestPath, "utf8"));
 await mkdir(outDir, { recursive: true });
 
-const surfaces = [
+const allSurfaces = [
   ["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"],
   ["try", "/ui/try/"], ["people", "/ui/people/"], ["usage", "/ui/usage/"],
-  ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"],
+  ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"], ["apps", "/ui/apps/"],
 ];
+// CONTACT_SURFACES=settings,people picks surfaces; the default is the eight in MEASUREMENTS.md.
+const only = (process.env.CONTACT_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
+const surfaces = only.length ? allSurfaces.filter(([name]) => only.includes(name)) : allSurfaces.slice(0, 8);
 const NO_ANIM = `*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition:none!important;caret-color:transparent!important}`;
 
 async function settled(page) {
