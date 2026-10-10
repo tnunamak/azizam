@@ -14329,6 +14329,19 @@ app.include_router(
     )
 )
 
+# Where a person's Library comes from. The person API and make jobs share it.
+_PERSON_LIBRARY: dict[str, Any] = {
+    "asset_path_resolver": lambda asset_id: asset_cache_path(asset_id),
+    "asset_media_type_resolver": lambda asset_id, path: asset_media_type(asset_id, path),
+    "asset_catalog_provider": lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
+    "asset_metadata_reader": _read_asset_metadata,
+    "admin_db_path": lambda: ADMIN_STORE.path,
+    "media_jobs_path": lambda: media_jobs.DB_PATH,
+    "receipts_path": lambda: receipt_store.DB_PATH,
+    "prompt_memory_path": lambda: media_jobs.DB_PATH,
+}
+
+
 class _SessionMakeRuntime:
     """Runs session make jobs through the existing image routes.
 
@@ -14373,6 +14386,10 @@ class _SessionMakeRuntime:
         body["response_format"] = "url"
         if payload.get("intent") == "image.edit":
             source_asset_id = str(body.pop("source_asset_id", ""))
+            # The person may have deleted the picture since asking, and a
+            # shared copy can stay in the cache, so recheck the Library itself.
+            if me_media.owned_library_asset(str(identity.person_id), source_asset_id, **_PERSON_LIBRARY) is None:
+                raise me_make.MakeBackendError("The source picture is no longer in your Library", http_status=404)
             source = asset_cache_path(source_asset_id)
             if source is None or not source.exists():
                 raise me_make.MakeBackendError("The source picture is no longer available", http_status=404)
@@ -14416,21 +14433,14 @@ app.include_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         signed_url_builder=lambda request, asset_id, mode: build_signed_asset_url(request, asset_id, mode),
-        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
-        asset_media_type_resolver=lambda asset_id, path: asset_media_type(asset_id, path),
         asset_deleter=me_media.conservative_asset_deleter(
             metadata_reader=_read_asset_metadata,
             asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
             metadata_path_resolver=_asset_metadata_path,
             prompt_memory_path=lambda: media_jobs.DB_PATH,
         ),
-        asset_catalog_provider=lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
-        asset_metadata_reader=_read_asset_metadata,
-        admin_db_path=lambda: ADMIN_STORE.path,
-        media_jobs_path=lambda: media_jobs.DB_PATH,
-        receipts_path=lambda: receipt_store.DB_PATH,
-        prompt_memory_path=lambda: media_jobs.DB_PATH,
         make_runtime=_SESSION_MAKE_RUNTIME,
+        **_PERSON_LIBRARY,
     )
 )
 

@@ -48,6 +48,11 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=self.admin)
         self.app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         self.runtime = proxy._SessionMakeRuntime()
+        # The source picture is in the person's Library: an earlier job of theirs made it.
+        source_job = media_jobs.MediaJob(intent="image.generate", request_id="req_source",
+                                         app_id=self.app["id"], status=media_jobs.STATUS_SUCCEEDED,
+                                         assets=[{"asset_id": SOURCE, "media_type": "image/png"}])
+        media_jobs.create(source_job, path=root / "jobs.db")
 
     def _payload(self, intent: str = "image.edit", **body) -> dict:
         body = {"model": "image", "prompt": "private make prompt", **body}
@@ -87,6 +92,30 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertEqual(seen["identity"].person_id, self.user["id"])
         self.assertEqual(seen["receipt_app"], self.app["id"])
         self.assertEqual(payload["body"]["source_asset_id"], SOURCE, "the stored payload is not mutated")
+
+    def test_edit_refuses_a_source_the_person_deleted_after_asking(self) -> None:
+        async def fake_edit(request, auth_context, receipt=None):
+            raise AssertionError("a deleted source must never be read")
+
+        admin_store.record_audit("media.asset.delete", actor_kind="user", actor_id=self.user["id"],
+                                 target_kind="media_asset", target_id=SOURCE, path=self.admin)
+        self.assertTrue(proxy.asset_cache_path(SOURCE).exists(), "a shared copy can outlive the delete")
+        with patch.object(proxy, "proxy_comfy_edit_request", fake_edit):
+            with self.assertRaises(me_make.MakeBackendError) as raised:
+                asyncio.run(self.runtime.execute(self._payload()))
+        self.assertEqual(raised.exception.http_status, 404)
+        self.assertIn("no longer in your Library", raised.exception.public_message)
+
+    def test_edit_refuses_a_cached_source_outside_the_persons_library(self) -> None:
+        stranger_picture = "img_" + "7d" * 32
+        proxy.asset_cache_path(stranger_picture).write_bytes(PNG)
+        async def fake_edit(request, auth_context, receipt=None):
+            raise AssertionError("another person's picture must never be read")
+
+        with patch.object(proxy, "proxy_comfy_edit_request", fake_edit):
+            with self.assertRaises(me_make.MakeBackendError) as raised:
+                asyncio.run(self.runtime.execute(self._payload(source_asset_id=stranger_picture)))
+        self.assertEqual(raised.exception.http_status, 404)
 
     def test_generate_runs_the_json_image_route(self) -> None:
         seen = {}

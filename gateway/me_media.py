@@ -103,20 +103,16 @@ def create_me_media_router(
     router = APIRouter(prefix="/me/api", tags=["me"])
 
     def find_owned_asset(request: Request, user_id: str, asset_id: str) -> dict[str, Any] | None:
-        admin_path = _resolve_path(admin_db_path)
-        return _find_asset(
-            asset_id,
-            scope=_member_media_scope(user_id, admin_path),
-            request=request,
-            signed_url_builder=signed_url_builder,
+        return owned_library_asset(
+            user_id, asset_id,
             asset_path_resolver=asset_path_resolver,
             asset_media_type_resolver=asset_media_type_resolver,
             asset_catalog_provider=asset_catalog_provider,
             asset_metadata_reader=asset_metadata_reader,
-            admin_db_path=admin_path,
-            media_jobs_path=_resolve_path(media_jobs_path),
-            receipts_path=_resolve_path(receipts_path),
-            prompt_memory_path=_resolve_path(prompt_memory_path),
+            admin_db_path=admin_db_path,
+            media_jobs_path=media_jobs_path,
+            receipts_path=receipts_path,
+            prompt_memory_path=prompt_memory_path,
         )
 
     me_make.add_make_routes(
@@ -524,6 +520,41 @@ def _list_media(
         "has_more": next_cursor is not None,
         "models": sorted({item["model"] for item in all_items if item.get("model")}),
     }
+
+
+def owned_library_asset(
+    user_id: str,
+    asset_id: str,
+    *,
+    asset_path_resolver: AssetPathResolver,
+    asset_media_type_resolver: AssetMediaTypeResolver,
+    asset_catalog_provider: AssetCatalogProvider | None,
+    asset_metadata_reader: AssetMetadataReader | None,
+    admin_db_path: PathProvider,
+    media_jobs_path: PathProvider,
+    receipts_path: PathProvider,
+    prompt_memory_path: PathProvider,
+) -> dict[str, Any] | None:
+    """Return the person's Library item for an asset, or None.
+
+    None also covers an asset the person deleted. The item carries no
+    download links, so it works off the HTTP path (for example, in a job).
+    """
+    admin_path = _resolve_path(admin_db_path)
+    return _find_asset(
+        asset_id,
+        scope=_member_media_scope(user_id, admin_path),
+        request=None,  # type: ignore[arg-type]
+        signed_url_builder=lambda request, asset_id, mode: None,  # type: ignore[arg-type,return-value]
+        asset_path_resolver=asset_path_resolver,
+        asset_media_type_resolver=asset_media_type_resolver,
+        asset_catalog_provider=asset_catalog_provider,
+        asset_metadata_reader=asset_metadata_reader,
+        admin_db_path=admin_path,
+        media_jobs_path=_resolve_path(media_jobs_path),
+        receipts_path=_resolve_path(receipts_path),
+        prompt_memory_path=_resolve_path(prompt_memory_path),
+    )
 
 
 def _find_asset(
