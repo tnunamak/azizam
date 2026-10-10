@@ -62,9 +62,9 @@ test("Providers presents the current API shape without inventing readiness or na
         provider.getByText("Key set", { exact: true }),
       ).toBeVisible();
       await expect(
-        provider.getByText("Configured, observation unknown.", { exact: true }),
+        provider.getByText("Provider connection not confirmed.", { exact: true }),
       ).toHaveCount(0);
-      await expect(provider).toContainText("This month$12.50 of $50.00");
+      await expect(provider).toContainText("This monthUSD 12.50 of USD 50.00");
       const missing = page.locator("li").filter({
         has: page.getByRole("heading", {
           name: "Missing key provider",
@@ -78,7 +78,7 @@ test("Providers presents the current API shape without inventing readiness or na
         missing.getByText("Missing key", { exact: true }),
       ).toBeVisible();
       await missing.getByText("Manage", { exact: true }).click();
-      const unknownSpend = missing.getByText("Not measured yet", {
+      const unknownSpend = missing.getByText("Cost not recorded", {
         exact: true,
       });
       await expect(unknownSpend).toHaveCount(2);
@@ -145,7 +145,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
     }),
   });
   await expect(
-    unknown.getByText("Configured, observation unknown.", { exact: true }),
+    unknown.getByText("Provider connection not confirmed.", { exact: true }),
   ).toHaveCount(0);
   await expect(unknown.getByText("Unknown", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Starting", { exact: true })).toHaveCount(0);

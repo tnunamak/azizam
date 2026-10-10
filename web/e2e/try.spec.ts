@@ -148,7 +148,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Speech result", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
+  await page.getByRole("tab", { name: "Transcribe a recording" }).click();
   await page.setInputFiles("input[type=file]", {
     name: "sample.wav",
     mimeType: "audio/wav",
@@ -263,7 +263,7 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   );
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
 
-  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
+  await page.getByRole("tab", { name: "Transcribe a recording" }).click();
   await expect(page.getByRole("combobox").first()).toContainText("stt model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "tts model",
@@ -376,7 +376,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
 
   await prepareTryKey(page);
   await waitForCatalog(page);
-  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
+  await page.getByRole("tab", { name: "Transcribe a recording" }).click();
 
   await page.getByRole("button", { name: "Record" }).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
@@ -537,7 +537,7 @@ test("capability chips keep full labels and never overlap on a phone", async ({
     "Chat",
     "Make a picture",
     "Read text aloud",
-    "Turn a recording into text",
+    "Transcribe a recording",
     "Choose an option",
     "Turn text into numbers",
     "Workflow",

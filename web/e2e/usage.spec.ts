@@ -129,7 +129,7 @@ test("usage omits the model line when only the capability is known", async ({
   const transcriptionRow = page
     .getByRole("table", { name: "Models" })
     .getByRole("row")
-    .filter({ hasText: "Turn a recording into text" });
+    .filter({ hasText: "Transcribe a recording" });
   await expect(transcriptionRow).toBeVisible();
   await expect(transcriptionRow.locator("code")).toHaveCount(0);
   await expect(transcriptionRow).not.toContainText("Unknown model");
@@ -255,7 +255,7 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
   const remoteSpendCard = page
     .getByText("Remote spend", { exact: true })
     .locator("..");
-  await expect(remoteSpendCard).toContainText("Unavailable");
+  await expect(remoteSpendCard).toContainText("Cost not recorded");
   await expect(remoteSpendCard).not.toContainText("$0");
 });
 
@@ -407,7 +407,7 @@ test("usage model table shows names, never a path, and a consistent Cost", async
   expect(text).not.toMatch(/Q4 K M|Q4_K_M/);
   await expect(table).toContainText("Qwen3.8 27B Uncensored");
   await expect(table).toContainText("Careful choices");
-  await expect(table).toContainText("Turn a recording into text");
+  await expect(table).toContainText("Transcribe a recording");
   await expect(table.getByTitle("Qwen3.8 27B Uncensored", { exact: true })).toBeVisible();
   await expect(table.locator('[title*="gguf" i], [title*="Q4_K_M"]')).toHaveCount(0);
 

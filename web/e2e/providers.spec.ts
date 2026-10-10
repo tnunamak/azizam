@@ -405,9 +405,9 @@ test("providers detail edits models caps and plans through real admin paths", as
   await page.getByLabel("OpenRouter daily cap (USD)").fill("7");
   await page.getByLabel("OpenRouter monthly cap (USD)").fill("70");
   await page.getByRole("button", { name: "Save caps" }).click();
-  await page.getByRole("button", { name: "Edit plans" }).click();
+  await page.getByRole("button", { name: "Edit access plans" }).click();
   await page.getByLabel("Allow Paid cloud for OpenRouter").click();
-  await page.getByRole("button", { name: "Save plans" }).click();
+  await page.getByRole("button", { name: "Save access plans" }).click();
   const flags = await page.evaluate(() =>
     fetch("/__provider-test-flags").then((response) => response.json()),
   );
@@ -431,8 +431,8 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await expect(page.getByRole("dialog")).toContainText(
     "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
   );
-  await expect(page.getByText("$0.015")).toBeVisible();
-  await expect(page.getByText("$0.000001234")).toBeVisible();
+  await expect(page.getByText("USD 0.015")).toBeVisible();
+  await expect(page.getByText("USD 0.000001234")).toBeVisible();
   const firstActual = page.getByLabel(
     "Verified actual charge for reconciliation 42",
   );
@@ -565,7 +565,7 @@ test("providers add OpenRouter and keep paid access gated", async ({
   await page.getByRole("button", { name: "Next" }).click();
   await expect(
     page.getByText(
-      "No plans selected. Paid requests will be denied until an owner allows a plan.",
+      "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
     ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save provider" }).click();
@@ -889,7 +889,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await page.getByRole("button", { name: "Next" }).click();
     await expect(
       page.getByText(
-        "No plans selected. Paid requests will be denied until an owner allows a plan.",
+        "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
       ),
     ).toBeVisible();
     await page.getByRole("button", { name: "Save provider" }).click();

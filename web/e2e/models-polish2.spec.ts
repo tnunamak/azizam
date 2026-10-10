@@ -99,10 +99,10 @@ for (const theme of ["light", "dark"] as const) {
       );
       await catalog(page, [measured, typical]);
       const cards = page.locator(
-        'table[aria-label="Available model aliases"] tbody tr',
+        'table[aria-label="Available model names"] tbody tr',
       );
       await expect(cards).toHaveCount(2);
-      const aliasGroups = page.getByLabel("Available model aliases");
+      const aliasGroups = page.getByLabel("Available model names");
       await expect(
         aliasGroups.getByText("Local · no provider charge", { exact: true }),
       ).toHaveCount(0);
@@ -182,7 +182,7 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
   await expect(page.getByText("Configured engine")).toHaveCount(0);
   await expect(
     page
-      .getByLabel("Available model aliases")
+      .getByLabel("Available model names")
       .getByText("Not measured yet", { exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Details" }).click();

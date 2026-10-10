@@ -154,7 +154,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
     .fill("no-such-test-actor");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(
-    page.getByText("No changes match these filters", { exact: true }),
+    page.getByText("No matching changes", { exact: true }),
   ).toBeVisible();
   await page.route("**/admin/api/audit?**", (route) =>
     route.fulfill({

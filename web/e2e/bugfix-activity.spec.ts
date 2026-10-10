@@ -34,7 +34,8 @@ for (const status of ["error", "failed"]) {
       page.getByText("Outcome not recorded", { exact: true }),
     ).toHaveCount(0);
     await row.click();
-    await expect(page.getByRole("dialog")).toContainText("Failed · Owner");
+    await expect(page.getByRole("dialog")).toContainText("Failed");
+    await expect(page.getByRole("dialog")).toContainText("Owner");
     await page.getByText("Technical details", { exact: true }).click();
     await expect(page.getByLabel("Technical request details")).toContainText(
       '"status_code": 529',

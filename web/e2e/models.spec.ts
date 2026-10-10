@@ -362,8 +362,11 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("button", { name: "Copy model name image" }),
       ).toBeVisible();
+      // Rows make no local-cost claim; the page note below the table may.
       await expect(
-        page.getByText("Local · no provider charge", { exact: true }),
+        page
+          .getByLabel("Available model names")
+          .getByText("Local · no provider charge", { exact: true }),
       ).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "No provider charge", exact: true }),

@@ -243,9 +243,11 @@ for (const theme of ["light", "dark"] as const) {
             .first()
             .click();
           await expect(page.getByRole("dialog")).toBeVisible();
+          // The outcome sits in the sheet body; the description names the person.
+          await expect(page.getByRole("dialog")).toContainText("Completed");
           await expect(
             page.getByRole("dialog").locator('[data-slot="sheet-description"]'),
-          ).toContainText("Completed");
+          ).not.toContainText("Completed");
           await page
             .getByRole("dialog")
             .getByText("Technical details", { exact: true })
