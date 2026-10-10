@@ -204,7 +204,7 @@ async function expectNoOverlap(targets: Locator[]) {
 }
 
 function engineCard(page: Page, name: string) {
-  return page.locator("article").filter({ hasText: name });
+  return page.locator("tr").filter({ hasText: name });
 }
 
 function engineSummaryButton(card: Locator, serviceName: string) {

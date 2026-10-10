@@ -77,7 +77,7 @@ test("polished model grouping fills width before and after filtering", async ({
   await expect(
     page.getByRole("heading", { name: "Fast", exact: true }),
   ).toBeVisible();
-  const cards = page.locator('[aria-label="Available model aliases"] article');
+  const cards = page.locator('table[aria-label="Available model aliases"] tbody tr');
   await verifyModelLayout(page, cards, 1);
   await expect(page.getByText("2 more", { exact: true })).toBeVisible();
   await expect(
@@ -122,7 +122,7 @@ for (const width of [390, 1440]) {
     );
     await page.goto("/ui/models/");
     const cards = page.locator(
-      '[aria-label="Available model aliases"] article',
+      'table[aria-label="Available model aliases"] tbody tr',
     );
     await verifyModelLayout(page, cards, 1);
     await expect(page.getByText("2 more", { exact: true })).toBeVisible();
@@ -256,7 +256,7 @@ for (const theme of ["light", "dark"] as const) {
           page.getByRole("heading", { name: "Fast", exact: true }),
         ).toBeVisible();
         const cards = page.locator(
-          '[aria-label="Available model aliases"] article',
+          'table[aria-label="Available model aliases"] tbody tr',
         );
         await verifyModelLayout(page, cards, count);
         await expect(

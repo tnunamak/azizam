@@ -32,7 +32,7 @@ test("Azizam Enabled changes reach the registry only on Save", async ({
     (item) => item.name === "Azizam staged engine",
   )!;
   expect(service.enabled).toBe(true);
-  const card = page.locator(`article[data-engine-id="${service.id}"]`);
+  const card = page.locator(`tr[data-engine-id="${service.id}"]`);
   await page.goto(`/ui/engines/?service=${encodeURIComponent(service.id)}`);
   for (const dismiss of ["Cancel", "Escape"]) {
     await card.getByRole("button").first().click();

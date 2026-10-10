@@ -99,7 +99,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       await catalog(page, [measured, typical]);
       const cards = page.locator(
-        '[aria-label="Available model aliases"] article',
+        'table[aria-label="Available model aliases"] tbody tr',
       );
       await expect(cards).toHaveCount(2);
       const aliasGroups = page.getByLabel("Available model aliases");
@@ -241,16 +241,19 @@ test("aliases keep alternatives within their server-classified capability", asyn
     peer("image-peer", "image.generate", "image", "Images"),
   ]);
 
-  for (const [label, primary, alternative] of [
-    ["Chat", "default", "chat-peer"],
-    ["Images", "image", "image-peer"],
+  // A capability is one rowgroup, plus its alternatives' rowgroup once opened.
+  const groupOf = (label: string, key: string) =>
+    page
+      .getByRole("rowgroup", { name: `${label} models` })
+      .or(page.locator(`tbody[id="model-alternatives-${key}"]`));
+  for (const [label, key, primary, alternative] of [
+    ["Chat", "chat", "default", "chat-peer"],
+    ["Images", "image", "image", "image-peer"],
     // Decisions read as the task they do, the name Try uses.
-    ["Choose an option", "decide", null],
-    ["Speech", "tts", null],
+    ["Choose an option", "decide", "decide", null],
+    ["Speech", "speech", "tts", null],
   ] as const) {
-    const group = page.locator("section").filter({
-      has: page.getByRole("heading", { name: label, exact: true }),
-    });
+    const group = groupOf(label, key);
     await expect(
       group.getByRole("heading", { name: primary, exact: true }),
     ).toBeVisible();
@@ -266,15 +269,11 @@ test("aliases keep alternatives within their server-classified capability", asyn
       await expect(group.getByText(/\d+ more/)).toHaveCount(0);
     }
   }
-  const chatGroup = page.locator("section").filter({
-    has: page.getByRole("heading", { name: "Chat", exact: true }),
-  });
+  const chatGroup = groupOf("Chat", "chat");
   await expect(
     chatGroup.getByRole("button", { name: "Copy model name image-peer" }),
   ).toHaveCount(0);
-  const imageGroup = page.locator("section").filter({
-    has: page.getByRole("heading", { name: "Images", exact: true }),
-  });
+  const imageGroup = groupOf("Images", "image");
   await expect(
     imageGroup.getByRole("button", { name: "Copy model name chat-peer" }),
   ).toHaveCount(0);

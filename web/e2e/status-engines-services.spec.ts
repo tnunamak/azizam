@@ -303,7 +303,7 @@ async function checkPageBasics(page: Page, screenshotName: string) {
 }
 
 function engineCard(page: Page, name: string) {
-  return page.locator("article").filter({ hasText: name });
+  return page.locator("tr").filter({ hasText: name });
 }
 
 async function openEngineEdit(
@@ -451,7 +451,7 @@ test("engines route selects a disabled service from the query string", async ({
   await mockEngineApis(page);
   await page.goto("/ui/engines/?service=image");
   await expect(page.getByText("Local image engine")).toBeVisible();
-  const selected = page.locator("article[aria-current='true']");
+  const selected = page.locator("tr[aria-current='true']");
   await expect(selected.getByText("Local image engine")).toBeVisible();
   const selectedSheet = await openEngineEdit(
     page,

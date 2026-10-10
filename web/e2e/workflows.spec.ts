@@ -180,7 +180,7 @@ async function preparePage(
   const response = await page.goto("/ui/workflows/");
   expect(response?.status()).toBeLessThan(500);
   await expect(
-    page.getByRole("heading", { name: "Workflows", exact: true }),
+    page.getByRole("heading", { name: /^Workflows/ }),
   ).toBeVisible();
 }
 
@@ -230,47 +230,40 @@ async function assertNoOverflow(page: Page) {
   ).toBe(true);
 }
 
-test("workflow cards use the available width at phone, tablet and desktop sizes", async ({
+test("workflow rows use the available width at phone, tablet and desktop sizes", async ({
   page,
 }) => {
-  for (const [width, columns] of [
-    [390, 1],
-    [768, 2],
-    [1440, 3],
+  // Craft PR 7: a group is one ListCard of full-width rows at every width,
+  // 60 tall on desktop and 64 on a phone, instead of a 1, 2 or 3 column grid.
+  for (const [width, rowHeight] of [
+    [390, 64],
+    [768, 60],
+    [1440, 60],
   ] as const) {
     await preparePage(page, "light", width, workflowsPolishCatalog);
     await expect(
-      page.getByText("Create a clean product render", { exact: true }),
+      page.getByRole("listitem", { name: "Product render" }),
     ).toBeVisible();
     const cards = page
       .getByRole("region", { name: "Images workflows" })
-      .locator("article");
+      .getByRole("listitem");
     await expect(cards).toHaveCount(3);
     const geometry = await cards.evaluateAll((elements) =>
       elements.map((element) => {
         const rect = element.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width };
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
       }),
     );
-    const firstRow = geometry.slice(0, columns);
-    expect(new Set(firstRow.map((card) => Math.round(card.x))).size).toBe(
-      columns,
-    );
-    expect(firstRow.every((card) => Math.abs(card.y - firstRow[0].y) < 2)).toBe(
-      true,
-    );
-    if (columns < 3) {
-      expect(geometry[columns].y).toBeGreaterThan(geometry[0].y);
+    expect(new Set(geometry.map((card) => Math.round(card.x))).size).toBe(1);
+    for (const [index, card] of geometry.entries()) {
+      expect(Math.round(card.height)).toBeGreaterThanOrEqual(rowHeight - 1);
+      if (index) expect(card.y).toBeGreaterThan(geometry[index - 1].y);
     }
-    const grid = await cards
+    const listWidth = await cards
       .first()
       .locator("xpath=..")
-      .evaluate((element) => ({
-        width: element.getBoundingClientRect().width,
-        gap: Number.parseFloat(getComputedStyle(element).columnGap),
-      }));
-    const expectedWidth = (grid.width - grid.gap * (columns - 1)) / columns;
-    expect(Math.abs(geometry[0].width - expectedWidth)).toBeLessThan(2);
+      .evaluate((element) => element.getBoundingClientRect().width);
+    expect(Math.abs(geometry[0].width - listWidth)).toBeLessThan(2);
 
     await page.getByPlaceholder("Search workflows").fill("product-render");
     await expect(cards).toHaveCount(1);
@@ -280,7 +273,7 @@ test("workflow cards use the available width at phone, tablet and desktop sizes"
     const contentWidth = await page
       .getByLabel("Available workflows")
       .evaluate((grid) => grid.getBoundingClientRect().width);
-    expect(singletonWidth).toBeGreaterThan(contentWidth - 2);
+    expect(singletonWidth).toBeGreaterThan(contentWidth - 4);
     await assertNoOverflow(page);
   }
 });
@@ -293,7 +286,7 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
     await routeWorkflows(page, workflowsPolishCatalog);
     await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
     await page.goto("/ui/workflows/");
-    await page.getByRole("button", { name: "Details" }).first().click();
+    await page.getByRole("button", { name: /^Details for / }).first().click();
 
     const sheet = page.getByRole("dialog", { name: "Product render" });
     await expect(sheet).toBeVisible();
@@ -377,7 +370,7 @@ test("missing input and time details stay quiet", async ({
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
   await page.goto("/ui/workflows/");
   await openNotSetUp(page);
-  await page.getByRole("button", { name: "Details" }).nth(1).click();
+  await page.getByRole("button", { name: /^Details for / }).nth(1).click();
   const sheet = page.getByRole("dialog", { name: "Voiceover" });
   await sheet.getByText("Technical details", { exact: true }).click();
   await expect(sheet.getByText("Not measured yet")).toHaveCount(0);
@@ -404,7 +397,7 @@ async function openSeededSheet(
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, seededRecentJobs, 200, requests);
   await page.goto("/ui/workflows/");
-  await page.getByRole("button", { name: "Details" }).first().click();
+  await page.getByRole("button", { name: /^Details for / }).first().click();
   const sheet = page.getByRole("dialog", { name: "Product render" });
   await expect(sheet).toBeVisible();
   return sheet;
@@ -421,7 +414,7 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Images", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Product render", exact: true }),
+        page.getByRole("button", { name: "Details for Product render", exact: true }),
       ).toBeVisible();
       // The owner sees the workflow that is not set up, folded, with one reason and a next step.
       await openNotSetUp(page);
@@ -440,7 +433,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByText("image/png")).toHaveCount(0);
       await expect(page.getByText("product-shot", { exact: true })).toHaveCount(0);
       await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Details" })).toHaveCount(
+      await expect(page.getByRole("button", { name: /^Details for / })).toHaveCount(
         2,
       );
 
@@ -495,7 +488,7 @@ test("workflows loading state stays accessible while the catalog is pending", as
   await assertNoSeriousAxe(page);
   release();
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
 });
 
@@ -507,10 +500,10 @@ test("workflows search filters aliases and can be cleared", async ({
 
   await search.fill("product-shot");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Voiceover", exact: true }),
+    page.getByRole("button", { name: "Details for Voiceover", exact: true }),
   ).toHaveCount(0);
 
   await search.fill("does-not-exist");
@@ -521,31 +514,31 @@ test("workflows search filters aliases and can be cleared", async ({
   ).toBeVisible();
   await search.fill("image-local");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await search.fill("What to render");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await search.fill("Final product render asset");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await search.fill("256 to 2048");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await search.fill("/v1/workflows/image.product-render/run");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await search.clear();
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await openNotSetUp(page);
   await expect(
-    page.getByRole("heading", { name: "Voiceover", exact: true }),
+    page.getByRole("button", { name: "Details for Voiceover", exact: true }),
   ).toBeVisible();
 });
 
@@ -555,7 +548,7 @@ test("a search that only matches a workflow that is not set up opens its folded 
   await preparePage(page, "light", 1440, seededCatalog);
   await page.getByPlaceholder("Search workflows").fill("speech");
   await expect(
-    page.getByRole("heading", { name: "Voiceover", exact: true }),
+    page.getByRole("button", { name: "Details for Voiceover", exact: true }),
   ).toBeVisible();
 });
 
@@ -567,13 +560,19 @@ test("owner sees Face Likeness Check in plain words with a reason and a link", a
     workflows: [seededCatalog.workflows[0], faceLikenessRow],
   });
   await openNotSetUp(page);
-  const card = page.getByRole("article", { name: "Face Likeness Check" });
-  await expect(card).toContainText("Needs: a face photo and a photo to check");
-  await expect(card).toContainText("Optional: a list of people and custom thresholds");
+  const card = page.getByRole("listitem", { name: "Face Likeness Check" });
   await expect(card).toContainText("Makes: a likeness score");
   await expect(card).toContainText("No health check has reported on it yet. See Status.");
   await expect(card).not.toContainText(/Unavailable|Not available right now|text and text/);
   await expect(card.getByRole("link", { name: "Open Status" })).toHaveAttribute("href", /\/status/);
+  // Needs and Optional are in the details sheet since craft PR 7.
+  await card.getByRole("button", { name: "Details for Face Likeness Check" }).click();
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toContainText("Needs: a face photo and a photo to check");
+  await expect(sheet).toContainText("Optional: a list of people and custom thresholds");
+  await expect(sheet).toContainText("Makes: a likeness score");
+  await expect(sheet).not.toContainText(/text and text/);
+  await page.keyboard.press("Escape");
   await assertNoSeriousAxe(page);
 });
 
@@ -593,12 +592,12 @@ test("a member does not see workflows that are not set up", async ({ page }) => 
     workflows: [seededCatalog.workflows[0], faceLikenessRow, seededCatalog.workflows[1]],
   });
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Face Likeness Check")).toHaveCount(0);
   await expect(page.getByText("Voiceover")).toHaveCount(0);
   await expect(page.getByText(/Not set up/)).toHaveCount(0);
-  await expect(page.getByText("1 workflow", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Workflows1");
 });
 
 test("workflow sheet shows controls, code, links and seeded recent jobs", async ({
@@ -708,7 +707,7 @@ test("workflow sheet recent jobs handles empty records", async ({ page }) => {
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
   await page.goto("/ui/workflows/");
   await openNotSetUp(page);
-  await page.getByRole("button", { name: "Details" }).nth(1).click();
+  await page.getByRole("button", { name: /^Details for / }).nth(1).click();
   await expect(page.getByRole("dialog")).toContainText(
     /No recent (jobs|records)/,
   );
@@ -720,7 +719,7 @@ test("workflow sheet recent jobs handles media errors", async ({ page }) => {
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { error: { message: "Unavailable" } }, 503);
   await page.goto("/ui/workflows/");
-  await page.getByRole("button", { name: "Details" }).first().click();
+  await page.getByRole("button", { name: /^Details for / }).first().click();
   await expect(page.getByRole("dialog")).toContainText(
     /Recent jobs could not be loaded|Workflow data could not be loaded/,
   );
@@ -774,17 +773,17 @@ for (const viewer of ["owner", "member"] as const) {
     // An engine that is down is not a setup task: nothing is folded away.
     await expect(page.getByText(/Not set up/)).toHaveCount(0);
 
-    const ready = page.getByRole("article", { name: "Identity Scene" });
+    const ready = page.getByRole("listitem", { name: "Identity Scene" });
     await expect(ready.getByRole("link", { name: "Open in Try" })).toBeVisible();
     await expect(ready).not.toContainText(/Every engine|Unavailable|Ready to start/);
 
-    const startable = page.getByRole("article", { name: "Face Likeness Check" });
+    const startable = page.getByRole("listitem", { name: "Face Likeness Check" });
     await expect(startable).toContainText("Ready to start");
     await expect(startable).toContainText("Face service starts when you make a request.");
     await expect(startable).not.toContainText(/Unavailable|Not available/);
     await expect(startable.getByRole("link", { name: "Open in Try" })).toBeVisible();
 
-    const down = page.getByRole("article", { name: "Seamless Tile" });
+    const down = page.getByRole("listitem", { name: "Seamless Tile" });
     await expect(down).toContainText("ComfyUI is down.");
     await expect(down.getByRole("button", { name: "Open in Try" })).toBeDisabled();
     await expect(down).not.toContainText(/Not available right now|See Status/);

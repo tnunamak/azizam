@@ -21,9 +21,10 @@ test("requests refresh on focus and keep metadata on one line", async ({
     page.getByRole("button", { name: "Refresh", exact: true }),
   ).toHaveCount(0);
   const meta = row.locator("p").nth(1);
+  // One line of text-meta (14 px, 20 px leading); it truncates, never wraps.
   expect(
     await meta.evaluate((element) => element.clientHeight),
-  ).toBeLessThanOrEqual(18);
+  ).toBeLessThanOrEqual(20);
   const before = loads;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => loads).toBeGreaterThan(before);

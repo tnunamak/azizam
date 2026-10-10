@@ -39,7 +39,7 @@ test("Providers presents the current API shape without inventing readiness or na
         theme,
       );
       await page.goto("/ui/providers/");
-      const provider = page.locator("article").filter({
+      const provider = page.locator("li").filter({
         has: page.getByRole("heading", {
           name: "Remote provider",
           exact: true,
@@ -65,7 +65,7 @@ test("Providers presents the current API shape without inventing readiness or na
         provider.getByText("Configured, observation unknown.", { exact: true }),
       ).toHaveCount(0);
       await expect(provider).toContainText("This month$12.50 of $50.00");
-      const missing = page.locator("article").filter({
+      const missing = page.locator("li").filter({
         has: page.getByRole("heading", {
           name: "Missing key provider",
           exact: true,
@@ -138,7 +138,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
     }),
   );
   await page.goto("/ui/providers/");
-  const unknown = page.locator("article").filter({
+  const unknown = page.locator("li").filter({
     has: page.getByRole("heading", {
       name: "Unchecked provider",
       exact: true,
@@ -152,7 +152,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
     0,
   );
-  const down = page.locator("article").filter({
+  const down = page.locator("li").filter({
     has: page.getByRole("heading", {
       name: "Unreachable provider",
       exact: true,
@@ -164,7 +164,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
       exact: true,
     }),
   ).toBeVisible();
-  const ready = page.locator("article").filter({
+  const ready = page.locator("li").filter({
     has: page.getByRole("heading", {
       name: "Reachable provider",
       exact: true,
@@ -184,20 +184,18 @@ test("workflow cards keep internal IDs behind an explicit copy or details action
   );
 
   await page.goto("/ui/workflows/");
-  const card = page
-    .locator("article")
-    .filter({ has: page.getByRole("heading", { name: "Product render" }) });
-  await expect(
-    card.getByRole("heading", { name: "Product render" }),
-  ).toBeVisible();
+  const card = page.getByRole("listitem", { name: "Product render" });
+  await expect(card.getByText("Product render", { exact: true })).toBeVisible();
   await expect(
     card.getByText("image.product-render", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    card.getByRole("button", { name: "Details", exact: true }),
+    card.getByRole("button", { name: "Details for Product render", exact: true }),
   ).toBeVisible();
 
-  await card.getByRole("button", { name: "Details", exact: true }).click();
+  await card
+    .getByRole("button", { name: "Details for Product render", exact: true })
+    .click();
   const sheet = page.getByRole("dialog");
   await expect(
     sheet.getByText("image.product-render", { exact: true }),
@@ -263,7 +261,7 @@ test("an observed-up engine with a bad health tone is shown as unavailable", asy
   );
 
   await page.goto("/ui/engines/");
-  const card = page.locator("article").filter({ hasText: "Chat engine" });
+  const card = page.locator("tr").filter({ hasText: "Chat engine" });
   await expect(card.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(card.getByText("Ready", { exact: true })).toHaveCount(0);
 });

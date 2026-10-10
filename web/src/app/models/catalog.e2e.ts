@@ -179,13 +179,13 @@ for (const theme of ["light", "dark"])
       await expect(page.getByText("Starting", { exact: true })).toBeVisible();
       await expect(page.getByText("Busy", { exact: true })).toBeVisible();
       await expect(
-        page.locator("article").getByText("Unknown", { exact: true }),
+        page.locator("tbody tr").getByText("Unknown", { exact: true }),
       ).toHaveCount(0);
       await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(
         2,
       );
       await expect(
-        page.locator("article").getByText("Not measured yet", { exact: true }),
+        page.locator("tbody tr").getByText("Not measured yet", { exact: true }),
       ).toHaveCount(0);
       await expect(
         page.getByText("Price not provided", { exact: true }),
@@ -295,7 +295,7 @@ test("member recovery keeps owner controls out of the catalog", async ({
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Check status" })).toHaveCount(0);
   await page
-    .getByRole("article")
+    .getByRole("row")
     .filter({
       has: page.getByRole("button", {
         name: "Copy model name catalog-only",
@@ -409,7 +409,7 @@ for (const theme of ["light", "dark"]) {
       });
       const rows = page
         .getByLabel("Available model aliases")
-        .locator("article");
+        .locator("tr");
       await expect(rows).toHaveCount(2);
       await expect(
         page.getByRole("button", { name: "Audio", exact: true }),

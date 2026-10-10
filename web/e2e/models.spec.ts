@@ -347,9 +347,7 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Speech", exact: true }),
       ).toBeVisible();
       await expect(page.getByText(/Other options/)).toHaveCount(0);
-      const chat = page.locator("section").filter({
-        has: page.getByRole("heading", { name: "Chat", exact: true }),
-      });
+      const chat = page.getByRole("rowgroup", { name: "Chat models" });
       const chatFacts = chat.getByRole("list", { name: "Model facts" });
       await expect(chatFacts.getByText("Reasoning")).toBeVisible();
       await expect(chatFacts.getByText("Vision")).toBeVisible();
@@ -374,9 +372,7 @@ for (const theme of ["light", "dark"] as const) {
         page.getByText("Ready to start when you make a request."),
       ).toHaveCount(0);
       await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
-      const decision = page.locator("section").filter({
-        has: page.getByRole("heading", { name: "Choose an option", exact: true }),
-      });
+      const decision = page.getByRole("rowgroup", { name: "Choose an option models" });
       await decision.getByRole("button", { name: "Details" }).click();
       await expect(
         page
@@ -384,9 +380,7 @@ for (const theme of ["light", "dark"] as const) {
           .getByText("Ready to start when you make a request."),
       ).toBeVisible();
       await page.keyboard.press("Escape");
-      const speech = page.locator("section").filter({
-        has: page.getByRole("heading", { name: "Speech", exact: true }),
-      });
+      const speech = page.getByRole("rowgroup", { name: "Speech models" });
       await speech.getByRole("button", { name: "Details" }).click();
       await expect(
         page.getByRole("dialog").getByText("Unknown", { exact: true }),

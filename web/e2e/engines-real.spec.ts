@@ -100,7 +100,7 @@ test("real registry journey preserves disabled state and unknown config through 
   );
   expect(legacySeeded.ok()).toBe(true);
   await page.reload();
-  let card = page.locator(`article[data-engine-id="${record.id}"]`);
+  let card = page.locator(`tr[data-engine-id="${record.id}"]`);
   await page.getByRole("switch", { name: "Show not in use" }).click();
   await expect(card).toBeVisible();
   await card.getByRole("button", { name: /Actions|More/ }).click();
@@ -163,7 +163,7 @@ test("real registry journey preserves disabled state and unknown config through 
       routing_hint: "keep-slot",
     }),
   ]);
-  card = page.locator(`article[data-engine-id="${record.id}"]`);
+  card = page.locator(`tr[data-engine-id="${record.id}"]`);
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Remove engine", exact: true })
