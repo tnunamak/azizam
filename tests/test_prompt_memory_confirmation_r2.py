@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, identity_api, media_jobs, prompt_memory
+from gateway import admin_store, identity_api, media_jobs, prompt_memory, receipt_store
 from tests.test_identity_api import BINDING, GOOD, PHOTO, TEMPLATE, FakeClient
 from tests.test_prompt_memory_final_cleanup import household
 from tests.test_audio_media_job_integration import _StubJsonRequest
@@ -72,6 +72,9 @@ def test_queued_outer_forget_reaches_execution_and_never_hits_disk(household, in
 def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, monkeypatch, intent, model):
     from tests.test_prompt_memory_identity import _png
     hh = household
+    receipt_path = hh.root / "receipts.db"
+    receipt_store.init_db(receipt_path)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipt_path)
     monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
     monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *_: None)
     for kind in ("image", "audio", "video"):
@@ -82,7 +85,7 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
     assert response.status_code == 202, response.body
     result = json.loads(response.body)
     job_id = result.get("job_id") or result["id"]
-    job = media_jobs.get(job_id, audience="internal")
+    job = media_jobs.get(job_id, audience="internal", path=hh.jobs)
     assert job["intent"] == intent
     assert "queued route private sentinel" not in json.dumps(job)
     payload = proxy._load_image_media_job_payload(job_id)
