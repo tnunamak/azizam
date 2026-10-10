@@ -618,19 +618,19 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
               <Table dense aria-label="By task">
                 <TableHeader>
                   <TableRow>
-                    <TableHead scope="col">Task</TableHead>
-                    <TableHead scope="col" numeric>Requests</TableHead>
-                    <TableHead scope="col" numeric>Share</TableHead>
-                    <TableHead scope="col" numeric>Cost</TableHead>
+                    <TableHead scope="col" className="max-sm:px-2">Task</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Requests</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Share</TableHead>
+                    <TableHead scope="col" numeric className="max-sm:px-2">Cost</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {tasks.map((task) => (
-                    <TableRow key={task.capability}>
-                      <TableCell rowName>{capabilityLabels[task.capability]}</TableCell>
-                      <TableCell numeric>{formatNumber(task.requests)}</TableCell>
-                      <TableCell numeric>{requests > 0 ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
-                      <TableCell numeric>
+                    <TableRow key={task.capability} className="max-sm:h-(--row-phone-2)">
+                      <TableCell rowName className="max-sm:px-2 max-sm:whitespace-normal">{capabilityLabels[task.capability]}</TableCell>
+                      <TableCell numeric className="max-sm:px-2">{formatNumber(task.requests)}</TableCell>
+                      <TableCell numeric className="max-sm:px-2">{requests > 0 ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
+                      <TableCell numeric className="max-sm:px-2">
                         {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary />}
                         {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
                       </TableCell>

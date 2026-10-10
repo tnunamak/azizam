@@ -711,7 +711,7 @@ function EnginesContents() {
               <Table aria-label="Engines">
                 {groups.map((group) => (
                   <TableBody key={group.capability} aria-label={`${group.capability} engines`}>
-                    <TableRow>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableCell colSpan={2} className="h-9 max-sm:h-(--row-phone-1)!">
                         <h2 className="text-label text-subtle-foreground font-medium">
                           {group.capability}
