@@ -154,7 +154,7 @@ describe("WorkflowsPage empathy copy", () => {
   });
 
   test("detail sheet uses plain input copy and preserves exact workflow values", async () => {
-    renderWorkflows();
+    renderWorkflows(owner);
 
     await screen.findByText("Upscale image");
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
@@ -258,7 +258,7 @@ describe("WorkflowsPage empathy copy", () => {
   });
 
   test("puts the next action before folded schema, requests and discovery, with recent outputs last", async () => {
-    renderWorkflows();
+    renderWorkflows(owner);
     await screen.findByText("Upscale image");
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
     const dialog = screen.getByRole("dialog");

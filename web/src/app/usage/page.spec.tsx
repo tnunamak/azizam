@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { ViewerContext } from "@/components/shell/session";
 import UsagePage from "./page";
+import { Requests } from "../activity/requests";
+import WorkflowsPage from "../workflows/page";
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: () => null,
@@ -18,6 +20,8 @@ function renderUsage(
   summary: Record<string, unknown>,
   fetchSummary?: () => Promise<Response>,
   lookups: Record<string, unknown> = {},
+  role: "owner" | "member" = "owner",
+  Page = UsagePage,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // Only the usage summary follows the test's script; the name lookups
@@ -36,12 +40,12 @@ function renderUsage(
         authenticated: true,
         name: "Owner",
         email: null,
-        role: "owner",
-        admin: true,
+        role,
+        admin: role === "owner",
       }}
     >
       <QueryClientProvider client={client}>
-        <UsagePage />
+        <Page />
       </QueryClientProvider>
     </ViewerContext.Provider>,
   );
@@ -317,6 +321,82 @@ test("Usage uses shared empty panels for missing daily and model breakdowns", as
 
 const GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
+test("Usage preserves exact path IDs for distinct catalog names and receipt lookups", async () => {
+  const other = GGUF.replace("/media/windows/", "/other/");
+  renderUsage({
+    by_model: [
+      { model: GGUF, capability: "chat", requests: 2 },
+      { model: other, capability: "chat", requests: 1 },
+    ],
+    receipts: [{ request_id: "exact", capability: "chat", requested_model: other, resolved_model: GGUF }],
+  }, undefined, { models: [{ id: GGUF, title: "Main chat" }, { id: other, title: "Backup chat" }] });
+  expect(await screen.findByTitle("Main chat")).toBeVisible();
+  expect(await screen.findByTitle("Backup chat")).toBeVisible();
+  expect(within(modelRow("Main chat")).getByText("2")).toBeVisible();
+  expect(within(modelRow("Backup chat")).getByText("1")).toBeVisible();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  await user.click(await screen.findByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = screen.getByRole("dialog");
+  expect(within(sheet).getByText("Requested model").nextElementSibling).toHaveTextContent("Backup chat");
+  expect(within(sheet).getByText("Served model").nextElementSibling).toHaveTextContent("Main chat");
+});
+
+test.each(["owner", "member"] as const)("Usage formats fallback names and protects technical paths for %s", async (role) => {
+  renderUsage({
+    receipts: [{ request_id: "fallback", capability: "chat", requested_model: GGUF, resolved_model: GGUF, fallback_model: GGUF }],
+  }, undefined, { models: [{ id: GGUF, title: "Fallback chat" }] }, role);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(await screen.findByRole("button", { name: "Receipt details for Chat request" }));
+  const sheet = screen.getByRole("dialog");
+  await waitFor(() => expect(within(sheet).getByText("Declared fallback").nextElementSibling).toHaveTextContent("Fallback chat"));
+  await user.click(within(sheet).getByText("Technical details"));
+  const technical = within(sheet).getByText("Technical details").closest("details")!;
+  expect(technical.textContent?.includes(GGUF)).toBe(role === "owner");
+  expect(technical.textContent).toContain("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
+});
+
+test.each(["owner", "member"] as const)("Activity formats fallback names and protects technical paths for %s", async (role) => {
+  renderUsage({}, undefined, {
+    records: [{ receipt: { request_id: "activity-fallback", intent: "chat", fallback_model: GGUF, resolved_model: GGUF }, person_label: "Mira", app_label: "Chat", created_at: 0 }],
+    next_cursor: null, people: [],
+    models: [{ id: GGUF, title: "Fallback chat" }],
+  }, role, Requests);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Chat by Mira" }));
+  const sheet = screen.getByRole("dialog");
+  await waitFor(() => expect(within(sheet).getByText("Declared fallback").nextElementSibling).toHaveTextContent("Fallback chat"));
+  await user.click(within(sheet).getByText("Technical details"));
+  expect(within(sheet).getByLabelText("Technical request details").textContent?.includes(GGUF)).toBe(role === "owner");
+});
+
+test.each(["owner", "member"] as const)("Workflows use readable recent models and role-specific input labels for %s", async (role) => {
+  renderUsage({}, undefined, {
+    schema_version: 1,
+    workflows: [{
+      id: "picture", title: "Picture workflow", description: "Make a picture.", capability: "image",
+      aliases: [], availability: { status: "ready" }, typical_seconds: null,
+      inputs: [{ name: "negative_prompt", label: "Things to avoid", type: "string", accepted: true, required: false }],
+      outputs: [], examples: { curl: "negative_prompt", python: "negative_prompt", javascript: "negative_prompt" },
+    }],
+    assets: [{ asset_id: "output", kind: "image", model: GGUF, created_at: 0 }],
+    models: [{ id: GGUF, title: "Picture maker" }],
+  }, role, WorkflowsPage);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Details" }));
+  const sheet = screen.getByRole("dialog");
+  const jobs = within(sheet).getByRole("region", { name: "Recent jobs" });
+  expect(await within(jobs).findByText("Picture maker")).toBeVisible();
+  const details = within(sheet).getAllByText(role === "owner" ? "Technical details" : "Input details")[0].closest("details")!;
+  await user.click(details.querySelector("summary")!);
+  expect(details.textContent).toContain(role === "owner" ? "negative_prompt" : "Things to avoid");
+  expect(details.textContent?.includes("negative_prompt")).toBe(role === "owner");
+  expect(jobs.textContent?.includes(GGUF)).toBe(role === "owner");
+  if (role === "member") expect(jobs.textContent).not.toMatch(/\.gguf|Q4_K_M/);
+});
+
+
 function modelRow(label: RegExp | string) {
   return screen
     .getAllByRole("row")
@@ -411,7 +491,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
   expect(screen.queryByText("Embeddings")).not.toBeInTheDocument();
 });
 
-test("Usage receipts and the Source list never show a host path", async () => {
+test("Usage receipts show host paths only in owner technical details", async () => {
   renderUsage({
     receipts: [
       { request_id: "r1", capability: "chat", requested_model: "default", resolved_model: GGUF },
@@ -423,7 +503,7 @@ test("Usage receipts and the Source list never show a host path", async () => {
   await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
   const sheet = screen.getByRole("dialog");
   expect(sheet.textContent).toContain("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
-  expect(sheet.textContent).not.toMatch(/\/media\/|AI Models/);
+  expect(sheet.textContent).toContain(GGUF);
 });
 
 test("Usage Source list ranks busy apps first and tells same-named apps apart", async () => {

@@ -29,7 +29,7 @@ import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { memberTerms, taskNames } from "@/lib/terms";
-import { safeModelId, scrubModelPaths } from "@/lib/model-name";
+import { technicalModelDetails } from "@/lib/model-name";
 import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
 import { normalizeCapability, type UsageCapability } from "./usage-capability";
@@ -891,6 +891,7 @@ function ReceiptSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const nameModel = useModelName();
+  const owner = ["owner", "superadmin"].includes(useViewer().role);
   const named = (id: string | null | undefined) => (id ? nameModel(id) : id);
   return (
     <Sheet open={receipt !== null} onOpenChange={onOpenChange}>
@@ -935,7 +936,7 @@ function ReceiptSheet({
                 />
                 <Detail
                   label="Declared fallback"
-                  value={receipt.fallbackModel}
+                  value={named(receipt.fallbackModel)}
                 />
                 <Detail
                   label="Duration"
@@ -983,7 +984,7 @@ function ReceiptSheet({
                 <div className="mt-4">
                   <CodeBlock
                     language="json"
-                    code={JSON.stringify(receipt.raw, null, 2)}
+                    code={JSON.stringify(technicalModelDetails(receipt.raw, owner), null, 2)}
                   />
                 </div>
               </details>
@@ -1331,7 +1332,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     costUsd,
     summary: `${requestNouns[capability]} request`,
     sourceLabel: nullableString(object(data.source).label ?? data.source_label),
-    raw: scrubModelPaths(raw),
+    raw,
   };
 }
 
@@ -1360,16 +1361,15 @@ function requestCount(value: unknown): number | null {
   return Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
-/** A model id as a screen may show it: never a directory on the gateway. */
+/** Preserve exact IDs for catalog lookups and keys; format only when rendering. */
 function modelId(value: unknown): string | null {
-  const id = nullableString(value);
-  return id === null ? null : safeModelId(id);
+  return nullableString(value);
 }
 
 function normalizeModel(raw: unknown): UsageModel {
   const data = object(raw);
   return {
-    model: safeModelId(nullableString(data.model ?? data.name) ?? ""),
+    model: nullableString(data.model ?? data.name) ?? "",
     capability: normalizeCapability(data.capability ?? data.intent),
     requests: number(data.requests ?? data.count, 0),
     costUsd: nullableNumber(

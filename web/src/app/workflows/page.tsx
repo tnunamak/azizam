@@ -20,7 +20,7 @@ import {
   withArticle,
   type MediaKind,
 } from "@/lib/workflow-media-input";
-import { safeModelId } from "@/lib/model-name";
+import { useModelName } from "@/lib/use-model-name";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -410,6 +410,7 @@ function DetailSheet({
   owner: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const inputLabels = inputNouns(workflow?.inputs ?? []);
   return (
     <Sheet open={!!workflow} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:!max-w-5xl [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
@@ -434,7 +435,7 @@ function DetailSheet({
               <WorkflowAction workflow={workflow} owner={owner} />
               <details className="rounded-lg border p-4">
                 <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
-                  Technical details
+                  {owner ? "Technical details" : "Input details"}
                 </summary>
                 <div className="mt-3 space-y-4">
                   {/* Research and engine notes are for the owner, never a member. */}
@@ -463,7 +464,7 @@ function DetailSheet({
                     <Fact
                       label="Input media types"
                       value={workflow.inputs.map((input) =>
-                        `${input.name}: ${[input.media_type, ...(input.accepted_media_types ?? [])].filter(Boolean).join(", ") || "not listed"}`,
+                        `${owner ? input.name : inputLabels.get(input)}: ${[input.media_type, ...(input.accepted_media_types ?? [])].filter(Boolean).join(", ") || "not listed"}`,
                       ).join("; ") || "Not listed"}
                     />
                     <Fact
@@ -538,8 +539,8 @@ function DetailSheet({
                         <li key={input.name} className="space-y-2 py-4">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <h4 className="font-mono text-sm break-all">
-                                {input.name}
+                              <h4 className={cn("text-sm break-all", owner && "font-mono")}>
+                                {owner ? input.name : inputLabels.get(input)}
                               </h4>
                               <p className="text-muted-foreground text-xs">
                                 {input.type}
@@ -599,7 +600,7 @@ function DetailSheet({
                           {workflow.inputs.map((input) => (
                             <TableRow key={input.name}>
                               <TableCell className="font-mono text-xs break-all !whitespace-normal">
-                                {input.name}
+                                {owner ? input.name : inputLabels.get(input)}
                                 {input.required && (
                                   <span className="ml-1 text-xs">(required)</span>
                                 )}
@@ -631,7 +632,7 @@ function DetailSheet({
                       </Table>
                     </div>
                   </div>
-                  <div>
+                  {owner && <div>
                     <h3 className="font-medium">Example request</h3>
                     <div className="mt-3 [&_pre]:overflow-visible [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
                       <CodeBlock
@@ -645,7 +646,7 @@ function DetailSheet({
                         ]}
                       />
                     </div>
-                  </div>
+                  </div>}
                   <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline">
                       <a href={"/me/api/workflows"}>
@@ -656,7 +657,7 @@ function DetailSheet({
                   </div>
                 </div>
               </details>
-              <RecentJobs key={workflow.id} workflow={workflow} />
+              <RecentJobs key={workflow.id} workflow={workflow} owner={owner} />
             </div>
           </>
         )}
@@ -674,7 +675,8 @@ function Fact({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
+function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean }) {
+  const nameModel = useModelName();
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflow-media", workflow.id],
     queryFn: () =>
@@ -730,7 +732,7 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
                   {asset.model && (
                     <>
                       <dt>Model</dt>
-                      <dd className="break-all">{safeModelId(asset.model)}</dd>
+                      <dd className="break-all">{nameModel(asset.model)}</dd>
                     </>
                   )}
                   {asset.workflow && (
@@ -746,6 +748,12 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
                     </>
                   )}
                 </dl>
+              )}
+              {owner && asset.model && (
+                <details>
+                  <summary className="cursor-pointer text-xs">Technical details</summary>
+                  <p className="mt-2 break-all font-mono text-xs">{asset.model}</p>
+                </details>
               )}
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" asChild>
