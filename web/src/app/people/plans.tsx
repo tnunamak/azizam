@@ -84,7 +84,11 @@ function PolicySet({
   choices: PolicyEditorChoice[];
   change: (value: string[] | undefined) => void;
 }) {
-  const unknown = (value || []).filter((v) => !choices.some((c) => c.id === v));
+  // A saved value counts under its choice whether it uses the choice id or an alias.
+  const choiceFor = (v: string) =>
+    choices.find((c) => c.id === v || c.aliases?.includes(v))?.id;
+  const selected = new Set((value || []).map(choiceFor));
+  const unknown = (value || []).filter((v) => choiceFor(v) === undefined);
   return (
     <fieldset className="space-y-3">
       <legend className="text-label">{label}</legend>
@@ -108,17 +112,24 @@ function PolicySet({
                 className="flex min-h-8 items-center gap-3 text-meta max-sm:min-h-11"
               >
                 <Checkbox
-                  checked={value.includes(c.id)}
-                  disabled={c.available === false && !value.includes(c.id)}
+                  checked={selected.has(c.id)}
+                  disabled={c.available === false && !selected.has(c.id)}
                   onCheckedChange={(checked) =>
                     change(
                       checked
                         ? [...value, c.id]
-                        : value.filter((v) => v !== c.id),
+                        : value.filter((v) => choiceFor(v) !== c.id),
                     )
                   }
                 />
-                {c.label}
+                <span>
+                  {c.label}
+                  {c.label !== c.id && (
+                    <span className="text-muted-foreground ml-2 font-mono">
+                      {c.id}
+                    </span>
+                  )}
+                </span>
               </label>
             ))}
           </div>
