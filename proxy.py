@@ -14679,7 +14679,14 @@ def _identity_note_delivery(auth_context: Any, form_fields: Mapping[str, Any]) -
     """Open the delivery context for the native identity route (flat form fields)."""
     _begin_media_delivery(auth_context)
     try:
-        nested = video_inputs.parse_bracket_form(form_fields.items())
+        # Parse the JSON container first, regardless of multipart field order.
+        # SDK bracket fields then extend it rather than replacing its controls.
+        controls = multipart_extensions(form_fields.get("extensions"))
+        nested = video_inputs.parse_bracket_form([
+            ("extensions", controls),
+            *((name, value) for name, value in form_fields.items()
+              if name != "extensions" and not hasattr(value, "read")),
+        ])
     except ValueError as exc:
         return _media_metadata_error(exc)
     return _note_media_metadata_body(nested)
@@ -22387,6 +22394,11 @@ async def gateway_image_generations_media_job(request: Request):
         return response
 
     idempotency_key = request.headers.get("idempotency-key")
+    _begin_media_delivery(auth_context)
+    invalid_controls = _note_media_metadata_body(body)
+    if invalid_controls is not None:
+        finish_image_route_receipt(receipt, invalid_controls)
+        return invalid_controls
     request_id, request_hash, idempotency = _image_media_job_request_id(
         body=body,
         auth_context=auth_context,
