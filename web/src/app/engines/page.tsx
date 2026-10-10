@@ -4,6 +4,7 @@ import { Fragment, Suspense, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 
 import {
   api,
@@ -37,7 +38,6 @@ import {
   OverflowMenuItem,
   OverflowMenuSeparator,
   Skeleton,
-  toast,
 } from "@/components/ui";
 import { PageHeader } from "@/components/product/page-header";
 import { StateBadge, StateWord } from "@/components/product/status-ui";

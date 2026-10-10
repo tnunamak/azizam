@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { formatAppName } from "@/lib/format";
 import {
   accountApi,

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";

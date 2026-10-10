@@ -4,7 +4,7 @@ import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, queryKeys } from "@/lib/api";
 import { destinations } from "@/lib/product";
 import { useViewer } from "@/components/shell/session";

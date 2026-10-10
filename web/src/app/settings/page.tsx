@@ -5,7 +5,7 @@ import { useViewer } from "@/components/shell/session";
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   adminFetch,
   ApiError,
