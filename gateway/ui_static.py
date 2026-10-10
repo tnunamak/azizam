@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from email.utils import parsedate_to_datetime
+from datetime import timezone
 from functools import lru_cache
 import gzip
 import os
@@ -209,8 +210,14 @@ class UIStaticFiles(StaticFiles):
         if "if-modified-since" not in headers or not last_modified:
             return False
         try:
-            modified = parsedate_to_datetime(last_modified).timestamp()
-            since = parsedate_to_datetime(headers["if-modified-since"]).timestamp()
+            modified_date = parsedate_to_datetime(last_modified)
+            since_date = parsedate_to_datetime(headers["if-modified-since"])
         except (TypeError, ValueError, OverflowError):
             return False
+        if modified_date.tzinfo is None:
+            modified_date = modified_date.replace(tzinfo=timezone.utc)
+        if since_date.tzinfo is None:
+            since_date = since_date.replace(tzinfo=timezone.utc)
+        modified = modified_date.timestamp()
+        since = since_date.timestamp()
         return modified <= since

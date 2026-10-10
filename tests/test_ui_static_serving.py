@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import gzip
+import os
+import time
+from datetime import datetime, timezone
 
 import brotli
 from fastapi import FastAPI
@@ -107,7 +110,7 @@ def test_hashed_chunk_is_brotli_compressed_and_immutable(tmp_path):
     assert range_refused.status_code == 406
 
 
-def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
+def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path, monkeypatch):
     page = tmp_path / "home/index.html"
     page.parent.mkdir()
     page.write_bytes(b"<html>page</html>")
@@ -156,6 +159,27 @@ def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
         "Accept-Encoding": "br, gzip, identity;q=0", "Range": "bytes=0-4",
     })
     assert refused_range.status_code == 406
+
+    original_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Etc/GMT+7")
+    time.tzset()
+    try:
+        modified = datetime(2026, 10, 10, 18, 0, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(page, (modified, modified))
+        newer_than_request_date = client.get("/ui/home/", headers={
+            "If-Modified-Since": "Sat Oct 10 18:00:00 2026",
+        })
+        assert newer_than_request_date.status_code == 200
+        at_request_date = client.get("/ui/home/", headers={
+            "If-Modified-Since": "Sat Oct 10 18:00:01 2026",
+        })
+        assert at_request_date.status_code == 304
+    finally:
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        time.tzset()
 
 
 def test_api_streaming_and_non_ui_static_routes_are_untouched(tmp_path):
