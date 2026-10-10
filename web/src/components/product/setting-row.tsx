@@ -51,9 +51,10 @@ export function SettingsSection({
 
 /**
  * One setting: the label in `text-body` 500, one line of description in
- * `text-meta`, and the control right-aligned at 32. At least 64 tall,
- * padding 12 × 16. On a phone the control drops under the text when the
- * two do not fit side by side, and the description stays one line.
+ * `text-meta`, and the control right-aligned at 32. At least 64 tall:
+ * padding 10 × 16 around a 22 label, 2, and a 20 description. On a phone
+ * the label and the description are one line each (the edit form below
+ * the row holds the full text), so a row stays 64; wider, a long label wraps.
  */
 export function SettingRow({
   label,
@@ -74,19 +75,24 @@ export function SettingRow({
     <div
       data-slot="setting-row"
       className={cn(
-        "flex min-h-(--row-setting) flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3",
+        "flex min-h-(--row-setting) flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2.5",
         className,
       )}
     >
       <div className="min-w-0 flex-1 basis-60">
         <Label
           {...(htmlFor ? { htmlFor } : {})}
-          className="text-body block font-medium"
+          // A truncated line keeps its full text on hover.
+          title={typeof label === "string" ? label : undefined}
+          className="text-body block font-medium max-sm:truncate sm:[overflow-wrap:anywhere]"
         >
           {label}
         </Label>
         {description ? (
-          <p className="text-muted-foreground text-meta mt-0.5 truncate">
+          <p
+            title={typeof description === "string" ? description : undefined}
+            className="text-muted-foreground text-meta mt-0.5 truncate"
+          >
             {description}
           </p>
         ) : null}
