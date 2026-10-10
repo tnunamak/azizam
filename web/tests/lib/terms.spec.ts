@@ -101,7 +101,7 @@ const legacyCopy: Record<string, string[]> = {
     "No manifest notes provided.",
     "No manifest notes provided.",
   ],
-  "app/usage/page.tsx": ["Cost", "Cost"],
+  "app/usage/page.tsx": ["Cost", "Cost", "Cost"],
   "app/settings/page.tsx": ["Public base URL"],
   "components/admin/add-service-dialog.tsx": [
     "Register an upstream engine. Select one API-supplied preset before\n            entering its connection details. Changes apply live — no restart\n            needed.",

@@ -368,7 +368,7 @@ export default function UsagePage() {
               onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
           ) : null}
-          <DailyChart days={data.byDay} />
+          <DailyChart days={data.byDay} models={data.byModel} requests={data.requests} />
           <ModelTable
             rows={data.byModel}
             nameModel={nameModel}
@@ -496,11 +496,25 @@ function CoverageNote({ summary }: { summary: UsageSummary }) {
   );
 }
 
-function DailyChart({ days }: { days: UsageDay[] }) {
+function DailyChart({ days, models, requests }: { days: UsageDay[]; models: UsageModel[]; requests: number }) {
   const rows = days.map((day) => ({
     label: shortDate(day.date),
-    ...day.byCapability,
+    total: day.total,
   }));
+  const tasks = capabilities.map((capability) => {
+    const modelsForTask = models.filter((model) => model.capability === capability);
+    const measured = modelsForTask.filter((model) => model.costUsd !== null);
+    const incomplete = modelsForTask.some((model) =>
+      ["partial", "unavailable"].includes(modelCostKind(model)),
+    );
+    return {
+      capability,
+      requests: modelsForTask.reduce((sum, model) => sum + model.requests, 0),
+      costUsd: measured.reduce((sum, model) => sum + (model.costUsd ?? 0), 0),
+      unavailable: measured.length === 0 && incomplete,
+      incomplete,
+    };
+  }).filter((task) => task.requests > 0).sort((a, b) => b.requests - a.requests);
   const active = capabilities.filter((capability) =>
     days.some((day) => (day.byCapability[capability] ?? 0) > 0),
   );
@@ -510,9 +524,9 @@ function DailyChart({ days }: { days: UsageDay[] }) {
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
-          Stacked by {memberTerms.task}
+          Total requests
           {overfullDays > 0 &&
-            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded counts.`}
+            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the ${memberTerms.task} counts add to more than the recorded total; the bars show the recorded totals and the daily table keeps the recorded task counts.`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -552,16 +566,12 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                       fontSize: "12px",
                     }}
                   />
-                  {active.map((capability) => (
-                    <Bar
-                      key={capability}
-                      dataKey={capability}
-                      stackId="capability"
-                      fill="var(--chart-1)"
-                      name={capabilityLabels[capability]}
-                      isAnimationActive={false}
-                    />
-                  ))}
+                  <Bar
+                    dataKey="total"
+                    fill="var(--chart-1)"
+                    name="Requests"
+                    isAnimationActive={false}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -598,22 +608,39 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-4 flex flex-wrap gap-3 text-meta">
-              {active.map((capability) => (
-                <span
-                  key={capability}
-                  className="inline-flex items-center gap-2"
-                >
-                  <span
-                    className="size-2 rounded-full"
-                    style={{ background: "var(--chart-1)" }}
-                  />
-                  {capabilityLabels[capability]}
-                </span>
-              ))}
-            </div>
           </>
         )}
+        <div className="mt-4 space-y-3">
+          <h2 className="text-heading font-semibold">By task</h2>
+          {tasks.length ? (
+            <>
+              <p className="text-muted-foreground text-meta">Recorded model totals · share of this month’s requests</p>
+              <Table dense aria-label="By task">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Task</TableHead>
+                    <TableHead scope="col" numeric>Requests</TableHead>
+                    <TableHead scope="col" numeric>Share</TableHead>
+                    <TableHead scope="col" numeric>Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tasks.map((task) => (
+                    <TableRow key={task.capability}>
+                      <TableCell rowName>{capabilityLabels[task.capability]}</TableCell>
+                      <TableCell numeric>{formatNumber(task.requests)}</TableCell>
+                      <TableCell numeric>{requests > 0 ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
+                      <TableCell numeric>
+                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary />}
+                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
+          ) : <p className="text-muted-foreground text-meta">Task totals are not recorded.</p>}
+        </div>
       </CardContent>
     </Card>
   );

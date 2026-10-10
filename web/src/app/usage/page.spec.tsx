@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,9 +9,11 @@ import { Requests } from "../activity/requests";
 import WorkflowsPage from "../workflows/page";
 
 vi.mock("recharts", () => ({
-  ResponsiveContainer: () => null,
-  Bar: () => null,
-  BarChart: () => null,
+  ResponsiveContainer: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Bar: ({ dataKey, stackId, fill }: { dataKey: string; stackId?: string; fill: string }) =>
+    <span data-testid="usage-bar" data-key={dataKey} data-stack={stackId} data-fill={fill} />,
+  BarChart: ({ children, data }: { children: ReactNode; data: unknown }) =>
+    <div data-testid="usage-chart" data-values={JSON.stringify(data)}>{children}</div>,
   CartesianGrid: () => null,
   Tooltip: () => null,
   XAxis: () => null,
@@ -478,7 +481,7 @@ test("Usage model Cost cell is Local, an amount or Unavailable, and the legend e
   expect(screen.getByText(/Local: no provider charge\./)).toBeVisible();
   expect(screen.getByText(/Unavailable: the provider cost was not recorded\./)).toBeVisible();
   // No row is blank in the Cost column.
-  for (const row of screen.getAllByRole("row").slice(1)) {
+  for (const row of within(screen.getByRole("table", { name: "Models" })).getAllByRole("row").slice(1)) {
     expect(within(row).getAllByRole("cell").at(-1)).not.toBeEmptyDOMElement();
   }
 });
@@ -544,4 +547,74 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
     "Idle app",
   ]);
   expect(screen.getByText("Turned off or no requests")).toBeVisible();
+});
+
+
+test("Usage daily bars use recorded totals without stacking and preserve overfull counts", async () => {
+  renderUsage({
+    by_day: [{ date: "2026-10-01", total: 4, chat: 4, image: 3 }],
+  });
+  const chart = await screen.findByTestId("usage-chart");
+  expect(JSON.parse(chart.getAttribute("data-values")!)).toEqual([{ label: "Oct 1", total: 4 }]);
+  const bars = screen.getAllByTestId("usage-bar");
+  expect(bars).toHaveLength(1);
+  expect(bars[0]).toHaveAttribute("data-key", "total");
+  expect(bars[0]).not.toHaveAttribute("data-stack");
+  expect(bars[0]).toHaveAttribute("data-fill", "var(--chart-1)");
+  expect(screen.getByText(/On 1 day the task counts add to more than the recorded total/)).toBeVisible();
+  const daily = screen.getByRole("table", { name: "Requests by day and task" });
+  expect(within(daily).getByText("4 (task counts add to 7)")).toBeInTheDocument();
+  expect(within(daily).getByText("3")).toBeInTheDocument();
+});
+
+test("Usage By task combines model counts and cost, sorts by count and shows period share", async () => {
+  renderUsage({
+    requests: 10,
+    by_model: [
+      { model: "picture", capability: "image", requests: 3, cost_usd: 0.5 },
+      { model: "chat-a", capability: "chat", requests: 2, cost_usd: 0.25 },
+      { model: "chat-b", capability: "chat", requests: 5, cost_usd: 0.75 },
+    ],
+  });
+  const table = await screen.findByRole("table", { name: "By task" });
+  expect(table).toHaveAttribute("data-dense");
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent))
+    .toEqual(["Task", "Requests", "Share", "Cost"]);
+  expect(within(table).getAllByRole("row").slice(1).map((row) =>
+    within(row).getAllByRole("cell").map((cell) => cell.textContent),
+  )).toEqual([
+    ["Chat", "7", "70%", "$1.00"],
+    ["Make a picture", "3", "30%", "$0.50"],
+  ]);
+});
+
+test("Usage By task keeps missing and partial costs distinct from known local cost", async () => {
+  renderUsage({
+    requests: 5,
+    by_model: [
+      { model: "chat-known", capability: "chat", requests: 1, cost_usd: 0.5 },
+      { model: "chat-unknown", capability: "chat", requests: 1 },
+      { model: "picture-unknown", capability: "image", requests: 2 },
+      { model: "local-video", capability: "video", requests: 1, paid_requests: 0, unknown_paid_requests: 0 },
+    ],
+  });
+  const table = await screen.findByRole("table", { name: "By task" });
+  const chat = within(table).getByRole("row", { name: /Chat/ });
+  expect(within(chat).getByText("$0.50")).toBeVisible();
+  expect(within(chat).getByText("partial")).toBeVisible();
+  const picture = within(table).getByRole("row", { name: /Make a picture/ });
+  expect(within(picture).getByText("Cost not recorded")).toBeVisible();
+  expect(within(picture).queryByText("$0.00")).not.toBeInTheDocument();
+  const video = within(table).getAllByRole("row").at(-1)!;
+  expect(within(video).getByText("$0.00")).toBeVisible();
+});
+
+test("Usage By task does not divide by an empty period total", async () => {
+  renderUsage({
+    requests: 0, media_count: 1,
+    by_model: [{ model: "chat", capability: "chat", requests: 1 }],
+  });
+  const table = await screen.findByRole("table", { name: "By task" });
+  expect(within(table).getByText("Unknown")).toBeVisible();
+  expect(table).not.toHaveTextContent(/NaN|Infinity/);
 });
