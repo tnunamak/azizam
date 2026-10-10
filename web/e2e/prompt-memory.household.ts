@@ -291,7 +291,9 @@ test.describe("Try: Don't keep this prompt", () => {
     const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
     await expect(toggle).not.toBeChecked();
     await expect(
-      page.getByText("Kept with the audio. Only you can see it."),
+      page.getByText(
+        "Azizam tries to save the prompt with the audio. Only you can see saved prompts.",
+      ),
     ).toBeVisible();
 
     const kept = `The paper boat is on the puddle ${Date.now()}`;
@@ -557,7 +559,10 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
     const session = await (await page.request.get("/me/api/session")).json();
     const saved = await page.request.put("/me/api/prompt-memory", {
       data: { remember, retention: "never" },
-      headers: { "x-azizam-user-action": "1", "x-azizam-csrf": session.csrf_token },
+      headers: {
+        "x-azizam-user-action": "1",
+        "x-azizam-csrf": session.csrf_token,
+      },
     });
     expect(saved.ok()).toBe(true);
   };
@@ -577,6 +582,9 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
   await expect(page.getByText("Prompt not saved")).toBeVisible({
     timeout: 60_000,
   });
+  await expect(
+    page.getByText("Not kept. The audio still goes to Library."),
+  ).toBeVisible();
   const media = await (
     await page.request.get("/me/api/media?scope=me&limit=50")
   ).json();

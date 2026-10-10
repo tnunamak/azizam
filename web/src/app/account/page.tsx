@@ -152,7 +152,7 @@ function PromptsSection() {
       <SettingsSection
         id="prompts"
         title="Prompts"
-        description="What you type is kept with what it makes, so you can find it again."
+        description="Choose whether Azizam saves what you type with what it makes."
       >
         {household.never_keep ? (
           <SettingRow

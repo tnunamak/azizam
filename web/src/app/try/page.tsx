@@ -1591,6 +1591,16 @@ export default function TryPage() {
           refreshedState = "unknown";
         }
       }
+      if (
+        personViewer &&
+        MEMORY_TABS.has(tab) &&
+        (refreshedState === "unknown" ||
+          ((keepState === "member-off" || keepState === "household-off") &&
+            refreshedState === "choice"))
+      ) {
+        // Keep the current run's privacy promise visible after a refresh.
+        setForget(true);
+      }
       const forgetRun =
         MEMORY_TABS.has(tab) &&
         (forget ||
@@ -2767,7 +2777,7 @@ function PromptKeepControl({
   ) : state === "unknown" ? (
     "Saved prompts are visible only to you."
   ) : (
-    `Kept with the ${made}. Only you can see it.`
+    `Azizam tries to save the prompt with the ${made}. Only you can see saved prompts.`
   );
   return (
     <div

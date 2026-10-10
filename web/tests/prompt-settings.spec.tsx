@@ -344,7 +344,11 @@ it.each(["member", "household"])(
     if (kind === "member") {
       mocks.promptMemory.mockResolvedValue(member());
       mocks.savePromptMemory.mockRejectedValue(
-        new ApiError("prompt_erasure_unavailable", "Deletion failed. Try again.", 503),
+        new ApiError(
+          "prompt_erasure_unavailable",
+          "Deletion failed. Try again.",
+          503,
+        ),
       );
       wrap(<AccountPage />);
       await user.click(
@@ -356,7 +360,11 @@ it.each(["member", "household"])(
         revision: "r1",
       });
       mocks.householdPut.mockRejectedValue(
-        new ApiError("prompt_erasure_unavailable", "Deletion failed. Try again.", 503),
+        new ApiError(
+          "prompt_erasure_unavailable",
+          "Deletion failed. Try again.",
+          503,
+        ),
       );
       wrap(<HouseholdPromptsSection />);
       await user.click(

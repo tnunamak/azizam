@@ -86,7 +86,7 @@ describe("Invite: the welcome card's line on prompts", () => {
     );
     expect(
       await screen.findByText(
-        "Azizam remembers what you type so you can find things again. Only you can see it. Change this in Your settings.",
+        "Azizam can remember what you type so you can find things again. Only you can see saved prompts. Change this in Your settings.",
       ),
     ).toBeVisible();
   });

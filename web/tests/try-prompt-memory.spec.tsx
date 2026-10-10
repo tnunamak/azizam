@@ -138,7 +138,9 @@ describe("Try: Don't keep this prompt", () => {
     });
     expect(toggle).not.toBeChecked();
     expect(
-      screen.getByText("Kept with the picture. Only you can see it."),
+      screen.getByText(
+        "Azizam tries to save the prompt with the picture. Only you can see saved prompts.",
+      ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 5000 });
@@ -188,7 +190,11 @@ describe("Try: Don't keep this prompt", () => {
       "/account",
     );
     expect(screen.queryByRole("switch")).toBeNull();
-    expect(screen.getByText("Jobs whose prompts aren’t kept cannot resume after a gateway restart.")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Jobs whose prompts aren’t kept cannot resume after a gateway restart.",
+      ),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 5000 });
     expect(submittedBody().extensions).toEqual({
@@ -241,6 +247,9 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
   await screen.findByText("Prompts aren’t kept");
   await user.click(screen.getByRole("button", { name: "Run" }));
   await screen.findByAltText("Generated result", {}, { timeout: 5000 });
+  expect(
+    screen.getByText("Not kept. The picture still goes to Library."),
+  ).toBeVisible();
   expect(account.promptMemory).toHaveBeenCalledTimes(2);
   expect(submittedBody().extensions).toEqual({
     "com.azizam.prompts": { mode: "forget" },
@@ -251,7 +260,9 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
 it("refreshes prompt settings on window focus", async () => {
   renderTry();
   await ready();
-  await screen.findByText("Kept with the picture. Only you can see it.");
+  await screen.findByText(
+    "Azizam tries to save the prompt with the picture. Only you can see saved prompts.",
+  );
   account.promptMemory.mockResolvedValue(
     memory({ effective_remember: false }, { never_keep: true }),
   );

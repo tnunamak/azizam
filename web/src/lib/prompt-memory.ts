@@ -123,7 +123,7 @@ export function tryKeepState(
  */
 export function welcomePromptNote(state: TryKeepState): string | null {
   if (state === "choice")
-    return "Azizam remembers what you type so you can find things again. Only you can see it. Change this in Your settings.";
+    return "Azizam can remember what you type so you can find things again. Only you can see saved prompts. Change this in Your settings.";
   if (state === "member-off")
     return "Azizam doesn’t keep what you type. Change this in Your settings.";
   if (state === "household-off")
