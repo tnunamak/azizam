@@ -1661,8 +1661,8 @@ function CreationViewer({
                 <p className="text-muted-foreground text-meta flex items-center gap-1.5">
                   <EyeOff aria-hidden="true" className="size-4 shrink-0" />
                   {notSavedReason
-                    ? `Prompt not saved. ${notSavedReason}`
-                    : "Prompt not saved"}
+                    ? `No saved prompt. ${notSavedReason}`
+                    : "No saved prompt"}
                 </p>
               ) : null}
               <details className="group">
@@ -2555,7 +2555,7 @@ export default function LibraryPage() {
         open={Boolean(confirming)}
         onOpenChange={(open) => !open && setConfirming(null)}
         title={`Delete ${confirming ? assetTitle(confirming) : "this creation"}?`}
-        description="This removes the creation from your library. Copies you downloaded are not affected."
+        description="Removes this creation from your Library. Downloaded copies stay."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (!confirming) return;

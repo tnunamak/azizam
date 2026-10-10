@@ -133,7 +133,7 @@ describe("the prompt in the viewer", () => {
     expect(
       within(dialog).getByRole("button", { name: "Copy prompt" }),
     ).toBeEnabled();
-    expect(within(dialog).queryByText("Prompt not saved")).toBeNull();
+    expect(within(dialog).queryByText("No saved prompt")).toBeNull();
     await user.click(
       within(dialog).getByRole("button", { name: /^Actions for / }),
     );
@@ -155,7 +155,7 @@ describe("the prompt in the viewer", () => {
     const user = userEvent.setup();
     renderWith([forgotten]);
     const dialog = await openOnly(user);
-    expect(within(dialog).getByText("Prompt not saved")).toBeVisible();
+    expect(within(dialog).getByText("No saved prompt")).toBeVisible();
     expect(
       within(dialog).queryByRole("button", { name: "Copy prompt" }),
     ).toBeNull();
@@ -179,7 +179,7 @@ describe("the prompt in the viewer", () => {
     });
     const dialog = await openOnly(user);
     expect(
-      await within(dialog).findByText("Prompt not saved. You turned it off."),
+      await within(dialog).findByText("No saved prompt. You turned off prompt keeping."),
     ).toBeVisible();
     cleanup();
     renderWith([forgotten], {
@@ -194,7 +194,7 @@ describe("the prompt in the viewer", () => {
     const again = await openOnly(user);
     expect(
       await within(again).findByText(
-        "Prompt not saved. This gateway doesn’t keep prompts.",
+        "No saved prompt. This gateway doesn’t keep prompts.",
       ),
     ).toBeVisible();
   });

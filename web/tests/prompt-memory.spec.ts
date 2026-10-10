@@ -1,8 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   isShorter,
   keyPromptNote,
   purgeStatus,
+  promptNotSavedReason,
+  welcomePromptNote,
   tryKeepState,
   withForget,
   withinCap,
@@ -124,7 +128,7 @@ describe("purgeStatus", () => {
         metadata_stripping: { status: "retrying", files_pending: 1 },
       }),
     ).toBe(
-      "Some older files still hold copies. Azizam keeps retrying in the background. 1 file left.",
+      "Some older files still contain prompts. Azizam keeps retrying. 1 file left.",
     );
   });
 
@@ -161,6 +165,68 @@ it("shows the full backend key description", () => {
 });
 it("names database erasure as pending", () => {
   expect(purgeStatus({ pending: true, database_pending: true })).toContain(
-    "Deletion pending",
+    "Prompt deletion hasn't finished",
   );
+});
+
+describe("prompt memory copy", () => {
+  it("names disabled prompt keeping without guessing missing-prompt reasons", () => {
+    expect(promptNotSavedReason("member-off", false)).toBe(
+      "You turned off prompt keeping.",
+    );
+    expect(promptNotSavedReason("household-off", true)).toBe(
+      "You turned off prompt keeping for everyone.",
+    );
+    expect(promptNotSavedReason("household-off", false)).toBe(
+      "This gateway doesn’t keep prompts.",
+    );
+    expect(promptNotSavedReason("choice", false)).toBeNull();
+    expect(promptNotSavedReason("unknown", false)).toBeNull();
+  });
+
+  it("uses keep consistently in the welcome note with privacy and settings", () => {
+    expect(welcomePromptNote("choice")).toBe(
+      "Azizam can keep what you type so you can find it again. Only you can see it. Change this in Your settings.",
+    );
+    expect(welcomePromptNote("unknown")).toBeNull();
+  });
+
+  it("names unfinished prompt deletion and retrying without claiming completion", () => {
+    expect(purgeStatus({ pending: true, database_pending: true })).toBe(
+      "Prompt deletion hasn't finished. Azizam keeps retrying.",
+    );
+  });
+
+  it("names prompts remaining in older files and preserves retry counts", () => {
+    expect(
+      purgeStatus({
+        pending: true,
+        metadata_stripping: { status: "retrying", files_pending: 12 },
+      }),
+    ).toBe(
+      "Some older files still contain prompts. Azizam keeps retrying. 12 files left.",
+    );
+    expect(
+      purgeStatus({ pending: true, metadata_stripping: { status: "retrying" } }),
+    ).toBe("Some older files still contain prompts. Azizam keeps retrying.");
+  });
+
+  it("keeps Library missing-prompt copy neutral and preserves known reasons", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/library/page.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("? `No saved prompt. ${notSavedReason}`");
+    expect(source).toContain(': "No saved prompt"}');
+  });
+
+  it("states Library deletion scope and that downloaded copies stay", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/app/library/page.tsx"),
+      "utf8",
+    );
+    expect(source).toContain(
+      'description="Removes this creation from your Library. Downloaded copies stay."',
+    );
+  });
 });

@@ -2503,7 +2503,7 @@ function ResultView({
         {result.promptNotSaved ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
             <EyeOff aria-hidden="true" className="size-4 shrink-0" />
-            Prompt not saved
+            Prompt not kept
           </p>
         ) : null}
         {Boolean(result.media?.length) && (
@@ -2717,7 +2717,7 @@ function PromptKeepControl({
   const description = fixed ? (
     state === "member-off" ? (
       <>
-        You turned this off.{" "}
+        You turned off prompt keeping.{" "}
         <Link
           href="/account"
           className="text-foreground underline underline-offset-4"
@@ -2727,7 +2727,7 @@ function PromptKeepControl({
       </>
     ) : owner ? (
       <>
-        You turned this off for everyone.{" "}
+        You turned off prompt keeping for everyone.{" "}
         <Link
           href="/settings#prompts"
           className="text-foreground underline underline-offset-4"
@@ -2739,11 +2739,16 @@ function PromptKeepControl({
       "Turned off for everyone on this gateway."
     )
   ) : forget ? (
-    `Not kept. The ${made} still goes to Library.`
+    `The ${made} still goes to Library.`
   ) : state === "unknown" ? (
-    "Saved prompts are visible only to you."
+    "Couldn't read your prompt settings. Saved prompts are visible only to you."
   ) : (
-    `Azizam tries to save the prompt with the ${made}. Only you can see saved prompts.`
+    <>
+      <span className="block">
+        Azizam tries to keep the prompt with the {made}.
+      </span>
+      <span className="block">Only you can see kept prompts.</span>
+    </>
   );
   return (
     <div

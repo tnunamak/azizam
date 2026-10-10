@@ -332,7 +332,7 @@ it.each(["member", "household"])(
     }
     expect(await screen.findByText("Deletion pending")).toBeVisible();
     expect(
-      screen.getByText(/Azizam keeps retrying saved prompt deletion/),
+      screen.getByText(/Prompt deletion hasn.t finished. Azizam keeps retrying/),
     ).toBeVisible();
     expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
   },

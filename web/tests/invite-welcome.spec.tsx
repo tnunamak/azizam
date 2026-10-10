@@ -80,13 +80,13 @@ async function acceptWith(promptMemory: Response) {
 }
 
 describe("Invite: the welcome card's line on prompts", () => {
-  it("says prompts are remembered, private, and where to change it", async () => {
+  it("says prompts are kept, private, and where to change it", async () => {
     await acceptWith(
       new Response(JSON.stringify(memory(true, false)), { status: 200 }),
     );
     expect(
       await screen.findByText(
-        "Azizam can remember what you type so you can find things again. Only you can see saved prompts. Change this in Your settings.",
+        "Azizam can keep what you type so you can find it again. Only you can see it. Change this in Your settings.",
       ),
     ).toBeVisible();
   });

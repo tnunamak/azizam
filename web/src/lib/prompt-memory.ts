@@ -123,7 +123,7 @@ export function tryKeepState(
  */
 export function welcomePromptNote(state: TryKeepState): string | null {
   if (state === "choice")
-    return "Azizam can remember what you type so you can find things again. Only you can see saved prompts. Change this in Your settings.";
+    return "Azizam can keep what you type so you can find it again. Only you can see it. Change this in Your settings.";
   if (state === "member-off")
     return "Azizam doesn’t keep what you type. Change this in Your settings.";
   if (state === "household-off")
@@ -142,10 +142,10 @@ export function promptNotSavedReason(
   state: TryKeepState,
   owner: boolean,
 ): string | null {
-  if (state === "member-off") return "You turned it off.";
+  if (state === "member-off") return "You turned off prompt keeping.";
   if (state === "household-off")
     return owner
-      ? "You turned it off for everyone."
+      ? "You turned off prompt keeping for everyone."
       : "This gateway doesn’t keep prompts.";
   return null;
 }
@@ -199,7 +199,7 @@ export function purgeStatus(
 ): string | null {
   if (!purge?.pending) return null;
   if (purge.database_pending)
-    return "Deletion pending. Azizam keeps retrying saved prompt deletion in the background.";
+    return "Prompt deletion hasn't finished. Azizam keeps retrying.";
   const stripping = purge.metadata_stripping;
   const left = stripping?.files_pending;
   const count =
@@ -207,7 +207,7 @@ export function purgeStatus(
       ? ` ${left} ${left === 1 ? "file" : "files"} left.`
       : "";
   if (stripping?.status === "retrying")
-    return `Some older files still hold copies. Azizam keeps retrying in the background.${count}`;
+    return `Some older files still contain prompts. Azizam keeps retrying.${count}`;
   return `Removing copies from older files in the background.${count}`;
 }
 
