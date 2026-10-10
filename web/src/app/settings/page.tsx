@@ -279,6 +279,7 @@ function MutationError({ error }: { error: unknown }) {
 function InstanceSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.instance,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ instance: Instance; revision: string }>(
         "/admin/api/settings/instance",
@@ -418,6 +419,7 @@ function SignInSection() {
     refetch: refetchOidc,
   } = useQuery({
     queryKey: keys.oidc,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ oidc_config: EffectiveOidcConfig | null; revision: string }>(
         "/admin/api/oidc-config",
@@ -431,6 +433,7 @@ function SignInSection() {
     refetch: refetchSignIn,
   } = useQuery({
     queryKey: keys.signIn,
+    staleTime: 15_000,
     queryFn: () => adminFetch<SignInOptions>("/admin/api/operator/sign-in"),
   });
   return (
@@ -759,6 +762,7 @@ function OidcForm({
 function DefaultsSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.defaults,
+    staleTime: 15_000,
     queryFn: async () => {
       const [defaults, profiles] = await Promise.all([
         adminFetch<DefaultsResponse>("/admin/api/settings/defaults"),
@@ -775,6 +779,7 @@ function DefaultsSection() {
     refetch: refetchAccess,
   } = useQuery({
     queryKey: keys.accessDefaults,
+    staleTime: 15_000,
     queryFn: api.userAccessDefaults.get,
   });
   return (
@@ -974,6 +979,7 @@ function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
 function MediaSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.media,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
         overrides: {
@@ -1161,6 +1167,7 @@ function ExtensionsSection() {
   const client = useQueryClient();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.extensions,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
         extension_packages: { packages: Record<string, Extension> };
@@ -1414,6 +1421,7 @@ function AdvancedSection() {
   const [open, setOpen] = useState(false);
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.effective,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ config: Record<string, unknown>; export_url: string }>(
         "/admin/api/settings/effective",

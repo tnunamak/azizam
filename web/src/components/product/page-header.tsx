@@ -55,7 +55,10 @@ export function PageHeader({
           <h1 className="text-title text-balance">
             {title}
             {typeof count === "number" ? (
-              <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
+              <span
+                aria-hidden="true"
+                className="text-subtle-foreground figures text-heading ml-2.5 font-normal"
+              >
                 {count}
               </span>
             ) : null}
