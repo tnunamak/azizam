@@ -61,7 +61,7 @@ intents:
     description: voice output and the voice list
     aliases: [audio.speech]
   - id: speech.transcription
-    label: Turn a recording into text
+    label: Transcribe a recording
     summary_label: speech transcription
     description: transcription input
     aliases: [audio.transcriptions, audio.transcribe]
