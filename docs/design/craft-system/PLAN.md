@@ -4,6 +4,8 @@ Spec: `../DESIGN.md`, "System numbers v2". Evidence: `MEASUREMENTS.md`. Paths be
 
 **Headline.** One PR changes the tokens and the shared components and adds a gate that measures the numbers. Eight surface PRs then adopt them, each one recaptured and checked against the numbers before it is judged. Surfaces adopt in the order that proves each template on a simple page first (Settings, People) before applying it to the pages the judges said "don't hold up" (Home, Library). Most of the gap is cross-cutting, so the first PR alone should remove four of the six control heights and the 44 px leak on every page.
 
+**The page's job comes first.** When a measured rule and the page's job conflict, the job wins. Amend the rule in this document and in `../DESIGN.md` with the evidence: Usage must distinguish tasks, and workflow rows must show what each choice needs and makes (set-10, both judges).
+
 ## PR 1: tokens, shared components, gate (no page layouts)
 
 Branch `design/craft-tokens`. It changes no page's layout on purpose. Pages change only where they already use the shared parts. Visual diffs are expected on every route. Snapshot and e2e selectors stay stable.
@@ -147,7 +149,7 @@ Files: `app/usage/page.tsx`, `app/usage/source-options.ts`, `app/activity/page.t
 - [ ] Remove the four `border-0! bg-transparent! shadow-none!` Card overrides (`usage/page.tsx:543, 570, 700, 821`). KPIs become a `StatStrip`, and the chart and table go in bordered cards.
 - [ ] KPI icon tiles (40 px tinted squares) go. The figure is in `text-figure`.
 - [ ] Header filters: the field labels above the selects ("Person", "Source") go, and the select's value carries them ("Everyone", "All sources"). Selects 44 → 32, "View recent requests" 40 → 32, all in one row.
-- [ ] Chart: 6 stacked hues → one series in `--chart-1`. The capability breakdown moves to the table, with 8 px dots. Target ≤ 2 % coloured pixels (10.6 % today).
+- [ ] Chart: a single-series chart uses `--chart-1`. If the chart encodes tasks, each category stays distinguishable: use the chart tokens' small categorical palette (at most 3 hues plus Other), or remove stacking and put the per-category breakdown in the table, with 8 px dots. Never turn a per-task stack into one colour (set-10, both judges). Target ≤ 2 % coloured pixels (10.6 % today), without hiding categories.
 - [ ] The model table becomes `Table dense`: rows 77 → 36–40, with capability and model on one line ("Chat · Default"), Requests and Cost right-aligned and tabular.
 - [ ] "Receipt coverage" is folded under the Spend stat as its note line.
 - [ ] Activity: the receipts list on the same `Table dense`, using `StateBadge` for Failed, Refused and In progress.
@@ -157,7 +159,7 @@ Files: `app/usage/page.tsx`, `app/usage/source-options.ts`, `app/activity/page.t
 Files: `app/workflows/page.tsx`, `app/workflows/workflow-api.ts` (display only), `app/models/models-client.tsx`, `app/models/page.tsx`.
 
 - [ ] Remove the page-wide `[&_button]:min-h-11` (`workflows/page.tsx:881`) and the one in the sheet (`:463`). Buttons are 44 → 32 on desktop.
-- [ ] Cards 350 tall → `ListRow lines={2}` rows at 60 (name, the "Makes …" line), with Needs and Optional moved to the detail sheet. The Images and Video groups become one ListCard each.
+- [ ] Cards 350 tall → `ListRow lines={2}` rows at 60: name, then the facts a person compares choices by, "From <inputs> → <outputs>". Required inputs and outputs stay in the row; Optional and fuller explanations move to the detail sheet (set-10, both judges). The Images and Video groups become one ListCard each.
 - [ ] "Open in Try" `size="sm"` as the row's trailing action; "Details" opens on a row click.
 - [ ] Filter chips 44 → Segmented 32 next to a 32 search (40 today). The "4 workflows" count moves into the title as the page count.
 - [ ] Models: the catalog on `Table`, rows 40 (60 with a second line), prices right-aligned and tabular (Vercel AI Gateway model list).
