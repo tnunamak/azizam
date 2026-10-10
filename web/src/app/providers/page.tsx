@@ -792,7 +792,7 @@ function DetailCard({
             <div className="flex min-w-0 items-center gap-3">
               <Logo value={provider.name} />
               <div className="min-w-0">
-                <h2 className="text-heading break-words">{provider.name}</h2>
+                <h2 className="text-body font-semibold break-words">{provider.name}</h2>
                 <p className="text-muted-foreground mt-0.5 text-meta">
                   <ProviderKeySummary provider={provider} />
                 </p>

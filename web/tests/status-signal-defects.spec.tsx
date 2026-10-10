@@ -269,7 +269,8 @@ it("keeps capability and infrastructure engines in one compact table", async () 
   expect(screen.getAllByRole("table")).toHaveLength(1);
   await waitFor(() => expect(table.querySelectorAll("[data-engine-id]")).toHaveLength(5));
   for (const row of table.querySelectorAll("[data-engine-id]")) {
-    expect(row.querySelector("td")).toHaveClass("h-(--row-2)", "max-sm:h-(--row-phone-2)!");
+    // The row carries the height tokens: a table cell height does not set a row's height.
+    expect(row).toHaveClass("h-(--row-2)", "max-sm:h-(--row-phone-2)");
   }
   fireEvent.click(screen.getByRole("button", { name: "Show infrastructure" }));
   expect(table.querySelector('[data-engine-id="infrastructure"]')).toBeNull();

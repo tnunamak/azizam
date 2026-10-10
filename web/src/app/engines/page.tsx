@@ -546,27 +546,30 @@ function EnginesContents() {
       <TableRow
         key={service.id}
         data-engine-id={service.id}
+        className="h-(--row-2) max-sm:h-(--row-phone-2)"
         data-state={service.id === selectedServiceId ? "selected" : undefined}
         aria-current={service.id === selectedServiceId ? "true" : undefined}
       >
-        <TableCell className="h-(--row-2) min-w-0 max-sm:h-(--row-phone-2)!">
+        <TableCell className="w-full max-w-0 py-1!">
           <button
             type="button"
-            className="min-h-8 max-sm:min-h-11 min-w-0 text-left"
+            className="flex min-h-8 max-sm:min-h-11 w-full min-w-0 flex-col justify-center text-left"
             onClick={() => openEditor(service)}
           >
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h3 className="text-body text-foreground truncate font-medium">
+            <div className="flex min-w-0 items-center gap-2">
+              <h3 className="text-body text-foreground min-w-0 truncate font-medium">
                 {title}
               </h3>
-              {stateKey === "ready" && serviceState.label === "Ready" ? (
-                <StateWord tone="ok" word="Ready" />
-              ) : (
-                <StateBadge
-                  state={stateKey}
-                  word={stateKey === "off" ? undefined : serviceState.label || undefined}
-                />
-              )}
+              <span className="flex shrink-0">
+                {stateKey === "ready" && serviceState.label === "Ready" ? (
+                  <StateWord tone="ok" word="Ready" />
+                ) : (
+                  <StateBadge
+                    state={stateKey}
+                    word={stateKey === "off" ? undefined : serviceState.label || undefined}
+                  />
+                )}
+              </span>
             </div>
             {(serves || checkedAt !== null) && (
               <p className="text-meta text-muted-foreground mt-0.5 truncate">
@@ -709,7 +712,7 @@ function EnginesContents() {
                 {groups.map((group) => (
                   <TableBody key={group.capability} aria-label={`${group.capability} engines`}>
                     <TableRow>
-                      <TableCell colSpan={2} className="h-9">
+                      <TableCell colSpan={2} className="h-9 max-sm:h-(--row-phone-1)!">
                         <h2 className="text-label text-subtle-foreground font-medium">
                           {group.capability}
                         </h2>
@@ -723,7 +726,7 @@ function EnginesContents() {
                           {renderEngine(service)}
                           {alternatives.length > 0 && (
                             <TableRow>
-                              <TableCell colSpan={2}>
+                              <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -746,7 +749,7 @@ function EnginesContents() {
                 {infrastructure.length > 0 && (
                   <TableBody aria-label="Infrastructure engines">
                     <TableRow>
-                      <TableCell colSpan={2}>
+                      <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
                         <Button
                           variant="ghost"
                           size="sm"

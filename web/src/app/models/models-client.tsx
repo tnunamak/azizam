@@ -607,7 +607,7 @@ function AliasOptionRow({
   showStatus: boolean;
 }) {
   return (
-    <TableRow onClick={() => onDetail(row)} className={cn("cursor-pointer", phoneRowClass)}>
+    <TableRow onClick={() => onDetail(row)} className={cn("cursor-pointer h-(--row-2)", phoneRowClass)}>
       <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
         <h3 className={cn("text-body font-medium", phoneTaskClass)} title={rowTaskName(row)}>
           <span className="truncate">{rowTaskName(row)}</span>
@@ -666,7 +666,7 @@ function CapabilityRow({
   return (
     <>
     <TableBody className="max-sm:block" aria-label={`${primaryCapabilityLabel(primary)} models`}>
-      <TableRow className={cn("cursor-pointer", phoneRowClass)} onClick={() => onDetail(primary)}>
+      <TableRow className={cn("cursor-pointer h-(--row-2)", phoneRowClass)} onClick={() => onDetail(primary)}>
         <TableCell className={cn("h-(--row-2) py-1! max-sm:contents", phoneCellClass)}>
           <div className={phoneTaskClass}>
             <CatalogIcon row={primary} />

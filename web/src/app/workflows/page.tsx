@@ -986,7 +986,7 @@ function WorkflowGroups({
         >
           <h2 className="text-heading mb-(--space-heading) flex items-baseline gap-2">
             {group.output}
-            <span className="text-subtle-foreground text-label figures">{group.rows.length}</span>
+            <span className="text-subtle-foreground text-meta figures">{group.rows.length}</span>
           </h2>
           <ListCard label={`${group.output} workflows`}>
             {group.rows.map((workflow) => (
