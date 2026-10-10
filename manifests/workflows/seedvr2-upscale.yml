@@ -16,6 +16,8 @@ trusted: true
 typical_seconds: 3
 inputs:
   source_image:
+    label: a picture to enlarge
+    help: The picture to make bigger and sharper.
     type: asset
     required: true
   scale:

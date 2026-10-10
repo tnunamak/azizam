@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { planCounts, planSummary } from "@/app/people/people-api";
+import {
+  inviteeSummary,
+  planCounts,
+  planSummary,
+} from "@/app/people/people-api";
 
 describe("access plan summaries", () => {
   it("uses capability names and separates counts from permissions", () => {
@@ -66,5 +70,32 @@ describe("access plan summaries", () => {
     expect(summary).toBe(
       "No capabilities allowed. Local models only. No paid providers.",
     );
+  });
+});
+
+describe("what an invitation says to the invitee", () => {
+  it("says nothing about fields the plan leaves at the gateway's defaults", () => {
+    expect(inviteeSummary({})).toBe("No paid online services.");
+    expect(inviteeSummary({})).not.toMatch(/capabilit|gateway defaults|protocol|fallback/i);
+  });
+
+  it("names what the invitee can do in plain verbs, leaving out app plumbing", () => {
+    expect(
+      inviteeSummary({
+        allow: { intents: ["chat", "image.generate", "text.embeddings"], exposure: ["local"] },
+        remote: { providers: [] },
+      }),
+    ).toBe("You can chat and make pictures. Everything runs on this gateway's own computer.");
+  });
+
+  it("says when some models cost money, without provider ids", () => {
+    const summary = inviteeSummary({
+      remote: { providers: ["household-remote"], budget_usd_per_day: "1" },
+    });
+    expect(summary).toBe("Some models are paid online services, within a spending limit.");
+    expect(inviteeSummary({ remote: { providers: ["openrouter"] } })).toBe(
+      "Some models are paid online services.",
+    );
+    expect(summary).not.toContain("household-remote");
   });
 });

@@ -22,7 +22,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
-import { capabilityLabels as terms, preferredTerms } from "@/lib/terms";
+import {
+  capabilityLabels as terms,
+  preferredTerms,
+  taskNames,
+} from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -101,9 +105,30 @@ const capabilityLabels: Record<ProductCapability, string> = {
   speech: terms.speech,
   audio: terms.audio,
   transcribe: terms.transcribe,
-  decide: terms.decisions,
-  embed: terms.embeddings,
+  decide: taskNames.decisions,
+  embed: taskNames.embeddings,
   rerank: terms.reranking,
+};
+
+/**
+ * What apps use embeddings and decisions for, in the words Try uses
+ * (lib/terms.ts taskNames), in place of the server's "Embeddings" and
+ * "Decisions".
+ */
+const PLAIN_TASK: Partial<Record<ProductCapability, string>> = {
+  decide: taskNames.decisions,
+  embed: taskNames.embeddings,
+};
+
+/** The name for one capability: the plain task name, else the server's label. */
+function capabilityName(cap: ProductCapability, serverLabel?: string | null) {
+  return PLAIN_TASK[cap] ?? serverLabel ?? capabilityLabels[cap];
+}
+
+/** Input and output kinds as people read them ("text → numbers"). */
+const MODALITY_WORDS: Record<string, string> = {
+  embedding: "numbers",
+  embeddings: "numbers",
 };
 
 // The server owns taxonomy and labels; this map only selects a glyph.
@@ -143,10 +168,9 @@ function primaryCapability(row: CatalogRow): ProductCapability {
 }
 
 function primaryCapabilityLabel(row: CatalogRow): string {
-  return (
-    row.capability_title ??
-    row.capabilities[0]?.label ??
-    capabilityLabels[primaryCapability(row)]
+  return capabilityName(
+    primaryCapability(row),
+    row.capability_title ?? row.capabilities[0]?.label,
   );
 }
 
@@ -191,10 +215,10 @@ function ModelFacts({
             variant="outline"
             className="text-muted-foreground font-normal"
           >
-            {inputs.join(", ")}
+            {inputs.map((word) => MODALITY_WORDS[word] ?? word).join(", ")}
             <span aria-hidden="true">→</span>
             <span className="sr-only">to</span>
-            {outputs.join(", ")}
+            {outputs.map((word) => MODALITY_WORDS[word] ?? word).join(", ")}
           </Badge>
         </li>
       )}
@@ -212,7 +236,13 @@ function descriptionFor(row: CatalogRow): string {
 }
 
 function titleFor(row: CatalogRow): string | undefined {
-  const capability = primaryCapabilityLabel(row);
+  // A title that only repeats the capability ("Embed" for Embeddings) adds
+  // nothing; the plain capability name stands in for it.
+  const names = [
+    primaryCapabilityLabel(row),
+    row.capability_title,
+    row.capabilities[0]?.label,
+  ].filter((name): name is string => Boolean(name));
   const repeatsCapability = (value: string) => {
     const normalize = (part: string) => {
       const word = part
@@ -223,7 +253,8 @@ function titleFor(row: CatalogRow): string | undefined {
     };
     const parts = value.split("·").map(normalize).filter(Boolean);
     return (
-      parts.length > 0 && parts.every((part) => part === normalize(capability))
+      parts.length > 0 &&
+      parts.every((part) => names.some((name) => part === normalize(name)))
     );
   };
 
@@ -973,10 +1004,12 @@ export default function ModelsClient() {
                   pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
-                  {allRows
-                    .flatMap((row) => row.capabilities)
-                    .find((entry) => entry.capability === cap)?.label ??
-                    capabilityLabels[cap]}
+                  {capabilityName(
+                    cap,
+                    allRows
+                      .flatMap((row) => row.capabilities)
+                      .find((entry) => entry.capability === cap)?.label,
+                  )}
                 </FilterToggle>
               ))}
               <div

@@ -17,11 +17,13 @@ trusted: true
 typical_seconds: 2
 inputs:
   reference:
+    help: A clear photo of the real person. Add more photos for a better check.
     type: asset
     required: true
     label: a face photo
     description: Reference photo of the real people. Repeat the field for several photos.
   candidate:
+    help: The picture to compare with the reference.
     type: asset
     required: true
     label: a photo to check

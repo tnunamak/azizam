@@ -206,6 +206,74 @@ export function planSummary(policy: ProfilePolicyDocument): string {
   return `${parts.join(". ")}.`;
 }
 
+/**
+ * What an invitation gives the person accepting it, in plain words. The
+ * owner's planSummary names every policy field ("Capabilities follow gateway
+ * defaults", "Selected app protocols only"); an invitee needs only what they
+ * will be able to do and whether it can cost money. A field the plan leaves
+ * at the gateway's defaults says nothing.
+ */
+export function inviteeSummary(policy: ProfilePolicyDocument): string {
+  const parts: string[] = [];
+  const intents = policy.allow?.intents;
+  if (intents !== undefined && !intents.includes("*")) {
+    const tasks = [
+      ...new Set(
+        intents.flatMap((intent) => {
+          const family = intent.split(".")[0];
+          const word = INVITEE_TASKS[intent] ?? INVITEE_TASKS[family];
+          return word === undefined ? [] : [word];
+        }),
+      ),
+    ].filter(Boolean);
+    parts.push(
+      tasks.length
+        ? `You can ${new Intl.ListFormat("en", { type: "conjunction" }).format(tasks)}`
+        : "Ask the owner what you can use",
+    );
+  }
+  const exposure = policy.allow?.exposure;
+  const localOnly = exposure?.length === 1 && exposure[0] === "local";
+  if (localOnly) parts.push("Everything runs on this gateway's own computer");
+  const providers = policy.remote?.providers ?? [];
+  const capped = [
+    policy.remote?.max_usd_per_request,
+    policy.remote?.budget_usd_per_day,
+    policy.remote?.budget_usd_per_month,
+  ].some((value) => value !== null && value !== undefined);
+  if (!localOnly) {
+    parts.push(
+      !providers.length
+        ? "No paid online services"
+        : capped
+          ? "Some models are paid online services, within a spending limit"
+          : "Some models are paid online services",
+    );
+  }
+  return parts.length ? `${parts.join(". ")}.` : "";
+}
+
+/** Plain verbs for the tasks a plan allows; app plumbing (embeddings, decisions) says nothing. */
+const INVITEE_TASKS: Record<string, string> = {
+  chat: "chat",
+  image: "make and edit pictures",
+  images: "make and edit pictures",
+  "image.generate": "make pictures",
+  "image.edit": "edit pictures",
+  video: "make videos",
+  voice: "hear text read aloud",
+  speech: "hear text read aloud",
+  "speech.synthesis": "hear text read aloud",
+  "speech.transcription": "turn recordings into text",
+  transcribe: "turn recordings into text",
+  audio: "make music and sounds",
+  "audio.generate": "make music and sounds",
+  text: "",
+  decide: "",
+  decisions: "",
+  embed: "",
+};
+
 export function planCounts(policy: ProfilePolicyDocument): string {
   return (
     [

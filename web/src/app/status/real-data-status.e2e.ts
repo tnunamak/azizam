@@ -48,7 +48,7 @@ test("member Status renders copied live-data projection without owner details", 
     ).toBeVisible();
     await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);
     await expect(
-      page.getByText("Your capabilities", { exact: true }),
+      page.getByText("What you can use", { exact: true }),
     ).toBeVisible();
     expect(await page.locator("li").count()).toBeGreaterThan(0);
     await expect(

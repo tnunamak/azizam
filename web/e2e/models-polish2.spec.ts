@@ -244,7 +244,8 @@ test("aliases keep alternatives within their server-classified capability", asyn
   for (const [label, primary, alternative] of [
     ["Chat", "default", "chat-peer"],
     ["Images", "image", "image-peer"],
-    ["Decisions", "decide", null],
+    // Decisions read as the task they do, the name Try uses.
+    ["Choose an option", "decide", null],
     ["Speech", "tts", null],
   ] as const) {
     const group = page.locator("section").filter({

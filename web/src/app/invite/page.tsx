@@ -14,7 +14,7 @@ import {
 } from "@/components/product";
 import { type ProfilePolicyDocument } from "@/lib/api";
 import { authFetch, continueTo, type SignInOptions } from "../sign-in/auth-api";
-import { planSummary } from "../people/people-api";
+import { inviteeSummary } from "../people/people-api";
 interface Invitation {
   plan: {
     id: string;
@@ -164,9 +164,11 @@ export default function InvitePage() {
                   <ShieldCheck className="size-4" aria-hidden="true" />
                   {inviteData.plan.name}
                 </p>
-                <p className="text-muted-foreground mt-2 text-xs leading-5 break-words">
-                  {planSummary(inviteData.plan.profile)}
-                </p>
+                {inviteeSummary(inviteData.plan.profile) ? (
+                  <p className="text-muted-foreground mt-2 text-xs leading-5 break-words">
+                    {inviteeSummary(inviteData.plan.profile)}
+                  </p>
+                ) : null}
                 <p className="text-muted-foreground mt-3 text-xs">
                   Invite expires <RelativeTime ts={inviteData.expires_at} />
                 </p>

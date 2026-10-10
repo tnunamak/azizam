@@ -13,9 +13,13 @@ inputs:
     type: string
     required: true
   source_image:
+    label: a picture to change
+    help: The picture you want to change.
     type: asset
     required: true
   mask:
+    label: a mask
+    help: White areas are redrawn; black areas stay as they are.
     type: asset
     required: true
     description: OpenAI image-edit mask. Transparent alpha or white pixels are regenerated; opaque alpha or black pixels are preserved.

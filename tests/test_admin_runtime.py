@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import sys
 import tempfile
 import unittest
@@ -1189,6 +1191,27 @@ class AdminOidcSettingsTests(unittest.TestCase):
         system_record = next(record for record in records if record["action"] == "system.seed")
         self.assertEqual(system_record["actor_kind"], "system")
         self.assertEqual(system_record["actor_label"], "System")
+
+    def test_audit_actor_with_no_account_reads_automatic_not_unknown(self) -> None:
+        # A tool on the gateway's host once recorded changes as kind "user"
+        # under its own name, which no account has. Accounts are never
+        # hard-deleted, so the honest label is an automatic change.
+        admin_store.record_audit(
+            "operator.service.toggled", actor_kind="user", actor_id="orchestrator",
+            target_kind="service", target_id="tabby", path=self.db,
+        )
+        admin_store.record_audit(
+            "legacy.event", actor_kind="cron", actor_id="nightly", path=self.db,
+        )
+        admin_key, _, _ = create_admin_service_account_key("reader", path=self.db)
+        records = self._client(admin_key).get(
+            "/admin/api/audit?show_automated=true"
+        ).json()["records"]
+        toggled = next(record for record in records if record["action"] == "operator.service.toggled")
+        self.assertEqual(toggled["actor_label"], "Automatic")
+        legacy = next(record for record in records if record["action"] == "legacy.event")
+        self.assertEqual(legacy["actor_label"], "Automatic")
+        self.assertNotIn("Unknown", json.dumps(records))
 
     def test_new_service_account_audit_uses_event_label_not_id_shape(self) -> None:
         actor = AdminContext(

@@ -32,9 +32,28 @@ describe("model names never expose a path on the gateway host", () => {
     expect(safeModelId(GGUF)).toBe("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
   });
 
-  test("the display name reads as words", () => {
-    expect(modelDisplayName(GGUF)).toBe("Qwen3.8 27B Uncensored Q4 K M");
+  test("the display name reads as words, without the file's packing tag", () => {
+    expect(modelDisplayName(GGUF)).toBe("Qwen3.8 27B Uncensored");
+    expect(modelDisplayName("Qwen3.8-27B-Uncensored-Q4_K_M.gguf")).toBe(
+      "Qwen3.8 27B Uncensored",
+    );
     expect(modelDisplayName("/m/x/Llama-3-00001-of-00003.gguf")).toBe("Llama 3");
+    expect(modelDisplayName("gemma-3-12b-it-IQ4_XS.gguf")).toBe("gemma 3 12b it");
+    expect(modelDisplayName("flux2_klein_4b_fp8_scaled.safetensors")).toBe(
+      "flux2 klein 4b",
+    );
+  });
+
+  test("a capability's recommended name that is a file stem is cleaned too", () => {
+    const name = modelDisplayName("default", undefined, [
+      { use_name: "default", recommended_model: "Qwen3.8-27B-Uncensored-Q4_K_M" },
+    ]);
+    expect(name).toBe("Qwen3.8 27B Uncensored");
+    expect(
+      modelDisplayName("fast", undefined, [
+        { use_name: "fast", recommended_model: "Qwen 3.5 8B" },
+      ]),
+    ).toBe("Qwen 3.5 8B");
   });
 
   test("a catalog title wins, and a path-shaped title is still not shown", () => {

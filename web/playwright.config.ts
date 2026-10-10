@@ -20,7 +20,7 @@ const declaredFixturePorts = [process.env.UI_E2E_ALLOWED_PORTS, strictEnginePort
   .join(",");
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "**/live-data-*.spec.ts",
+  testIgnore: ["**/live-data-*.spec.ts", "**/sweep/**"],
   globalSetup: "./e2e/global-setup.ts",
   outputDir: "./test-results/artifacts",
   workers: 1,

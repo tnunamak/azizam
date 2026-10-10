@@ -166,11 +166,11 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("tab", { name: "Choose an option" }).click();
   await page.route("**/v1/systemone", async (route) => {
     const body = route.request().postDataJSON();
-    expect(body.state).toBe("Gateway smoke test is starting.");
+    expect(body.state).toBe("It is raining and the bus is 20 minutes late.");
     expect(body.questions.route.type).toBe("choice");
     expect(body.questions.route.criteria).toEqual({
-      "Run chat": "Run chat",
-      "Run embeddings": "Run embeddings",
+      "Take a taxi": "Take a taxi",
+      "Wait for the bus": "Wait for the bus",
     });
     await route.fulfill({
       status: 404,
@@ -189,9 +189,9 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
         answers: {
           route: {
             type: "choice",
-            choice: "Run chat",
+            choice: "Take a taxi",
             confidence: 0.7,
-            probabilities: { "Run chat": 0.7, "Run embeddings": 0.3 },
+            probabilities: { "Take a taxi": 0.7, "Wait for the bus": 0.3 },
           },
         },
       },

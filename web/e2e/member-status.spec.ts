@@ -166,7 +166,7 @@ for (const theme of ["light", "dark"] as const) {
               }),
         );
         const yourCapabilities = page.getByRole("region", {
-          name: "Your capabilities",
+          name: "What you can use",
         });
         await page.goto("/ui/status/");
         if (state === "error") {

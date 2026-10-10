@@ -78,6 +78,9 @@ OIDC_LIST_FIELDS: frozenset[str] = frozenset({
     "scopes", "allowed_email_domains", "admin_emails", "admin_groups", "admin_roles",
 })
 _OIDC_SECRET_REDACTED = "<redacted>"
+# The actor of an audit row that names no account: a change made by a tool,
+# not a person (Activity → Changes says "Automatic", never "Unknown user").
+AUTOMATIC_ACTOR_LABEL = "Automatic"
 
 
 def service_account_session_subject(service_account_id: str) -> str:
@@ -1310,18 +1313,22 @@ class AdminSQLiteStore:
             return out
         kind = str(out.get("actor_kind") or "")
         actor_id = str(out.get("actor_id") or "")
+        # Accounts are never hard-deleted, so an id no account has was never a
+        # person or automation account: a tool on the gateway's host recorded
+        # the change under its own name. That is an automatic change, and the
+        # page says so rather than "Unknown user" (no inference from the id).
         if kind == "user":
             principal = admin_store.get_user(actor_id, path=self.path) or {}
-            out["actor_label"] = principal.get("display_name") or principal.get("email") or "Unknown user"
+            out["actor_label"] = principal.get("display_name") or principal.get("email") or AUTOMATIC_ACTOR_LABEL
         elif kind == "service_account":
             principal = admin_store.get_service_account(actor_id, path=self.path) or {}
-            out["actor_label"] = principal.get("name") or "Unknown service account"
+            out["actor_label"] = principal.get("name") or AUTOMATIC_ACTOR_LABEL
         elif kind in {"system", "cli"}:
             out["actor_label"] = "System"
         else:
             # Legacy rows can retain their historical kind but are not
             # reclassified from their ID; this keeps the boundary truthful.
-            out["actor_label"] = "Unknown principal"
+            out["actor_label"] = AUTOMATIC_ACTOR_LABEL
         return out
 
     def list_audit_page(

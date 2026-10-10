@@ -1,0 +1,317 @@
+{
+ "schema_version": 1,
+ "object": "workflow.catalog",
+ "discovery_url": "/gateway/v1/workflows",
+ "workflows": [
+  {
+   "id": "image.edit.flux2-klein-4b",
+   "short_id": "flux2-klein-4b",
+   "capability": "image",
+   "intent": "image.edit",
+   "title": "Flux2 Klein 4B Edit",
+   "purpose": "Edit an image from an instruction",
+   "description": "Edit an image from an instruction",
+   "inputs": [
+    {
+     "name": "prompt",
+     "type": "string",
+     "required": true,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Multipart form",
+     "request_field": "prompt"
+    },
+    {
+     "name": "source_image",
+     "type": "string",
+     "required": true,
+     "accepted": true,
+     "ignored": false,
+     "applies": "File upload",
+     "request_field": "image",
+     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture you want to change.",
+     "help": "The picture you want to change.",
+     "asset": true,
+     "media_type": "image/*",
+     "label": "a picture to change"
+    },
+    {
+     "name": "mask",
+     "type": "string",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "File upload",
+     "request_field": "mask",
+     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. White areas change; black areas stay as they are.",
+     "help": "White areas change; black areas stay as they are.",
+     "asset": true,
+     "media_type": "image/*",
+     "label": "a mask"
+    },
+    {
+     "name": "width",
+     "type": "integer",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Multipart form",
+     "request_field": "size",
+     "minimum": 64,
+     "maximum": 2048
+    },
+    {
+     "name": "height",
+     "type": "integer",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Multipart form",
+     "request_field": "size",
+     "minimum": 64,
+     "maximum": 2048
+    },
+    {
+     "name": "steps",
+     "type": "integer",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Workflow extension",
+     "request_field": "steps",
+     "minimum": 1,
+     "maximum": 100
+    },
+    {
+     "name": "guidance",
+     "type": "number",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Workflow extension",
+     "request_field": "guidance",
+     "minimum": 0,
+     "maximum": 20
+    },
+    {
+     "name": "denoise",
+     "type": "number",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Workflow extension",
+     "request_field": "denoise",
+     "default": 1,
+     "minimum": 0,
+     "maximum": 1,
+     "description": "Amount of denoising applied by truncating the Flux2 sigma schedule. Lower values preserve more input-image structure."
+    },
+    {
+     "name": "n",
+     "type": "integer",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Route option",
+     "request_field": "n",
+     "minimum": 1,
+     "maximum": 10,
+     "description": "Number of images."
+    }
+   ],
+   "outputs": [
+    {
+     "name": "image",
+     "media_type": "image/png"
+    }
+   ],
+   "engine_binding": "comfyui",
+   "engine_binding_detail": {
+    "backends": [
+     "comfyui"
+    ],
+    "available": true,
+    "status": "ready",
+    "measured": true,
+    "reason_code": "ready"
+   },
+   "availability": {
+    "status": "ready",
+    "available": true,
+    "measured": true,
+    "reason_code": "ready"
+   },
+   "typical_seconds": null,
+   "aliases": [],
+   "example_request": {
+    "method": "POST",
+    "path": "/v1/images/edits",
+    "content_type": "multipart/form-data",
+    "body": {},
+    "form": {
+     "model": "flux2-klein-4b",
+     "prompt": "A small teal fish mark on a clean white card.",
+     "size": "64x64",
+     "extensions": "{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}"
+    },
+    "files": {
+     "image": {
+      "input": "source_image",
+      "required": true,
+      "media_type": "image/*"
+     },
+     "mask": {
+      "input": "mask",
+      "required": false,
+      "media_type": "image/*"
+     }
+    },
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = {\n    'image': stack.enter_context(open('./source-image.png', 'rb')),\n    'mask': stack.enter_context(open('./mask.png', 'rb')),\n    }\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+   },
+   "examples": {
+    "curl": "curl '/v1/images/edits' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -F 'model=flux2-klein-4b' \\\n  -F 'prompt=A small teal fish mark on a clean white card.' \\\n  -F 'size=64x64' \\\n  -F 'extensions={\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}' \\\n  -F 'image=@./source-image.png' \\\n  -F 'mask=@./mask.png' \\\n  --output workflow-output.bin",
+    "python": "import os\nfrom contextlib import ExitStack\nimport requests\n\nwith ExitStack() as stack:\n    files = {\n    'image': stack.enter_context(open('./source-image.png', 'rb')),\n    'mask': stack.enter_context(open('./mask.png', 'rb')),\n    }\n    response = requests.request('POST', '/v1/images/edits',\n        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n        data={'model': 'flux2-klein-4b', 'prompt': 'A small teal fish mark on a clean white card.', 'size': '64x64', 'extensions': '{\"com.azizam.workflow\":{\"steps\":1,\"guidance\":0.0,\"denoise\":1}}'}, files=files, timeout=300)\nresponse.raise_for_status()\nopen('workflow-output.bin', 'wb').write(response.content)\n",
+    "javascript": "import { readFile, writeFile } from 'node:fs/promises';\nconst form = new FormData();\nform.append(\"model\", \"flux2-klein-4b\");\nform.append(\"prompt\", \"A small teal fish mark on a clean white card.\");\nform.append(\"size\", \"64x64\");\nform.append(\"extensions\", \"{\\\"com.azizam.workflow\\\":{\\\"steps\\\":1,\\\"guidance\\\":0.0,\\\"denoise\\\":1}}\");\nform.append(\"image\", new Blob([await readFile(\"./source-image.png\")]), \"source-image.png\");\nform.append(\"mask\", new Blob([await readFile(\"./mask.png\")]), \"mask.png\");\nconst response = await fetch(\"/v1/images/edits\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },\n  body: form\n});\nif (!response.ok) throw new Error(await response.text());\nawait writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+   },
+   "native_route": null,
+   "native_passthrough_route": null,
+   "discovery_url": "/gateway/v1/workflows/image.edit.flux2-klein-4b",
+   "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
+   "recent_jobs_url": "/me/api/media?workflow=image.edit.flux2-klein-4b",
+   "try_url": "/ui/try/?workflow=image.edit.flux2-klein-4b",
+   "capabilities": [
+    {
+     "intent": "image.edit",
+     "input_modalities": [],
+     "output_modalities": [],
+     "execution": "sync",
+     "streaming": false,
+     "exposure": "default",
+     "trust_tier": "stable",
+     "resource_tier": "interactive",
+     "tags": [],
+     "available": true,
+     "caveats": [],
+     "capability": "image",
+     "capability_title": "Images",
+     "icon_key": "image",
+     "title": "Image.edit.flux2 Klein 4b",
+     "recommended_model": "Image.edit.flux2 Klein 4b",
+     "summary": "Generate or edit images from your prompts.",
+     "use_names": [
+      "image.edit.flux2-klein-4b"
+     ],
+     "secondary_profile": false,
+     "use_name": "image.edit.flux2-klein-4b",
+     "availability": {
+      "available": false,
+      "status": "unknown",
+      "reason": "Not measured yet",
+      "measured": false,
+      "enabled": true,
+      "configured": true,
+      "up": null,
+      "idle_startable": false,
+      "evidence": {
+       "kind": "unknown"
+      }
+     },
+     "workflow": "image.edit.flux2-klein-4b"
+    }
+   ],
+   "recent_jobs": [],
+   "recent_receipts": [],
+   "openapi": {
+    "inputs_schema": {
+     "$ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b"
+    },
+    "route_inputs": [
+     {
+      "name": "n",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Number of images.",
+      "in": "body",
+      "field": "n"
+     }
+    ],
+    "execution": {
+     "recommended": "sync",
+     "sync": {
+      "method": "POST",
+      "path": "/v1/images/edits",
+      "content_type": "multipart/form-data",
+      "model": "flux2-klein-4b",
+      "fields": {
+       "prompt": {
+        "in": "form",
+        "field": "prompt"
+       },
+       "source_image": {
+        "in": "file",
+        "field": "image"
+       },
+       "mask": {
+        "in": "file",
+        "field": "mask"
+       },
+       "width": {
+        "in": "form",
+        "field": "size",
+        "combine": [
+         "width",
+         "height"
+        ]
+       },
+       "height": {
+        "in": "form",
+        "field": "size",
+        "combine": [
+         "width",
+         "height"
+        ]
+       },
+       "steps": {
+        "in": "extension",
+        "field": "steps"
+       },
+       "guidance": {
+        "in": "extension",
+        "field": "guidance"
+       },
+       "denoise": {
+        "in": "extension",
+        "field": "denoise"
+       }
+      },
+      "extensions_field": "extensions (JSON string)",
+      "output": "data[].b64_json or data[].url"
+     },
+     "async": null
+    }
+   }
+  }
+ ],
+ "groups": [
+  {
+   "capability": "image",
+   "title": "Image",
+   "count": 1,
+   "workflow_ids": [
+    "image.edit.flux2-klein-4b"
+   ]
+  }
+ ],
+ "counts": {
+  "workflows": 1,
+  "capabilities": 1
+ },
+ "links": {
+  "self": "/me/api/workflows",
+  "gateway_discovery": "/gateway/v1/workflows",
+  "openapi": "/openapi.json"
+ }
+}

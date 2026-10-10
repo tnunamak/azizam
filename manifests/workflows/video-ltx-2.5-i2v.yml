@@ -27,6 +27,8 @@ inputs:
     type: integer
     minimum: 0
   image:
+    label: a starting picture
+    help: The picture the video starts from.
     type: asset
     required: true
   image_strength:

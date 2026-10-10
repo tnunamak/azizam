@@ -1585,8 +1585,14 @@ export function StatusClient() {
                   id="layers-heading"
                   title="Engines and providers"
                 />
-                {registryIsPending ? (
-                  <Skeleton className="rounded-panel h-48 w-full" />
+                {/* Rows need both answers: drawn before the status check
+                    returns, every engine would read "Unknown" for a moment. */}
+                {registryIsPending || statusIsPending ? (
+                  <Skeleton
+                    aria-busy="true"
+                    aria-label="Checking engines"
+                    className="rounded-panel h-48 w-full"
+                  />
                 ) : !tableEngines.length && !providerList.length ? (
                   <Callout
                     severity="info"

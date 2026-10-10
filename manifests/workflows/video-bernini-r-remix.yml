@@ -12,6 +12,8 @@ trusted: true
 typical_seconds: 480
 inputs:
   source_video:
+    label: a video to remix
+    help: The video to restyle.
     type: asset
     media_type: video/*
     required: true

@@ -79,7 +79,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderWorkflows() {
+function renderWorkflows(viewer?: Viewer) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -93,10 +93,17 @@ function renderWorkflows() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  const page = (
     <QueryClientProvider client={client}>
       <WorkflowsPage />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  render(
+    viewer ? (
+      <ViewerContext.Provider value={viewer}>{page}</ViewerContext.Provider>
+    ) : (
+      page
+    ),
   );
 }
 
@@ -119,9 +126,18 @@ it("keeps browsing cards compact and leaves manifest facts in the detail view", 
   expect(card.queryByText("studio, flatlay")).toBeNull();
 });
 
-it("puts manifest details behind a closed native disclosure", async () => {
+it("keeps the manifest's research and engine notes from members", async () => {
   const user = userEvent.setup();
   renderWorkflows();
+  await user.click(await screen.findByRole("button", { name: "Details" }));
+  const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
+  await user.click(sheet.getByText("Technical details"));
+  expect(sheet.queryByText(/full manifest note/)).toBeNull();
+});
+
+it("puts manifest details behind a closed native disclosure", async () => {
+  const user = userEvent.setup();
+  renderWorkflows(ownerViewer);
   await user.click(await screen.findByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   const disclosure = sheet

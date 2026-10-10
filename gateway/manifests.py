@@ -103,6 +103,12 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise ManifestError("manifest purpose must be a non-empty string")
         if len(purpose.split()) > 8:
             raise ManifestError("manifest purpose must contain at most 8 words")
+    for name, spec in manifest["inputs"].items():
+        if not isinstance(spec, dict):
+            continue
+        for key in ("label", "help"):
+            if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
+                raise ManifestError(f"input {name} {key} must be a non-empty string")
 
 
 def validate_inputs(

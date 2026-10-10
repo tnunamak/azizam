@@ -632,3 +632,55 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
     within(card).getByText("Chat: no other engine serves it."),
   ).toBeVisible();
 });
+
+it("waits for the status check before drawing engine rows, never a passing Unknown", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue(chatRegistry);
+  let answer: (value: StatusPayload) => void = () => undefined;
+  vi.spyOn(api, "status").mockReturnValue(
+    new Promise<StatusPayload>((resolve) => {
+      answer = resolve;
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <StatusClient />
+    </QueryClientProvider>,
+  );
+  // The registry answered first: the rows still wait for their health.
+  await waitFor(() => expect(api.services.registry).toHaveBeenCalled());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.queryByRole("table", { name: "Engine status" })).toBeNull();
+  expect(screen.getByLabelText("Checking engines")).toHaveAttribute("aria-busy", "true");
+  expect(document.body.textContent).not.toMatch(/\bUnknown\b/);
+  answer({
+    current_health: {
+      state: "ok",
+      tone: "ok",
+      label: "Ready",
+      detail: "Ready",
+      observation_available: true,
+      services: [
+        {
+          service_id: "chat",
+          name: "Local chat",
+          engine_label: "Local chat",
+          capability_title: "Chat",
+          capability_labels: ["Chat"],
+          icon_key: "chat",
+          configured: true,
+          enabled: true,
+          role: "primary",
+          routable: true,
+          observation: "up",
+          tone: "ok",
+          last_error: null,
+        },
+      ],
+    },
+  } as StatusPayload);
+  const engine = await screen.findByRole("button", { name: "Local chat" });
+  expect(within(engine.closest("tr")!).getByText("Ready")).toBeVisible();
+});
