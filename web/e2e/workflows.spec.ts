@@ -608,14 +608,17 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const mediaRequests: string[] = [];
   const sheet = await openSeededSheet(page, "light", 1440, mediaRequests);
+  // Each owner-visible recent job has its own "Technical details" disclosure;
+  // the workflow's own one comes first in the sheet.
   const technicalDetails = sheet
     .getByText("Technical details", { exact: true })
+    .first()
     .locator("xpath=ancestor::details[1]");
   await expect(technicalDetails).not.toHaveAttribute("open", "");
   await expect(
     sheet.getByText(/Long manifest guidance stays searchable/),
   ).not.toBeVisible();
-  await sheet.getByText("Technical details", { exact: true }).click();
+  await sheet.getByText("Technical details", { exact: true }).first().click();
   await expect(technicalDetails).toHaveAttribute("open", "");
   await expect(
     sheet.getByText(/Long manifest guidance stays searchable/),
@@ -681,7 +684,7 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   await expect(
     sheet
       .getByRole("region", { name: "Recent jobs" })
-      .getByText("image", { exact: true })
+      .getByText("Image", { exact: true })
       .first(),
   ).toBeVisible();
   await expect(
