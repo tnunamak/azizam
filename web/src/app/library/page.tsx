@@ -442,10 +442,8 @@ function AudioTile({
     const audio = audioRef.current;
     return () => {
       if (!audio) return;
-      const hadSource = audio.hasAttribute("src");
-      if (hadSource) audio.pause();
+      if (audio.isConnected) audio.pause();
       audio.removeAttribute("src");
-      if (hadSource) audio.load();
     };
   }, []);
 
