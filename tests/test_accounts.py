@@ -104,6 +104,7 @@ def test_invite_returns_key_once_and_stores_only_hashes(account_db, fast_passwor
     assert app["owner_user_id"] == user["id"]
     assert app["default_profile_id"] == plan["id"]
     saved = rows(path, "SELECT * FROM credentials WHERE id=?", (credential["id"],))[0]
+    assert saved["created_by"] == user["id"]
     assert saved["hash"] == hash_api_key(credential["api_key"])
     assert credential["api_key"] not in str(saved)
     assert rows(path, "SELECT token_hash FROM account_links")[0]["token_hash"] == hashlib.sha256(token.encode()).hexdigest()

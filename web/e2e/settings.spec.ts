@@ -13,19 +13,28 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             theme_default: "system",
           },
         }
-      : path.includes("defaults")
+      : path.includes("prompt-memory")
         ? {
-            defaults: { profile_id: state === "empty" ? null : "local" },
-            aliases: state === "empty" ? {} : { chat: "local-chat" },
-          }
-        : {
-            config: {
-              proxy: { port: 18000 },
-              secret: "<redacted>",
-              example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
+            revision: "7",
+            prompt_memory: {
+              default_remember: true,
+              never_keep: false,
+              retention_cap: "never",
             },
-            export_url: "/admin/api/settings/effective/export",
-          };
+          }
+        : path.includes("defaults")
+          ? {
+              defaults: { profile_id: state === "empty" ? null : "local" },
+              aliases: state === "empty" ? {} : { chat: "local-chat" },
+            }
+          : {
+              config: {
+                proxy: { port: 18000 },
+                secret: "<redacted>",
+                example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
+              },
+              export_url: "/admin/api/settings/effective/export",
+            };
     return route.fulfill({ status: state === "error" ? 503 : 200, json: body });
   });
   await page.route("**/admin/api/oidc-config", (route) =>
@@ -146,6 +155,7 @@ for (const theme of ["light", "dark"] as const) {
           "Instance",
           "Sign-in",
           "Defaults",
+          "Prompts",
           "Media admission",
           "Extensions",
           "Advanced",
@@ -161,7 +171,7 @@ for (const theme of ["light", "dark"] as const) {
         if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(8);
+          ).toHaveCount(9);
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),

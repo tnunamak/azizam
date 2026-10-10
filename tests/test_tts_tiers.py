@@ -16,6 +16,9 @@ from gateway import speech_stream
 from tests.speech_tier_helpers import HAVE_FFMPEG, RouteCase, _Chunks, _wav_bytes
 
 
+WAV = _wav_bytes(24000, 1)
+
+
 class TtsLifecycleTests(RouteCase):
     def _speak(self, **extra):
         payload = {"model": "tts-fast", "voice": "shimmer", "input": "hello", "response_format": "wav", **extra}
@@ -23,12 +26,12 @@ class TtsLifecycleTests(RouteCase):
 
     def test_down_engine_is_started_through_its_lifecycle_driver(self) -> None:
         self.health.return_value = False
-        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         self.assertEqual(self._speak().status_code, 200)
         self.ensure.assert_awaited_once_with("tts-supertonic", None)
 
     def test_healthy_engine_is_not_restarted(self) -> None:
-        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         self.assertEqual(self._speak().status_code, 200)
         self.ensure.assert_not_awaited()
 
@@ -42,14 +45,14 @@ class TtsLifecycleTests(RouteCase):
 
     def test_always_on_service_is_never_probed(self) -> None:
         self.cfg["backends"]["tts-supertonic"].pop("lifecycle", None)  # an always-on (external) service
-        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         resp = self.client.post("/v1/audio/speech", json={"model": "tts", "voice": "nova", "input": "hi", "response_format": "wav"})
         self.assertEqual(resp.status_code, 200)
         self.health.assert_not_awaited()
         self.ensure.assert_not_awaited()
 
     def test_unknown_model_is_not_silently_routed_to_default_engine(self) -> None:
-        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav"))
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=WAV))
         response = self.client.post(
             "/v1/audio/speech",
             json={"model": "tts-omnivoice", "voice": "alloy", "input": "hello"},
@@ -60,7 +63,7 @@ class TtsLifecycleTests(RouteCase):
         self.assertEqual(seen, [])
 
     def test_documented_openai_speech_model_alias_still_routes(self) -> None:
-        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav"))
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=WAV))
         response = self.client.post(
             "/v1/audio/speech",
             json={"model": "tts-1", "voice": "alloy", "input": "hello", "response_format": "wav"},
@@ -146,13 +149,13 @@ class TtsRuntimeFallbackTests(RouteCase):
     def _upstream(self, first_response):
         first, _second = self._ports()
         return self.use_upstream(
-            lambda r: first_response(r) if r.url.port == first else httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"})
+            lambda r: first_response(r) if r.url.port == first else httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"})
         )
 
     def test_allocation_failure_falls_back_with_a_header(self) -> None:
         seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 18.00 MiB."}))
         resp = self._speak()
-        self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
+        self.assertEqual((resp.status_code, resp.content), (200, WAV))
         self.assertEqual([r.url.port for r in seen], list(self._ports()))
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (gpu_oom)")
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (gpu_oom)")
@@ -198,10 +201,10 @@ class TtsRuntimeFallbackTests(RouteCase):
 
     def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
         self.cfg["backends"]["tts-supertonic"]["enabled"] = False
-        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         proxy.receipt_store.begin.reset_mock()
         resp = self._speak()
-        self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
+        self.assertEqual((resp.status_code, resp.content), (200, WAV))
         self.assertEqual([r.url.port for r in seen], [self.cfg["backends"]["tts"]["port"]])
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (not_deployed)")
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (not_deployed)")
@@ -211,7 +214,7 @@ class TtsRuntimeFallbackTests(RouteCase):
     def test_start_failure_falls_back(self) -> None:
         self.health.side_effect = lambda bcfg, _t: bcfg.get("port") != self._ports()[0]
         self.ensure.return_value = False
-        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         resp = self._speak()
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (start_failed)")
@@ -338,14 +341,14 @@ class TtsStreamingTests(RouteCase):
         self.assertEqual(resp.json()["error"]["message"], "bad voice")
 
     def test_engine_that_cannot_stream_still_answers_an_sse_request(self) -> None:
-        self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        self.use_upstream(lambda r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"}))
         resp = self.client.post(
             "/v1/audio/speech",
             json={"model": "omnivoice", "voice": "nova", "input": "hi", "response_format": "wav", "stream_format": "sse"},
         )
         events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
         self.assertEqual([e["type"] for e in events], ["speech.audio.delta", "speech.audio.done"])
-        self.assertEqual(base64.b64decode(events[0]["audio"]), b"RIFFwav")
+        self.assertEqual(base64.b64decode(events[0]["audio"]), WAV)
 
     def test_bad_stream_format_is_a_coded_400(self) -> None:
         resp = self._post(stream_format="carrier-pigeon")

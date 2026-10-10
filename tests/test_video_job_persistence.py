@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import media_jobs, video_job_records  # noqa: E402
+from gateway import admin_store, media_jobs, prompt_memory, video_job_records  # noqa: E402
 from tests.test_video_list_delete_remix import (  # noqa: E402
     ALICE,
     BOB,
@@ -85,7 +85,8 @@ class MigrationTests(unittest.TestCase):
         video_job_records.save("new", {"created_at": now, "prompt": "pé", "deleted_at": None}, path=self.db)
         video_job_records.save("old", {"created_at": now - 1000}, path=self.db)
         loaded = video_job_records.load_all(path=self.db)
-        self.assertEqual(loaded["new"]["prompt"], "pé")
+        self.assertNotIn("prompt", loaded["new"])
+        self.assertNotIn("pé", self.db.read_bytes().decode("utf-8", errors="ignore"))
         self.assertEqual(video_job_records.prune(500, path=self.db), 1)
         self.assertEqual(set(video_job_records.load_all(path=self.db)), {"new"})
         video_job_records.remove("new", path=self.db)
@@ -100,6 +101,9 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
         patcher = patch.object(media_jobs, "DB_PATH", Path(self.tmp.name) / "media_jobs.db")
         patcher.start()
         self.addCleanup(patcher.stop)
+        admin_patcher = patch.object(proxy.ADMIN_STORE, "path", Path(self.tmp.name) / "admin.db")
+        admin_patcher.start()
+        self.addCleanup(admin_patcher.stop)
         self.vid = proxy._video_id_from_prompt_id("p1")
 
     def _record(self, **fields):
@@ -134,6 +138,37 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
         rec = proxy._video_job_records["p1"]
         self.assertEqual(rec["owner_key_hash"], "sha256:alice")
         self.assertEqual(rec["remixed_from_video_id"], "video_src")
+        self.assertNotIn("prompt", rec)
+
+    async def test_status_ignores_legacy_record_prompt_without_prompt_memory(self) -> None:
+        proxy._video_job_records["p1"] = self._record(prompt="legacy-secret")
+        response = await self._status(ALICE)
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertIsNone(body["prompt"])
+
+    async def test_status_reads_prompt_only_from_maker_prompt_memory(self) -> None:
+        admin_store.init_db(proxy.ADMIN_STORE.path)
+        alice = admin_store.upsert_oidc_user(
+            "issuer", "alice", email="alice@example.test", path=proxy.ADMIN_STORE.path,
+        )
+        app = admin_store.create_app(
+            "Alice app", kind="personal", owner_user_id=alice["id"], path=proxy.ADMIN_STORE.path,
+        )
+        maker_auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+            name="alice", key_hash="sha256:alice", app_id=app["id"], person_id=alice["id"],
+        ))
+        proxy._video_job_records["p1"] = self._record(
+            app_id=app["id"], person_id=alice["id"], owner_key_hash=proxy._asset_owner_key(maker_auth),
+            prompt="legacy-secret",
+        )
+        prompt_memory.put("video_p1", alice["id"], "kept-maker-secret",
+                          kept_until=None, path=media_jobs.DB_PATH)
+
+        response = await self._status(maker_auth)
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.body)
+        self.assertEqual(body["prompt"], "kept-maker-secret")
 
     async def test_other_key_gets_404_after_restart_and_owner_still_reads(self) -> None:
         proxy._video_job_records["p1"] = self._record()

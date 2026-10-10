@@ -15,6 +15,7 @@ from PIL import Image
 
 import proxy
 from gateway import media_fetch
+from tests.media_test_bytes import mp4_bytes
 
 
 def _response(status=200, *, headers=None, data=b"media"):
@@ -250,12 +251,13 @@ def test_gateway_video_asset_signed_url_resolves_internally(monkeypatch, tmp_pat
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
-    asset_id = proxy.store_asset_bytes(b"mp4 test bytes", kind="vid", suffix=".mp4", owner_key_hash="owner")
+    asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
+    clean = proxy.asset_cache_path(asset_id).read_bytes()
     request = SimpleNamespace(headers={"host": "ai.vivid.fish"}, url=SimpleNamespace(scheme="https", netloc="ai.vivid.fish"))
-    url = proxy.build_signed_asset_url(request, asset_id, "full")
+    url = proxy.build_signed_asset_url(request, asset_id, "none")
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no network for own media")):
         data, filename, mime = asyncio.run(proxy._resolve_video_workflow_asset(url, kind="video", param="source_video", auth_context=owner))
-    assert data == b"mp4 test bytes"
+    assert data == clean
     assert filename.endswith(".mp4")
     assert mime == "video/mp4"
 
@@ -264,23 +266,25 @@ def test_forwarded_host_minted_signed_asset_resolves_internally(monkeypatch, tmp
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
-    asset_id = proxy.store_asset_bytes(b"video bytes", kind="vid", suffix=".mp4", owner_key_hash="owner")
+    asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
+    clean = proxy.asset_cache_path(asset_id).read_bytes()
     request = SimpleNamespace(headers={
         "host": "internal.lan:8080", "x-forwarded-host": "localhost:8081",
     }, url=SimpleNamespace(scheme="http", netloc="internal.lan:8080"))
-    url = proxy.build_signed_asset_url(request, asset_id, "full")
+    url = proxy.build_signed_asset_url(request, asset_id, "none")
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no network for own media")):
         result = asyncio.run(proxy._fetch_media_url(url, owner, request=request))
-    assert result.data == b"video bytes"
+    assert result.data == clean
 
 
 def test_redirect_into_gateway_signed_asset_uses_internal_resolver(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
-    asset_id = proxy.store_asset_bytes(b"source bytes", kind="vid", suffix=".mp4", owner_key_hash="owner")
+    asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
+    clean = proxy.asset_cache_path(asset_id).read_bytes()
     request = SimpleNamespace(headers={"host": "ai.vivid.fish"}, url=SimpleNamespace(scheme="https", netloc="ai.vivid.fish"))
-    signed_url = proxy.build_signed_asset_url(request, asset_id, "full")
+    signed_url = proxy.build_signed_asset_url(request, asset_id, "none")
     resolver = AsyncMock(return_value=["93.184.216.34"])
     with patch.object(media_fetch, "_resolve_addresses", resolver):
         result = asyncio.run(media_fetch.safe_fetch_media(
@@ -288,7 +292,7 @@ def test_redirect_into_gateway_signed_asset_uses_internal_resolver(monkeypatch, 
             internal_resolver=lambda url: proxy._resolve_gateway_media_url(url, owner),
             transport=httpx.MockTransport(lambda request: _response(302, headers={"location": signed_url})),
         ))
-    assert result.data == b"source bytes"
+    assert result.data == clean
     assert resolver.await_count == 1
 
 
@@ -297,12 +301,13 @@ def test_saved_instance_base_url_identifies_internal_signed_assets(monkeypatch, 
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     monkeypatch.setattr(proxy, "instance_settings", lambda *args: {"base_url": "http://instance.lan"})
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
-    asset_id = proxy.store_asset_bytes(b"source bytes", kind="vid", suffix=".mp4", owner_key_hash="owner")
+    asset_id = proxy.store_asset_bytes(mp4_bytes(), kind="vid", suffix=".mp4", owner_key_hash="owner")
+    clean = proxy.asset_cache_path(asset_id).read_bytes()
     request = SimpleNamespace(headers={"host": "instance.lan"}, url=SimpleNamespace(scheme="http", netloc="instance.lan"))
-    signed_url = proxy.build_signed_asset_url(request, asset_id, "full")
+    signed_url = proxy.build_signed_asset_url(request, asset_id, "none")
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no network for own media")):
         result = asyncio.run(proxy._fetch_media_url(signed_url, owner))
-    assert result.data == b"source bytes"
+    assert result.data == clean
 
 
 def test_legacy_gateway_video_url_checks_ownership_and_streams_under_cap(monkeypatch):

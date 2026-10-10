@@ -1,7 +1,7 @@
 /**
- * Model names for people. A raw model id can be a file on the gateway's disk
- * (a llama.cpp engine reports the GGUF it loaded). No screen shows that path:
- * the identifier shrinks to the file name, and the display name reads as words.
+ * Model names for people. A raw model id can be a file on the gateway's disk.
+ * Member-facing identifiers omit directories and display names read as words.
+ * Only owner technical details retain the exact identifier for routing diagnostics.
  */
 
 const MODEL_FILE_EXTENSION = /\.(?:gguf|safetensors|ckpt|onnx|bin)$/i;
@@ -117,7 +117,12 @@ export function modelDisplayName(
 }
 
 
-const MODEL_KEY = /model|display_name|resolves_to|^(?:id|name|title)$/i;
+/** Owners can inspect exact routing IDs; members receive scrubbed copies. */
+export function technicalModelDetails<T>(value: T, owner: boolean): T {
+  return owner ? value : scrubModelPaths(value);
+}
+
+const MODEL_KEY = /model|display_name|resolves_to|fallback|^(?:id|name|title)$/i;
 
 /**
  * A payload with every model-naming field that holds a file path shortened to

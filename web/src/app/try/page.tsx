@@ -13,7 +13,9 @@ import {
   AudioLines,
   MessageSquare,
   Copy,
+  EyeOff,
   GitBranch,
+  History,
   Image as ImageIcon,
   Loader2,
   Mic,
@@ -50,7 +52,16 @@ import {
 } from "@/lib/workflow-availability";
 import { useViewer } from "@/components/shell/session";
 import Link from "next/link";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/cn";
+import {
+  tryKeepState,
+  withForget,
+  type MemberPromptMemory,
+  type TryKeepState,
+} from "@/lib/prompt-memory";
 import { taskNames } from "@/lib/terms";
+import { modelDisplayName } from "@/lib/model-name";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -157,7 +168,14 @@ type Result = {
   job?: WorkflowJob;
   technical?: string;
   probabilities?: Array<{ option: string; probability: number | null }>;
+  /** The run asked the gateway not to keep its words, or memory was off. */
+  promptNotSaved?: boolean;
 };
+
+/** Tabs whose words the gateway can keep with what they make. */
+const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
+/** "Don't keep this prompt", remembered for the browser session. */
+const FORGET_SESSION_KEY = "azizam.try.forget";
 
 const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
   chat: { model: "chat", prompt: "Reply with one short sentence." },
@@ -293,7 +311,9 @@ class LostRequestError extends Error {
 
 const IMAGE_JOB_PATH = "/gateway/v1/media/jobs/image-generations";
 
-function lostCopy(tab: TryTab): Pick<TryError, "heading" | "message" | "library"> {
+function lostCopy(
+  tab: TryTab,
+): Pick<TryError, "heading" | "message" | "library"> {
   if (tab === "image")
     return {
       heading: "Your picture may still be finishing",
@@ -334,10 +354,16 @@ function createdAtSeconds(value: unknown) {
 
 /**
  * After a lost connection, the picture may already be in the Library. Look
- * for the newest picture made for this prompt since the run began.
+ * for the newest picture from this job, or made for this prompt, since the
+ * run began. A prompt that was not kept has no prompt to match, so the job
+ * is the better key.
  */
-async function recentCreation(prompt: unknown, startedAtMs: number) {
-  if (typeof prompt !== "string" || !prompt) return null;
+async function recentCreation(
+  prompt: unknown,
+  startedAtMs: number,
+  jobId?: string,
+) {
+  if ((typeof prompt !== "string" || !prompt) && !jobId) return null;
   try {
     const response = await fetch("/me/api/media?kind=image&limit=5&scope=me", {
       credentials: "same-origin",
@@ -348,6 +374,7 @@ async function recentCreation(prompt: unknown, startedAtMs: number) {
         asset_id?: string;
         kind?: string;
         prompt?: string | null;
+        job_id?: string | null;
         created_at?: unknown;
         available?: boolean;
       }>;
@@ -358,7 +385,8 @@ async function recentCreation(prompt: unknown, startedAtMs: number) {
         asset.asset_id &&
         asset.available !== false &&
         (asset.kind ?? "image") === "image" &&
-        asset.prompt === prompt &&
+        ((jobId && asset.job_id === jobId) ||
+          (typeof prompt === "string" && prompt && asset.prompt === prompt)) &&
         created !== null &&
         created >= startedAtMs / 1000 - 5
       );
@@ -640,8 +668,15 @@ function groupCatalog(payload: unknown) {
     for (const capability of capabilities) {
       const option: CatalogOption = {
         id,
-        label:
-          stringValue(record.name) ?? stringValue(record.display_name) ?? id,
+        label: modelDisplayName(id, {
+          models: [
+            {
+              id,
+              title: stringValue(record.title) ?? stringValue(record.name),
+              display_name: stringValue(record.display_name),
+            },
+          ],
+        }),
         recommended: record.recommended === true,
         capability,
         price: costLabel(record.cost),
@@ -689,7 +724,7 @@ function groupCatalog(payload: unknown) {
         return (labelCounts.get(label) ?? 0) > 1
           ? {
               ...option,
-              label: [option.label, option.provider, option.id]
+              label: [option.label, option.provider, modelDisplayName(option.id)]
                 .filter(Boolean)
                 .join(" · "),
             }
@@ -965,6 +1000,14 @@ export default function TryPage() {
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
+  const viewer = useViewer();
+  const personViewer = viewer.authenticated && !viewer.serviceAdmin;
+  // Prompt memory: whether this person's runs keep their words. Read once;
+  // the switch below starts from it and is remembered for the session.
+  const [promptMemory, setPromptMemory] = useState<
+    MemberPromptMemory | null | undefined
+  >(undefined);
+  const [forget, setForgetState] = useState(false);
   const [model, setModel] = useState(
     () =>
       Object.fromEntries(
@@ -1028,7 +1071,7 @@ export default function TryPage() {
         ?.workflow,
     [catalog.workflow, model.workflow],
   );
-  const owner = useViewer().admin;
+  const owner = viewer.admin;
   const workflowAvailability = selectedWorkflow
     ? workflowAvailabilityView(selectedWorkflow.availability, {
         owner,
@@ -1073,6 +1116,31 @@ export default function TryPage() {
         : CAPABILITY_TABS[requestedCapability.toLowerCase().trim()];
     if (tab) setActiveTab(tab);
   }, [requestedCapability]);
+
+  useEffect(() => {
+    try {
+      setForgetState(sessionStorage.getItem(FORGET_SESSION_KEY) === "1");
+    } catch {
+      // Storage can be blocked; the switch then starts off.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!personViewer) return;
+    let live = true;
+    const refresh = () => {
+      void accountApi.promptMemory().then(
+        (response) => live && setPromptMemory(response.prompt_memory),
+        () => live && setPromptMemory(null),
+      );
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [personViewer]);
 
   useEffect(() => {
     if (!requestedModel || requestedCapabilityKey === "audio") return;
@@ -1128,9 +1196,27 @@ export default function TryPage() {
     if (activeTab !== "transcribe") stopRecording();
     // On a phone the strip scrolls; keep the chosen chip in view.
     document
-      .querySelector<HTMLElement>('[aria-label="Try capability"] [data-state="active"]')
+      .querySelector<HTMLElement>(
+        '[aria-label="Try capability"] [data-state="active"]',
+      )
       ?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
   }, [activeTab]);
+
+  const keepState: TryKeepState | null = personViewer
+    ? promptMemory === undefined
+      ? null
+      : tryKeepState(promptMemory)
+    : null;
+
+  function setForget(next: boolean) {
+    setForgetState(next);
+    try {
+      if (next) sessionStorage.setItem(FORGET_SESSION_KEY, "1");
+      else sessionStorage.removeItem(FORGET_SESSION_KEY);
+    } catch {
+      // A blocked store only means the choice lasts for this page.
+    }
+  }
 
   async function prepareKey() {
     setKeyBusy(true);
@@ -1304,7 +1390,7 @@ export default function TryPage() {
               ? [
                   {
                     id: item.id,
-                    label: item.id,
+                    label: modelDisplayName(item.id),
                     capability: "chat" as const,
                     price: "",
                     locality: "Available to this Try key",
@@ -1467,7 +1553,9 @@ export default function TryPage() {
         workflowOutputKind,
         workflowFiles,
       );
-      const first = selectedWorkflow.inputs.find((input) => problems[input.name]);
+      const first = selectedWorkflow.inputs.find(
+        (input) => problems[input.name],
+      );
       setWorkflowChecked(true);
       if (first) {
         setErrors((current) => ({ ...current, workflow: undefined }));
@@ -1492,7 +1580,47 @@ export default function TryPage() {
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
-      const request = buildRequest(tab, selectedModel);
+      const built = buildRequest(tab, selectedModel);
+      // Preserve the promise shown when Run was pressed, even if a refresh
+      // finds that another tab has since enabled memory.
+      let refreshedState = keepState;
+      if (personViewer && MEMORY_TABS.has(tab)) {
+        try {
+          const latest = await accountApi.promptMemory();
+          setPromptMemory(latest.prompt_memory);
+          refreshedState = tryKeepState(latest.prompt_memory);
+        } catch {
+          setPromptMemory(null);
+          refreshedState = "unknown";
+        }
+      }
+      if (
+        personViewer &&
+        MEMORY_TABS.has(tab) &&
+        (refreshedState === "unknown" ||
+          ((keepState === "member-off" || keepState === "household-off") &&
+            refreshedState === "choice"))
+      ) {
+        // Keep the current run's privacy promise visible after a refresh.
+        setForget(true);
+      }
+      const forgetRun =
+        MEMORY_TABS.has(tab) &&
+        (forget ||
+          keepState === "member-off" ||
+          keepState === "household-off" ||
+          refreshedState === "member-off" ||
+          refreshedState === "household-off" ||
+          (personViewer && refreshedState === "unknown"));
+      const request: RequestInfo = forgetRun
+        ? built.multipart
+          ? { ...built, form: withForget(built.form ?? {}) }
+          : {
+              ...built,
+              body: withForget((built.body ?? {}) as Record<string, unknown>),
+            }
+        : built;
+      const promptNotSaved = forgetRun;
       let result: Awaited<ReturnType<typeof publicRequest>> & {
         requestId?: string;
       };
@@ -1513,8 +1641,12 @@ export default function TryPage() {
               form.set(field, selectedFile);
             }
           }
+          const fileFields = new Set(
+            (request.files ?? []).map((file) => file.field),
+          );
           for (const [name, value] of Object.entries(request.form ?? {})) {
-            if (value === undefined || value === null) continue;
+            if (fileFields.has(name) || value === undefined || value === null)
+              continue;
             if (typeof value === "object") {
               form.set(name, JSON.stringify(value));
             } else {
@@ -1554,22 +1686,25 @@ export default function TryPage() {
       );
       setResults((current) => ({
         ...current,
-        [tab]: formatResult(
-          tab,
-          result.payload,
-          result.elapsedMs,
-          costFrom(
+        [tab]: {
+          ...formatResult(
+            tab,
             result.payload,
-            result.response,
-            preparedCatalog?.[tab]?.find(
-              (option) => option.id === selectedModel[tab],
-            )?.locality ??
-              catalog[tab]?.find((option) => option.id === selectedModel[tab])
-                ?.locality,
+            result.elapsedMs,
+            costFrom(
+              result.payload,
+              result.response,
+              preparedCatalog?.[tab]?.find(
+                (option) => option.id === selectedModel[tab],
+              )?.locality ??
+                catalog[tab]?.find((option) => option.id === selectedModel[tab])
+                  ?.locality,
+            ),
+            receiptId,
+            request,
           ),
-          receiptId,
-          request,
-        ),
+          promptNotSaved,
+        },
       }));
     } catch (error) {
       const lost =
@@ -1582,7 +1717,9 @@ export default function TryPage() {
           ...(lost ? { ...lost, lost: true } : {}),
           message:
             lost?.message ??
-            (error instanceof ApiError && tab === "decide" && error.status === 404
+            (error instanceof ApiError &&
+            tab === "decide" &&
+            error.status === 404
               ? "Decisions not enabled on this gateway"
               : error instanceof Error
                 ? error.message
@@ -1675,13 +1812,16 @@ export default function TryPage() {
         const assetId = await recentCreation(
           (request.body as { prompt?: unknown }).prompt,
           startedAt,
+          outcome.jobId,
         );
         if (!assetId) throw new LostRequestError("image", outcome.jobId);
         return {
           response: new Response(null),
           payload: {
             data: [
-              { url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me` },
+              {
+                url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+              },
             ],
           } as unknown,
           elapsedMs: Math.round(performance.now() - clock),
@@ -1943,7 +2083,7 @@ export default function TryPage() {
           // On a phone the strip runs edge to edge and fades at both ends,
           // so a chip that is partly off screen reads as "more this way",
           // not as a label cut mid-word.
-          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)]"
+          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)] max-sm:px-5"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
@@ -1954,7 +2094,7 @@ export default function TryPage() {
                 value={tab.value}
                 // A chip keeps its full label; the strip scrolls instead of
                 // squeezing chips into each other.
-                className="max-sm:min-w-fit flex-none shrink-0"
+                className="flex-none shrink-0 max-sm:min-w-fit"
               >
                 <tab.icon aria-hidden="true" />
                 {tab.label}
@@ -2050,6 +2190,7 @@ export default function TryPage() {
                   )}
                   {tab.value === "workflow" && selectedWorkflow && (
                     <WorkflowInputs
+                      key={selectedWorkflow.id}
                       inputs={selectedWorkflow.inputs}
                       mapping={selectedWorkflow.inputMapping}
                       outputKind={workflowOutputKind}
@@ -2188,6 +2329,34 @@ export default function TryPage() {
                       </span>
                     </label>
                   )}
+                  {MEMORY_TABS.has(tab.value) && keepState ? (
+                    <PromptKeepControl
+                      id={`forget-${tab.value}`}
+                      state={keepState}
+                      forget={forget}
+                      onForget={setForget}
+                      owner={owner}
+                      made={
+                        tab.value === "image"
+                          ? "picture"
+                          : tab.value === "speech"
+                            ? "audio"
+                            : workflowOutputKind === "image"
+                              ? "picture"
+                              : workflowOutputKind === "other"
+                                ? "result"
+                                : workflowOutputKind
+                      }
+                    />
+                  ) : null}
+                  {MEMORY_TABS.has(tab.value) &&
+                  personViewer &&
+                  tab.value !== "speech" ? (
+                    <p className="text-muted-foreground text-meta">
+                      Jobs whose prompts aren’t kept cannot resume after a
+                      gateway restart.
+                    </p>
+                  ) : null}
                   {/* Run is the page's one primary action (D1.5b). */}
                   <Button
                     type="submit"
@@ -2270,12 +2439,20 @@ export default function TryPage() {
                       />
                       {currentError.status !== undefined && (
                         <dl className="grid gap-3 text-sm sm:grid-cols-3">
-                          <Fact label="Status" value={`HTTP ${currentError.status}`} />
-                          <Fact label="Time" value={`${currentError.elapsedMs} ms`} />
+                          <Fact
+                            label="Status"
+                            value={`HTTP ${currentError.status}`}
+                          />
+                          <Fact
+                            label="Time"
+                            value={`${currentError.elapsedMs} ms`}
+                          />
                           {currentError.receiptId && (
                             <Fact
                               label="Receipt"
-                              value={<ReceiptLink id={currentError.receiptId} />}
+                              value={
+                                <ReceiptLink id={currentError.receiptId} />
+                              }
                             />
                           )}
                         </dl>
@@ -2323,6 +2500,12 @@ function ResultView({
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
         <h2 className="font-semibold">{result.title}</h2>
+        {result.promptNotSaved ? (
+          <p className="text-muted-foreground text-meta flex items-center gap-1.5">
+            <EyeOff aria-hidden="true" className="size-4 shrink-0" />
+            Prompt not kept
+          </p>
+        ) : null}
         {Boolean(result.media?.length) && (
           <p className="text-muted-foreground text-sm">
             {result.media?.length} output{result.media?.length === 1 ? "" : "s"}{" "}
@@ -2504,6 +2687,106 @@ function ResultView({
   );
 }
 
+/**
+ * "Don't keep this prompt", set before Run (ChatGPT's Temporary Chat and
+ * Safari's private mode: the mode is chosen before you send, and the screen
+ * shows it). One row above Run: the switch and what happens to the words.
+ * When memory is off for the person or the household there is no choice
+ * to make, so the row says so instead of offering a switch that does
+ * nothing.
+ */
+function PromptKeepControl({
+  id,
+  state,
+  forget,
+  onForget,
+  owner,
+  made,
+}: {
+  id: string;
+  state: TryKeepState;
+  forget: boolean;
+  onForget: (next: boolean) => void;
+  owner: boolean;
+  made: string;
+}) {
+  const fixed = state === "member-off" || state === "household-off";
+  const notKept = fixed || forget;
+  const Icon = notKept ? EyeOff : History;
+  const label = fixed ? "Prompts aren’t kept" : "Don’t keep this prompt";
+  const description = fixed ? (
+    state === "member-off" ? (
+      <>
+        You turned off prompt keeping.{" "}
+        <Link
+          href="/account"
+          className="text-foreground underline underline-offset-4"
+        >
+          Change
+        </Link>
+      </>
+    ) : owner ? (
+      <>
+        You turned off prompt keeping for everyone.{" "}
+        <Link
+          href="/settings#prompts"
+          className="text-foreground underline underline-offset-4"
+        >
+          Settings
+        </Link>
+      </>
+    ) : (
+      "Turned off for everyone on this gateway."
+    )
+  ) : forget ? (
+    `The ${made} still goes to Library.`
+  ) : state === "unknown" ? (
+    "Couldn't read your prompt settings. Saved prompts are visible only to you."
+  ) : (
+    <>
+      <span className="block">
+        Azizam tries to keep the prompt with the {made}.
+      </span>
+      <span className="block">Only you can see kept prompts.</span>
+    </>
+  );
+  return (
+    <div
+      data-slot="prompt-keep"
+      data-state={notKept ? "not-kept" : "kept"}
+      className={cn(
+        "rounded-control flex items-center gap-3 border px-3 py-2.5",
+        notKept && "bg-muted",
+      )}
+    >
+      <Icon
+        aria-hidden="true"
+        className="text-muted-foreground size-4 shrink-0"
+      />
+      <div className="min-w-0 flex-1">
+        {fixed ? (
+          <p className="text-body font-medium">{label}</p>
+        ) : (
+          <label htmlFor={id} className="text-body block font-medium">
+            {label}
+          </label>
+        )}
+        <p id={`${id}-note`} className="text-muted-foreground text-meta">
+          {description}
+        </p>
+      </div>
+      {fixed ? null : (
+        <Switch
+          id={id}
+          checked={forget}
+          onCheckedChange={onForget}
+          aria-describedby={`${id}-note`}
+        />
+      )}
+    </div>
+  );
+}
+
 function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border p-3">
@@ -2600,7 +2883,7 @@ function ModelSelect({
       ? [
           {
             id: value || fallbackLabel,
-            label: `${value || fallbackLabel} · Unverified model`,
+            label: `${modelDisplayName(value || fallbackLabel)} · Unverified model`,
             price: "",
             locality: "Not in the catalog",
           },

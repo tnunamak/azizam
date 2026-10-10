@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import comfy_object_info, media_delivery, media_jobs, media_metadata, provenance, receipt_store  # noqa: E402
+from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
 from gateway.extensions import validate_extension_inputs  # noqa: E402
@@ -349,8 +350,9 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         record = json.loads(media_metadata.png_text_chunks(full_bytes)["azizam_provenance"])
         self.assertEqual(record["seed"], 11)
         self.assertEqual(record["parameters"]["size"], "8x6")
-        # the stored copy is full in both cases
-        self.assertEqual(set(media_metadata.png_text_chunks(self._stored(none["data"][0]))), {"prompt", "workflow", "azizam_provenance"})
+        # The stored cache copy is clean; prompt/workflow metadata is restored
+        # only from a maker-scoped prompt record.
+        self.assertEqual(media_metadata.png_text_chunks(self._stored(none["data"][0])), {})
 
     def test_request_overrides_profile_both_ways(self) -> None:
         down = self._payload(mode_default="full", requested="none")
@@ -358,10 +360,10 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(down["data"][0]["b64_json"])), {})
         self.assertIn("workflow", media_metadata.png_text_chunks(base64.b64decode(up["data"][0]["b64_json"])))
 
-    def test_url_delivery_mode_is_signed_into_the_url(self) -> None:
+    def test_signed_url_defaults_to_clean_media_even_for_full_profile(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
         full = self._payload(mode_default="none", requested="full", response_format="url")
-        for payload, expected in ((none, "none"), (full, "full")):
+        for payload, expected in ((none, "none"), (full, "none")):
             for key in ("url", "asset_url"):
                 query = parse_qs(urlparse(payload["data"][0][key]).query)
                 self.assertEqual(query["md"], [expected])
@@ -370,8 +372,8 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         got_full = client.get(self._relative(full["data"][0]["asset_url"]))
         self.assertEqual(got_none.status_code, 200)
         self.assertEqual(media_metadata.png_text_chunks(got_none.content), {})
-        self.assertEqual(set(media_metadata.png_text_chunks(got_full.content)), {"prompt", "workflow", "azizam_provenance"})
-        self.assertEqual(pixels(got_none.content), pixels(got_full.content))
+        self.assertEqual(got_full.status_code, 200)
+        self.assertEqual(media_metadata.png_text_chunks(got_full.content), {})
 
     def test_signed_url_cannot_be_flipped_to_full(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
@@ -399,10 +401,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
                 item = payload["data"][0]
                 stored = self._stored(item)
                 exif = Image.open(io.BytesIO(stored)).getexif()
-                joined = " ".join(str(v) for v in exif.values())
-                self.assertIn("workflow:", joined)
-                self.assertIn("prompt:", joined)
-                self.assertIn("azizam_provenance:", joined)
+                self.assertEqual(len(exif), 0)
                 delivered = base64.b64decode(item["b64_json"])
                 self.assertEqual(len(Image.open(io.BytesIO(delivered)).getexif()), 0)
                 self.assertNotIn(b"KSampler", delivered)
@@ -411,7 +410,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
                     list(Image.open(io.BytesIO(stored)).convert("RGB").tobytes()),
                 )
                 full = self._payload(mode_default="full", requested=None, fmt=fmt)
-                self.assertEqual(base64.b64decode(full["data"][0]["b64_json"]), self._stored(full["data"][0]))
+                self.assertEqual(len(Image.open(io.BytesIO(self._stored(full["data"][0]))).getexif()), 0)
 
     def _client(self):
         from fastapi.testclient import TestClient
@@ -571,13 +570,22 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         _patch_route_stores(self, Path(tmp.name))
+        admin_db = Path(tmp.name) / "admin.db"
+        admin_store.init_db(admin_db)
+        maker = admin_store.upsert_oidc_user("test", "video-maker", path=admin_db)
+        admin_path = patch.object(proxy.ADMIN_STORE, "path", admin_db)
+        admin_path.start()
+        self.addCleanup(admin_path.stop)
+        auth = proxy.AuthContext(identity=replace(auth.identity, person_id=maker["id"]))
         raw = AvDeliveryTests()._make(".mp4", audio=False)
         prompt_id = "pid-1"
         record = {
             "owner_key_hash": proxy._asset_owner_key(auth), "deleted_at": None,
+            "person_id": maker["id"],
             "metadata_mode": record_mode,
             "provenance": provenance.build_provenance_record(kind="video", seed=3, request_id="video_x"),
         }
+        prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None, admin_path=admin_db)
 
         class View:
             status_code = 200
@@ -815,7 +823,7 @@ class MediaJobUrlTests(unittest.TestCase):
             ctx = media_delivery.begin(profile_default="none")
             ctx.requested_mode = "full"
             item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
-            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["full"])
+            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")

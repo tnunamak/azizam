@@ -12,8 +12,8 @@ import { modelDisplayName, type CapabilityNameRow } from "@/lib/model-name";
  */
 export function useModelName(): (id: string) => string {
   const { data: catalog } = useQuery({
-    queryKey: ["models", "catalog"],
-    queryFn: productApi.models,
+    queryKey: ["models", "catalog", "exact-ids"],
+    queryFn: productApi.modelsByExactId,
     retry: false,
   });
   const { data: home } = useQuery({

@@ -1,8 +1,10 @@
 """SQLite-backed persistence for the OpenAI Responses API.
 
-The Responses API supports server-side conversation state. When a client
-sends `store: true` (default) the response is persisted so a later request
-with `previous_response_id` can chain off it. We also need this for
+The Responses API supports server-side conversation state. The runtime
+defaults to `store: true` for people whose prompt memory is enabled;
+callers without a person must opt in and have a stable credential scope.
+Stored responses let a later request with `previous_response_id` chain off
+the conversation. We also need this for
 GET/DELETE /v1/responses/{id}.
 
 Layout mirrors metrics_store.py: stdlib sqlite3, WAL mode, integrity check
@@ -29,7 +31,7 @@ DB_PATH = Path(get_env("AZIZAM_RESPONSES_DB", _default_db))
 # Retention window for stored responses (seconds).
 RETAIN_S = 7 * 24 * 3600
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS responses (
@@ -39,7 +41,10 @@ CREATE TABLE IF NOT EXISTS responses (
   previous_response_id TEXT,
   request_json TEXT NOT NULL,
   response_json TEXT NOT NULL,
-  api_key_name TEXT
+  api_key_name TEXT,
+  person_id TEXT,
+  app_id TEXT,
+  owner_key_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS responses_created_at ON responses(created_at);
 CREATE INDEX IF NOT EXISTS responses_previous ON responses(previous_response_id);
@@ -57,9 +62,17 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(responses)")}
+    for column in ("person_id", "app_id", "owner_key_hash"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE responses ADD COLUMN {column} TEXT")
+    # Older rows have no trustworthy identity. Leave their scope unset; the
+    # runtime hides them instead of guessing ownership from display names.
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if row is None:
         conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+    else:
+        conn.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
     conn.commit()
 
 
@@ -118,14 +131,17 @@ def save(
     request_json: dict,
     response_json: dict,
     api_key_name: Optional[str] = None,
+    person_id: Optional[str] = None,
+    app_id: Optional[str] = None,
+    owner_key_hash: Optional[str] = None,
     path: Path = DB_PATH,
 ) -> None:
     """Persist a response. INSERT OR REPLACE so retries are idempotent."""
     with _conn(path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO responses "
-            "(id, created_at, model, previous_response_id, request_json, response_json, api_key_name) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(id, created_at, model, previous_response_id, request_json, response_json, api_key_name, "
+            "person_id, app_id, owner_key_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 response_id,
                 int(created_at),
@@ -134,6 +150,9 @@ def save(
                 json.dumps(request_json, ensure_ascii=False),
                 json.dumps(response_json, ensure_ascii=False),
                 api_key_name,
+                person_id,
+                app_id,
+                owner_key_hash,
             ),
         )
         conn.commit()
@@ -143,7 +162,8 @@ def get(response_id: str, path: Path = DB_PATH) -> Optional[dict]:
     """Return the stored row as a dict, or None."""
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT id, created_at, model, previous_response_id, request_json, response_json, api_key_name "
+            "SELECT id, created_at, model, previous_response_id, request_json, response_json, api_key_name, "
+            "person_id, app_id, owner_key_hash "
             "FROM responses WHERE id = ?",
             (response_id,),
         ).fetchone()
@@ -157,6 +177,9 @@ def get(response_id: str, path: Path = DB_PATH) -> Optional[dict]:
             "request_json": _safe_loads(row[4]),
             "response_json": _safe_loads(row[5]),
             "api_key_name": row[6],
+            "person_id": row[7],
+            "app_id": row[8],
+            "owner_key_hash": row[9],
         }
 
 
@@ -166,6 +189,56 @@ def delete(response_id: str, path: Path = DB_PATH) -> bool:
         cur = conn.execute("DELETE FROM responses WHERE id = ?", (response_id,))
         conn.commit()
         return cur.rowcount > 0
+
+
+def delete_all(path: Path = DB_PATH) -> int:
+    """Discard stored conversations when the household disables prompt retention."""
+    with _conn(path) as conn:
+        conn.execute("PRAGMA secure_delete=ON")
+        cur = conn.execute("DELETE FROM responses")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return cur.rowcount
+
+
+def delete_all_before(cutoff: int, path: Path = DB_PATH) -> int:
+    with _conn(path) as conn:
+        conn.execute("PRAGMA secure_delete=ON")
+        cur = conn.execute("DELETE FROM responses WHERE created_at<=?", (int(cutoff),))
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return cur.rowcount
+
+
+def delete_person(person_id: str, path: Path = DB_PATH) -> int:
+    """Discard one person's stored conversations without removing media."""
+    return _delete_person_rows(person_id, None, path)
+
+
+def delete_person_before(person_id: str, cutoff: int, path: Path = DB_PATH) -> int:
+    """Discard this person's conversations started at or before an erasure."""
+    return _delete_person_rows(person_id, cutoff, path)
+
+
+def _delete_person_rows(person_id: str, cutoff: int | None, path: Path) -> int:
+    if not Path(path).exists():
+        return 0
+    with _conn(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(responses)")}
+        if "person_id" not in columns:
+            # An absent store has no conversations. Pre-scope legacy rows
+            # have no trustworthy person and remain invisible until pruning.
+            return 0
+        conn.execute("PRAGMA secure_delete=ON")
+        if cutoff is None:
+            cur = conn.execute("DELETE FROM responses WHERE person_id=?", (person_id,))
+        else:
+            cur = conn.execute(
+                "DELETE FROM responses WHERE person_id=? AND created_at<=?", (person_id, cutoff),
+            )
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return cur.rowcount
 
 
 def walk_chain(

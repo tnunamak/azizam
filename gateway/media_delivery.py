@@ -1,8 +1,7 @@
-"""Per-request media delivery context: stored copy is full, delivery is a choice.
+"""Per-request media delivery context and metadata policy.
 
-The gateway keeps every generated asset with full metadata (ComfyUI ``prompt``
-and ``workflow`` plus a gateway provenance record). Whether the bytes sent to
-a client keep that metadata is decided per request, in this order:
+Generated assets are stored without embedded prompt or workflow metadata.
+The bytes sent to a caller use the metadata choice, in this order:
 
 1. ``extensions["com.azizam.workflow"].metadata`` on the request;
 2. the caller's app profile (``media_metadata.default``);
@@ -11,7 +10,7 @@ a client keep that metadata is decided per request, in this order:
 This module holds the request-scoped context (a ``ContextVar``, so concurrent
 requests and background tasks stay separate) and the two byte operations:
 :func:`attach_provenance` (store side) and :func:`deliver_bytes` (delivery
-side). It never imports ``proxy`` and never touches the stored copy.
+side). It never imports ``proxy``.
 """
 
 from __future__ import annotations
@@ -26,8 +25,8 @@ from fastapi.responses import Response
 
 from gateway import media_metadata, provenance
 
-# Scratch space for ffmpeg rewrites. Disk-backed on purpose: /tmp is RAM here.
-DEFAULT_WORKDIR = Path(__file__).resolve().parent.parent / "cache" / "media_metadata"
+# Media scratch uses anonymous memfd buffers; no prompt-bearing cache files.
+DEFAULT_WORKDIR = None
 
 
 @dataclass
@@ -41,9 +40,17 @@ class DeliveryContext:
     parameters: dict[str, Any] = field(default_factory=dict)
     seeds: list[int | None] = field(default_factory=list)
     model_alias: str | None = None
+    app_id: str | None = None
+    person_id: str | None = None
+    prompt_decision: Any = None
+    prompt_text: str | None = None
+    capture_embedded_prompt: bool = True
 
     @property
     def mode(self) -> str:
+        if (self.prompt_decision is not None and not self.prompt_decision.keep
+                and self.prompt_decision.reason != "no_person"):
+            return provenance.METADATA_NONE
         return provenance.resolve_metadata_mode(self.requested_mode, self.profile_default)
 
 
@@ -123,12 +130,12 @@ def attach_provenance(
     *,
     workdir: Path | None = None,
 ) -> bytes:
-    """Embed the provenance record into the bytes that will be stored.
+    """Embed provenance in the in-memory output before delivery and cache strip.
 
     PNG gets a ``azizam_provenance`` text chunk; video and audio get a
     container tag. JPEG and WebP are handled at encode time (EXIF), so they
     pass through unchanged here. Failure to embed never fails the request:
-    the original bytes come back and the caller still stores a full copy.
+    the original bytes come back and the cache still strips metadata.
     """
     if not record:
         return content

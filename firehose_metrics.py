@@ -22,6 +22,7 @@ Public surface:
 
 Privacy:
     - Never store request/response bodies.
+    - Never store prompts or prompt snippets.
     - Never store API keys (only the resolved App display name).
     - Truncate error messages to 160 chars.
 """
@@ -70,6 +71,17 @@ _DEFAULT_CACHE_PATH = Path(get_env(
     "AZIZAM_KEY_ACTIVITY_LOG",
     str(Path(__file__).parent / "cache" / "key_activity.jsonl"),
 ))
+
+_PROMPT_FIELDS = frozenset({"prompt", "prompts", "prompt_preview", "prompt_snippet", "negative_prompt", "text", "input", "inputs",
+                            "lyrics", "tags", "instructions", "shots", "messages", "workflow"})
+
+
+def _is_prompt_field(name: str) -> bool:
+    return name.lower() in _PROMPT_FIELDS
+
+
+def _without_prompt_fields(record: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in record.items() if not _is_prompt_field(str(k))}
 
 
 def _persist_event(record: dict[str, Any]) -> None:
@@ -125,6 +137,7 @@ def record_event(event_type: str, summary: str, **extra: Any) -> None:
             evt[k] = v
         else:
             evt[k] = str(v)[:200]
+    evt = _without_prompt_fields(evt)
     with _lock:
         _RECENT_EVENTS.append(evt)
     _persist_event({"kind": "event", **evt})
@@ -142,9 +155,6 @@ def capture_video_submit(
 ) -> None:
     if not prompt_id:
         return
-    pt = (prompt_text or "")
-    if len(pt) > 200:
-        pt = pt[:200] + "..."
     with _lock:
         _VIDEO_META[prompt_id] = {
             "alias": alias,
@@ -152,7 +162,6 @@ def capture_video_submit(
             "size": size,
             "seconds": seconds,
             "key_name": key_name,
-            "prompt_truncated": pt,
             "submitted_at": time.time(),
         }
 
@@ -201,7 +210,7 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
                     stats["requests_replayed"] += 1
                     oldest_kept = ts if oldest_kept is None else min(oldest_kept, ts)
                 elif kind == "event":
-                    evt = {k: v for k, v in rec.items() if k != "kind"}
+                    evt = _without_prompt_fields({k: v for k, v in rec.items() if k != "kind"})
                     with _lock:
                         _RECENT_EVENTS.append(evt)
                     stats["events_replayed"] += 1
@@ -293,7 +302,7 @@ def snapshot_per_key(known_names: list[str]) -> list[dict[str, Any]]:
 def snapshot_recent_events(n: int = 20) -> list[dict[str, Any]]:
     with _lock:
         items = list(_RECENT_EVENTS)
-    return list(reversed(items[-n:]))
+    return [_without_prompt_fields(dict(item)) for item in reversed(items[-n:])]
 
 
 def snapshot_window() -> dict[str, Any]:

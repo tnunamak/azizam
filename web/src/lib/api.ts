@@ -134,6 +134,7 @@ export interface Credential {
   display_name: string;
   scopes: string[];
   created_at: number;
+  created_by?: string | null;
   expires_at: number | null;
   revoked_at: number | null;
   last_used_at: number | null;
@@ -145,6 +146,9 @@ export interface MintedCredential extends Credential {
   api_key: string;
   role?: string;
   service_account?: string;
+  /** Whose prompts this key carries: a person, or none (service and
+   * someone else's Apps), with the gateway's own description. */
+  prompt_memory?: { person_id: string | null; description?: string };
 }
 
 export interface Profile {
@@ -647,7 +651,9 @@ let cachedSession: Session | null = null;
 let sessionInFlight: Promise<Session> | null = null;
 
 async function requestSession(): Promise<Session> {
-  const response = await networkFetch(SESSION_PATH, { credentials: "same-origin" });
+  const response = await networkFetch(SESSION_PATH, {
+    credentials: "same-origin",
+  });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     if (isErrorEnvelope(payload)) {

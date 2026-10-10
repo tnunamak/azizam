@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import struct
 import sys
 import tempfile
 import unittest
 import wave
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +21,23 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
+from tests.voice_test_audio import speechlike  # noqa: E402
+
+
+TEST_WAV = speechlike(0.1)
+
+
+@lru_cache(maxsize=None)
+def _encoded_audio(audio_format: str) -> bytes:
+    suffix = {"mp3": ".mp3", "opus": ".ogg", "aac": ".aac", "flac": ".flac"}[audio_format]
+    codec = ["-c:a", "libopus"] if audio_format == "opus" else []
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / f"sample{suffix}"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "wav", "-i", "pipe:0", *codec, str(path)],
+            input=TEST_WAV, capture_output=True, check=True,
+        )
+        return path.read_bytes()
 
 
 @contextmanager
@@ -53,7 +72,7 @@ class _FakeTTSAsyncClient:
         )
         return proxy.httpx.Response(
             200,
-            content=b"backend-wav",
+            content=TEST_WAV,
             headers={"content-type": "audio/wav"},
         )
 
@@ -333,8 +352,8 @@ class OpenAICompatValidationTests(unittest.TestCase):
         with patch.object(proxy.httpx, "AsyncClient", _FakeTTSAsyncClient), patch.object(
             proxy,
             "convert_wav_to_mp3",
-            return_value=b"converted-mp3",
-        ):
+            return_value=_encoded_audio("mp3"),
+        ) as convert:
             resp = self.client.post(
                 "/v1/audio/speech",
                 json={
@@ -347,7 +366,8 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers["content-type"], "audio/mpeg")
-        self.assertEqual(resp.content, b"converted-mp3")
+        self.assertEqual(resp.content, _encoded_audio("mp3"))
+        convert.assert_called_once()
         self.assertEqual(len(_FakeTTSAsyncClient.requests), 1)
         downstream = json.loads(_FakeTTSAsyncClient.requests[0]["content"])
         self.assertEqual(downstream["response_format"], "wav")
@@ -366,8 +386,8 @@ class OpenAICompatValidationTests(unittest.TestCase):
             ), patch.object(
                 proxy,
                 "convert_wav_to_audio_format",
-                return_value=b"converted-audio",
-            ):
+                return_value=(b"\x00\x00" * 16 if audio_format == "pcm" else _encoded_audio(audio_format)),
+            ) as convert:
                 resp = self.client.post(
                     "/v1/audio/speech",
                     json={
@@ -380,7 +400,9 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
                 self.assertEqual(resp.status_code, 200)
                 self.assertEqual(resp.headers["content-type"], content_type)
-                self.assertEqual(resp.content, b"converted-audio")
+                expected = b"\x00\x00" * 16 if audio_format == "pcm" else _encoded_audio(audio_format)
+                self.assertEqual(resp.content, expected)
+                convert.assert_called_once()
 
     def test_tts_rejects_unsupported_response_format(self) -> None:
         resp = self.client.post(

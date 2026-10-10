@@ -13,7 +13,8 @@
     "activity": "/ui/activity/",
     "models": "/ui/models/",
     "engines": "/ui/engines/",
-    "providers": "/ui/providers/"
+    "providers": "/ui/providers/",
+    "account": "/ui/account/"
   },
   "enforce": {
     "home": [
@@ -105,6 +106,14 @@
       "rows",
       "geometry",
       "cards"
+    ],
+    "account": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
     ]
   },
   "desktop_width": 1440,

@@ -287,6 +287,69 @@ class VideoProbeCacheTests(unittest.TestCase):
             status._ffprobe_video(Path("1"), size=1, mtime_ns=1)
             self.assertEqual(run.call_count, 5)
 
+    def test_recent_video_render_rows_do_not_join_prompt_text(self):
+        secret = "SECRET video prompt should not reach status"
+        with TemporaryDirectory() as directory, patch.object(status, "_FFPROBE_CACHE", OrderedDict()):
+            video = Path(directory) / "ltx-2.5_00001_.mp4"
+            video.write_bytes(b"video")
+            mtime = int(time.time())
+            os.utime(video, (mtime, mtime))
+            with patch.object(status, "_VIDEO_DIR", Path(directory)), patch.object(
+                status, "_run", return_value=(0, '{"streams": []}', "")
+            ):
+                rows = status._recent_renders_videos(
+                    video_meta={"pid-1": {"prompt_truncated": secret}},
+                    recent_events=[
+                        {
+                            "type": "video_submit",
+                            "alias": "ltx-2.5",
+                            "prompt_id": "pid-1",
+                            "ts": mtime,
+                        }
+                    ],
+                )
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("prompt", rows[0])
+        self.assertNotIn(secret, json.dumps(rows))
+
+    def test_live_video_jobs_do_not_include_prompt_text(self):
+        secret = "SECRET live video prompt should not reach status"
+        proxy = SimpleNamespace(_video_progress={"pid-1": {"status": "running", "percent": 50}})
+
+        jobs = status._live_video_jobs(
+            proxy,
+            {"pid-1": {"submitted_at": time.time(), "prompt_truncated": secret}},
+        )
+
+        self.assertEqual(len(jobs), 1)
+        self.assertNotIn("prompt_truncated", jobs[0])
+        self.assertNotIn(secret, json.dumps(jobs))
+
+    def test_recent_image_render_rows_do_not_extract_prompt_metadata(self):
+        secret = "SECRET embedded image prompt should not reach status"
+        with TemporaryDirectory() as directory, patch.object(status, "_IMG_DIMS_CACHE", OrderedDict()):
+            image = Path(directory) / "image.png"
+            image.write_bytes(b"not really an image")
+            image.with_suffix(".png.json").write_text(json.dumps({"prompt": secret}), encoding="utf-8")
+            with patch.object(status, "_IMAGE_DIR", Path(directory)), patch.object(
+                status, "_run", return_value=(1, "", "identify unavailable")
+            ):
+                rows = status._recent_renders_images()
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("prompt", rows[0])
+        self.assertNotIn(secret, json.dumps(rows))
+
+    def test_daisy_audit_summary_does_not_use_prompt_field(self):
+        secret = "SECRET daisy audit prompt should not reach status"
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            path.write_text(json.dumps({"ts": 1, "type": "decision", "prompt": secret}) + "\n", encoding="utf-8")
+            with patch.object(status, "_DAISY_AUDIT_PATH", path), patch.object(
+                status, "_run", return_value=(1, "", "tmux unavailable")
+            ):
+                summary = status._daisy_audit_summary()
+        self.assertNotIn(secret, json.dumps(summary))
+
 
 if __name__ == "__main__":
     unittest.main()

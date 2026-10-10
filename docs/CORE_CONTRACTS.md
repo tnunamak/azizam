@@ -571,6 +571,125 @@ Minimum fields:
 Receipts are not full request logs. They should avoid raw prompts, raw files,
 secrets, downstream credentials, and large payloads by default.
 
+Generated-media prompts have a separate store keyed by asset and maker person.
+A request counts as a person only when it is authenticated as that person
+(session/OIDC), or uses a personal App key created by that App's own owner.
+A key minted by anyone on a service App, or by the owner on someone else's
+App, has no person: prompts are not remembered and maker-only metadata is
+unavailable. Generated items still belong to the App for Library visibility
+and receipts. Library item visibility does not depend on the key's creator.
+
+Upgrade backfills App-key creators from `credential.create` and
+`credential.self_create` audit events, including the older invitation event
+shape. A recorded minter other than the App owner becomes an empty creator
+and has no person scope. Audit lookup runs outside the write lock; updates
+commit in batches of at most 100 keys and only change NULL creators. Repeating
+or interrupting the migration is safe.
+
+Each startup reports `legacy App-key creators: resolved=N unresolved=M` when
+either count is nonzero. `M` is the exact number of App keys still without a
+creation record, including revoked keys; zero is silent when no keys changed.
+It can also be counted with:
+
+```sql
+SELECT COUNT(*) FROM credentials
+WHERE subject_kind = 'app' AND created_by IS NULL;
+```
+
+The count depends on the operator database. No live database was accessed for
+this cleanup; its unresolved count is not known before upgrade. The regression
+fixture leaves exactly one unresolved key and verifies `unresolved=1`.
+
+At read time, a pre-upgrade key with no recorded creator (`created_by IS NULL`)
+has no person. It keeps App access, but cannot read the App owner’s saved
+prompts or full workflow downloads. Service App keys also have no person.
+New keys minted by non-human administrators record an empty creator. Sharing your
+own personal App key delegates your person identity, including access to your
+saved prompts and full workflow downloads.
+
+A retained prompt has an optional expiry. Receipts and media-job metadata
+reject raw prompt fields. New cache writes strip embedded prompts and workflows.
+Full metadata downloads require the authenticated maker and an unexpired saved
+prompt; signed URLs default to `metadata=none`. Another key on the same App
+can read permitted clean media, but cannot read another person's prompt or full
+workflow. The owner role grants no prompt access through these APIs. An owner
+can read server databases or issue an account reset link and sign in as a
+member; this system does not protect content against that server authority.
+
+`extensions.com.azizam.prompts.mode="forget"`, a member's off setting,
+Responses `store:false`, and the household kill switch prevent prompt storage.
+Member preferences are saved at rollout and user creation. The household
+default affects new members only. The kill switch overrides every preference.
+Responses conversation rows are scoped by person and immutable App ID, or by
+credential hash when there is no App. Display names grant no access. Older
+rows without trustworthy scope are hidden. No-person requests default to
+`store:false`; explicit `store:true` works only with a stable authenticated App
+or credential scope. Keyless LAN requests have no private conversation scope.
+
+Normal asynchronous jobs retain restart durability. For service or keyless
+requests with no person, the prompt is required to resume inference, so the
+execution spool keeps it until completion, failure or cancellation, with an
+orphan pruner as a fallback. This temporary operational copy is not personal
+prompt memory. Redacting it would make the job unable to resume. Explicit
+forget, member-off and the kill switch use a memory-only execution spool.
+Those jobs can finish in the current process but cannot resume after restart.
+Delete-all and the kill switch move active spools to memory and remove their
+durable copies. They also remove job `metadata.request_hash` and prompt-derived
+`imgjob_seeded_*` request IDs (both the indexed SQL field and its JSON copy).
+A durable per-App cutoff prevents an old worker or late job insert from
+restoring those values. Legacy credential-scoped jobs are included. Other
+members' jobs and jobs created after the cutoff keep their deduplication.
+Caller-supplied idempotency IDs are retained because they do not hash the body.
+Unseeded image and new video request tokens are random; their former body
+hashes had no lookup consumer. Asset/cache handles hash stripped media bytes,
+URL signatures hash the handle and expiry, and migration fingerprints use filesystem stat
+fields. These values do not fingerprint prompt text; no separate prompt cache
+key or dedupe field is retained outside the stores erased here. The submit-time
+forget decision stays in effect during retries.
+Normal seeded no-person jobs also retain their existing prompt-derived body
+HMAC for automatic deduplication after the execution spool is deleted. Explicit
+forget, member-off and kill-switch jobs use random request hashes instead;
+caller-supplied Idempotency-Key semantics remain unchanged.
+
+Deleting media, evicting the cache, deleting a video, failing a video, and
+removing a member remove associated prompt rows. Disabling a member only
+suspends access: saved prompts and chats remain subject to their existing
+retention deadlines and are available after re-enabling. Removal is permanent
+and erases them; disabling does not create an erasure cutoff. Cancellation
+removes the execution spool and current placeholder, but does not abort an in-flight
+backend generation; its output can still finish. Unfetched video rows expire
+after 14 days. A separate maintenance task removes expired and orphaned rows
+and retries pending erasure. A missing, unreadable or empty cache inventory
+skips orphan deletion and logs the skip; expiry still applies. Normal policy
+reads use existing member preferences without a write transaction. If a legacy
+preference needs initialization while SQLite is busy, the request proceeds
+without storing its prompt. Media asset prompt writes run off the event loop
+and fail closed: if a write fails, the finished generation still succeeds with
+clean cache bytes and no saved prompt.
+
+Upgrade runs a throttled, resumable background migration that strips legacy
+cache metadata in place. Asset IDs remain opaque handles after this rewrite;
+no download path rechecks them against a content hash. Delete-all and the kill
+switch remove database rows immediately and queue affected legacy files for
+stripping. HTTP 202 reports queued cleanup and schedules retries; settings GET
+keeps queued or retrying status visible until file cleanup finishes. It does
+not claim completed erasure while file work is pending. Unsupported or corrupt
+files remain reported as pending.
+SQLite secure deletion reduces recoverable database content, but snapshots,
+backups, backend histories and previous downloads are outside this contract.
+See `docs/design/PROMPT_MEMORY.md`.
+
+Deletion records a per-person erasure cutoff before cleanup. Final prompt and
+Responses writes reject requests started at or before that cutoff, including
+async image retries. Whole-second timestamps can also suppress storage for a
+new request in the same second. Media generation still completes. A deletion
+whose intent cannot be saved returns 503 with retry_required; it does not claim
+that a background retry was scheduled. Persisted off settings and retention
+limits are reconciled on startup and every minute. Background erasure uses
+the recorded off-setting timestamp and existing cutoff, never a stale
+setting snapshot with a new "now" cutoff. Rows written after memory was
+re-enabled remain outside that cleanup.
+
 Receipts have audiences:
 
 - internal receipts can include backend, policy source, manifest hash, and

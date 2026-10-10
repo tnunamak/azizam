@@ -10,6 +10,7 @@ validated against an explicit contract.
 | Namespace | Purpose | Status |
 |---|---|---|
 | `extensions.com.azizam.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for image, audio, and video workflow routes. |
+| `extensions.com.azizam.prompts` | `mode: "forget"` disables prompt retention for one request. | Implemented for media generation, speech, and Responses routes. |
 | `extensions.com.azizam.chat` | Local chat/runtime behavior that is not an OpenAI field. | Proposed. |
 | `extensions.com.azizam.routing` | Per-request routing hints that profiles may allow or deny. | Proposed. |
 | `extensions.com.azizam.telemetry` | Receipt/debug verbosity preferences without prompt/body capture. | Proposed. |
@@ -50,6 +51,15 @@ adapter, or preprocessor request controls until a real workflow, model,
 manifest, and readiness check are present. When support is present, put those
 controls under `extensions.com.azizam.workflow` or a gateway-native media job
 shape, not as global OpenAI-compatible fields.
+
+Prompt memory is a gateway privacy decision, not a workflow input. Use
+`{"extensions":{"com.azizam.prompts":{"mode":"forget"}}}` before sending a
+media or Responses request. The gateway validates the exact value and removes
+the control before backend dispatch. Responses `store:false` has the same
+retention effect and keeps its OpenAI meaning: no server-side response row.
+An async media request made with `mode:forget` runs from process memory; it
+cannot resume after a gateway restart. No prompt text or workflow graph is
+recorded in receipts or media-job metadata.
 
 Variant semantics are not a separate extension family. Use top-level `n` where
 the public protocol owns batch count, and use manifest-backed `seed` or

@@ -16,6 +16,7 @@ from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
 from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
 from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
+from gateway.prompt_memory import NAMESPACE as PROMPT_MEMORY_NAMESPACE
 
 
 _WORKFLOW_ROUTES = (
@@ -52,6 +53,20 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
         "schema_version": 1,
         "audience": audience,
         "extensions": [
+            {
+                "namespace": PROMPT_MEMORY_NAMESPACE,
+                "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
+                "gateway_controls": [{"name": "mode", "values": ["forget"], "default": "member and household settings"}],
+                "routes": [
+                    {"route": route, "target": "gateway_prompt_policy", "controls": ["mode"]}
+                    for route in (
+                        "/v1/images/generations", "/v1/images/edits", "/v1/videos",
+                        "/v1/videos/extensions", "/v1/videos/workflows/{workflow_id}",
+                        "/v1/audio/generate", "/v1/audio/speech", "/v1/responses",
+                        "/gateway/v1/media/jobs/image-generations",
+                    )
+                ],
+            },
             {
                 "namespace": WORKFLOW_EXTENSION_NAMESPACE,
                 "description": "Gateway-owned workflow controls for image, video, and audio routes.",

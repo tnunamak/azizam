@@ -111,6 +111,21 @@ supporting source detail. Historical receipt rows with `app_id = NULL` are
 interpreted the same way at read time. This is non-destructive; no receipt
 backfill is required.
 
+Prompt visibility is narrower than media visibility. Only the person who made
+an item sees its retained prompt, prompt-based title, prompt search result, or
+full workflow download. The owner's instance Library shows other members'
+media with date-and-maker titles, without their prompts. Service Apps and
+no-key LAN calls have no person to own a private media prompt, so media prompts
+are not retained for them. The separate Responses store still honours
+`store:true` for these callers. `GET/PUT /me/api/prompt-memory` manages a
+member's setting;
+shorter retention also applies to existing saved prompts. `DELETE
+/me/api/prompt-memory/prompts` removes their
+saved prompts while keeping media. Owners manage the household default, kill
+switch, and retention ceiling at `GET/PUT /admin/api/settings/prompt-memory`.
+The owner operates the server and can read its database outside Azizam; no
+Azizam screen grants the owner another member's prompt text.
+
 Members do not inherit owner instance scope. Their Home, Usage and Library
 views remain limited to their own Apps and key-attributed assets. A member
 cannot filter to `local-network` or another App source. A member never sees

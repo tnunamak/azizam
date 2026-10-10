@@ -106,6 +106,10 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await expect(
     page.getByRole("row", { name: new RegExp(`${taskNames.speech} · Voice 1\\b`) }),
   ).toBeVisible();
+  // The same row by its literal copy, the task name Home and Try use.
+  await expect(
+    page.getByRole("row", { name: /Read text aloud · Voice 1\b/ }),
+  ).toBeVisible();
 });
 
 test("member cannot see local/service media or mint signed URLs for them", async ({

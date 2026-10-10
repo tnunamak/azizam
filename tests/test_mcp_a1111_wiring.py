@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+import io
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -68,7 +70,9 @@ class ProxyWiringTests(unittest.TestCase):
                            "headers": [(b"host", b"gw.example"), (b"x-forwarded-proto", b"https")], "client": ("127.0.0.1", 1)})
         owner = proxy.AuthContext(identity=proxy._identity_for("owner-a", "test"))
         other = proxy.AuthContext(identity=proxy._identity_for("owner-b", "test"))
-        png = b"\x89PNG\r\n\x1a\n" + b"adapter-test-bytes"
+        output = io.BytesIO()
+        Image.new("RGB", (1, 1), (1, 2, 3)).save(output, format="PNG")
+        png = output.getvalue()
         stored = proxy._mcp_store_asset(request, owner, png, "img", ".png")
         self.assertTrue(stored["url"].startswith("https://gw.example/v1/assets/img_"))
         self.assertIn("sig=", stored["url"])

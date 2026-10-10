@@ -122,7 +122,7 @@ test("equal labels retain each selectable model ID", async () => {
       .getAllByRole("option")
       .filter((option) => option.textContent?.includes("Shared name")),
   ).toHaveLength(2);
-  expect(screen.getByRole("option", { name: /provider\/b/ })).toBeVisible();
+  expect(screen.getByRole("option", { name: /Provider B/ })).toBeVisible();
 });
 test.each(["http", "transport"])(
   "workflow %s failure offers retry while model options survive",

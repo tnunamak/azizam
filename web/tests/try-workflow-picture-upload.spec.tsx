@@ -20,6 +20,7 @@ const account = vi.hoisted(() => ({
   session: vi.fn(),
   mintKey: vi.fn(),
   revokeKey: vi.fn(),
+  promptMemory: vi.fn(),
   params: new URLSearchParams(),
 }));
 vi.mock("next/navigation", () => ({
@@ -33,6 +34,20 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 const fetchMock = vi.fn();
+// Prompt memory as the member reads it: on by default.
+const promptMemory = (remember: boolean) => ({
+  prompt_memory: {
+    remember,
+    retention: "never",
+    effective_remember: remember,
+    effective_retention: "never",
+    household: {
+      default_remember: true,
+      never_keep: false,
+      retention_cap: "never",
+    },
+  },
+});
 const PNG = new File([new Uint8Array([137, 80, 78, 71])], "garden.png", {
   type: "image/png",
 });
@@ -56,12 +71,22 @@ beforeEach(() => {
     apps: [{ id: "try", name: "Try" }],
   });
   account.mintKey.mockResolvedValue({ id: "try-key", api_key: "test-key" });
+  account.promptMemory.mockResolvedValue(promptMemory(true));
   fetchMock.mockReset().mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return json({ data: [] });
     if (url.includes("/me/api/receipts/")) return json({}, 404);
     return json(url.includes("workflows") ? catalog : { aliases: [], models: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
+  // The "Don't keep this prompt" switch measures itself.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
 });
 afterEach(() => {
   cleanup();
@@ -147,5 +172,24 @@ describe("a picture-edit workflow on Try", () => {
     expect(form.get("prompt")).toBe("Make the sky purple");
     expect(form.has("source_image")).toBe(false);
     expect(form.has("mask")).toBe(false);
+  });
+
+  it("asks the gateway not to keep the prompt when the member turned memory off", async () => {
+    account.promptMemory.mockResolvedValue(promptMemory(false));
+    await openWorkflow();
+    await screen.findByText("Prompts aren’t kept");
+    fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture/ }), {
+      target: { value: "Make the sky purple" },
+    });
+    const source = screen.getByRole("group", { name: /Picture to change/ });
+    const input = source.querySelector<HTMLInputElement>("input[data-media-file-input]")!;
+    await userEvent.upload(input, PNG);
+    await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    const form = posts()[0][1].body as FormData;
+    expect((form.get("image") as File).name).toBe("garden.png");
+    expect(JSON.parse(form.get("extensions") as string)).toMatchObject({
+      "com.azizam.prompts": { mode: "forget" },
+    });
   });
 });

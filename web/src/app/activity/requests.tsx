@@ -28,6 +28,8 @@ import { RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
+import { technicalModelDetails } from "@/lib/model-name";
+import { useViewer } from "@/components/shell/session";
 
 type Receipt = {
   request_id: string;
@@ -183,6 +185,7 @@ function duration(ms?: number | null) {
 
 export function Requests() {
   const nameModel = useModelName();
+  const owner = ["owner", "superadmin"].includes(useViewer().role);
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
@@ -510,7 +513,7 @@ export function Requests() {
                       ? ([
                           [
                             "Declared fallback",
-                            declaredFallback(record.receipt) as string,
+                            nameModel(declaredFallback(record.receipt) as string),
                           ],
                         ] as const)
                       : []),
@@ -560,7 +563,7 @@ export function Requests() {
                       aria-label="Technical request details"
                       className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-panel p-4 font-mono text-meta leading-relaxed focus-visible:outline-2"
                     >
-                      <code>{JSON.stringify(record.receipt, null, 2)}</code>
+                      <code>{JSON.stringify(technicalModelDetails(record.receipt, owner), null, 2)}</code>
                     </pre>
                   </div>
                 </details>

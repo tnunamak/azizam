@@ -469,7 +469,8 @@ def _process_alive(pid):
     # Read /proc rather than os.kill(pid, 0): the hermetic runner forbids os.kill.
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # The process can exit after /proc lookup but before open completes.
         return False
     return stat.rsplit(")", 1)[1].split()[0] != "Z"
 

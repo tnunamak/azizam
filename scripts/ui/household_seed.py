@@ -882,7 +882,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             now=now - day * 86400,
             path=paths["admin"],
         )
-    assets = _media(state, paths, apps, hashes, now, rng)
+    assets = _media(state, paths, apps, hashes, now, rng, people)
     if scenario == "running":
         _scenario_running(ctx)
     manifest = {
@@ -1188,8 +1188,13 @@ def _scenario_running(ctx):
     )
 
 
-def _media(state, paths, apps, hashes, now, rng):
-    from gateway import media_jobs, receipt_store
+# Fixture indexes whose maker ran them with "Don't keep this prompt": the
+# Library shows the maker "Prompt not saved" and everyone else no prompt.
+PROMPT_NOT_KEPT = frozenset({4, 13})
+
+
+def _media(state, paths, apps, hashes, now, rng, people):
+    from gateway import media_jobs, prompt_memory, receipt_store
     from gateway.receipts import RouteReceipt
 
     entries = json.loads((FIXTURES / "manifest.json").read_text())
@@ -1214,14 +1219,22 @@ def _media(state, paths, apps, hashes, now, rng):
         request_id = f"req_household_asset_{index:02}"
         # The cache ages files by mtime; match it to the asset's own creation time.
         os.utime(cache / f"{digest}{source.suffix}", (ts, ts))
+        maker = people[owner]["id"]
         (cache / f"{digest}.meta.json").write_text(
             json.dumps(
                 {
                     "asset_id": asset_id,
                     "owner_key_hashes": [hashes[owner]],
+                    "maker_person_ids": [maker],
                     "updated_at": ts,
                 }
             )
+        )
+        # The prompt lives only in the maker's prompt record (PROMPT_MEMORY.md),
+        # through the same write path, settings and lock as a real request.
+        prompt_kept = index not in PROMPT_NOT_KEPT and prompt_memory.put(
+            asset_id, maker, entry["prompt"], kept_until=None,
+            path=paths["media_jobs"], admin_path=paths["admin"], created_at=ts,
         )
         poster_asset_id = None
         if entry.get("poster"):
@@ -1236,6 +1249,7 @@ def _media(state, paths, apps, hashes, now, rng):
                     {
                         "asset_id": poster_asset_id,
                         "owner_key_hashes": [hashes[owner]],
+                        "maker_person_ids": [maker],
                         "updated_at": ts,
                     }
                 )
@@ -1303,7 +1317,8 @@ def _media(state, paths, apps, hashes, now, rng):
                     1,
                 ),
             )
-        assets.append({"asset_id": asset_id, "owner": owner, "kind": kind})
+        assets.append({"asset_id": asset_id, "owner": owner, "kind": kind,
+                       "prompt_kept": bool(prompt_kept)})
     return assets
 
 

@@ -4,11 +4,21 @@ import {
   modelDisplayName,
   safeModelId,
   scrubModelPaths,
+  technicalModelDetails,
 } from "@/lib/model-name";
 
 const GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
 describe("model names never expose a path on the gateway host", () => {
+  test("technical model details preserve owner IDs without mutating member scrubbing", () => {
+    const payload = { requested_model: GGUF, resolved_model: GGUF, fallback_model: GGUF, metadata: { resolves_to: { chat: GGUF } } };
+    const member = technicalModelDetails(payload, false);
+    expect(JSON.stringify(member)).not.toContain("/media/");
+    expect(member.fallback_model).toBe(safeModelId(GGUF));
+    expect(technicalModelDetails(payload, true)).toBe(payload);
+    expect(payload.resolved_model).toBe(GGUF);
+    expect(technicalModelDetails(payload, true).metadata.resolves_to.chat).toBe(GGUF);
+  });
   test.each([
     GGUF,
     "C:\\Models\\llama-3.gguf",
@@ -87,4 +97,9 @@ describe("model names never expose a path on the gateway host", () => {
     expect(scrubbed.models[0].examples[0].body.messages).toEqual(["/etc/not-a-model"]);
     expect(JSON.stringify(scrubbed)).not.toContain("/media/");
   });
+});
+
+test("scrubModelPaths shortens a declared fallback model path for members", () => {
+  const scrubbed = scrubModelPaths({ declared_fallback: "/private/models/Fallback.gguf" });
+  expect(JSON.stringify(scrubbed)).not.toContain("/private/models/");
 });

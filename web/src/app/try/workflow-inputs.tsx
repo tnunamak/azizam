@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { AlertCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -135,8 +136,18 @@ export function workflowDefaults(
   // them sends text the person never wrote. Only what the manifest declares,
   // a default or a fixed choice, is a starting value.
   for (const input of inputs) {
-    if (isFileInput(input, mapping)) continue;
-    if (input.default !== undefined || input.enum?.length) continue;
+    if (isFileInput(input, mapping)) {
+      const target = inputTarget(input, mapping);
+      const root = requestRoot(values);
+      delete root[target.field];
+      if (target.in === "file+extension") {
+        setExtensionValue(root, target.field, undefined);
+      }
+      continue;
+    }
+    if (input.ignored || input.accepted === false) continue;
+    // A single enum value is fixed protocol; every editable example is cleared.
+    if (input.enum?.length === 1 && input.default === undefined) continue;
     setWorkflowInputValue(values, inputs, input, undefined, mapping);
   }
   for (const input of inputs) {
@@ -203,6 +214,10 @@ export function WorkflowInputs({
   onFileChange,
   technical = false,
 }: WorkflowInputsProps) {
+  const currentJson = useRef(json);
+  useEffect(() => {
+    currentJson.current = json;
+  }, [json]);
   if (!inputs.length) return null;
   const values = safeObject(json);
   const parseError = values.ok ? null : values.error;
@@ -219,9 +234,12 @@ export function WorkflowInputs({
   ];
 
   function update(input: WorkflowInput, value: unknown) {
-    const next = cloneJsonObject(current);
+    const latest = safeObject(currentJson.current);
+    if (!latest.ok) return;
+    const next = cloneJsonObject(latest.value);
     setWorkflowInputValue(next, inputs, input, value, mapping);
-    onChange(JSON.stringify(next, null, 2));
+    currentJson.current = JSON.stringify(next, null, 2);
+    onChange(currentJson.current);
   }
 
   return (

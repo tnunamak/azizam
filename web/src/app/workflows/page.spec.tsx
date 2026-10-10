@@ -159,7 +159,7 @@ describe("WorkflowsPage empathy copy", () => {
   });
 
   test("detail sheet uses plain input copy and preserves exact workflow values", async () => {
-    renderWorkflows();
+    renderWorkflows(owner);
 
     await screen.findByText("Upscale image");
     fireEvent.click(screen.getAllByRole("button", { name: /^Details for / })[0]);
@@ -275,7 +275,7 @@ describe("WorkflowsPage empathy copy", () => {
   });
 
   test("puts the next action before folded schema, requests and discovery, with recent outputs last", async () => {
-    renderWorkflows();
+    renderWorkflows(owner);
     await screen.findByText("Upscale image");
     fireEvent.click(screen.getAllByRole("button", { name: /^Details for / })[0]);
     const dialog = screen.getByRole("dialog");
@@ -357,6 +357,13 @@ describe("WorkflowsPage empathy copy", () => {
     serve([faceLikeness]);
     renderWorkflows(member);
     expect(await screen.findByText("No workflows are set up yet. The person who manages Azizam can add them.")).toBeVisible();
+  });
+
+  test("a delegated admin gets the member view, not the owner's details", async () => {
+    serve([{ ...workflows[0], id: "w.ready", title: "Ready one" }, faceLikeness]);
+    renderWorkflows({ ...member, name: "Robin", role: "admin", admin: true });
+    expect(await screen.findByText("Ready one")).toBeVisible();
+    expect(screen.queryByText(/Not set up/)).toBeNull();
   });
 
   test("the owner finds unavailable workflows in a folded Not set up section", async () => {

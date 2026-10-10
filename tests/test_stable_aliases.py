@@ -20,6 +20,7 @@ import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway import stable_aliases as sa  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
+from tests.speech_tier_helpers import _wav_bytes  # noqa: E402
 
 SHIPPED = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
 ALIASES = SHIPPED["model_aliases"]
@@ -483,7 +484,7 @@ class _FakeTTSClient:
 
     async def post(self, url, headers=None, content=None):
         self.__class__.requests.append({"url": url, "body": json.loads(content)})
-        return proxy.httpx.Response(200, content=b"wav", headers={"content-type": "audio/wav"})
+        return proxy.httpx.Response(200, content=_wav_bytes(24000, 1), headers={"content-type": "audio/wav"})
 
 
 class SpeechEngineRoutingTests(unittest.TestCase):

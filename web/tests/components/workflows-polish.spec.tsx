@@ -137,7 +137,7 @@ it("keeps the manifest's research and engine notes from members", async () => {
   renderWorkflows();
   await user.click(await screen.findByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
-  await user.click(sheet.getByText("Technical details"));
+  await user.click(sheet.getByText("Input details"));
   expect(sheet.queryByText(/full manifest note/)).toBeNull();
 });
 
@@ -172,7 +172,7 @@ it("puts manifest details behind a closed native disclosure", async () => {
 
 it("renders mobile input summaries beside the desktop table", async () => {
   const user = userEvent.setup();
-  renderWorkflows();
+  renderWorkflows(ownerViewer);
   await user.click(await screen.findByRole("button", { name: "Details for Product render" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   await user.click(sheet.getByText("Technical details"));

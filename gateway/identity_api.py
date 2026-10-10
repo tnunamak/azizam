@@ -25,6 +25,7 @@ from gateway import identity_scene as ids
 from gateway import likeness
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
 from gateway.likeness import LikenessError
+from gateway.extensions import ExtensionError, multipart_extensions
 
 LIKENESS_PATH = "/gateway/v1/faces/likeness"
 IDENTITY_PATH = "/gateway/v1/images/identity"
@@ -385,6 +386,15 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             raise IdentityError("this request must be multipart/form-data")
         return await request.form(max_part_size=MAX_PART_BYTES)
 
+    def note_form(auth: Any, form: Any) -> Response | None:
+        body = dict(form.multi_items())
+        try:
+            if "extensions" in body:
+                body["extensions"] = multipart_extensions(body["extensions"])
+        except ExtensionError as exc:
+            return error(400, "invalid_extensions", str(exc), param="extensions")
+        return deps.note_delivery(auth, body) if deps.note_delivery is not None else None
+
     def face_deps() -> IdentityDeps:
         client = deps.face_client()
         return IdentityDeps(analyze=client.analyze, run_workflow=_unused_workflow, models=deps.models)
@@ -395,6 +405,9 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             return auth
         try:
             form = await form_of(request)
+            bad_metadata = note_form(auth, form)
+            if bad_metadata is not None:
+                return bad_metadata
             photos = await _uploads(form, "reference", "reference[]")
             candidates = await _uploads(form, "candidate")
             if not photos or len(photos) > MAX_PHOTOS:
@@ -438,10 +451,9 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             response_format = str(form.get("response_format") or "b64_json")
             if response_format not in ("b64_json", "url"):
                 raise IdentityError("response_format must be 'b64_json' or 'url'", param="response_format")
-            if deps.note_delivery is not None:
-                bad_metadata = deps.note_delivery(auth, dict(form.multi_items()))
-                if bad_metadata is not None:
-                    return bad_metadata
+            bad_metadata = note_form(auth, form)
+            if bad_metadata is not None:
+                return bad_metadata
             req = build_scene_request(form, photos, str(form.get("prompt") or ""))
             if wants_async(form, req) and deps.submit_job is not None:
                 return await submit(request, auth, req, response_format)

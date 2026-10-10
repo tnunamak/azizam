@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import io
 import base64
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -30,6 +31,18 @@ import _fake_comfy_video as rr_fake  # noqa: E402
 import test_video_remix_replace as rr  # noqa: E402
 from test_video_remix_replace import RemixReplaceBase  # noqa: E402,F401
 from gateway import media_jobs, receipt_store, video_inputs, video_media_jobs  # noqa: E402
+from tests.voice_test_audio import speechlike  # noqa: E402
+
+
+def _rendered_mp4() -> bytes:
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "rendered.mp4"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+             "color=c=black:s=16x16:d=0.2:r=5", "-c:v", "mpeg4", str(output)],
+            capture_output=True, check=True,
+        )
+        return output.read_bytes()
 
 
 def _patch_route_stores(case: unittest.TestCase) -> None:
@@ -222,7 +235,7 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
     def test_speech_route_returns_spec_supported_binary_audio(self) -> None:
         class AudioResponse:
             status_code = 200
-            content = b"synthetic-wav"
+            content = speechlike(0.1)
             headers = {"content-type": "audio/wav"}
 
             async def aread(self):
@@ -356,12 +369,16 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         proxy._video_progress[rr.NEW_PROMPT_ID].update(status="running", percent=7, node="19")
         self.assertGreaterEqual(poll()["progress"], 85)
         self.comfy.history[rr.NEW_PROMPT_ID] = rr_fake.succeeded_history("remix_00001_.mp4")
-        self.comfy.view_bytes["remix_00001_.mp4"] = b"rendered-mp4"
+        self.comfy.view_bytes["remix_00001_.mp4"] = _rendered_mp4()
         done = poll()
         self.assertEqual((done["status"], done["progress"]), ("completed", 100))
         self.assertIsInstance(done["completed_at"], int)
-        content = self.client.get(f"/v1/videos/{video_id}/content")
-        self.assertEqual((content.status_code, content.content), (200, b"rendered-mp4"))
+        full = self.client.get(f"/v1/videos/{video_id}/content")
+        self.assertEqual(full.status_code, 403)  # No retained maker identity for this caller.
+        content = self.client.get(f"/v1/videos/{video_id}/content?metadata=none")
+        self.assertEqual(content.status_code, 200)
+        expected = proxy.media_metadata.strip_metadata(_rendered_mp4(), ".mp4")
+        self.assertEqual(content.content, expected)
         self.assertEqual(content.headers["content-type"], "video/mp4")
         self.assertEqual([s for s, _ in seen][0], "queued")
         progress = [p for _, p in seen]

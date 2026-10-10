@@ -20,6 +20,7 @@ import {
 import { formatAppName } from "@/lib/format";
 import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
+import { keyPromptNote } from "@/lib/prompt-memory";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
@@ -447,9 +448,11 @@ function Connect({
   const [client, setClient] = useState<Client>("Open WebUI");
   const [selectedCredentialId, setSelectedCredentialId] = useState("new");
   const [notesOpen, setNotesOpen] = useState(false);
-  const [reveal, setReveal] = useState<{ secret: string; id: string } | null>(
-    null,
-  );
+  const [reveal, setReveal] = useState<{
+    secret: string;
+    id: string;
+    note?: string | null;
+  } | null>(null);
   const [creating, setCreating] = useState(false);
   const [pendingApp, setPendingApp] = useState<AccountApp | null>(null);
   const createLock = useRef(false);
@@ -505,7 +508,11 @@ function Connect({
       setPendingApp(app);
       const key = await accountApi.mintKey(app.id, chosenAppName);
       setSelectedCredentialId(key.id);
-      setReveal({ secret: key.api_key, id: key.id });
+      setReveal({
+        secret: key.api_key,
+        id: key.id,
+        note: keyPromptNote(key.prompt_memory),
+      });
       setSaved(false);
       setPendingApp(null);
       await queryClient.invalidateQueries({ queryKey: homeKey });
@@ -685,6 +692,7 @@ function Connect({
               <SecretReveal
                 key={reveal.id}
                 secret={reveal.secret}
+                note={reveal.note}
                 onSaved={() => {
                   setReveal(null);
                   setSaved(true);

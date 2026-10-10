@@ -28,7 +28,7 @@ const allSurfaces = [
 // Measured only when named in MEASURE_SURFACES (not in MEASUREMENTS.md).
 const extraSurfaces = [
   ["apps", "/ui/apps/"], ["activity", "/ui/activity/"], ["models", "/ui/models/"],
-  ["engines", "/ui/engines/"], ["providers", "/ui/providers/"],
+  ["engines", "/ui/engines/"], ["providers", "/ui/providers/"], ["account", "/ui/account/"],
 ];
 // Activity opens on Changes; the craft PR 6 surface is the Requests tab.
 const prepare = {

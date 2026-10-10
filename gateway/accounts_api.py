@@ -93,6 +93,7 @@ def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
 
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
                           signing_key_provider, oidc_provider: Callable,
+                          on_person_prompt_purge: Callable | None = None,
                           instance_provider: Callable | None = None,
                           client_ip_resolver: Callable | None = None,
                           effective_plan_resolver: Callable | None = None) -> APIRouter:
@@ -229,7 +230,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if isinstance(ctx, JSONResponse):
             return ctx
         accounts.change_person(user_id, ctx.audit_actor_id, remove=True, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
-        return {"ok": True}
+        result = on_person_prompt_purge(user_id) if on_person_prompt_purge else None
+        return {"ok": True, **(result or {})}
 
     @router.post("/admin/api/people/{user_id}/reset")
     def reset_link(request: Request, user_id: str, body: Expiry):

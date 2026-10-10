@@ -1508,6 +1508,11 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertTrue(tracked_client.close_attempted)
 
     def test_litellm_substrate_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
+        auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+            name="Responses maker", key_hash="sha256:responses-maker",
+            app_id="responses-app", person_id="responses-person",
+        ))
+
         async def forbidden_litellm_direct(*_args, **_kwargs):
             raise AssertionError("Responses retrieve/delete/cancel should use the gateway store")
 
@@ -1525,14 +1530,15 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with patch.object(proxy, "authenticate_request", return_value=auth), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", forbidden_litellm_direct
         ), patch.object(
             proxy.responses_store,
             "get",
-            return_value={"response_json": {"id": "resp_123", "status": "completed"}},
+            return_value={"person_id": "responses-person", "app_id": "responses-app",
+                          "response_json": {"id": "resp_123", "status": "completed"}},
         ), patch.object(
             proxy.responses_store, "delete", return_value=True
         ):

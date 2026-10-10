@@ -101,7 +101,52 @@ const unsupportedCombineInputs: WorkflowInput[] = [
 afterEach(cleanup);
 
 describe("workflow input helpers", () => {
-  it("builds defaults without replacing a declared default or extra fields", () => {
+  it("drops mapped upload examples from the form and extension", () => {
+    const upload: WorkflowInput[] = [{ name: "picture", type: "string", asset: true }];
+    const mapping: WorkflowInputMapping = {
+      picture: { in: "file+extension", field: "image" },
+    };
+    const example = {
+      model: "edit",
+      image: "example.png",
+      extensions: '{"other":{"keep":true},"com.azizam.workflow":{"image":"example.png"}}',
+    };
+    const defaults = workflowDefaults(upload, example, mapping);
+    expect(defaults).not.toHaveProperty("image");
+    expect(JSON.parse(defaults.extensions as string)).toEqual({
+      other: { keep: true },
+      "com.azizam.workflow": {},
+    });
+    expect(defaults.model).toBe("edit");
+    expect(example.image).toBe("example.png");
+  });
+
+  it("clears editable examples before applying defaults inside request envelopes", () => {
+    const inputs: WorkflowInput[] = [
+      { name: "seed", type: "integer", default: 42 },
+      { name: "mode", type: "string", enum: ["fast", "best"] },
+      { name: "format", type: "string", enum: ["png"] },
+      { name: "steps", type: "integer", default: 8 },
+    ];
+    expect(workflowDefaults(inputs, {
+      request: {
+        model: "fixed-model",
+        seed: 0,
+        mode: "fast",
+        format: "png",
+        extensions: { "com.azizam.workflow": { steps: 1 }, other: { keep: true } },
+      },
+    }, { steps: { in: "extension", field: "steps" } })).toEqual({
+      request: {
+        model: "fixed-model",
+        seed: 42,
+        format: "png",
+        extensions: { "com.azizam.workflow": { steps: 8 }, other: { keep: true } },
+      },
+    });
+  });
+
+  it("uses declared defaults while preserving extra protocol fields", () => {
     expect(
       workflowDefaults(inputs, {
         text: "kept prompt",
@@ -109,7 +154,7 @@ describe("workflow input helpers", () => {
         extra_passthrough: "kept",
       }),
     ).toEqual({
-      text: "kept prompt",
+      text: "stone arch",
       steps: 8,
       transparent_background: false,
       size: "1024x1024",
@@ -124,9 +169,9 @@ describe("workflow input helpers", () => {
     ).not.toHaveProperty("guidance");
   });
 
-  it("does not replace existing combined size defaults", () => {
+  it("replaces example combined size with declared defaults", () => {
     expect(workflowDefaults(mappedInputs, { size: "640x480" })).toEqual({
-      size: "640x480",
+      size: "1024x768",
       extensions: { "com.azizam.workflow": { steps: 8 } },
     });
   });
