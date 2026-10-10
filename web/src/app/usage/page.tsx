@@ -560,7 +560,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                   data={rows}
                   margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
                 >
-                  <CartesianGrid vertical={false} stroke="var(--vf-border)" />
+                  <CartesianGrid vertical={false} stroke="var(--border)" />
                   <XAxis
                     dataKey="label"
                     tickLine={false}
@@ -576,13 +576,13 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                   />
                   <Tooltip
                     cursor={{
-                      fill: "color-mix(in srgb, var(--vf-accent) 8%, transparent)",
+                      fill: "color-mix(in srgb, var(--primary) 8%, transparent)",
                     }}
                     contentStyle={{
-                      background: "var(--vf-panel-raised)",
-                      border: "1px solid var(--vf-border-strong)",
+                      background: "var(--popover)",
+                      border: "1px solid var(--input)",
                       borderRadius: "8px",
-                      color: "var(--vf-text)",
+                      color: "var(--foreground)",
                       fontSize: "12px",
                     }}
                   />

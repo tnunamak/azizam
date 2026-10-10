@@ -101,7 +101,7 @@ function ConfirmDialogContent({
             label={
               <>
                 Type{" "}
-                <span className="text-vf-micro text-vf-text font-mono">
+                <span className="text-xs text-foreground font-mono">
                   {typedName}
                 </span>{" "}
                 to confirm

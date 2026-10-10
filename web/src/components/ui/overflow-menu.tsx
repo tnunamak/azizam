@@ -37,7 +37,7 @@ export function OverflowMenu({
         <DropdownMenuPrimitive.Content
           align={align}
           sideOffset={4}
-          className="rounded-vf-md border-vf-border bg-vf-surface-2 shadow-vf-caustic-2 z-50 min-w-44 border p-1"
+          className="rounded-md border-border bg-muted z-50 min-w-44 border p-1"
         >
           {children}
         </DropdownMenuPrimitive.Content>
@@ -61,11 +61,11 @@ export function OverflowMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       className={cn(
-        "rounded-vf-sm text-vf-small flex min-h-[var(--vf-hit-target)] cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
+        "rounded-md text-sm flex min-h-[44px] cursor-pointer items-center gap-2 px-3 py-2 outline-none select-none",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         danger
-          ? "text-vf-bad data-[highlighted]:bg-vf-bad/15"
-          : "text-vf-text data-[highlighted]:bg-vf-surface-3",
+          ? "text-danger data-[highlighted]:bg-danger/15"
+          : "text-foreground",
         className,
       )}
       {...props}
@@ -76,7 +76,7 @@ export function OverflowMenuItem({
 export function OverflowMenuSeparator({ className }: { className?: string }) {
   return (
     <DropdownMenuPrimitive.Separator
-      className={cn("bg-vf-border my-1 h-px", className)}
+      className={cn("bg-border my-1 h-px", className)}
     />
   );
 }

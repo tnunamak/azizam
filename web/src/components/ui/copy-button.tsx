@@ -87,7 +87,7 @@ export function CopyButton({
       onClick={() => void copy(value)}
     >
       {copied ? (
-        <CheckIcon className="text-vf-ok size-4" />
+        <CheckIcon className="text-success size-4" />
       ) : (
         <CopyIcon className="size-4" />
       )}
