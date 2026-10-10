@@ -2230,7 +2230,7 @@ export default function ProvidersPage() {
       <PageHeader
         title="Providers"
         answer="Paid models run with provider pages."
-        description="A request uses a provider only when its model names one."
+        tight
         actions={
           missingApi ? undefined : (
             <Button onClick={() => setAddOpen(true)}>
@@ -2238,7 +2238,12 @@ export default function ProvidersPage() {
             </Button>
           )
         }
-      />
+      >
+        {/* PageHeader shows only one of answer and description. */}
+        <p className="text-muted-foreground text-meta max-w-2xl">
+          A request uses a provider only when its model names one.
+        </p>
+      </PageHeader>
       <div className="max-w-(--content-max) pb-20 sm:pb-0">
         {loading ? (
           <div
