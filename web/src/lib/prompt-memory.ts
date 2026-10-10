@@ -8,7 +8,7 @@
  * rules the screens share, so Try, Library, the member's settings and the
  * owner's Settings never say different things.
  */
-import { adminFetch } from "./api";
+import { adminFetch, ApiError } from "./api";
 
 export type Retention = "never" | "1_year" | "3_months";
 
@@ -225,6 +225,27 @@ export function keyPromptNote(
     : "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation for up to seven days.";
 }
 
+/**
+ * A save the gateway kept but could not fully clean up answers 202 with an
+ * error-shaped body ("The setting was saved. Older prompt cleanup is pending
+ * ..."). It used to answer 503, which the fetch layers threw as an ApiError.
+ * Throw it the same way so each screen still shows that message and refetches
+ * the saved settings, rather than storing the error body as the settings.
+ */
+export function rejectPendingCleanup<T>(payload: T): T {
+  const error = (
+    payload as { error?: { code?: unknown; message?: unknown } } | null
+  )?.error;
+  if (error && typeof error === "object" && typeof error.message === "string") {
+    throw new ApiError(
+      typeof error.code === "string" ? error.code : "prompt_retention_pending",
+      error.message,
+      202,
+    );
+  }
+  return payload;
+}
+
 export const householdPromptMemoryApi = {
   get: () =>
     adminFetch<HouseholdPromptMemoryResponse>(
@@ -238,5 +259,5 @@ export const householdPromptMemoryApi = {
         body: value,
         headers: { "If-Match": revision },
       },
-    ),
+    ).then(rejectPendingCleanup),
 };

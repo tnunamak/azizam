@@ -1,9 +1,10 @@
 import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
-import type {
-  DeletePromptsResponse,
-  MemberPromptMemoryResponse,
-  Retention,
+import {
+  rejectPendingCleanup,
+  type DeletePromptsResponse,
+  type MemberPromptMemoryResponse,
+  type Retention,
 } from "./prompt-memory";
 
 export interface AccountApp {
@@ -90,7 +91,7 @@ export const accountApi = {
     accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory", {
       method: "PUT",
       body: value,
-    }),
+    }).then(rejectPendingCleanup),
   deleteSavedPrompts: () =>
     accountRequest<DeletePromptsResponse>("/me/api/prompt-memory/prompts", {
       method: "DELETE",
