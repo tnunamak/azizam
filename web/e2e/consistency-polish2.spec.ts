@@ -403,7 +403,8 @@ test("personal access app hides only its exact generated email-based name", asyn
   );
 
   await page.goto("/ui/apps/");
-  const card = page.locator("article").filter({
+  // Craft PR 3: each app is a row of the Apps ListCard.
+  const card = page.getByRole("listitem").filter({
     has: page.getByRole("heading", { name: "Personal access", exact: true }),
   });
   await expect(

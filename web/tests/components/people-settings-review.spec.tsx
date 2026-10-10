@@ -661,7 +661,9 @@ describe("People and Settings red-team regressions", () => {
     expect(
       screen.queryByRole("navigation", { name: "Settings sections" }),
     ).toBeNull();
-    expect(container.firstElementChild).toHaveClass("page-read", "page-stack");
+    // A 720 column; the header 24 above sections that are 32 apart.
+    expect(container.firstElementChild).toHaveClass("page-read");
+    expect(instance.parentElement).toHaveClass("page-stack");
     expect(
       within(instance).getByRole("heading", { name: "Instance" }),
     ).toHaveClass("text-heading");
@@ -727,14 +729,19 @@ describe("People and Settings red-team regressions", () => {
       profiles: [plan],
     };
     mount(<PeoplePage />);
-    expect(await screen.findByText("n".repeat(300))).toHaveClass(
-      "min-w-0",
-      "[overflow-wrap:anywhere]",
-    );
-    expect(screen.getByText("p".repeat(300))).toHaveClass(
-      "min-w-0",
-      "[overflow-wrap:anywhere]",
-    );
+    // Craft PR 3: a person row is two lines; a long name or plan is cut with
+    // an ellipsis inside its column and keeps its full text in its title.
+    const name = await screen.findByText("n".repeat(300));
+    expect(name.closest(".truncate")).not.toBeNull();
+    expect(name).toHaveAttribute("title", "n".repeat(300));
+    // One copy is the desktop column, one joins the phone's second line.
+    for (const planName of screen.getAllByText("p".repeat(300))) {
+      expect(planName.closest("[title]")).toHaveAttribute(
+        "title",
+        "p".repeat(300),
+      );
+      expect(planName.closest(".truncate")).not.toBeNull();
+    }
   });
 
   describe("Invite action without access plans", () => {

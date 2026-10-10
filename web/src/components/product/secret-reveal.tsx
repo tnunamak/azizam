@@ -20,7 +20,7 @@ export function SecretReveal({
     return (
       <div
         role="status"
-        className="text-muted-foreground flex items-center gap-2 text-sm"
+        className="text-muted-foreground text-meta flex items-center gap-2"
       >
         <ShieldCheck className="size-4" aria-hidden="true" />
         {saved
@@ -30,12 +30,14 @@ export function SecretReveal({
     );
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-muted-foreground text-sm">
+      <p className="text-muted-foreground text-meta">
         Copy this key now. You can’t view it again after closing this step.
       </p>
       <CopyField value={secret} label={label} />
+      {/* The reveal-once dialog's primary: md (40), like a form's submit. */}
       <Button
         type="button"
+        size="md"
         onClick={() => {
           setSaved(true);
           onSaved?.();

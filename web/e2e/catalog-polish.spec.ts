@@ -286,12 +286,31 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("heading", { name: "Family", exact: true }),
       ).toBeVisible();
-      const cards = page.getByRole("tabpanel").locator("article");
-      await verifyGrid(page, cards, width, 3);
-      await expect(cards.first()).toContainText(
+      // Craft PR 3: plans are one ListCard of full-width rows, 60 tall (64 on
+      // a phone), each with its summary and counts on the second line.
+      const rows = page.getByRole("tabpanel").getByRole("listitem");
+      await expect(rows).toHaveCount(3);
+      const boxes = await rows.evaluateAll((elements) =>
+        elements.map((element) => element.getBoundingClientRect().toJSON()),
+      );
+      const contentWidth = await page
+        .getByRole("tabpanel")
+        .evaluate((element) => element.getBoundingClientRect().width);
+      for (const [index, box] of boxes.entries()) {
+        expect(Math.round(box.x)).toBe(Math.round(boxes[0].x));
+        expect(box.width).toBeGreaterThan(contentWidth - 4);
+        expect(Math.round(box.height)).toBe(width < 640 ? 64 : 60);
+        if (index) expect(box.y).toBeGreaterThan(boxes[index - 1].y);
+      }
+      await expect(rows.first()).toContainText(
         "Chat and images. Local models only. No paid providers. Selected models only.",
       );
-      await expect(cards.first()).toContainText("1 selected model");
+      await expect(rows.first()).toContainText("1 selected model");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
       await page.screenshot({
         path: `test-results/screens/polish-plans-${theme}-${width}.png`,
         fullPage: true,

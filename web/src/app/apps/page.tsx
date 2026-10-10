@@ -27,7 +27,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
+import { ListCard, ListRow } from "@/components/product/list-card";
 import {
   Select,
   SelectContent,
@@ -296,11 +297,9 @@ function AppsContents() {
           role="status"
           aria-label="Loading apps"
           aria-busy="true"
-          className="space-y-4"
+          className="bg-card rounded-panel border"
         >
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
+          <SkeletonRows count={3} lines={2} />
         </div>
       ) : accountError ? (
         <ErrorState
@@ -325,7 +324,8 @@ function AppsContents() {
           action={<Button onClick={startNewApp}>New app</Button>}
         />
       ) : (
-        <div className="space-y-3">
+        // The list template: one ListCard of 60 px rows (64 on a phone).
+        <ListCard label="Apps">
           {apps.map((app) => {
             const appName = formatAppName(app.name, accountData?.user?.email);
             const lastUsed = app.credentials.reduce<number | null>(
@@ -337,122 +337,128 @@ function AppsContents() {
               null,
             );
             return (
-              <article
+              <ListRow
                 key={app.id}
                 id={`app-${app.id}`}
                 tabIndex={requestedApp === app.id ? -1 : undefined}
-                className={`border-border bg-card flex gap-4 rounded-xl border p-5 ${requestedApp === app.id ? "ring-ring ring-offset-background ring-2 ring-offset-2" : ""}`}
-              >
-                <div className="bg-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-                  <AppWindow
-                    aria-hidden="true"
-                    className="text-muted-foreground size-5"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-base font-semibold break-words">
-                    {appName}
-                  </h2>
-                  <p className="text-muted-foreground mt-1 text-sm">
-                    {app.credentials.length}{" "}
-                    {app.credentials.length === 1 ? "key" : "keys"}
-                    {accessPlanSummary(app) && <> · {accessPlanSummary(app)}</>}
-                  </p>
-                  {lastUsed !== null && (
-                    <p className="text-muted-foreground mt-2 text-xs">
-                      Last used · <RelativeTime ts={lastUsed} />
-                    </p>
-                  )}
-                </div>
-                {!app.credentials.length && (
-                  <Button
-                    variant="outline"
-                    disabled={!app.can_mint_keys || busy}
-                    onClick={() => {
-                      resetDraft();
-                      setCreatedApp(app);
-                      setName(app.name);
-                      setCreating(true);
-                    }}
-                  >
-                    Create key
-                  </Button>
-                )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Actions for ${appName}`}
-                    >
-                      <MoreHorizontal />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      disabled={!app.can_mint_keys || busy}
-                      onSelect={async () => {
-                        setBusy(true);
-                        setError(null);
-                        try {
-                          const key = await accountApi.mintKey(app.id, appName);
-                          setSaved(false);
-                          setReveal({
-                            secret: key.api_key,
-                            app: appName,
-                            client: "Other app",
-                            oldIds: [],
-                          });
-                          await refresh();
-                        } catch (err) {
-                          toast.error(
-                            err instanceof Error
-                              ? err.message
-                              : "Could not create key",
-                          );
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      {app.credentials.length
-                        ? "Create another key"
-                        : "Create key"}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!app.credentials.length || !app.can_mint_keys}
-                      onSelect={() => {
-                        setAction({ kind: "rotate", app });
-                        setError(null);
-                      }}
-                    >
-                      Rotate keys
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!app.credentials.length}
-                      onSelect={() => {
-                        setAction({ kind: "revoke", app });
-                        setError(null);
-                      }}
-                    >
-                      Revoke keys
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      disabled={busy}
-                      onSelect={() => {
-                        setAction({ kind: "remove", app });
-                        setError(null);
-                      }}
-                    >
-                      Remove app
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </article>
+                className={
+                  requestedApp === app.id
+                    ? "ring-ring ring-offset-background ring-2 ring-offset-2"
+                    : undefined
+                }
+                lines={2}
+                titleAs="h2"
+                leading={<AppWindow aria-hidden="true" />}
+                title={appName}
+                meta={[
+                  `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
+                  accessPlanSummary(app) || null,
+                ]}
+                facts={[
+                  lastUsed !== null ? (
+                    <span key="used">
+                      Last used <RelativeTime ts={lastUsed} />
+                    </span>
+                  ) : null,
+                ]}
+                trailing={
+                  <>
+                    {!app.credentials.length && (
+                      <Button
+                        variant="outline"
+                        disabled={!app.can_mint_keys || busy}
+                        onClick={() => {
+                          resetDraft();
+                          setCreatedApp(app);
+                          setName(app.name);
+                          setCreating(true);
+                        }}
+                      >
+                        Create key
+                      </Button>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Actions for ${appName}`}
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          disabled={!app.can_mint_keys || busy}
+                          onSelect={async () => {
+                            setBusy(true);
+                            setError(null);
+                            try {
+                              const key = await accountApi.mintKey(
+                                app.id,
+                                appName,
+                              );
+                              setSaved(false);
+                              setReveal({
+                                secret: key.api_key,
+                                app: appName,
+                                client: "Other app",
+                                oldIds: [],
+                              });
+                              await refresh();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Could not create key",
+                              );
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          {app.credentials.length
+                            ? "Create another key"
+                            : "Create key"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={
+                            !app.credentials.length || !app.can_mint_keys
+                          }
+                          onSelect={() => {
+                            setAction({ kind: "rotate", app });
+                            setError(null);
+                          }}
+                        >
+                          Rotate keys
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!app.credentials.length}
+                          onSelect={() => {
+                            setAction({ kind: "revoke", app });
+                            setError(null);
+                          }}
+                        >
+                          Revoke keys
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={busy}
+                          onSelect={() => {
+                            setAction({ kind: "remove", app });
+                            setError(null);
+                          }}
+                        >
+                          Remove app
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                }
+              />
             );
           })}
-        </div>
+        </ListCard>
       )}
       <Dialog
         open={creating}
@@ -469,7 +475,7 @@ function AppsContents() {
           </DialogHeader>
           <form onSubmit={create} className="space-y-5">
             <div className="space-y-2">
-              <label htmlFor="app-name" className="text-sm font-medium">
+              <label htmlFor="app-name" className="text-label">
                 App name
               </label>
               <Input
@@ -484,7 +490,7 @@ function AppsContents() {
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="app-client" className="text-sm font-medium">
+              <label htmlFor="app-client" className="text-label">
                 App recipe
               </label>
               <Select value={client} onValueChange={setClient}>
@@ -501,7 +507,7 @@ function AppsContents() {
               </Select>
             </div>
             {error && (
-              <p role="alert" className="text-destructive text-sm">
+              <p role="alert" className="text-destructive text-meta">
                 {createdApp
                   ? "Your app was created, but its key could not be created. Retry to finish. "
                   : ""}
@@ -552,7 +558,7 @@ function AppsContents() {
             <DialogDescription>{actionDescription}</DialogDescription>
           </DialogHeader>
           {error && (
-            <p role="alert" className="text-destructive text-sm">
+            <p role="alert" className="text-destructive text-meta">
               {error}
             </p>
           )}
@@ -609,13 +615,13 @@ function AppsContents() {
                 label={preferredTerms.connectionAddress}
                 value={baseUrl}
               />
-              <p className="text-muted-foreground text-sm">
+              <p className="text-muted-foreground text-meta">
                 {reveal.client === "Other app"
                   ? "Choose your app's OpenAI-compatible provider"
                   : `Use ${reveal.client} with the OpenAI-compatible API`}
                 , paste this gateway address, and enter your saved key.
               </p>
-              <details className="text-sm">
+              <details className="text-meta">
                 <summary className="cursor-pointer font-medium">
                   Connection examples
                 </summary>
@@ -663,9 +669,10 @@ console.log(await client.models.list());`,
               </details>
               {error && (
                 <div role="alert">
-                  <p className="text-destructive text-sm">{error}</p>
+                  <p className="text-destructive text-meta">{error}</p>
                   <Button
                     className="mt-3"
+                    size="md"
                     disabled={busy}
                     onClick={() => void saveKey()}
                   >
@@ -674,7 +681,7 @@ console.log(await client.models.list());`,
                 </div>
               )}
               {saved && busy && (
-                <p role="status" className="text-muted-foreground text-sm">
+                <p role="status" className="text-muted-foreground text-meta">
                   Revoking previous keys…
                 </p>
               )}

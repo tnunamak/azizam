@@ -85,7 +85,7 @@ it("refreshes a partially created app, clears the cancelled draft, and resumes k
   expect(screen.queryByRole("alert")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   const card = within(
-    screen.getByRole("heading", { name: "My laptop" }).closest("article")!,
+    screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
   );
   fireEvent.click(card.getByRole("button", { name: "Create key" }));
   expect(screen.getByLabelText("App name")).toHaveValue("My laptop");
@@ -139,7 +139,7 @@ it("keeps a newly created app resumable while the session refresh is still pendi
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByRole("heading", { name: "Existing app" })).toBeVisible();
   const createdCard = within(
-    screen.getByRole("heading", { name: "My laptop" }).closest("article")!,
+    screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
   );
   fireEvent.click(createdCard.getByRole("button", { name: "Create key" }));
   fireEvent.click(

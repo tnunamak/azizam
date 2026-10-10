@@ -8,11 +8,10 @@ import { api, adminFetch, ApiError, type Profile } from "@/lib/api";
 import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonRows } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -43,13 +42,20 @@ import {
   RelativeTime,
   CopyField,
 } from "@/components/product";
-import { StatusLine } from "@/components/product/status-ui";
+import { StateBadge, StatusLine } from "@/components/product/status-ui";
+import {
+  ListCard,
+  ListRow,
+  listFactClass,
+} from "@/components/product/list-card";
+import { PersonMark } from "@/components/product/person-mark";
 import {
   peopleApi,
   planSummary,
   planCounts,
   planSourceLabel,
-  grantSourceLabel,
+  grantLabel,
+  protectedLabel,
   type Person,
   type Invite,
 } from "./people-api";
@@ -97,11 +103,9 @@ function Loading({ label }: { label: string }) {
       role="status"
       aria-label={label}
       aria-busy="true"
-      className="space-y-4 py-6"
+      className="bg-card rounded-panel border"
     >
-      {[1, 2, 3].map((v) => (
-        <Skeleton key={v} className="h-16 w-full" />
-      ))}
+      <SkeletonRows count={3} lines={2} />
     </div>
   );
 }
@@ -177,7 +181,7 @@ export default function PeoplePage() {
   }, [requestedFound]);
   // Focus the row once, when it first mounts (the tab content mounts late).
   const requestedShown = useRef(false);
-  const showRequestedRow = (node: HTMLDivElement | null) => {
+  const showRequestedRow = (node: HTMLElement | null) => {
     if (!node || requestedShown.current) return;
     requestedShown.current = true;
     node.scrollIntoView?.({ block: "center" });
@@ -396,14 +400,17 @@ export default function PeoplePage() {
         ) : null}
       </PageHeader>
       <Tabs value={tab} onValueChange={setTab} className="gap-6">
-        <TabsList variant="line" className="w-full justify-start border-b">
-          <TabsTrigger className="flex-none px-4" value="people">
+        <TabsList
+          variant="line"
+          className="w-full justify-start gap-4 border-b"
+        >
+          <TabsTrigger className="flex-none px-1" value="people">
             People
           </TabsTrigger>
-          <TabsTrigger className="flex-none px-4" value="invites">
+          <TabsTrigger className="flex-none px-1" value="invites">
             Invites
           </TabsTrigger>
-          <TabsTrigger className="flex-none px-4" value="plans">
+          <TabsTrigger className="flex-none px-1" value="plans">
             Access plans
           </TabsTrigger>
         </TabsList>
@@ -448,92 +455,124 @@ export default function PeoplePage() {
               />
             )
           ) : (
-            <div className="divide-y">
-              <div
-                className={`text-muted-foreground hidden gap-4 pb-3 text-xs md:grid ${hasUsageMeasurement ? "grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
-              >
-                <span>Person</span>
-                <span>Access plan</span>
-                <span>Last active</span>
-                {hasUsageMeasurement && <span>This month</span>}
-                <span />
-              </div>
-              {peopleData.people.map((person) => (
-                <div
-                  key={person.id}
-                  {...(person.id === requestedPerson && {
-                    ref: showRequestedRow,
-                    tabIndex: -1,
-                    "aria-current": "true" as const,
-                  })}
-                  className={`${person.id === requestedPerson ? "bg-muted rounded-md px-2" : ""} grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {formatPersonName(person.name, "") && (
-                        <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
-                          {formatPersonName(person.name, "")}
-                        </span>
-                      )}
-                      {person.disabled && (
-                        <Badge variant="secondary">Disabled</Badge>
-                      )}
-                      {person.protected && (
-                        <Badge variant="secondary">
-                          {person.role === "owner"
-                            ? "Owner"
-                            : person.role === "admin"
-                              ? "Administrator"
-                              : "Protected account"}
-                        </Badge>
-                      )}
-                      {person.grants?.map((grant, index) => (
-                        <Badge
-                          key={`${grant.role}-${grant.source}-${index}`}
-                          variant="outline"
-                        >
-                          {grant.role} · {grantSourceLabel(grant.source)}
-                        </Badge>
-                      ))}
-                    </div>
-                    {person.email && (
-                      <p className="text-muted-foreground text-sm break-all">
-                        {person.email}
-                      </p>
+            // The list template (DESIGN "Page templates"): one ListCard, a
+            // 36 header band over 60 rows (64 on a phone). Role and where it
+            // came from are words on the second line, not chips; one state
+            // badge at most (Disabled).
+            <ListCard
+              label="People"
+              header={
+                <>
+                  <span className="min-w-0 flex-1 pl-11">Person</span>
+                  {/* The fact columns, spaced like ListRow's (16 apart). */}
+                  <span className="flex shrink-0 gap-4 max-sm:hidden">
+                    <span className={listFactClass}>Access plan</span>
+                    <span className={listFactClass}>Last active</span>
+                    {hasUsageMeasurement && (
+                      <span className={listFactClass}>This month</span>
                     )}
-                  </div>
-                  <div className="col-start-1 min-w-0 text-sm [overflow-wrap:anywhere] md:col-auto">
-                    <span className="text-muted-foreground md:hidden">
-                      Access plan ·{" "}
-                    </span>
-                    {person.plan_name || "Gateway default"}
-                    <div className="text-muted-foreground text-xs">
-                      {planSourceLabel(person.plan_source)}
-                    </div>
-                  </div>
-                  {person.last_active ? (
-                    <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
-                      <span className="md:hidden">Last active · </span>
-                      <RelativeTime ts={person.last_active} />
-                    </div>
-                  ) : (
-                    <div aria-hidden="true" className="hidden md:block" />
-                  )}
-                  {hasUsageMeasurement &&
-                    (person.requests_this_month == null ? (
-                      <div aria-hidden="true" className="hidden md:block" />
-                    ) : (
-                      <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
-                        <span className="md:hidden">This month · </span>
-                        {`${person.requests_this_month.toLocaleString()} requests`}
-                      </div>
-                    ))}
-                  <div className="col-start-2 row-start-1 md:col-auto md:row-auto">
-                    {actions(person)}
-                  </div>
-                </div>
-              ))}
-            </div>
+                  </span>
+                  <span aria-hidden="true" className="w-8 shrink-0" />
+                </>
+              }
+            >
+              {peopleData.people.map((person) => {
+                const name = formatPersonName(person.name, "");
+                const roles = person.grants?.length
+                  ? person.grants.map((grant, index) => (
+                      <span key={`${grant.role}-${grant.source}-${index}`}>
+                        {grantLabel(grant)}
+                      </span>
+                    ))
+                  : person.protected
+                    ? [
+                        <span key="protected">
+                          {protectedLabel(person.role)}
+                        </span>,
+                      ]
+                    : [];
+                const mapped =
+                  person.plan_source &&
+                  !["assigned", "gateway_default"].includes(person.plan_source);
+                return (
+                  <ListRow
+                    key={person.id}
+                    lines={2}
+                    phoneLine="facts"
+                    {...(person.id === requestedPerson && {
+                      ref: showRequestedRow,
+                      tabIndex: -1,
+                      "aria-current": "true" as const,
+                    })}
+                    className={
+                      person.id === requestedPerson ? "bg-muted" : undefined
+                    }
+                    leading={
+                      <PersonMark
+                        name={name || person.email || "?"}
+                        size="md"
+                      />
+                    }
+                    title={
+                      <span title={name || person.email || undefined}>
+                        {name || person.email}
+                      </span>
+                    }
+                    badge={
+                      person.disabled ? (
+                        <StateBadge state="off" word="Disabled" />
+                      ) : undefined
+                    }
+                    meta={[
+                      name ? person.email : null,
+                      roles.length ? (
+                        <span key="roles">
+                          {roles.map((role, index) => (
+                            <span key={index}>
+                              {index ? ", " : null}
+                              {role}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null,
+                    ]}
+                    facts={[
+                      <span
+                        key="plan"
+                        title={person.plan_name || "Gateway default"}
+                      >
+                        <span>{person.plan_name || "Gateway default"}</span>
+                        {mapped ? (
+                          <>
+                            {" · "}
+                            <span>{planSourceLabel(person.plan_source)}</span>
+                          </>
+                        ) : null}
+                      </span>,
+                      person.last_active ? (
+                        <RelativeTime ts={person.last_active} />
+                      ) : null,
+                      ...(hasUsageMeasurement
+                        ? [
+                            person.requests_this_month == null ? null : (
+                              <span key="month">
+                                {/* No header names this on a phone. */}
+                                <span className="sm:hidden">This month · </span>
+                                {`${person.requests_this_month.toLocaleString()} requests`}
+                              </span>
+                            ),
+                          ]
+                        : []),
+                    ]}
+                    trailing={
+                      actions(person) ?? (
+                        <span aria-hidden="true" className="w-8" />
+                      )
+                    }
+                  />
+                );
+              })}
+            </ListCard>
           )}
         </TabsContent>
         <TabsContent value="invites">
@@ -577,25 +616,27 @@ export default function PeoplePage() {
               />
             )
           ) : (
-            <div className="divide-y">
-              {invites.map((invite) => (
-                <InviteRow
-                  key={invite.id}
-                  invite={invite}
-                  copy={() => copyInvite.mutate(invite)}
-                  copying={copyInvite.isPending}
-                  owner={owner}
-                  revoke={() =>
-                    setConfirmation({
-                      title: "Revoke invitation?",
-                      confirmLabel: "Revoke invitation",
-                      description: `Invitation for ${invite.email || "anyone with the link"}: This link will stop working. You can create a new invitation later.`,
-                      run: () => peopleApi.revoke(invite.id),
-                    })
-                  }
-                />
-              ))}
-              <p className="text-muted-foreground pt-4 text-sm">
+            <div className="space-y-4">
+              <ListCard label="Invitations">
+                {invites.map((invite) => (
+                  <InviteRow
+                    key={invite.id}
+                    invite={invite}
+                    copy={() => copyInvite.mutate(invite)}
+                    copying={copyInvite.isPending}
+                    owner={owner}
+                    revoke={() =>
+                      setConfirmation({
+                        title: "Revoke invitation?",
+                        confirmLabel: "Revoke invitation",
+                        description: `Invitation for ${invite.email || "anyone with the link"}: This link will stop working. You can create a new invitation later.`,
+                        run: () => peopleApi.revoke(invite.id),
+                      })
+                    }
+                  />
+                ))}
+              </ListCard>
+              <p className="text-muted-foreground text-meta">
                 Each invitation can be accepted once. Revoke a link to stop it
                 from being used.
               </p>
@@ -603,8 +644,8 @@ export default function PeoplePage() {
           )}
         </TabsContent>
         <TabsContent value="plans">
-          <div className="flex flex-wrap justify-between gap-4 pb-6">
-            <p className="text-muted-foreground max-w-xl text-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+            <p className="text-muted-foreground text-meta max-w-xl">
               Access plans control capabilities, models and remote access. Save
               a plan, then test a request before assigning it.
             </p>
@@ -632,73 +673,82 @@ export default function PeoplePage() {
               }
             />
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <ListCard label="Access plans">
               {plansData.map((plan) => (
-                <article
+                <ListRow
                   key={plan.id}
-                  className="bg-card flex min-w-0 flex-col rounded-xl border p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <h2 className="min-w-0 text-base font-semibold [overflow-wrap:anywhere]">
-                      {plan.name}
-                    </h2>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label={`Actions for ${plan.name}`}
-                        >
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => setEditor(plan)}>
-                          Edit access plan
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onSelect={() =>
-                            setConfirmation({
-                              title: "Delete access plan?",
-                              confirmLabel: "Delete access plan",
-                              name: plan.name,
-                              description:
-                                "The gateway blocks deletion while this plan is in use. Reassign people, apps and invitations first.",
-                              run: () => api.profiles.delete(plan.id),
-                            })
-                          }
-                        >
-                          Delete access plan
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                  <p className="text-muted-foreground mt-2 text-sm leading-6 break-words">
-                    {planSummary(plan.profile)}
-                  </p>
-                  {planCounts(plan.profile) && (
-                    <p className="text-muted-foreground mt-3 text-xs">
-                      {planCounts(plan.profile)}
-                    </p>
-                  )}
-                  {plan.description && (
-                    <p className="mt-3 text-sm break-words">
-                      {plan.description}
-                    </p>
-                  )}
-                  <div className="mt-auto flex flex-wrap gap-2 pt-6">
-                    <Button variant="outline" onClick={() => setEditor(plan)}>
-                      Edit plan
-                    </Button>
-                    <Button variant="ghost" onClick={() => setTesting(plan)}>
-                      Test access
-                    </Button>
-                  </div>
-                </article>
+                  lines={2}
+                  title={plan.name}
+                  titleAs="h2"
+                  // One line: what the plan allows and its counts; with the
+                  // description, in full on hover and in the plan editor.
+                  meta={[
+                    planSummary(plan.profile),
+                    planCounts(plan.profile) || null,
+                  ]}
+                  metaTitle={[
+                    plan.description,
+                    planSummary(plan.profile),
+                    planCounts(plan.profile),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  trailing={
+                    <>
+                      <Button
+                        variant="outline"
+                        className="max-sm:hidden"
+                        onClick={() => setEditor(plan)}
+                      >
+                        Edit plan
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="max-sm:hidden"
+                        onClick={() => setTesting(plan)}
+                      >
+                        Test access
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label={`Actions for ${plan.name}`}
+                          >
+                            <MoreHorizontal />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => setEditor(plan)}>
+                            Edit access plan
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setTesting(plan)}>
+                            Test access
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() =>
+                              setConfirmation({
+                                title: "Delete access plan?",
+                                confirmLabel: "Delete access plan",
+                                name: plan.name,
+                                description:
+                                  "The gateway blocks deletion while this plan is in use. Reassign people, apps and invitations first.",
+                                run: () => api.profiles.delete(plan.id),
+                              })
+                            }
+                          >
+                            Delete access plan
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  }
+                />
               ))}
-            </div>
+            </ListCard>
           )}
         </TabsContent>
       </Tabs>
@@ -774,7 +824,7 @@ export default function PeoplePage() {
                 label="Link"
               />
             )}
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-meta">
               Expires <RelativeTime ts={link.expires_at} />
             </p>
             <DialogFooter>
@@ -827,62 +877,63 @@ function InviteRow({
         ? "Expired"
         : "Pending";
   return (
-    <div className="flex items-start justify-between gap-4 py-5">
-      <div className="min-w-0">
-        <p className="font-medium break-all">
-          {invite.email || "Anyone with the link"}
-        </p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Badge variant={isPending ? "default" : "secondary"}>{status}</Badge>
-          <p className="text-muted-foreground min-w-0 text-sm [overflow-wrap:anywhere]">
-            {invite.plan_name} ·{" "}
-            {status === "Accepted" && invite.used_at ? (
-              <>
-                Accepted <RelativeTime ts={invite.used_at} />
-              </>
-            ) : status === "Revoked" && invite.revoked_at ? (
-              <>
-                Revoked <RelativeTime ts={invite.revoked_at} />
-              </>
-            ) : status === "Expired" ? (
-              <>
-                Expired <RelativeTime ts={invite.expires_at} />
-              </>
-            ) : (
-              <>
-                Expires <RelativeTime ts={invite.expires_at} />
-              </>
-            )}
-          </p>
-        </div>
-      </div>
-      {owner && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Actions for invitation to ${invite.email || "anyone"}`}
-            >
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={copy} disabled={copying || !isPending}>
-              Copy invite link
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={revoke}
-              disabled={!isPending}
-            >
-              Revoke invitation
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </div>
+    <ListRow
+      lines={2}
+      title={invite.email || "Anyone with the link"}
+      // One state badge, for the invitations that still need someone.
+      badge={isPending ? <StateBadge state="busy" word="Pending" /> : undefined}
+      meta={[
+        invite.plan_name,
+        status === "Accepted" && invite.used_at ? (
+          <span key="when">
+            <span>Accepted</span> <RelativeTime ts={invite.used_at} />
+          </span>
+        ) : status === "Revoked" && invite.revoked_at ? (
+          <span key="when">
+            <span>Revoked</span> <RelativeTime ts={invite.revoked_at} />
+          </span>
+        ) : status === "Expired" ? (
+          <span key="when">
+            <span>Expired</span> <RelativeTime ts={invite.expires_at} />
+          </span>
+        ) : (
+          <span key="when">
+            <span>Expires</span> <RelativeTime ts={invite.expires_at} />
+          </span>
+        ),
+      ]}
+      trailing={
+        owner ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Actions for invitation to ${invite.email || "anyone"}`}
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={copy}
+                disabled={copying || !isPending}
+              >
+                Copy invite link
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={revoke}
+                disabled={!isPending}
+              >
+                Revoke invitation
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : undefined
+      }
+    />
   );
 }
 function InviteDialog({
@@ -946,7 +997,7 @@ function InviteDialog({
                 setAllowAnyone(false);
               }}
             />
-            <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-meta">
               For password signup, this limits the address but does not verify
               the mailbox.
             </p>
@@ -958,7 +1009,7 @@ function InviteDialog({
                 checked={allowAnyone}
                 onCheckedChange={(checked) => setAllowAnyone(checked === true)}
               />
-              <Label htmlFor="allow-anyone" className="text-sm leading-5">
+              <Label htmlFor="allow-anyone" className="text-meta">
                 Allow anyone with the link to create an account and receive an
                 API key
               </Label>
@@ -978,7 +1029,7 @@ function InviteDialog({
             </Select>
           </div>
           {mutation.isError && (
-            <p role="alert" className="text-destructive text-sm">
+            <p role="alert" className="text-destructive text-meta">
               {message(mutation.error)}
             </p>
           )}
@@ -1042,7 +1093,7 @@ function ChangePlan({
         <PlanSelect profiles={profiles} value={plan} onChange={setPlan} />
         {selectedPlan && <PlanPreview plan={selectedPlan} />}
         {mutation.isError && (
-          <p role="alert" className="text-destructive text-sm">
+          <p role="alert" className="text-destructive text-meta">
             {message(mutation.error)}
           </p>
         )}
@@ -1063,20 +1114,20 @@ function ChangePlan({
 }
 function PlanPreview({ plan }: { plan: Profile }) {
   return (
-    <div className="rounded-lg border p-4">
-      <p className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
+    <div className="rounded-panel border p-4">
+      <p className="text-body min-w-0 font-medium [overflow-wrap:anywhere]">
         {plan.name}
       </p>
-      <p className="text-muted-foreground mt-2 text-sm leading-6">
+      <p className="text-muted-foreground text-meta mt-2">
         {planSummary(plan.profile)}
       </p>
       {planCounts(plan.profile) && (
-        <p className="text-muted-foreground mt-2 text-xs">
+        <p className="text-muted-foreground text-meta mt-2">
           {planCounts(plan.profile)}
         </p>
       )}
       {plan.description && (
-        <p className="mt-2 text-sm break-words">{plan.description}</p>
+        <p className="text-meta mt-2 break-words">{plan.description}</p>
       )}
     </div>
   );
@@ -1131,7 +1182,7 @@ function Confirmation({
           </div>
         )}
         {mutation.isError && (
-          <p role="alert" className="text-destructive text-sm">
+          <p role="alert" className="text-destructive text-meta">
             {message(mutation.error)}
           </p>
         )}

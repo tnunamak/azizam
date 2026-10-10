@@ -28,6 +28,19 @@ export function planSourceLabel(source: Person["plan_source"]): string {
 export function grantSourceLabel(source: "manual" | "oidc-claim"): string {
   return source === "oidc-claim" ? "OIDC claim" : "Manual";
 }
+
+const roleWords = { owner: "Owner", admin: "Administrator", member: "Member" };
+
+/** A role and where it came from, as words: "Owner (manual)". */
+export function grantLabel(grant: { role: string; source: "manual" | "oidc-claim" }): string {
+  const role = roleWords[grant.role as keyof typeof roleWords] ?? grant.role;
+  return `${role} (${grant.source === "oidc-claim" ? "OIDC claim" : "manual"})`;
+}
+
+/** Why a protected account has no actions here. */
+export function protectedLabel(role: Person["role"]): string {
+  return role === "owner" ? "Owner" : role === "admin" ? "Administrator" : "Protected account";
+}
 export interface Invite {
   id: string;
   email: string | null;

@@ -31,7 +31,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
   await expect(reveal).not.toBeVisible();
   await page.reload();
   const card = page
-    .getByRole("article")
+    .getByRole("listitem")
     .filter({ has: page.getByRole("heading", { name, exact: true }) });
   await expect(card).toContainText("1 key");
   await card.getByRole("button", { name: `Actions for ${name}` }).click();

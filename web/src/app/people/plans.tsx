@@ -87,8 +87,8 @@ function PolicySet({
   const unknown = (value || []).filter((v) => !choices.some((c) => c.id === v));
   return (
     <fieldset className="space-y-3">
-      <legend className="text-sm font-medium">{label}</legend>
-      <label className="flex min-h-11 items-center gap-3 text-sm">
+      <legend className="text-label">{label}</legend>
+      <label className="flex min-h-8 items-center gap-3 text-meta max-sm:min-h-11">
         <Checkbox
           checked={value !== undefined}
           onCheckedChange={(checked) => change(checked ? [] : undefined)}
@@ -97,7 +97,7 @@ function PolicySet({
       </label>
       {value !== undefined && (
         <>
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-meta">
             No selections denies all. Turn off the restriction to follow gateway
             defaults.
           </p>
@@ -105,7 +105,7 @@ function PolicySet({
             {choices.map((c) => (
               <label
                 key={c.id}
-                className="flex min-h-11 items-center gap-3 text-sm"
+                className="flex min-h-8 items-center gap-3 text-meta max-sm:min-h-11"
               >
                 <Checkbox
                   checked={value.includes(c.id)}
@@ -123,12 +123,12 @@ function PolicySet({
             ))}
           </div>
           {unknown.length > 0 && (
-            <p className="text-muted-foreground text-sm break-words">
+            <p className="text-muted-foreground text-meta break-words">
               Other saved values (preserved): {unknown.join(", ")}
             </p>
           )}
           {!choices.length && (
-            <p className="text-muted-foreground text-sm">
+            <p className="text-muted-foreground text-meta">
               No choices are registered yet.
             </p>
           )}
@@ -299,12 +299,12 @@ function PlanForm({
         value={policy.allow?.exposure}
         change={(v) => setAllow("exposure", v)}
       />
-      <p className="text-muted-foreground text-xs">
+      <p className="text-muted-foreground text-meta">
         Remote access can incur provider charges. Cloud fallback is a separate
         permission under Advanced.
       </p>
       <details className="border-t pt-4">
-        <summary className="cursor-pointer py-3 text-sm font-medium">
+        <summary className="flex min-h-8 cursor-pointer items-center text-meta font-medium max-sm:min-h-11">
           Advanced
         </summary>
         <div className="space-y-6 pt-4">
@@ -345,11 +345,11 @@ function PlanForm({
             change={(v) => setAllow("tags", v)}
           />
           <fieldset>
-            <legend className="text-sm font-medium">Cloud fallback</legend>
+            <legend className="text-label">Cloud fallback</legend>
             <div className="flex flex-col gap-2 pt-2">
               {(["default", "allowed", "blocked"] as const).map((v) => (
                 <label
-                  className="flex min-h-11 items-center gap-3 text-sm"
+                  className="flex min-h-8 items-center gap-3 text-meta max-sm:min-h-11"
                   key={v}
                 >
                   <input
@@ -380,10 +380,10 @@ function PlanForm({
             </div>
           </fieldset>
           <details>
-            <summary className="cursor-pointer py-3 text-sm font-medium">
+            <summary className="flex min-h-8 cursor-pointer items-center text-meta font-medium max-sm:min-h-11">
               Complete policy document
             </summary>
-            <p className="text-muted-foreground mb-3 text-xs">
+            <p className="text-muted-foreground mb-3 text-meta">
               All saved fields are preserved. Edit this document for permissions
               without a form control.
             </p>
@@ -418,7 +418,7 @@ function PlanForm({
                 <p
                   id="policy-json-error"
                   role="alert"
-                  className="text-destructive text-sm"
+                  className="text-destructive text-meta"
                 >
                   {rawError}
                 </p>
@@ -435,7 +435,7 @@ function PlanForm({
         </div>
       </details>
       {mutation.isError && (
-        <p role="alert" className="text-destructive text-sm">
+        <p role="alert" className="text-destructive text-meta">
           {errorMessage(mutation.error)}
         </p>
       )}
@@ -443,7 +443,7 @@ function PlanForm({
         {rawError && (
           <p
             id="plan-save-error"
-            className="text-destructive self-center text-sm"
+            className="text-destructive self-center text-meta"
           >
             Save is blocked. Fix or discard invalid JSON changes in Advanced.
           </p>
@@ -525,7 +525,7 @@ export function TestAccess({
             />
           </div>
           <details>
-            <summary className="cursor-pointer py-3 text-sm font-medium">
+            <summary className="flex min-h-8 cursor-pointer items-center text-meta font-medium max-sm:min-h-11">
               Request details
             </summary>
             <div className="space-y-3">
@@ -549,7 +549,7 @@ export function TestAccess({
             </div>
           </details>
           {mutation.data && (
-            <div role="status" className="rounded-lg border p-4">
+            <div role="status" className="rounded-panel border p-4">
               <p className="font-medium">
                 {mutation.data.decision.allowed
                   ? "This request would be allowed"
@@ -558,7 +558,7 @@ export function TestAccess({
               {mutation.data.decision.reasons.map((reason) => (
                 <p
                   key={reason}
-                  className="text-muted-foreground mt-2 text-sm break-words"
+                  className="text-muted-foreground mt-2 text-meta break-words"
                 >
                   {reason}
                 </p>
@@ -566,7 +566,7 @@ export function TestAccess({
             </div>
           )}
           {mutation.isError && (
-            <p role="alert" className="text-destructive text-sm">
+            <p role="alert" className="text-destructive text-meta">
               {errorMessage(mutation.error)}
             </p>
           )}

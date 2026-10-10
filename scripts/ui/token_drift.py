@@ -91,6 +91,11 @@ SYSTEM_FILES = [
     "components/product/status-ui.tsx",
     # PR 2: Settings
     "app/settings/page.tsx",
+    # PR 3: People, invites and plans; Apps and keys
+    "app/people/page.tsx",
+    "app/people/plans.tsx",
+    "app/apps/page.tsx",
+    "components/product/secret-reveal.tsx",
 ]
 # Overlays may lift with a shadow (menus, popovers, dialogs, sheets, toasts).
 OVERLAY_FILES = {

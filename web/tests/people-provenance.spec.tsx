@@ -21,10 +21,13 @@ it("renders the effective mapped plan and manual/OIDC grant provenance from Peop
   }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><PeoplePage /></QueryClientProvider>);
-  expect(await screen.findByText("Mapped plan")).toBeInTheDocument();
-  expect(screen.getByText("Group mapping")).toBeInTheDocument();
-  expect(screen.getByText("owner · Manual")).toBeInTheDocument();
-  expect(screen.getByText("admin · OIDC claim")).toBeInTheDocument();
+  // The plan is a column on wider screens and joins the second line on a
+  // phone; CSS shows one copy, jsdom has both.
+  expect(await screen.findAllByText("Mapped plan")).toHaveLength(2);
+  expect(screen.getAllByText("Group mapping")).toHaveLength(2);
+  // Craft PR 3: roles and their source are words on the second line, not chips.
+  expect(screen.getByText("Owner (manual)")).toBeInTheDocument();
+  expect(screen.getByText("Administrator (OIDC claim)")).toBeInTheDocument();
 });
 
 it("opens on the person named in ?person= and leaves other rows unmarked", async () => {
@@ -47,7 +50,7 @@ it("opens on the person named in ?person= and leaves other rows unmarked", async
     const zoe = (await screen.findByText("Zoë")).closest("[aria-current]");
     expect(zoe).not.toBeNull();
     expect(zoe).toHaveFocus();
-    expect(zoe).toHaveClass("grid");
+    expect(zoe).toHaveAttribute("data-slot", "list-row");
     expect(screen.getByText("Robin").closest("[aria-current]")).toBeNull();
   } finally {
     window.history.replaceState(null, "", "/");

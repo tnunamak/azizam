@@ -637,11 +637,11 @@ test("people lane omits unknown monthly usage and keeps known usage", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/ui/people/");
   const unknownRow = page
-    .getByText("Morgan Rivera", { exact: true })
-    .locator("xpath=ancestor::div[contains(@class, 'grid')][1]");
+    .getByRole("listitem")
+    .filter({ hasText: "Morgan Rivera" });
   const knownRow = page
-    .getByText("Casey Rivera", { exact: true })
-    .locator("xpath=ancestor::div[contains(@class, 'grid')][1]");
+    .getByRole("listitem")
+    .filter({ hasText: "Casey Rivera" });
   await expect(unknownRow).toBeVisible();
   await expect(unknownRow).not.toContainText("This month");
   await expect(knownRow).toContainText("This month · 42 requests");
@@ -995,8 +995,10 @@ test("invitation revoke names the recipient and link dialogs use the public URL"
   await expect(trigger).toBeFocused();
 });
 
+// Craft PR 3: a person row is two lines. A long name or plan stays inside
+// its row: it fits, or ends in an ellipsis and keeps its full text in a title.
 for (const width of [390, 1440]) {
-  test(`long person and plan names wrap within their rows at ${width}px`, async ({
+  test(`long person and plan names stay within their rows at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -1013,17 +1015,23 @@ for (const width of [390, 1440]) {
     );
     await page.goto("/ui/people/");
     for (const text of ["n".repeat(300), "p".repeat(300)]) {
-      const name = page.getByText(text);
+      // The plan is a column on wider screens and joins the second line on
+      // a phone; one copy is visible.
+      const name = page
+        .getByText(text, { exact: true })
+        .filter({ visible: true });
       await expect(name).toBeVisible();
       expect(
-        await name.evaluate((el) => {
-          const rect = el.getBoundingClientRect();
+        await name.evaluate((el, full) => {
+          const clip = (el.closest(".truncate") ?? el) as HTMLElement;
+          const fits = clip.scrollWidth <= clip.clientWidth;
+          const kept =
+            getComputedStyle(clip).textOverflow === "ellipsis" &&
+            (el.closest("[title]")?.getAttribute("title") ?? "").includes(full);
           return (
-            getComputedStyle(el).overflowWrap === "anywhere" &&
-            rect.right <= innerWidth &&
-            el.scrollWidth <= el.clientWidth
+            clip.getBoundingClientRect().right <= innerWidth && (fits || kept)
           );
-        }),
+        }, text),
       ).toBe(true);
     }
     expect(

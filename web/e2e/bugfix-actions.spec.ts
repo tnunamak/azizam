@@ -32,7 +32,7 @@ test("remove an app through Apps & keys and invalidate its key", async ({
     ).status(),
   ).toBe(200);
   const card = page
-    .getByRole("article")
+    .getByRole("listitem")
     .filter({ has: page.getByRole("heading", { name, exact: true }) });
   await card.getByRole("button", { name: `Actions for ${name}` }).click();
   await page.getByRole("menuitem", { name: "Remove app" }).click();
