@@ -545,10 +545,12 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
     conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
-        _ensure_erasure_cutoff_table(conn)
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,),
+        ).fetchone()
         row = conn.execute(
             f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'"
-        ).fetchone()
+        ).fetchone() if table_exists else None
         setting = conn.execute(
             "SELECT value_json, updated_at FROM operator_settings WHERE key='prompt_memory'"
         ).fetchone()

@@ -299,3 +299,14 @@ def test_video_move_preserves_workflow_when_clean_cache_wrote_empty_destination(
     assert prompt_memory.move("video_source", "vid_cached", "maker", path=db)
     assert prompt_memory.get("vid_cached", "maker", path=db)["metadata"] == {"workflow": "full graph"}
     assert prompt_memory.get("video_source", "maker", path=db) is None
+
+
+def test_fresh_household_fence_read_does_not_request_a_second_write_lock(tmp_path):
+    from gateway import admin_store
+
+    admin_db = tmp_path / "admin.db"
+    admin_store.init_db(admin_db)
+    # The outer transaction can create its fence table before committing it.
+    # A read on another connection must not try to create that table again.
+    with prompt_memory.retention_guard(admin_db):
+        assert prompt_memory.household_erasure_cutoff(admin_path=admin_db) is None
