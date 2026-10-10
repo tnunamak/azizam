@@ -9,7 +9,11 @@ import {
   type ServiceRegistry,
   type ServiceRegistryResponse,
 } from "@/lib/api";
-import { Button, Field, IncidentBanner, Input } from "@/components/ui";
+import { Button } from "@/components/ui/button";
+import { Field } from "@/components/ui/field";
+import { IncidentBanner } from "@/components/ui/operational";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { detectedModelsPatch, type DetectedModelRow } from "./detected-models";
 
 type CheckResult = {
@@ -165,24 +169,28 @@ export function EngineChecks({
     <div className="mt-5 flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap gap-2">
         <Button
+          type="button"
           size="sm"
-          variant="secondary"
-          loading={test.isPending}
+          variant="outline"
+          aria-busy={test.isPending || undefined}
           disabled={busy || undefined}
           onClick={() => {
             setResult(null);
             test.mutate();
           }}
         >
+          {test.isPending && <Spinner className="size-4" />}
           Test
         </Button>
         <Button
+          type="button"
           size="sm"
-          variant="secondary"
-          loading={detect.isPending}
+          variant="outline"
+          aria-busy={detect.isPending || undefined}
           disabled={busy || undefined}
           onClick={() => detect.mutate()}
         >
+          {detect.isPending && <Spinner className="size-4" />}
           Detect
         </Button>
       </div>
@@ -196,6 +204,8 @@ export function EngineChecks({
             !result.ok ? (
               <div className="flex flex-wrap gap-2">
                 <Button
+                  variant="outline"
+                  type="button"
                   size="sm"
                   onClick={() =>
                     result.retry === "detect" ? detect.mutate() : test.mutate()
@@ -205,7 +215,12 @@ export function EngineChecks({
                   {result.retry === "detect" ? "Retry detection" : "Retry test"}
                 </Button>
                 {service.editable !== false && (
-                  <Button size="sm" variant="ghost" onClick={onEdit}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={onEdit}
+                  >
                     Edit endpoint
                   </Button>
                 )}
@@ -249,7 +264,7 @@ export function EngineChecks({
                             : item,
                         ),
                       );
-                    }}
+                  }}
                   />
                   <span className="min-w-0 break-all">{row.upstream}</span>
                 </label>
@@ -310,17 +325,24 @@ export function EngineChecks({
           ) : (
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
-                variant="primary"
-                loading={apply.isPending}
-                disabled={!accessConfirmed || !rows.some((row) => row.selected)}
+                size="md"
+                type="button"
+                variant="default"
+                aria-busy={apply.isPending || undefined}
+                disabled={
+                  apply.isPending || !accessConfirmed || !rows.some((row) => row.selected)
+                }
                 onClick={() => {
                   setApplyError(null);
                   apply.mutate();
                 }}
               >
+                {apply.isPending && <Spinner className="size-4" />}
                 Apply models
               </Button>
               <Button
+                size="md"
+                type="button"
                 variant="ghost"
                 disabled={apply.isPending}
                 onClick={() => setRows(null)}

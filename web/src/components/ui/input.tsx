@@ -1,5 +1,8 @@
+"use client";
+
 import * as React from "react";
 import { cn } from "@/lib/cn";
+import { useFieldContext } from "./field";
 
 /**
  * `md` (40, `text-body`) in forms, the default; `sm` (32, `text-meta`) in
@@ -12,6 +15,11 @@ function Input({
   size = "md",
   ...props
 }: Omit<React.ComponentProps<"input">, "size"> & { size?: "sm" | "md" }) {
+  const field = useFieldContext();
+  const invalid =
+    field?.invalid ||
+    props["aria-invalid"] === true ||
+    props["aria-invalid"] === "true";
   // The size owns desktop height; callers may only adjust phone heights.
   const callerClasses = className
     ?.split(/\s+/)
@@ -20,6 +28,9 @@ function Input({
   return (
     <input
       type={type}
+      id={props.id ?? field?.id}
+      aria-describedby={props["aria-describedby"] ?? field?.describedBy}
+      aria-invalid={invalid || undefined}
       data-slot="input"
       data-size={size}
       className={cn(

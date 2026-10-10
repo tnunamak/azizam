@@ -1,20 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Button } from "./legacy/button";
+import { Button } from "./button";
 import {
   Dialog,
-  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "./legacy/dialog";
+} from "./dialog";
 import { Field } from "./field";
-import { Input } from "./legacy/input";
+import { Input } from "./input";
+import { Spinner } from "./spinner";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -60,12 +60,18 @@ function ConfirmDialogContent({
   typedName,
   onConfirm,
 }: Omit<ConfirmDialogProps, "open">) {
+  const returnFocus = useRef<HTMLElement | null>(
+    typeof document === "undefined"
+      ? null
+      : (document.activeElement as HTMLElement),
+  );
   const [typed, setTyped] = useState("");
   const [pending, setPending] = useState(false);
 
   const nameMismatch = typedName !== undefined && typed !== typedName;
 
   async function handleConfirm() {
+    if (pending || nameMismatch) return;
     setPending(true);
     try {
       await onConfirm();
@@ -85,18 +91,25 @@ function ConfirmDialogContent({
 
   return (
     <DialogContent
-      hideClose
-      className="max-w-md"
+      showCloseButton={false}
+      className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden sm:max-w-md"
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        returnFocus.current?.focus();
+      }}
       onEscapeKeyDown={blockWhilePending}
       onPointerDownOutside={blockWhilePending}
       onInteractOutside={blockWhilePending}
     >
-      <DialogHeader>
+      <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
         <DialogTitle>{title}</DialogTitle>
         {description && <DialogDescription>{description}</DialogDescription>}
       </DialogHeader>
       {typedName !== undefined && (
-        <DialogBody>
+        <div
+          data-slot="dialog-body"
+          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+        >
           <Field
             label={
               <>
@@ -116,10 +129,12 @@ function ConfirmDialogContent({
               disabled={pending}
             />
           </Field>
-        </DialogBody>
+        </div>
       )}
-      <DialogFooter>
+      <DialogFooter className="mt-6 shrink-0">
         <Button
+          size="md"
+          type="button"
           variant="ghost"
           onClick={() => onOpenChange(false)}
           disabled={pending}
@@ -127,11 +142,14 @@ function ConfirmDialogContent({
           {cancelLabel}
         </Button>
         <Button
-          variant={danger ? "danger" : "primary"}
-          loading={pending}
-          disabled={nameMismatch}
+          size="md"
+          type="button"
+          variant={danger ? "destructive" : "default"}
+          aria-busy={pending || undefined}
+          disabled={pending || nameMismatch}
           onClick={() => void handleConfirm()}
         >
+          {pending && <Spinner className="size-4" />}
           {confirmLabel}
         </Button>
       </DialogFooter>

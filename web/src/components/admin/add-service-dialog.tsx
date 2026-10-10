@@ -5,23 +5,21 @@ import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 import {
-  Button,
   Dialog,
-  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogForm,
   DialogHeader,
   DialogTitle,
-  EmptyOperationalState,
-  Field,
-  IncidentBanner,
-  Input,
-  Skeleton,
-  toast,
-} from "@/components/ui";
+} from "@/components/ui/dialog";
+import { Field } from "@/components/ui/field";
+import { EmptyOperationalState, IncidentBanner } from "@/components/ui/operational";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/toast";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
   SelectContent,
@@ -97,6 +95,11 @@ export function AddServiceDialogContent({
   onOpenChange: (open: boolean) => void;
   onSaved: (registry: ServiceRegistry) => void;
 }) {
+  const returnFocus = useRef<HTMLElement | null>(
+    typeof document === "undefined"
+      ? null
+      : (document.activeElement as HTMLElement),
+  );
   const {
     data,
     error,
@@ -165,69 +168,107 @@ export function AddServiceDialogContent({
 
   if (loading) {
     return (
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocus.current?.focus();
+        }}
+      >
+        <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
             Loading the presets required to configure this engine.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
+        <div
+          data-slot="dialog-body"
+          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+        >
           <div className="flex flex-col gap-3" aria-busy="true">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
+            <Skeleton aria-hidden="true" className="h-10 w-full" />
+            <Skeleton aria-hidden="true" className="h-10 w-full" />
+            <Skeleton aria-hidden="true" className="h-10 w-full" />
           </div>
-        </DialogBody>
+        </div>
       </DialogContent>
     );
   }
   if (error) {
     return (
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocus.current?.focus();
+        }}
+      >
+        <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
             Engine presets could not be loaded. No preset has been selected.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
+        <div
+          data-slot="dialog-body"
+          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+        >
           <IncidentBanner
             tone="bad"
             title="Could not load engine presets"
             detail={errorMessage(error)}
             actions={
-              <Button size="sm" onClick={() => void refetch()}>
+              <Button
+                variant="outline"
+                type="button"
+                size="sm"
+                onClick={() => void refetch()}
+              >
                 Retry
               </Button>
             }
           />
-        </DialogBody>
+        </div>
       </DialogContent>
     );
   }
   if (!presets.length) {
     return (
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocus.current?.focus();
+        }}
+      >
+        <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
             The gateway has not supplied an engine preset to select.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
+        <div
+          data-slot="dialog-body"
+          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+        >
           <EmptyOperationalState
             title="No engine presets available"
             detail="Add or restore a preset through the gateway configuration, then try again."
           />
-        </DialogBody>
+        </div>
       </DialogContent>
     );
   }
   return (
-    <DialogContent>
-      <DialogForm onSubmit={handleSubmit}>
-        <DialogHeader>
+    <DialogContent
+      className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        returnFocus.current?.focus();
+      }}
+    >
+      <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+        <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
             Register an upstream engine. Select one API-supplied preset before
@@ -235,7 +276,10 @@ export function AddServiceDialogContent({
             needed.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
+        <div
+          data-slot="dialog-body"
+          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+        >
           <div className="flex flex-col gap-4">
             {formError && (
               <p
@@ -309,11 +353,12 @@ export function AddServiceDialogContent({
             <Button
               type="button"
               size="sm"
-              variant="secondary"
-              loading={testing}
-              disabled={!form.base_url}
+              variant="outline"
+              aria-busy={testing || undefined}
+              disabled={testing || !form.base_url}
               onClick={() => void handleTest()}
             >
+              {testing && <Spinner className="size-4" />}
               Test connection
             </Button>
             {probe && (
@@ -326,20 +371,29 @@ export function AddServiceDialogContent({
               </div>
             )}
           </div>
-        </DialogBody>
-        <DialogFooter>
+        </div>
+        <DialogFooter className="mt-6 shrink-0">
           <Button
+            size="md"
+            type="button"
             variant="ghost"
             onClick={() => onOpenChange(false)}
             disabled={save.isPending}
           >
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={save.isPending}>
+          <Button
+            disabled={save.isPending}
+            size="md"
+            type="submit"
+            variant="default"
+            aria-busy={save.isPending || undefined}
+          >
+            {save.isPending && <Spinner className="size-4" />}
             Add engine
           </Button>
         </DialogFooter>
-      </DialogForm>
+      </form>
     </DialogContent>
   );
 }

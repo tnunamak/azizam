@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { ConfirmDialog } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+
+afterEach(cleanup);
 
 function deferred() {
   let resolve: () => void;
@@ -65,4 +67,57 @@ describe("ConfirmDialog", () => {
       screen.getByRole("dialog", { name: "Remove service?" }),
     ).toBeVisible();
   });
+});
+
+it("requires the exact typed name, blocks dismissal while pending, and resets on reopen", async () => {
+  const user = userEvent.setup();
+  const mutation = deferred();
+  const onConfirm = vi.fn(() => mutation.promise);
+  function TypedFixture() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Open removal</button>
+        <ConfirmDialog
+          open={open}
+          onOpenChange={setOpen}
+          title="Remove engine?"
+          description="Removal applies live."
+          confirmLabel="Remove engine"
+          typedName="my-engine"
+          onConfirm={onConfirm}
+        />
+      </>
+    );
+  }
+  render(<TypedFixture />);
+  const trigger = screen.getByRole("button", { name: "Open removal" });
+  await user.click(trigger);
+  const input = screen.getByRole("textbox", { name: /Type my-engine to confirm/ });
+  const confirm = screen.getByRole("button", { name: "Remove engine" });
+  expect(input).toHaveFocus();
+  expect(confirm).toBeDisabled();
+  await user.type(input, "My-engine");
+  expect(confirm).toBeDisabled();
+  await user.clear(input);
+  await user.type(input, "my-engine ");
+  expect(confirm).toBeDisabled();
+  await user.clear(input);
+  await user.type(input, "my-engine");
+  await user.click(confirm);
+  expect(confirm).toBeDisabled();
+  expect(confirm).toHaveAttribute("aria-busy", "true");
+  expect(input).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog", { name: "Remove engine?" })).toBeVisible();
+  expect(onConfirm).toHaveBeenCalledOnce();
+  mutation.resolve();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await user.click(trigger);
+  expect(screen.getByRole("textbox", { name: /Type my-engine to confirm/ })).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Remove engine" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(trigger).toHaveFocus());
 });

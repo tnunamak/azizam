@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 
 import { Button as ModernButton } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import { Button as LegacyButton } from "@/components/ui";
+import { CopyButton, copyText } from "@/components/ui/copy-button";
 import { Switch as ModernSwitch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -35,18 +35,18 @@ describe("phone target contracts", () => {
     expect(screen.getByRole("button", { name: "Unavailable" })).toBeDisabled();
   });
 
-  it("preserves legacy button keyboard activation and links", async () => {
+  it("preserves migrated button keyboard activation, links, and touch targets", async () => {
     const user = userEvent.setup();
-    const onLegacyClick = vi.fn();
+    const onButtonClick = vi.fn();
     const onIconClick = vi.fn();
     render(
       <>
-        <LegacyButton size="sm" onClick={onLegacyClick}>
+        <ModernButton size="sm" onClick={onButtonClick}>
           Test
-        </LegacyButton>
-        <LegacyButton asChild size="sm">
+        </ModernButton>
+        <ModernButton asChild size="sm">
           <a href="#edit">Edit</a>
-        </LegacyButton>
+        </ModernButton>
         <IconButton size="sm" aria-label="Close" onClick={onIconClick}>
           x
         </IconButton>
@@ -55,7 +55,8 @@ describe("phone target contracts", () => {
 
     await user.keyboard("{Tab}{Enter}");
     await user.keyboard("{Tab}{Tab}{Enter}");
-    expect(onLegacyClick).toHaveBeenCalledOnce();
+    expect(onButtonClick).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Test" })).toHaveClass("max-sm:min-h-11", "max-sm:min-w-11");
     expect(onIconClick).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "Edit" })).toHaveAttribute(
       "href",
@@ -100,4 +101,35 @@ describe("phone target contracts", () => {
     );
     expect(screen.getByRole("tab", { name: "Disabled" })).toBeDisabled();
   });
+});
+
+it.each(["missing", "rejected"] as const)("copies with the textarea fallback when clipboard is %s", async (mode) => {
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const execCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+  const copy = vi.fn(() => true);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: mode === "missing" ? undefined : { writeText: vi.fn().mockRejectedValue(new Error("Unavailable")) },
+  });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: copy });
+  try {
+    expect(await copyText("example")).toBe(true);
+    expect(copy).toHaveBeenCalledWith("copy");
+    expect(document.querySelector("textarea")).toBeNull();
+  } finally {
+    if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+    if (execCommand) Object.defineProperty(document, "execCommand", execCommand);
+    else Reflect.deleteProperty(document, "execCommand");
+  }
+});
+
+it("keeps Copy accessible and non-submitting inside a form", async () => {
+  const user = userEvent.setup();
+  const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
+  render(<form onSubmit={submit}><CopyButton value="example" /></form>);
+  const copy = screen.getByRole("button", { name: "Copy" });
+  expect(copy).toHaveClass("max-sm:min-h-11", "max-sm:min-w-11");
+  await user.click(copy);
+  expect(submit).not.toHaveBeenCalled();
 });
