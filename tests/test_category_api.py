@@ -166,7 +166,7 @@ def test_restore_previews_reverted_access_without_activation(categories):
     restored = response.json()
     assert restored["revision"] not in (first["revision"], second["revision"])
     assert restored["snapshot"] == first["snapshot"]
-    assert restored["reason"] == f'restore revision {first["revision"]}'
+    assert restored["reason"] == "undo restriction"
     audit = client.get(PREFIX + "/history").json()["history"][-1]
     assert audit["action"] == "restore"
     assert audit["source_revision"] == first["revision"]

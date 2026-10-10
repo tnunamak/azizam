@@ -251,3 +251,20 @@ class CategoryStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RestoreReasonTests(unittest.TestCase):
+    def test_restore_records_the_given_reason_and_defaults_otherwise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = CategoryStore(Path(tmp) / "categories.db")
+            first = store.create_candidate({"v": 1}, None, "owner", "first")
+            store.activate(first.revision, None)
+            second = store.create_candidate({"v": 2}, first.revision, "owner", "second")
+            store.activate(second.revision, first.revision)
+            named = store.restore(first.revision, second.revision, "owner", "undo second")
+            self.assertEqual(named.reason, "undo second")
+            default = store.restore(first.revision, second.revision, "owner")
+            self.assertEqual(default.reason, f"restore revision {first.revision}")
+            actions = [row["action"] for row in store.history()]
+            self.assertEqual(actions.count("restore"), 2)
+

@@ -234,8 +234,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
                     # Concurrent activation makes create_candidate fail its own CAS.
                     preview = _json(policy.change_preview(before, after))
                     if operation == "restore":
-                        # Store.restore does not take a reason yet; retain its restore audit.
-                        row = store.restore(revision, expected, ctx.subject)
+                        row = store.restore(revision, expected, ctx.subject, reason)
                     else:
                         row = store.create_candidate(snapshot_to_json(after), expected, ctx.subject, reason)
                     result = record(row)

@@ -274,15 +274,19 @@ class CategoryStore:
             self._append_audit(conn, "activate", snapshot, previous, None, counter + 1)
             return self._get(conn, candidate_revision, counter + 1)
 
-    def restore(self, old_revision, base_revision, author) -> Snapshot:
-        """Copy verified old data to a NEW candidate; callers revalidate/preview."""
+    def restore(self, old_revision, base_revision, author, reason=None) -> Snapshot:
+        """Copy verified old data to a NEW candidate; callers revalidate/preview.
+
+        ``reason`` is recorded with the candidate and its restore audit row; it
+        defaults to naming the restored revision.
+        """
         _revision(old_revision)
         _revision(base_revision, optional=True)
         with self._transaction() as conn:
             previous, counter = self._check_base(conn, base_revision)
             old = self._get(conn, old_revision)
-            snapshot = self._insert(conn, old.body_json, base_revision, author,
-                                    f"restore revision {old_revision}")
+            text = (reason or "").strip() or f"restore revision {old_revision}"
+            snapshot = self._insert(conn, old.body_json, base_revision, author, text)
             self._append_audit(conn, "restore", snapshot, previous, old_revision, counter)
             return snapshot
 
