@@ -229,7 +229,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             self.assertEqual(proxy._media_job_queue_depth(1), 1, f"a queued {intent} job is queued work")
             refused = proxy._media_job_admission_response("image.generate")
             self.assertIsNotNone(refused, f"a queued {intent} job fills a one-job queue")
-            self.assertEqual(refused.status_code, 429)
+            self.assertIn("queue full", json.loads(refused.body)["error"]["message"])
             media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, path=media_jobs.DB_PATH)
 
     def test_at_most_the_configured_number_of_make_jobs_run_at_once(self) -> None:
