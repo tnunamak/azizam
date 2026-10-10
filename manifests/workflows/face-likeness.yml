@@ -43,3 +43,6 @@ bindings:
     model_id: face-likeness
     compose: face_likeness
     route: /gateway/v1/faces/likeness
+requires:
+  services:
+    - faces

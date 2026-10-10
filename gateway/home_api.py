@@ -224,14 +224,25 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
                 or any(row.get(flag) is True for row in models for flag in local_flags))
 
 
-def _capability_rows(capabilities, evidence, registry=None, alias_views=None) -> list[dict[str, Any]]:
+def _capability_rows(capabilities, evidence, registry=None, alias_views=None, workflow_records=()) -> list[dict[str, Any]]:
     rows = []
-    visible = project_capabilities(capabilities, service_records=registry, evidence=evidence)
+    visible = project_capabilities(capabilities, service_records=registry, evidence=evidence,
+                                   workflow_records=workflow_records)
     for cap in visible:
         if not cap.policy_available:
             continue
-        state, reason = _availability(cap, evidence, registry)
-        projection = project_service(cap.backend, service_records=registry, evidence=evidence, fallback_capability=cap)
+        composed = (cap.availability if isinstance(cap.availability, Mapping)
+                    and (cap.availability.get("evidence") or {}).get("source") == "dependencies" else None)
+        if composed is not None:
+            # A gateway-composed workflow is as available as the engines it
+            # needs; the "gateway" pseudo-backend itself is never checked.
+            state = str(composed.get("status") or "unknown")
+            reason = str(composed.get("reason_code") or state)
+            product_availability = dict(composed)
+        else:
+            state, reason = _availability(cap, evidence, registry)
+            product_availability = project_service(cap.backend, service_records=registry, evidence=evidence,
+                                                   fallback_capability=cap).to_public_dict()
         metadata = next((alias for view in (alias_views or {}).values() for alias in view.get("stable", [])
                          if alias.get("alias") == cap.model and "alias" in cap.tags), None)
         summary = summarize_capability(cap, "client")
@@ -244,8 +255,8 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None) ->
             summary["backend_kind"] = "local"
         elif remote:
             summary["backend_kind"] = "remote"
-        product_availability = projection.to_public_dict()
         product_availability.pop("reason", None)
+        product_availability.pop("engine", None)
         product_availability["reason_code"] = reason
         rows.append({**summary, **capability_presentation(cap, metadata),
                      "status": state, "available": state in {"ready", "idle"}, "reason_code": reason,
@@ -273,8 +284,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                        require_action, csrf_token, default_profile_id, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
                        inherited_profile_id_for_app=None, self_service_enabled=lambda: True,
-                       spend_ledger_path: Callable[[], Path | None] = lambda: None) -> APIRouter:
+                       spend_ledger_path: Callable[[], Path | None] = lambda: None,
+                       availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
+                       workflow_records: Callable[[], Any] = lambda: ()) -> APIRouter:
     """Register session discovery, connection checks and owner setup evidence.
+
+    ``availability_services`` adds engines that only composed workflows use
+    (such as the face sidecar) to the registry view availability reads;
+    ``workflow_records`` lets those workflows project from their engines.
 
     ``spend_ledger_path`` returns the provider spend ledger that cap
     enforcement uses; without it, plan spend is reported as unknown.
@@ -322,6 +339,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             )
         )
         alias_views = aliases()
+        rows_registry = availability_services(registry)
+        records = tuple(workflow_records())
         allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
         credential_aliases: dict[str, list[dict[str, Any]]] = {}
         owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
@@ -336,17 +355,17 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                     continue
                 scoped = _resolved_capabilities(identity, capabilities, registry)
                 if credential is not None:
-                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, registry, alias_views), alias_views)
+                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
                 for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
         new_identity = _identity({}, None, inherited, store.path) if self_service_enabled() else None
         new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
-        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, registry, alias_views), alias_views)
+        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
         for cap in new_caps:
             if cap.policy_available:
                 allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = _capability_rows(allowed.values(), availability_evidence, registry, alias_views)
+        rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
         alias_rows = _alias_rows(rows, alias_views)
         rows = group_product_capabilities(rows)
         summary = product_status_summary(rows)

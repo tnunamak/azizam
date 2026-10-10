@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.capabilities import Capability, resolve_capability_targets
+from gateway.discovery import WorkflowRecord
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
 STARTING_STATUSES = frozenset({"starting", "warming"})
@@ -48,6 +49,8 @@ class AvailabilityProjection:
     measured: bool
     evidence: dict[str, Any]
     idle_startable: bool = False
+    # A gateway-composed workflow names the engine that limits it.
+    engine: str | None = None
 
     @property
     def available(self) -> bool:
@@ -64,6 +67,8 @@ class AvailabilityProjection:
             "up": self.up,
             "idle_startable": self.idle_startable,
             "evidence": _public_evidence(self.evidence),
+            **({"engine": self.engine, "reason_code": composed_reason_code(self.status, self.enabled, self.configured)}
+               if self.engine else {}),
         }
 
 
@@ -72,11 +77,13 @@ def project_capabilities(
     *,
     service_records: Mapping[str, Any] | None = None,
     evidence: Mapping[str, Mapping[str, Any]] | None = None,
+    workflow_records: Iterable[WorkflowRecord] = (),
 ) -> list[Capability]:
     """Stamp capability lifecycle/health from the shared projection."""
 
     service_records = service_records or {}
     evidence = evidence or {}
+    records = {record.id: record for record in workflow_records}
     out: list[Capability] = []
     for capability in resolve_capability_targets(capabilities, service_records):
         if _capability_declares_unavailable(capability):
@@ -86,12 +93,19 @@ def project_capabilities(
                 health="unhealthy",
             ))
             continue
-        projection = project_service(
-            capability.backend,
-            service_records=service_records,
-            evidence=evidence,
-            fallback_capability=capability,
-        )
+        record = records.get(capability.workflow or capability.resolved_workflow or "")
+        requirements = record.manifest.get("requires") if record else None
+        if capability.backend == "gateway" and isinstance(requirements, Mapping):
+            projection = _project_required_dependencies(
+                capability, requirements, records, service_records, evidence,
+            )
+        else:
+            projection = project_service(
+                capability.backend,
+                service_records=service_records,
+                evidence=evidence,
+                fallback_capability=capability,
+            )
         lifecycle, health = _capability_states(projection)
         out.append(replace(
             capability,
@@ -100,6 +114,89 @@ def project_capabilities(
             availability=projection.to_public_dict(),
         ))
     return out
+
+
+def _project_required_dependencies(
+    capability: Capability,
+    requirements: Mapping[str, Any],
+    records: Mapping[str, WorkflowRecord],
+    service_records: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, Any]],
+) -> AvailabilityProjection:
+    services = _services_mapping(service_records)
+    dependencies: list[str] = [str(service) for service in requirements.get("services") or ()]
+    for workflow_id in requirements.get("workflows") or ():
+        record = records.get(str(workflow_id))
+        if record is None or len(record.supported_backends) != 1:
+            return AvailabilityProjection(
+                capability.backend, True, False, None, "unknown",
+                "A workflow it builds on is not set up to run on one engine.", False,
+                {"source": "dependencies", "kind": "missing_workflow"},
+            )
+        dependencies.append(record.supported_backends[0])
+    dependencies = list(dict.fromkeys(dependencies))
+    if not dependencies:
+        return project_service(capability.backend, service_records=service_records,
+                               evidence=evidence, fallback_capability=capability)
+
+    # Only measured evidence counts. An on-demand engine with a fresh lifecycle
+    # check that says "stopped" projects as idle (ready to start); one with no
+    # check at all stays unknown rather than being assumed startable.
+    projected = [project_service(service, service_records=service_records, evidence=evidence)
+                 for service in dependencies]
+    # A known failure wins over an unknown measurement; otherwise the least ready
+    # required engine determines the composed workflow's state.
+    priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3,
+                "unknown": 4, "idle": 5, "ready": 6}
+    limiting = min(projected, key=lambda item: priority.get(item.status, 4))
+    status = limiting.status
+    composed_evidence: dict[str, Any] = {"source": "dependencies", "kind": "required",
+                                         "services": list(dependencies)}
+    # The composed state is only as fresh as its oldest dependency check.
+    for field in EVIDENCE_TIME_FIELDS:
+        values = [item.evidence.get(field) for item in projected]
+        if values and all(_is_epoch(value) for value in values):
+            composed_evidence[field] = min(values)
+    return AvailabilityProjection(
+        # Flags follow the limiting engine, so the reason code and the reason agree.
+        capability.backend, limiting.enabled, limiting.configured,
+        False if status == "unavailable" else None if status in {"idle", "starting", "unknown"} else True,
+        status, _dependency_reason(limiting, services.get(limiting.service_id) or {}),
+        all(item.measured for item in projected), composed_evidence,
+        idle_startable=status == "idle", engine=limiting.service_id,
+    )
+
+
+def composed_reason_code(status: str, enabled: bool, configured: bool) -> str:
+    """Reason code for a composed workflow: an engine turned off or not set up is Off, not Down."""
+
+    if status == "unavailable" and not enabled:
+        return "unavailable_disabled"
+    if status == "unavailable" and not configured:
+        return "unavailable_unconfigured"
+    return status
+
+
+def _dependency_reason(limiting: AvailabilityProjection, service: Mapping[str, Any]) -> str:
+    """Plain-language reason naming the engine that limits a composed workflow."""
+
+    if limiting.status == "ready":
+        return "Every engine it needs is ready."
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    name = str(service.get("name") or config.get("name") or "An engine it needs").strip()
+    kind = limiting.evidence.get("kind")
+    if limiting.status == "unavailable":
+        if kind == "disabled":
+            return f"{name} is turned off."
+        if kind == "unconfigured":
+            return f"{name} is not set up."
+        return f"{name} is down."
+    return {
+        "idle": f"{name} starts when you make a request.",
+        "starting": f"{name} is starting.",
+        "busy": f"{name} is busy with other requests.",
+        "degraded": f"{name} is answering with errors.",
+    }.get(limiting.status, f"{name} has not been checked yet.")
 
 
 def project_service(

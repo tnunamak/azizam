@@ -60,6 +60,18 @@ describe("capabilityView: one state word from recorded evidence", () => {
       expect(capabilityView({ ...chat, status: "idle", available: true, evidence }, { now }).state).toBe("unknown");
     }
   });
+  it("shows a composed workflow waiting on a checked on-demand engine as ready to start", () => {
+    // The gateway stamps a composed workflow with its oldest engine check.
+    const evidence = { source: "dependencies", kind: "required", observed_at_s: now - 30 };
+    const view = capabilityView({ ...chat, status: "idle", available: true, evidence }, { now });
+    expect(view.state).toBe("ready");
+    expect(view.detail).toBe("Ready to start when you make a request.");
+    expect(view.checkedAt).toBe(now - 30);
+  });
+  it("does not trust a composed ready-to-start state without an engine check time", () => {
+    const evidence = { source: "dependencies", kind: "required" };
+    expect(capabilityView({ ...chat, status: "idle", available: true, evidence }, { now }).state).toBe("unknown");
+  });
   it("never shows a request as a check", () => {
     const view = capabilityView(
       { ...chat, evidence: { source: "request", observed_at_s: now - 60 } },
