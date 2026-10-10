@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+import anyio
 import brotli
 from starlette.datastructures import Headers
 from starlette.responses import FileResponse, Response
@@ -56,9 +57,33 @@ def _accepted_quality(header: str, coding: str) -> float:
     return wildcard or 0.0
 
 
+def _identity_quality(header: str) -> float:
+    wildcard_quality: float | None = None
+    for item in header.split(","):
+        name, *parameters = item.strip().lower().split(";")
+        quality = 1.0
+        for parameter in parameters:
+            key, separator, value = parameter.strip().partition("=")
+            if key == "q" and separator:
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+                if not 0 <= quality <= 1:
+                    quality = 0.0
+        if name == "identity":
+            return quality
+        if name == "*":
+            wildcard_quality = quality
+    # Identity is acceptable by default; `*;q=0` also excludes it unless
+    # identity has an explicit quality above.
+    return 0.0 if wildcard_quality == 0 else 1.0
+
+
 def _choose_encoding(header: str) -> str | None:
     choices = [("br", _accepted_quality(header, "br")),
-               ("gzip", _accepted_quality(header, "gzip"))]
+               ("gzip", _accepted_quality(header, "gzip")),
+               ("identity", _identity_quality(header))]
     coding, quality = max(choices, key=lambda choice: choice[1])
     return coding if quality > 0 else None
 
@@ -105,10 +130,18 @@ class UIStaticFiles(StaticFiles):
             response_headers["vary"] = self._merge_vary(
                 response_headers.get("vary"), "Accept-Encoding"
             )
-            if not range_request:
-                encoding = _choose_encoding(
-                    request_headers.get("accept-encoding", "")
-                )
+            accept_encoding = request_headers.get("accept-encoding", "")
+            encoding = (
+                ("identity" if _identity_quality(accept_encoding) > 0 else None)
+                if range_request else _choose_encoding(accept_encoding)
+            )
+            if encoding is None:
+                return Response(status_code=406, headers={
+                    "cache-control": "no-store",
+                    "vary": response_headers["vary"],
+                })
+            if encoding == "identity":
+                encoding = None
 
         etag = response_headers["etag"]
         if encoding:
@@ -128,18 +161,17 @@ class UIStaticFiles(StaticFiles):
             response.headers.update(response_headers)
             return response
 
-        if encoding:
-            body = _compressed_file(
-                str(file_path), stat_result.st_mtime_ns,
-                stat_result.st_ctime_ns, stat_result.st_size, encoding,
-            )
-        elif method == "HEAD":
-            body = b""
-        else:
-            body = file_path.read_bytes()
+        if not encoding:
+            response.headers.update(response_headers)
+            return response
 
-        content_length = (len(body) if method != "HEAD" or encoding
-                          else stat_result.st_size)
+        body = await anyio.to_thread.run_sync(
+            _compressed_file,
+            str(file_path), stat_result.st_mtime_ns,
+            stat_result.st_ctime_ns, stat_result.st_size, encoding,
+        )
+
+        content_length = len(body)
         headers = {
             key: value for key, value in response_headers.items()
             if key.lower() not in {"content-length", "content-encoding"}

@@ -49,6 +49,30 @@ def test_hashed_chunk_is_brotli_compressed_and_immutable(tmp_path):
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert brotli.decompress(encoded) == original
 
+    with client.stream(
+        "GET",
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers={"Accept-Encoding": "br;q=0, gzip;q=0.5, identity;q=1"},
+    ) as response:
+        identity = b"".join(response.iter_raw())
+    assert "content-encoding" not in response.headers
+    assert identity == original
+
+    with client.stream(
+        "GET",
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers={"Accept-Encoding": "br;q=0, gzip;q=1, identity;q=0"},
+    ) as response:
+        encoded_gzip = b"".join(response.iter_raw())
+    assert response.headers["content-encoding"] == "gzip"
+    assert gzip.decompress(encoded_gzip) == original
+
+    refused = client.get(
+        "/ui/_next/static/chunks/app-0123456789abcdef.js",
+        headers={"Accept-Encoding": "br;q=0, gzip;q=0, identity;q=0"},
+    )
+    assert refused.status_code == 406
+
 
 def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
     page = tmp_path / "home/index.html"
@@ -74,6 +98,12 @@ def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
     assert head.headers["content-length"] == first.headers["content-length"]
     assert head.headers["content-encoding"] == "br"
 
+    identity_head = client.head("/ui/home/", headers={"Accept-Encoding": "identity"})
+    assert identity_head.status_code == 200
+    assert identity_head.content == b""
+    assert identity_head.headers["content-length"] == str(page.stat().st_size)
+    assert "content-encoding" not in identity_head.headers
+
     ranged = client.get("/ui/home/", headers={
         "Accept-Encoding": "br", "Range": "bytes=0-4",
     })
@@ -81,6 +111,11 @@ def test_html_revalidates_and_head_and_range_keep_file_semantics(tmp_path):
     assert ranged.content == b"<html"
     assert "content-encoding" not in ranged.headers
     assert ranged.headers["content-range"].startswith("bytes 0-4/")
+
+    refused_range = client.get("/ui/home/", headers={
+        "Accept-Encoding": "br, gzip, identity;q=0", "Range": "bytes=0-4",
+    })
+    assert refused_range.status_code == 406
 
 
 def test_api_streaming_and_non_ui_static_routes_are_untouched(tmp_path):
