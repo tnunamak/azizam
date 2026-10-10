@@ -160,3 +160,27 @@ test("examplesByCard groups and orders", () => {
   assert.deepEqual(g.x.map((e) => e.id), ["a", "b"]);
   assert.deepEqual(Object.keys(g).sort(), ["x", "y"]);
 });
+
+test("isSameOrigin: only the gateway origin may receive the stored API key", () => {
+  const base = "https://gw.example:5000/showcase";
+  for (const ok of ["/v1/videos/1/content", "v1/x", "https://gw.example:5000/files/a.png", "?q=1", ""]) {
+    assert.equal(C.isSameOrigin(ok, base), true, ok);
+  }
+  for (const bad of [
+    "https://attacker.example/exfil", "http://gw.example:5000/x", "https://gw.example/x",
+    "https://gw.example:5000.attacker.example/x", "https://gw.example:5000@attacker.example/x",
+    "//attacker.example/x", "/\\attacker.example/x", "\\\\attacker.example\\x",
+    "data:text/plain,hi", "javascript:alert(1)", "blob:https://attacker.example/1",
+  ]) {
+    assert.equal(C.isSameOrigin(bad, base), false, JSON.stringify(bad));
+  }
+  assert.equal(C.isSameOrigin("/x", "not a url"), false);
+});
+
+test("app.js api() attaches the Bearer key only after the same-origin check", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("async function api("), src.indexOf("async function apiJson("));
+  assert.match(body, /if \(C\.isSameOrigin\(path, location\.href\)\) o\.headers = authHeaders\(o\.headers\)/);
+  assert.doesNotMatch(body.replace(/if \(C\.isSameOrigin[^\n]*\n/, ""), /authHeaders\(/);
+  assert.match(body, /credentials = "omit"/);
+});
