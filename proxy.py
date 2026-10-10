@@ -274,7 +274,7 @@ from gateway.local_capabilities import (
     build_local_capabilities,
 )
 from gateway.service_usage import relied_on_service_ids
-from gateway.extensions import ExtensionError
+from gateway.extensions import ExtensionError, multipart_extensions
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
     STANDARD_IMAGE_GENERATE_FIELDS,
@@ -20374,18 +20374,14 @@ def _drain_prompt_purges() -> None:
 
 
 def _maintain_household_prompt_memory() -> None:
-    # Retry the durable fence after re-enable, preserving newer prompts.
+    # Keep the fence for in-flight writes; replay cleanup only while unfinished.
     with prompt_memory.retention_guard(ADMIN_STORE.path) as household:
         cutoff = prompt_memory.household_erasure_cutoff(admin_path=ADMIN_STORE.path)
-        if cutoff is not None:
-            media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
-            if household["never_keep"]:
-                prompt_memory.delete_all()
-                responses_store.delete_all(path=responses_store.DB_PATH)
-            else:
-                prompt_memory.prune_all_before(cutoff)
-                responses_store.delete_all_before(cutoff, path=responses_store.DB_PATH)
-    if cutoff is not None:
+        pending = prompt_memory.erasure_pending("*", admin_path=ADMIN_STORE.path)
+    if cutoff is not None and (pending or cutoff > _prompt_purge_covered("*")):
+        media_jobs.erase_prompt_derivatives({"*"}, before=cutoff, path=media_jobs.DB_PATH)
+        prompt_memory.prune_all_before(cutoff)
+        responses_store.delete_all_before(cutoff, path=responses_store.DB_PATH)
         if cutoff > _prompt_purge_covered("*"):
             _queue_prompt_purge("*", cutoff)
             _purge_queued_payloads("*")
@@ -21213,14 +21209,25 @@ def _image_generation_body_from_media_job_payload(
     if not isinstance(request_body, Mapping):
         request_body = payload.get("parameters")
     if isinstance(request_body, Mapping):
-        return dict(request_body)
+        return _media_job_prompt_body(payload, request_body)
     if "prompt" not in payload:
         return None
-    return {
+    return _media_job_prompt_body(payload, {
         str(key): value
         for key, value in payload.items()
         if str(key) in STANDARD_IMAGE_GENERATE_FIELDS
-    }
+    })
+
+
+def _media_job_prompt_body(payload: Mapping[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:
+    """Honor a forget control on either side of the queued request envelope."""
+    outer_mode = prompt_memory.requested_mode(payload)
+    prompt_memory.requested_mode(body)
+    result = dict(body)
+    if outer_mode == "forget":
+        result["extensions"] = {**(body.get("extensions") or {}),
+                                prompt_memory.NAMESPACE: {"mode": "forget"}}
+    return result
 
 
 _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
@@ -21376,7 +21383,7 @@ def _audio_generation_body_from_media_job_payload(
     request_body = payload.get("request")
     if not isinstance(request_body, Mapping):
         request_body = payload.get("parameters")
-    return dict(request_body) if isinstance(request_body, Mapping) else None
+    return _media_job_prompt_body(payload, request_body) if isinstance(request_body, Mapping) else None
 
 
 def _persist_audio_media_job_payload(
@@ -21747,7 +21754,7 @@ def _video_generation_body_from_media_job_payload(
     request_body = payload.get("request")
     if not isinstance(request_body, Mapping):
         request_body = payload.get("parameters")
-    return dict(request_body) if isinstance(request_body, Mapping) else None
+    return _media_job_prompt_body(payload, request_body) if isinstance(request_body, Mapping) else None
 
 
 def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None, Response | None]:
@@ -22298,13 +22305,16 @@ async def _dispatch_gateway_media_job_submission(
     if not isinstance(intent, str) or not intent.strip():
         return None
     intent = intent.strip()
-    audio_body = _audio_generation_body_from_media_job_payload({**payload, "intent": intent})
+    try:
+        audio_body = _audio_generation_body_from_media_job_payload({**payload, "intent": intent})
+        video_body = _video_generation_body_from_media_job_payload({**payload, "intent": intent})
+        body = _image_generation_body_from_media_job_payload({**payload, "intent": intent})
+    except prompt_memory.PromptModeError as exc:
+        return _json_error(400, str(exc), code="invalid_prompt_mode", param="extensions")
     if audio_body is not None:
         return await _submit_audio_media_job(request=request, intent=intent, body=audio_body)
-    video_body = _video_generation_body_from_media_job_payload({**payload, "intent": intent})
     if video_body is not None:
         return await _submit_video_media_job(request=request, body=video_body)
-    body = _image_generation_body_from_media_job_payload(payload)
     if body is None:
         if intent == "image.generate":
             return None
@@ -22894,12 +22904,12 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
         form_fields = set(form.keys())
         prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
-        controls: dict[str, Any] = {}
+        controls = multipart_extensions(form.get("extensions"))
         if form.get(metadata_field) is not None:
             controls[WORKFLOW_EXTENSION_NAMESPACE] = {provenance.METADATA_CONTROL: form.get(metadata_field)}
         if form.get(prompt_mode_field) is not None:
             controls[prompt_memory.NAMESPACE] = {"mode": form.get(prompt_mode_field)}
-        unknown_fields = form_fields - set(input_specs) - {metadata_field, prompt_mode_field}
+        unknown_fields = form_fields - set(input_specs) - {"extensions", metadata_field, prompt_mode_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}

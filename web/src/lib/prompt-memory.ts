@@ -175,8 +175,17 @@ export function withForget<T extends Record<string, unknown>>(
     extensions = { ...(raw as Record<string, unknown>) };
   }
   extensions[FORGET_EXTENSION] = { mode: "forget" };
+  // Queued workflow routes execute the nested request or parameters body.
+  const nested: Record<string, unknown> = {};
+  for (const field of ["request", "parameters"]) {
+    const value = body[field];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      nested[field] = withForget(value as Record<string, unknown>);
+    }
+  }
   return {
     ...body,
+    ...nested,
     extensions: wasString ? JSON.stringify(extensions) : extensions,
   };
 }
@@ -213,7 +222,7 @@ export function keyPromptNote(
   if (promptMemory.description) return promptMemory.description;
   return promptMemory.person_id
     ? "This key acts as you. Anyone who has it can see the prompts you saved."
-    : "Media prompts sent with this key are not remembered. Chat requests with store:true can save the conversation for up to seven days.";
+    : "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation for up to seven days.";
 }
 
 export const householdPromptMemoryApi = {

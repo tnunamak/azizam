@@ -56,7 +56,10 @@ describe("prompt memory rules", () => {
 
 describe("withForget", () => {
   it("puts forget inside queued workflow requests as well as the envelope", () => {
-    const request = { prompt: "Private words", extensions: { "com.azizam.workflow": { seed: 7 } } };
+    const request = {
+      prompt: "Private words",
+      extensions: { "com.azizam.workflow": { seed: 7 } },
+    };
     const body = withForget({ intent: "image.generate", request });
     expect(body.request.extensions).toEqual({
       "com.azizam.workflow": { seed: 7 },
@@ -135,7 +138,7 @@ describe("purgeStatus", () => {
 describe("keyPromptNote", () => {
   it("says a service or someone else's key is not remembered", () => {
     expect(keyPromptNote({ person_id: null })).toBe(
-      "Media prompts sent with this key are not remembered. Chat requests with store:true can save the conversation for up to seven days.",
+      "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation for up to seven days.",
     );
   });
 
