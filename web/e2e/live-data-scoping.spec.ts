@@ -101,9 +101,10 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
   // The seeded audio.speech request, under its task name from lib/terms
-  // (taskNames.speech), then its model and count.
+  // (taskNames.speech), then its model after a "·" (one line since craft
+  // PR 6) and its count.
   await expect(
-    page.getByRole("row", { name: new RegExp(`${taskNames.speech} Voice 1\\b`) }),
+    page.getByRole("row", { name: new RegExp(`${taskNames.speech} · Voice 1\\b`) }),
   ).toBeVisible();
 });
 
