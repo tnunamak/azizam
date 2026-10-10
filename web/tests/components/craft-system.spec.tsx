@@ -349,9 +349,13 @@ describe("ListCard and ListRow", () => {
     expect(classes(screen.getByText("Sam"))).toEqual(
       expect.arrayContaining(["text-body", "font-medium", "truncate"]),
     );
-    expect(classes(screen.getByText("robin@example.test"))).toEqual(
-      expect.arrayContaining(["text-meta", "truncate"]),
-    );
+    expect(
+      classes(
+        screen.getByText("robin@example.test").closest(
+          "[data-slot=list-row-meta]",
+        )!,
+      ),
+    ).toEqual(expect.arrayContaining(["text-meta", "truncate"]));
   });
 
   it("joins meta and, on a phone, the facts into one second line", () => {
@@ -374,6 +378,27 @@ describe("ListCard and ListRow", () => {
       .getByRole("listitem")
       .querySelector("[data-slot=list-row-facts]")!;
     expect(classes(facts)).toEqual(expect.arrayContaining(["max-sm:hidden", "text-meta"]));
+  });
+
+  it("can give a phone's second line to the facts alone", () => {
+    render(
+      <ListCard label="People">
+        <ListRow
+          lines={2}
+          phoneLine="facts"
+          title="Robin"
+          meta="robin@example.test"
+          facts={["Builder", "just now"]}
+        />
+      </ListCard>,
+    );
+    const meta = screen
+      .getByRole("listitem")
+      .querySelector("[data-slot=list-row-meta]")!;
+    expect(screen.getByText("robin@example.test")).toHaveClass("max-sm:hidden");
+    expect(meta.querySelector(".sm\\:hidden")?.textContent).toBe(
+      "Builder · just now",
+    );
   });
 
   it("opens the row from its title and keeps the trailing action on top", () => {
