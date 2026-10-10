@@ -632,9 +632,11 @@ clean cache bytes and no saved prompt.
 Upgrade runs a throttled, resumable background migration that strips legacy
 cache metadata in place. Asset IDs remain opaque handles after this rewrite;
 no download path rechecks them against a content hash. Delete-all and the kill
-switch strip affected legacy files before returning success. A partial purge
-returns HTTP 202 with pending counts and schedules retries; it does not claim
-completed erasure. Unsupported or corrupt files remain reported as pending.
+switch remove database rows immediately and queue affected legacy files for
+stripping. HTTP 202 reports queued cleanup and schedules retries; settings GET
+keeps queued or retrying status visible until file cleanup finishes. It does
+not claim completed erasure while file work is pending. Unsupported or corrupt
+files remain reported as pending.
 SQLite secure deletion reduces recoverable database content, but snapshots,
 backups, backend histories and previous downloads are outside this contract.
 See `docs/design/PROMPT_MEMORY.md`.
@@ -645,7 +647,10 @@ async image retries. Whole-second timestamps can also suppress storage for a
 new request in the same second. Media generation still completes. A deletion
 whose intent cannot be saved returns 503 with retry_required; it does not claim
 that a background retry was scheduled. Persisted off settings and retention
-limits are reconciled on startup and every minute.
+limits are reconciled on startup and every minute. Background erasure uses
+the recorded off-setting timestamp and existing cutoff, never a stale
+setting snapshot with a new "now" cutoff. Rows written after memory was
+re-enabled remain outside that cleanup.
 
 Receipts have audiences:
 

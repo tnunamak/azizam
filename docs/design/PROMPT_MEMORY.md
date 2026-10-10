@@ -74,10 +74,11 @@ own personal-App key delegates the owner's identity and prompt access.
 The owner can read databases or issue a reset link to sign in as a member.
 Privacy in the UI/API does not protect against that server authority.
 
-The key-minting API returns `prompt_memory.person_id` and
+Both admin and self-service key-minting APIs return `prompt_memory.person_id` and
 `prompt_memory.description`. For service Apps or someone else's App the copy
 is: "Prompts sent with this key are not remembered. Generated items belong to
-the App." For an own personal-App key it says prompts follow your settings
+the App. Chat requests can explicitly ask to save a conversation for up to
+seven days." For an own personal-App key it says prompts follow your settings
 and anyone holding the key can access your saved prompts. The web key form
 must show this description when its frontend work ships.
 
@@ -150,9 +151,12 @@ legacy crash scratch files are removed. Lossless JPEG/WebP metadata insertion
 preserves compressed image data, and clean WAV/MP3/FLAC stripping requires no
 ffmpeg. Input-reference resolution and MCP reads strip metadata on delivery.
 
-Delete-all and the kill switch strip affected files synchronously in a worker
-thread. HTTP 202 reports pending cleanup; a persisted retry queue and startup
-maintenance resume it. The kill switch takes effect before cleanup and blocks
+Delete-all and the kill switch remove database rows immediately and queue
+file stripping for background work. HTTP 202 reports queued cleanup; the
+settings GET keeps queued/retrying status visible until the persisted queue
+is drained. Startup and periodic maintenance retry unfinished work. Cleanup
+uses recorded setting-change cutoffs, preserving prompts and chats saved after
+a member re-enables memory. The kill switch takes effect before cleanup and blocks
 new prompt writes. Recent video prompts with unknown creators are removed at
 upgrade rather than assigned to an App's owner.
 
