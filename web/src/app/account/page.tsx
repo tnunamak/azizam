@@ -8,10 +8,7 @@ import { toast } from "sonner";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";
-import {
-  SettingRow,
-  SettingsSection,
-} from "@/components/product/setting-row";
+import { SettingRow, SettingsSection } from "@/components/product/setting-row";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,7 +58,7 @@ function errorMessage(error: unknown, fallback: string) {
 export default function AccountPage() {
   const viewer = useViewer();
   return (
-    <div className="page-read">
+    <div className="page-read page-stack">
       <PageHeader title="Your settings" />
       {viewer.serviceAdmin ? (
         <ErrorState
@@ -98,7 +95,9 @@ function PromptsSection() {
       );
     },
     onError: (failure) =>
-      toast.error(errorMessage(failure, "Your setting wasn’t saved. Try again.")),
+      toast.error(
+        errorMessage(failure, "Your setting wasn’t saved. Try again."),
+      ),
   });
   const remove = useMutation({
     mutationFn: accountApi.deleteSavedPrompts,
@@ -147,7 +146,7 @@ function PromptsSection() {
   }
 
   return (
-    <>
+    <div>
       <SettingsSection
         id="prompts"
         title="Prompts"
@@ -257,9 +256,7 @@ function PromptsSection() {
               className="text-muted-foreground mt-0.5 size-4 shrink-0 animate-spin motion-reduce:animate-none"
             />
             <div className="min-w-0">
-              <p className="text-body font-medium">
-                Saved prompts are deleted
-              </p>
+              <p className="text-body font-medium">Saved prompts are deleted</p>
               <p className="text-muted-foreground text-meta">{status}</p>
             </div>
           </div>
@@ -311,6 +308,6 @@ function PromptsSection() {
             });
         }}
       />
-    </>
+    </div>
   );
 }

@@ -101,7 +101,11 @@ export function withinCap(value: Retention, cap: Retention): boolean {
  * - `unknown`: the setting could not be read; Try offers the opt-out and
  *   claims nothing about keeping.
  */
-export type TryKeepState = "choice" | "member-off" | "household-off" | "unknown";
+export type TryKeepState =
+  | "choice"
+  | "member-off"
+  | "household-off"
+  | "unknown";
 
 export function tryKeepState(
   settings: MemberPromptMemory | null | undefined,
@@ -120,7 +124,9 @@ export const FORGET_EXTENSION = "com.azizam.prompts";
  * a multipart form's `extensions` field (which may be a JSON string). Other
  * extensions are kept as they are.
  */
-export function withForget<T extends Record<string, unknown>>(body: T): T {
+export function withForget<T extends Record<string, unknown>>(
+  body: T,
+): T & { extensions: unknown } {
   const raw = body.extensions;
   const wasString = typeof raw === "string";
   let extensions: Record<string, unknown> = {};

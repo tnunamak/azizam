@@ -90,7 +90,10 @@ describe("purgeStatus", () => {
   it("is silent when nothing is pending", () => {
     expect(purgeStatus(undefined)).toBeNull();
     expect(
-      purgeStatus({ pending: false, metadata_stripping: { status: "complete" } }),
+      purgeStatus({
+        pending: false,
+        metadata_stripping: { status: "complete" },
+      }),
     ).toBeNull();
   });
 
@@ -100,7 +103,9 @@ describe("purgeStatus", () => {
         pending: true,
         metadata_stripping: { status: "queued", files_pending: 12 },
       }),
-    ).toBe("Removing copies from older files in the background. 12 files left.");
+    ).toBe(
+      "Removing copies from older files in the background. 12 files left.",
+    );
     expect(
       purgeStatus({
         pending: true,
