@@ -1,5 +1,10 @@
 import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
+import type {
+  DeletePromptsResponse,
+  MemberPromptMemoryResponse,
+  Retention,
+} from "./prompt-memory";
 
 export interface AccountApp {
   id: string;
@@ -75,6 +80,19 @@ export const accountApi = {
     }),
   deleteApp: (appId: string) =>
     accountRequest(`/me/api/apps/${encodeURIComponent(appId)}`, {
+      method: "DELETE",
+    }),
+  /** The signed-in person's prompt memory and the household's rules. */
+  promptMemory: () =>
+    accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory"),
+  /** Turning memory off or shortening the period deletes prompts now. */
+  savePromptMemory: (value: { remember: boolean; retention: Retention }) =>
+    accountRequest<MemberPromptMemoryResponse>("/me/api/prompt-memory", {
+      method: "PUT",
+      body: value,
+    }),
+  deleteSavedPrompts: () =>
+    accountRequest<DeletePromptsResponse>("/me/api/prompt-memory/prompts", {
       method: "DELETE",
     }),
 };

@@ -145,6 +145,9 @@ export interface MintedCredential extends Credential {
   api_key: string;
   role?: string;
   service_account?: string;
+  /** Whose prompts this key carries: a person, or none (service and
+   * someone else's Apps), with the gateway's own description. */
+  prompt_memory?: { person_id: string | null; description?: string };
 }
 
 export interface Profile {
