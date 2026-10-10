@@ -37,6 +37,7 @@ import {
   type CapabilityNameRow,
 } from "@/lib/model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
+import { normalizeCapability, type UsageCapability } from "./usage-capability";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -72,10 +73,8 @@ import {
   Money,
   PageHeader,
   RelativeTime,
-  type Capability,
 } from "@/components/product";
 
-type UsageCapability = Capability | "audio" | "embeddings" | "rerank" | "other";
 
 interface UsageDay {
   date: string;
@@ -1416,27 +1415,6 @@ function normalizeCapabilityCounts(
     counts[capability] += requestCount(value) ?? 0;
   }
   return counts;
-}
-
-function normalizeCapability(value: unknown): UsageCapability {
-  const text = String(value ?? "").toLowerCase();
-  if (text === "default") return "chat";
-  if (text === "stt" || text.includes("transcri")) return "transcribe";
-  if (text.includes("image")) return "image";
-  if (text.includes("video")) return "video";
-  if (text.includes("rerank")) return "rerank";
-  if (text.includes("embedding") || text.includes("embed")) return "embeddings";
-  if (text.includes("speech") || text.includes("audio")) return "audio";
-  if (text.includes("voice")) return "voice";
-  if (text.includes("transcrib")) return "transcribe";
-  if (text.includes("decision") || text.includes("decide")) return "decide";
-  if (
-    text.includes("chat") ||
-    text.includes("completion") ||
-    text.includes("openai")
-  )
-    return "chat";
-  return "other";
 }
 
 function object(value: unknown): Record<string, unknown> {

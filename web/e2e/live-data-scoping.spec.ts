@@ -1,5 +1,6 @@
 import { expect, request, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { taskNames } from "../src/lib/terms";
 
 type Manifest = {
   service_asset: string;
@@ -99,7 +100,11 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByRole("row", { name: /Audio voice 1/ })).toBeVisible();
+  // The seeded audio.speech request, under its task name from lib/terms
+  // (taskNames.speech), then its model and count.
+  await expect(
+    page.getByRole("row", { name: new RegExp(`^${taskNames.speech} Voice 1\\b`) }),
+  ).toBeVisible();
 });
 
 test("member cannot see local/service media or mint signed URLs for them", async ({

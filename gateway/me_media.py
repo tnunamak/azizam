@@ -47,7 +47,8 @@ _CAPABILITY_BY_INTENT_PREFIX = {
     "image": "image",
     "video": "video",
     "audio": "audio",
-    "speech": "audio",
+    # Text read aloud is its own task ("Read text aloud"), not music or sounds.
+    "speech": "voice",
     "stt": "transcribe",
     "transcription": "transcribe",
     "embedding": "embeddings",
@@ -1343,6 +1344,8 @@ def _capability(receipt: Mapping[str, Any]) -> str:
     path = str(receipt.get("path") or "")
     if intent.startswith("audio.transcri") or path.startswith(("/v1/audio/transcriptions", "/v1/audio/translations")):
         return "transcribe"
+    if intent.startswith("audio.speech") or path.startswith("/v1/audio/speech"):
+        return "voice"
     prefix = intent.split(".", 1)[0]
     if prefix in _CAPABILITY_BY_INTENT_PREFIX:
         return _CAPABILITY_BY_INTENT_PREFIX[prefix]
@@ -1373,6 +1376,7 @@ def _capability_label(capability: str) -> str:
         "image": "Image",
         "video": "Video",
         "audio": "Audio",
+        "voice": "Voice",
         "transcribe": "Transcription",
         "embeddings": "Embeddings",
         "rerank": "Rerank",
