@@ -104,7 +104,13 @@ def gateway(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, "ReceiptLifecycleOwner", receipt_owner)
 
     restricted = admin_store.create_profile(
-        "Restricted", {"id": "restricted", "allow": {"model_groups": []}}, path=paths["admin"]
+        "Restricted",
+        {
+            "id": "restricted",
+            "allow": {"intents": ["image.generate"]},
+            "native_passthrough": {"enabled": False},
+        },
+        path=paths["admin"],
     )
     user = admin_store.upsert_oidc_user(
         "https://catchall.test", "member", email="member@example.test", path=paths["admin"]
@@ -177,6 +183,18 @@ def test_identities_resolve_to_the_expected_apps_and_plan(gateway):
     assert member.app_id == gateway.member_app["id"]
     assert member.profile.id == "restricted"
     assert identity(gateway.headers["app"]).app_id == gateway.service_app["id"]
+
+
+def test_restricted_plan_is_denied_on_the_canonical_native_route(gateway):
+    """Control: the plan the bypass skipped really denies native passthrough."""
+    before = _receipt_count(gateway)
+    response = _send(
+        gateway, "POST", "/gateway/v1/providers/tabby/v1/model/load",
+        headers=gateway.headers["member"],
+    )
+    assert response.status_code == 403, response.text
+    assert gateway.calls == []
+    assert _receipt_count(gateway) == before + 1  # the denial is receipted
 
 
 @pytest.mark.parametrize("who", ["member", "app"])
