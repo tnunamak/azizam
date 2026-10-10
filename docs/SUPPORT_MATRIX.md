@@ -252,9 +252,9 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/v1/videos/{video_id}/remix` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_remix` |
 | `GET` | `/v1/voices` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `list_voices` |
 | `POST` | `/v2/rerank` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `rerank_v2` |
-| `DELETE` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
-| `GET` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
-| `OPTIONS` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
-| `PATCH` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
-| `POST` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
-| `PUT` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `proxy_request` |
+| `DELETE` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
+| `GET` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
+| `OPTIONS` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
+| `PATCH` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
+| `POST` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
+| `PUT` | `/{path:path}` | unsupported | 404 for unmatched public paths | [proxy.py](../proxy.py) `unmatched_route` |
