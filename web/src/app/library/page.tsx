@@ -54,6 +54,7 @@ import {
   audioKind,
   DayChip,
   MediaBadge,
+  mediaGridGap,
   playDiscButton,
   Waveform,
 } from "@/components/product/audio-cover";
@@ -2351,7 +2352,7 @@ export default function LibraryPage() {
           >
             {/* The grid's own shape: three to six columns (D1.5: two big
               phone squares jumped to three). */}
-            <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
               {Array.from({ length: 12 }).map((_, index) => (
                 <Skeleton key={index} className="rounded-media aspect-square" />
               ))}
@@ -2404,7 +2405,7 @@ export default function LibraryPage() {
           <div aria-busy={updating}>
             {/* One continuous grid, newest first (D1.6: date groups left
               part-filled rows); the day rides on its first tile. */}
-            <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
               {inProgress.map((item) => (
                 <InProgressTile key={item.id} item={item} />
               ))}

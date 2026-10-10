@@ -5,6 +5,13 @@ import { AudioLines, Music2, Play, Waves } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAudioPeaks } from "@/lib/audio-peaks";
 
+/**
+ * The gutter between media tiles: 4 on a phone, 6 above (DESIGN.md, "Media
+ * grid"). Library's grid and Home's Recent strip both use it, so a tile sits
+ * the same distance from its neighbours on every page.
+ */
+export const mediaGridGap = "gap-1 sm:gap-1.5";
+
 /** What kind of sound a model makes, in the glossary's words. */
 export function audioKind(model?: string | null): {
   label: "Voice" | "Music" | "Sound effect" | "Audio";
