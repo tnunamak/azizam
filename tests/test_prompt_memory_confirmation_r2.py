@@ -62,6 +62,46 @@ def test_queued_outer_forget_reaches_execution_and_never_hits_disk(household, in
     assert b"queued private sentinel" not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
 
 
+@pytest.mark.parametrize("intent,model", [
+    ("image.generate", "krea2-turbo"),
+    ("audio.generate", "tangoflux"),
+    ("music.generate", "tangoflux"),
+    ("sfx.generate", "tangoflux"),
+    ("video.generate", "ltx-2.3"),
+])
+def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, monkeypatch, intent, model):
+    from tests.test_prompt_memory_identity import _png
+    hh = household
+    monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *_: None)
+    for kind in ("image", "audio", "video"):
+        monkeypatch.setattr(proxy, f"_schedule_{kind}_media_job", lambda *_: True)
+    body = {"model": model, "prompt": "queued route private sentinel"}
+    response = asyncio.run(proxy._dispatch_gateway_media_job_submission(
+        request=_StubJsonRequest({}), payload={"intent": intent, "request": body, "extensions": FORGET}, audience="client"))
+    assert response.status_code == 202, response.body
+    result = json.loads(response.body)
+    job_id = result.get("job_id") or result["id"]
+    job = media_jobs.get(job_id, audience="internal")
+    assert job["intent"] == intent
+    assert "queued route private sentinel" not in json.dumps(job)
+    payload = proxy._load_image_media_job_payload(job_id)
+    assert payload["body"]["extensions"] == FORGET
+    context = proxy._begin_media_delivery(hh.auth)
+    try:
+        assert proxy._note_media_metadata_body(payload["body"]) is None
+        assert not context.prompt_decision.keep
+        asset = proxy.store_asset_bytes(_png(body["prompt"]), kind="img", suffix=".png",
+                                       owner_key_hash=proxy._asset_owner_key(hh.auth))
+        assert prompt_memory.get(asset, hh.robin["id"]) is None
+        assert body["prompt"].encode() not in proxy.asset_cache_path(asset).read_bytes()
+    finally:
+        proxy.media_delivery._CONTEXT.set(None)
+    assert b"queued route private sentinel" not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
+    proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS.clear()
+    assert proxy._load_image_media_job_payload(job_id) is None, "forgotten jobs cannot resume after restart"
+
+
 @pytest.mark.parametrize("mode", ["forget", "member-off"])
 @pytest.mark.parametrize("route", [identity_api.IDENTITY_PATH, identity_api.LIKENESS_PATH])
 @pytest.mark.parametrize("encoding", ["json", "bracket"])
