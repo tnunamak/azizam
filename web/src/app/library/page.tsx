@@ -53,9 +53,9 @@ import {
   AudioFace,
   audioKind,
   DayChip,
-  MediaBadge,
   mediaGridGap,
-  playDiscButton,
+  tilePlayButton,
+  TileMeta,
   Waveform,
 } from "@/components/product/audio-cover";
 import { useAudioPeaks } from "@/lib/audio-peaks";
@@ -391,11 +391,6 @@ function pauseOtherAudio(current: HTMLAudioElement) {
  * its own cover and title. One persistent control groups play, type and
  * length, leaving room for the day chip without adding another overlay.
  */
-const tilePlayButton = cn(
-  playDiscButton,
-  "absolute bottom-2 left-2 h-10 w-auto gap-1 rounded-badge px-2 max-sm:min-h-11 [&_svg]:translate-x-0",
-);
-
 function AudioTile({
   assetId,
   src,
@@ -502,10 +497,12 @@ function AudioTile({
           }
         }}
       >
-        {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-        <MediaBadge icon={AudioLines} className="bg-transparent">
-          {durationText}
-        </MediaBadge>
+        {isPlaying ? (
+          <Pause aria-hidden className="size-4 fill-current" />
+        ) : (
+          <Play aria-hidden className="size-4 fill-current" />
+        )}
+        <TileMeta icon={AudioLines}>{durationText}</TileMeta>
       </button>
     </>
   );
@@ -962,18 +959,25 @@ function Preview({
               setTilePlaying(true);
               setTileBlocked(false);
               setMediaFailed(false);
-            } catch {
+            } catch (error) {
+              // Pausing while play() is pending rejects with AbortError; that is not a failure.
+              if (error instanceof DOMException && error.name === "AbortError")
+                return;
               setTilePlaying(false);
               setTileBlocked(true);
             }
           }}
         >
-          {tilePlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-          <MediaBadge icon={Video} className="bg-transparent">
+          {tilePlaying ? (
+            <Pause aria-hidden className="size-4 fill-current" />
+          ) : (
+            <Play aria-hidden className="size-4 fill-current" />
+          )}
+          <TileMeta icon={Video}>
             {tileDuration != null && Number.isFinite(tileDuration) && tileDuration >= 0
               ? formatDuration(tileDuration)
               : null}
-          </MediaBadge>
+          </TileMeta>
         </button>
         {tileBlocked ? (
           <p role="status" className="bg-media-badge text-media-badge-foreground text-badge absolute inset-x-2 top-10 z-30 rounded-badge px-2">

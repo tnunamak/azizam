@@ -360,9 +360,7 @@ describe("LibraryPage batch J provenance", () => {
       name: `Play ${audioAsset.prompt}`,
     });
     // Play and the type/length badge share one persistent control.
-    expect(
-      playButton.closest("article")!.querySelector("span.pointer-events-none.flex.h-6"),
-    ).toHaveTextContent("2:05");
+    expect(playButton).toHaveTextContent("2:05");
     expect(
       screen.queryByLabelText(`Play ${audioAsset.prompt}`, {
         selector: "audio",
@@ -1064,6 +1062,9 @@ describe("Library media identity and tile playback", () => {
       const button = screen.getByRole("button", { name: `Play ${title}` });
       expect(button).toBeVisible();
       expect(button).not.toHaveClass("opacity-0", "max-sm:hidden");
+      // Anchored to the tile corner; a stray "relative" would drop it below the face.
+      expect(button).toHaveClass("absolute", "bottom-2", "left-2");
+      expect(button).not.toHaveClass("relative");
       expect(button.querySelector(".lucide-play")).toBeTruthy();
       expect(button.querySelector(`.${icon}`)).toBeTruthy();
       expect(button).toHaveTextContent(duration);

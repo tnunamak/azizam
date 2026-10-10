@@ -136,6 +136,32 @@ export const playDiscButton = cn(
 );
 
 /**
+ * The one always-visible control on a video or audio tile: play or pause, then
+ * the type and length. It is its own class set, not playDiscButton plus
+ * overrides, because cn does not merge conflicting utilities.
+ */
+export const tilePlayButton = cn(
+  scrim,
+  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto absolute bottom-2 left-2 z-30 flex h-10 cursor-pointer items-center gap-1.5 rounded-badge px-2.5 transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11",
+);
+
+/** The type glyph and length inside a tilePlayButton. */
+export function TileMeta({
+  icon: Icon,
+  children,
+}: {
+  icon: typeof AudioLines;
+  children?: ReactNode;
+}) {
+  return (
+    <span className="text-badge flex items-center gap-1 [&_svg]:size-3.5">
+      <Icon aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+/**
  * A short day label ("Today", "Oct 20") on the first tile of each day, in
  * badge text with the badge radius.
  */
