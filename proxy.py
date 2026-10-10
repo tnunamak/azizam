@@ -22394,7 +22394,6 @@ async def gateway_image_generations_media_job(request: Request):
         return response
 
     idempotency_key = request.headers.get("idempotency-key")
-    _begin_media_delivery(auth_context)
     invalid_controls = _note_media_metadata_body(body)
     if invalid_controls is not None:
         finish_image_route_receipt(receipt, invalid_controls)
