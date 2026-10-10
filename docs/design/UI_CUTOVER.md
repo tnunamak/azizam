@@ -39,15 +39,18 @@ The Profiles redirect prepends `tab=plans`, followed by the unchanged
 incoming query text. Unknown `/ui/admin/*` pages remain 404 after the owner
 check; they do not become Home. `/admin/*` and `/ui/admin/*` aliases retain
 the existing owner/admin authorization checks. Canonical owner static pages
-(Status, Engines, Providers, People, Activity and Settings) have the same
-server guard. The shared app shell determines the person's visible navigation.
+(Engines, Providers, People, Activity and Settings) have the same server guard.
+The canonical Status page is visible to members as well as owners.
+The shared app shell determines the person's visible navigation.
 
 ## Retained compatibility and technical details
 
 Every `/me/api/*`, `/admin/api/*`, and protocol API keeps its route and
 method. Logout, setup POST handlers, OIDC callbacks, `/docs`, and `/redoc`
-remain outside the static route map. Bearer-authenticated `/admin` retains
-its Python admin response for existing automation; it does not redirect.
+remain outside the static route map. The old Python dashboard at `/admin`
+requires an admin key in a request header. Such authenticated requests retain
+the Python response for existing automation; they do not redirect.
+The personal browser page at `/me` redirects to `/ui/home/`.
 The Python portal renderer remains referenced by non-HTML root clients
 and `/r/{request_id}` receipt links. Those links keep their existing receipt
 sheet until Usage supports selecting a receipt from the query string.
@@ -102,10 +105,7 @@ observed client version is labelled “Untested recipe.” Local execution means
 initial setup milestone; connecting an engine, making a request, copying
 client settings and seeing its receipt form the Home milestone.
 
-The member-scoped Status API and page, Workflows surface, amended navigation
-order and visual identity belong to their product surface lanes. This cutover
-adds no placeholder destinations. The current Status page still reads owner
-APIs, so its server authorization remains owner/admin-only until a member
-surface can display scoped observations. `/status/raw` stays owner/admin-only
-when member Status ships. Ship those surface changes with this cutover to meet
-the amended release bar.
+Status is visible to members as well as owners. `/status/raw` remains
+owner/admin-only. The Workflows surface, amended navigation order and visual
+identity belong to their product surface lanes. This cutover adds no
+placeholder destinations.

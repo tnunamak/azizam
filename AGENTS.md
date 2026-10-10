@@ -65,9 +65,13 @@ encoding per-engine fixes it must maintain.
 `tests/test_engine_knowledge_boundary.py` fails the build if new per-engine code
 appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
-/ `--jinja`). The allowlist is content-keyed (drift-proof) and holds only the
-already-reviewed `_LOCAL_SWAP_BACKENDS` kobold/tabby lifecycle infra (a frozen
-set) and two `D-1`/`D-2`-pending built-ins. **If your change trips this guard:
+/ `--jinja`). proxy.py has no allowlist entries: the remaining reviewed engine
+literals (the kobold/tabby local-swap lifecycle set and similar properties) live
+as data in `gateway/engine_quarantine.py`, which is reviewed as a unit and not
+scanned. The former engine-named transform classes are now generic. D-2's engine
+framing is removed and D-3 is complete. D-1's generic reasoning transform still
+applies automatically to resolved local chat, once behind a resolved-target gate.
+**If your change trips this guard:
 the fix is to move the knowledge to data, not to add an allowlist entry.** Adding
 an allowlist entry requires an explicit, reviewed justification and is the
 exception, never the reflex.

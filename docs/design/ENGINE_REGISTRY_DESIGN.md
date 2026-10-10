@@ -543,6 +543,11 @@ Per managed service: **Start / Stop / Swap-model** buttons calling `ensure_ready
 
 ## 7. WHAT GETS DELETED (the ~74 → mapped)
 
+**Status — 2026-10-10, owner-supplied audit at `fdc3c9d`:** Some named
+health wrappers remain. `backend_supports()` is dead code, not an active
+config reader. The deletion table and recommendations below are historical
+design intent, not proof that every named health function was removed.
+
 | Today (audit category) | Becomes | Survives? |
 |---|---|---|
 | `TABBY_HOST`/`KOBOLD_HOST`/`TTS_HOST`/`STT_HOST`/`EMBEDDINGS_HOST`/`COMFY_HOST` constants + ports/paths | `service.connection.*` | **config field** |

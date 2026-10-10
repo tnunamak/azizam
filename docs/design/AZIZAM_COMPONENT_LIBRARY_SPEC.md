@@ -1,5 +1,11 @@
 # Azizam Component Library Spec
 
+**Superseded — 2026-10-10, owner-supplied audit at `fdc3c9d`:** The external
+brand-package and operational-widget requirements below are historical.
+Follow `docs/design/DESIGN.md` for design rules. Tokens are local in
+`web/src/styles/tokens.css`. The old operational widgets are being removed.
+Do not use these older requirements to restore them.
+
 This is the working contract for bringing the gateway UI to the designer's bar
 without duplicating branding, design tokens, or component behavior across routes.
 
@@ -12,8 +18,8 @@ history but are not competing requirements.
 
 Build one coherent, reusable Azizam component system for the gateway:
 
-- `@vivid-fish/brand` owns tokens, semantic CSS primitives, motion, focus,
-  surfaces, row grammar, status grammar, and responsive shell layout.
+- Local tokens supply the visual decisions. The former external
+  `@vivid-fish/brand` ownership requirement is superseded.
 - `web/src/components/ui/*` owns typed React wrappers and behavior over those
   primitives.
 - route files own data selection, mutations, and page-specific composition only.
