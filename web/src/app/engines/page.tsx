@@ -821,7 +821,7 @@ export default function Page() {
   const viewer = useViewer();
   if (!viewer.admin) {
     return (
-      <ErrorState message="Only an owner or admin can manage backends. Ask an owner or admin for help." />
+      <ErrorState message="Only an owner or admin can manage engines. Ask an owner or admin for help." />
     );
   }
   return (

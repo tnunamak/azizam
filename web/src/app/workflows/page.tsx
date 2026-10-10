@@ -884,8 +884,8 @@ export default function WorkflowsPage() {
           title="No workflows available"
           description={
             owner
-              ? "No workflow choices are available."
-              : "No workflow choices are available to you. Ask the owner what you can use."
+              ? "No workflows are available."
+              : "No workflows are available to you. Ask the owner what you can use."
           }
           action={
             <Button variant="outline" asChild>

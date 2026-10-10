@@ -434,13 +434,13 @@ it.each([
   mountCopyProviders({ spend_today_usd: amount, spend_month_usd: amount });
   await screen.findByRole("heading", { name: "Example Provider" });
   expect(screen.getAllByText(String(label))).toHaveLength(2);
-  expect(screen.getByText("Paid models run with provider pages.")).toBeVisible();
+  expect(screen.getByText("Paid models run with providers.")).toBeVisible();
   expect(screen.getByText("A request uses a provider only when its model names one.")).toBeVisible();
   expect(screen.queryByText(/Paid access is never automatic/)).toBeNull();
 });
 
 it.each([
-  ["Remove provider", "Remove Example Provider from this proxy?"],
+  ["Remove provider", "Remove Example Provider from this gateway?"],
   ["Delete key", "Delete the saved key for Example Provider?"],
 ])("COPY-07 provider confirmation %s", async (action, description) => {
   mountCopyProviders();
@@ -482,6 +482,6 @@ it("COPY-19 backend access guidance", () => {
       <EnginesPage />
     </ViewerContext.Provider>,
   );
-  expect(screen.getByText("Only an owner or admin can manage backends. Ask an owner or admin for help.")).toBeVisible();
+  expect(screen.getByText("Only an owner or admin can manage engines. Ask an owner or admin for help.")).toBeVisible();
   expect(screen.queryByText(/Sign in with an owner account/)).toBeNull();
 });

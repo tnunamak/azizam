@@ -478,7 +478,7 @@ describe("WorkflowsPage empathy copy", () => {
   test("a member whose every workflow is not set up sees the empty state", async () => {
     serve([faceLikeness]);
     renderWorkflows(member);
-    expect(await screen.findByText("No workflow choices are available to you. Ask the owner what you can use.")).toBeVisible();
+    expect(await screen.findByText("No workflows are available to you. Ask the owner what you can use.")).toBeVisible();
   });
 
   test("a delegated admin gets the member view, not the owner's details", async () => {
@@ -536,7 +536,7 @@ describe("WorkflowsPage empathy copy", () => {
   test("an empty catalog says who can add workflows without directing members to owner pages", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: [] })));
     renderWorkflows();
-    expect(await screen.findByText("No workflow choices are available to you. Ask the owner what you can use.")).toBeVisible();
+    expect(await screen.findByText("No workflows are available to you. Ask the owner what you can use.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Explore models" })).toHaveAttribute("href", "/models");
     expect(document.querySelector('a[href="/engines"], a[href="/status"], a[href="/people"]')).toBeNull();
   });
@@ -581,7 +581,7 @@ describe("WorkflowsPage empathy copy", () => {
   test("COPY-09 owner empty catalog", async () => {
     serve([]);
     renderWorkflows(owner);
-    expect(await screen.findByText("No workflow choices are available.")).toBeVisible();
+    expect(await screen.findByText("No workflows are available.")).toBeVisible();
     expect(screen.queryByText(/Ask the owner/)).toBeNull();
   });
 

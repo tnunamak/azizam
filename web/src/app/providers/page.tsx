@@ -2229,7 +2229,7 @@ export default function ProvidersPage() {
     <>
       <PageHeader
         title="Providers"
-        answer="Paid models run with provider pages."
+        answer="Paid models run with providers."
         tight
         actions={
           missingApi ? undefined : (
@@ -2360,7 +2360,7 @@ export default function ProvidersPage() {
         description={
           confirmTarget
             ? confirmTarget.action === "remove"
-              ? `Remove ${confirmTarget.provider.name} from this proxy?`
+              ? `Remove ${confirmTarget.provider.name} from this gateway?`
               : `Delete the saved key for ${confirmTarget.provider.name}?`
             : undefined
         }
