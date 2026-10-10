@@ -5,12 +5,7 @@ id: video.edit.rife-interpolate
 intent: video.edit
 display_name: RIFE 2x Frame Interpolation
 purpose: Double a video's frame rate
-description: >-
-  Doubles video frame rate via ComfyUI-Frame-Interpolation's native RIFE VFI node (rife49.pth).
-  Frame count and output fps both double, so real-time duration is unchanged. Audio passes through
-  unchanged. Verified end to end on a 3s/24fps synthetic test clip -> 48fps/143 frames, ~3s duration
-  preserved, 6.4s wall time, ~6.3GB VRAM delta. Published in workflow and capability discovery and
-  executable through the manifest-driven /gateway/v1/workflows/{workflow_id}/run route.
+description: Make a video play more smoothly by adding frames. The length and sound stay the same.
 source: local
 trusted: true
 typical_seconds: 4

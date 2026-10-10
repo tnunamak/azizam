@@ -5,7 +5,7 @@ id: video.generate.ltx-2.5-t2v
 intent: video.generate
 display_name: LTX 2.5
 purpose: Video from a prompt or image
-description: Video from a prompt or image
+description: Make a video with sound from a description or picture.
 technical_description: 'LTX-2.5 22B distilled two-stage text-to-video with synchronized audio (int8_convrot). Default
   video model. Request via POST /v1/videos: size is floored to multiples of 64 (max 1280x704; default
   960x512), seconds 1-10 at 24 fps (frames are 8k+1). About 45 s warm for 5 s at 960x512; 1280x704 about
@@ -15,16 +15,24 @@ trusted: true
 typical_seconds: 49
 inputs:
   prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
     type: string
     required: true
   negative_prompt:
+    label: What to avoid
+    help: Describe anything you want left out.
     type: string
   frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
     type: number
     minimum: 1
     maximum: 50
     default: 24
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
 outputs:

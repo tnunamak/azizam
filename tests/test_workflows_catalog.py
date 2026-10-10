@@ -17,6 +17,7 @@ from gateway import media_jobs
 from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
+from gateway.workflow_openapi import augment_openapi
 from gateway.workflows_catalog import (
     _workflow_description,
     build_workflows_catalog,
@@ -245,6 +246,66 @@ def _aliases() -> dict:
 
 
 class WorkflowsCatalogTests(unittest.TestCase):
+    def test_catalog_includes_manifest_license_verbatim(self) -> None:
+        manifest = yaml.safe_load(IMAGE_MANIFEST)
+        manifest["license"] = "Community terms: Not For Use in restricted regions"
+        registry = WorkflowRegistry()
+        registry.add_manifest(manifest, source_path="licensed.yml")
+        payload = build_workflows_catalog(
+            records=registry.records(),
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow=manifest["id"])],
+        )
+        self.assertEqual(payload["workflows"][0]["license"], manifest["license"])
+
+    def test_catalog_omits_license_when_manifest_has_none(self) -> None:
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")],
+        )
+        self.assertNotIn("license", payload["workflows"][0])
+
+    def test_summary_is_preferred_without_leaking_research_notes(self) -> None:
+        manifest = yaml.safe_load(IMAGE_MANIFEST)
+        manifest.update(
+            summary="Make a detailed picture from a written description of your scene.",
+            purpose="Make a picture",
+            description="Reddit community research and a long bake-off.",
+        )
+        registry = WorkflowRegistry()
+        registry.add_manifest(manifest, source_path="summary.yml")
+        payload = build_workflows_catalog(
+            records=registry.records(),
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow=manifest["id"])],
+        )
+        self.assertEqual(payload["workflows"][0]["description"], manifest["summary"])
+        self.assertEqual(payload["workflows"][0]["purpose"], manifest["purpose"])
+        self.assertNotIn("technical_notes", payload["workflows"][0])
+        self.assertNotIn(manifest["description"], json.dumps(payload))
+
+    def test_openapi_summary_replaces_research_in_all_descriptions(self) -> None:
+        manifest = yaml.safe_load(VIDEO_MANIFEST)
+        manifest.update(id="video.edit.summary", intent="video.edit",
+                        summary="Edit a video.", description="Reddit research must remain private.")
+        registry = WorkflowRegistry()
+        registry.add_manifest(manifest, source_path="summary.yml")
+        spec = augment_openapi({}, registry.records())
+        self.assertEqual(spec["x-azizam-workflows"][0]["description"], manifest["summary"])
+        descriptions = [
+            schema["description"] for schema in spec["components"]["schemas"].values()
+            if schema.get("x-azizam-workflow-id") == manifest["id"]
+        ]
+        self.assertEqual(descriptions, [manifest["summary"], manifest["summary"]])
+        operation = next(iter(spec["paths"].values()))["post"]
+        self.assertEqual(operation["description"], manifest["summary"])
+        self.assertNotIn(manifest["description"], json.dumps(spec))
+
+    def test_openapi_keeps_description_when_summary_is_absent(self) -> None:
+        registry = WorkflowRegistry()
+        manifest = yaml.safe_load(IMAGE_MANIFEST)
+        registry.add_manifest(manifest, source_path="legacy.yml")
+        spec = augment_openapi({}, registry.records())
+        self.assertEqual(spec["x-azizam-workflows"][0]["description"], manifest["description"])
+
     def test_manifest_capability_controls_audio_workflow_group(self) -> None:
         payload = build_workflows_catalog(
             records=_registry().records(),
@@ -312,13 +373,24 @@ class WorkflowsCatalogTests(unittest.TestCase):
             "workflow purposes must be distinct",
         )
         self.assertTrue(
-            all(row["description"] == row["purpose"] for row in payload["workflows"]),
-            "capability fallback descriptions should not appear when purpose is set",
+            all(
+                row["description"] == next(
+                    (" ".join(record.manifest["summary"].split()) if record.manifest.get("summary") else row["purpose"])
+                    for record in records if record.id == row["id"]
+                )
+                for row in payload["workflows"]
+            ),
+            "summary or purpose should replace capability fallback descriptions",
         )
         face = next(
             row for row in payload["workflows"] if row["id"] == "image.analyze.face-likeness"
         )
-        self.assertIn("Objective likeness check", face["technical_notes"])
+        face_record = next(record for record in records if record.id == face["id"])
+        if face_record.manifest.get("summary"):
+            self.assertNotIn("technical_notes", face)
+        else:
+            self.assertEqual(face["technical_notes"], face_record.manifest["description"])
+            self.assertNotIn("ArcFace", face["technical_notes"])
 
     def test_asset_inputs_and_outputs_carry_the_meaning_the_manifest_declares(self) -> None:
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"

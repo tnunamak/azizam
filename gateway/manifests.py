@@ -103,6 +103,13 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise ManifestError("manifest purpose must be a non-empty string")
         if len(purpose.split()) > 8:
             raise ManifestError("manifest purpose must contain at most 8 words")
+    for field_name in ("summary", "license"):
+        if field_name in manifest:
+            value = manifest[field_name]
+            if not isinstance(value, str) or not value.strip():
+                raise ManifestError(f"manifest {field_name} must be a non-empty string")
+    if "summary" in manifest and len(manifest["summary"].split()) > 40:
+        raise ManifestError("manifest summary must contain at most 40 words")
     for name, spec in manifest["inputs"].items():
         if not isinstance(spec, dict):
             continue

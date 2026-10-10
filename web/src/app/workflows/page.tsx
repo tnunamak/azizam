@@ -50,6 +50,7 @@ import {
   PageHeader,
   StatusPill,
 } from "@/components/product";
+import { StateBadge } from "@/components/product/status-ui";
 import { ListCard, ListRow } from "@/components/product/list-card";
 import { Segmented } from "@/components/product/segmented";
 import {
@@ -412,6 +413,9 @@ function DetailSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const inputLabels = inputNouns(workflow?.inputs ?? []);
+  const license = workflow && "license" in workflow && typeof workflow.license === "string"
+    ? workflow.license
+    : null;
   return (
     <Sheet open={!!workflow} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:!max-w-5xl">
@@ -432,6 +436,14 @@ function DetailSheet({
                   </p>
                 )}
                 <WorkflowSummary workflow={workflow} />
+                {owner && license && (
+                  <div className="space-y-1">
+                    {/not for use|non-commercial/i.test(license) && (
+                      <StateBadge state="degraded" word="Licence limit" />
+                    )}
+                    <p className="text-meta break-words">Licence: {license}</p>
+                  </div>
+                )}
               </section>
               <WorkflowAction workflow={workflow} owner={owner} />
               <details className="rounded-panel border p-4">

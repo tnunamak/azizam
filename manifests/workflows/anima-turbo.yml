@@ -5,12 +5,14 @@ id: image.generate.anima-turbo
 intent: image.generate
 display_name: Anima Turbo (anime)
 purpose: Anime-style images from a prompt
-description: Local anime T2I workflow bound to Anima Turbo v1.1 (2B). Fast (about 3.5 s warm at 1024x1024 on a 3090). Accepts booru tags plus prose. CFG fixed at 1.0. Only depict adults.
+description: Make an anime-style picture from a description. It only shows adults.
 source: local
 trusted: true
 typical_seconds: 4
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
   width:
@@ -35,6 +37,8 @@ inputs:
     maximum: 20
     default: 10
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
   batch_size:

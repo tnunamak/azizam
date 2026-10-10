@@ -52,10 +52,16 @@ class ModelDiscoveryTests(unittest.TestCase):
             "video-ltx-2.5-long", "tangoflux",
         ):
             self.assertIn(model_id, by_id)
-        self.assertIn("US, EU, UK", by_id["video-minimax-h3-t2v"]["description"])
-        self.assertIn("US, EU, UK", by_id["video-minimax-h3-i2v"]["description"])
-        self.assertIn("CC BY-NC", by_id["yue2-song"]["description"])
-        self.assertIn("MAXIMUM", by_id["yue2-song"]["description"])
+        notes = Path(__file__).resolve().parents[1] / "docs" / "workflows"
+        for model_id, wf_id, text in (
+            ("video-minimax-h3-t2v", "video.generate.minimax-h3-t2v", "US, EU, UK"),
+            ("video-minimax-h3-i2v", "video.generate.minimax-h3-i2v", "US, EU, UK"),
+            ("yue2-song", "audio.generate.yue2-song", "CC BY-NC"),
+            ("yue2-song", "audio.generate.yue2-song", "MAXIMUM"),
+        ):
+            # Licence and length caveats live in the notes file, not in member-visible copy.
+            self.assertNotIn(text, by_id[model_id]["description"])
+            self.assertIn(text, (notes / f"{wf_id}.md").read_text(encoding="utf-8"))
         self.assertEqual(by_id["yue2-song"]["azizam_intent"], "audio.generate")
         self.assertEqual(by_id["video-ltx-2.5-t2v"]["azizam_intent"], "video.generate")
 

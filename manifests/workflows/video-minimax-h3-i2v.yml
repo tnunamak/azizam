@@ -2,24 +2,28 @@ schema_version: 1
 min_gateway_version: '0.1'
 version: 0.1.0
 id: video.generate.minimax-h3-i2v
+license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
 display_name: MiniMax H3 I2V
 purpose: Animate an image with stereo sound
-description: 'MiniMax H3 FL2VA first-frame image-to-video with native stereo audio. Selected automatically
-  when /v1/videos gets input_reference with model minimax-h3, or by model id. Same size and length rules
-  as minimax-h3. About 185 s for 5 s at 960x544. LICENSE: the MiniMax H3 Community License excludes use
-  in the US, EU, UK and South Korea.'
+description: Make a video with stereo sound from a starting picture and a description.
 source: local
 trusted: true
 typical_seconds: 135
 inputs:
   prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
     type: string
     required: true
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
   steps:
+    label: Refinement steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 50

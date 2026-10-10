@@ -2,29 +2,35 @@ schema_version: 1
 min_gateway_version: '0.1'
 version: 0.1.0
 id: audio.generate.yue2-song
+license: "CC BY-NC (non-commercial use only)"
 intent: audio.generate
 capability: music
 display_name: YuE2 Song
 purpose: Full songs with vocals from lyrics
-description: 'Full song with vocals from a style prompt (tags) and lyrics (YuE2-3B int8_convrot). POST
-  /v1/audio/generate with tags, lyrics, duration. duration is a MAXIMUM in seconds, not an exact length:
-  the model decides the real length, usually shorter. About 50-60 s for a 2-minute song. Output is MP3.
-  LICENSE: CC BY-NC (non-commercial).'
+description: Make a song with vocals from musical styles and lyrics.
 source: local
 trusted: true
 typical_seconds: 30
 inputs:
   tags:
+    label: Musical style
+    help: Describe the genre, instruments, and mood.
     type: string
     required: true
   lyrics:
+    label: Lyrics
+    help: Words to sing.
     type: string
   duration:
+    label: Maximum length
+    help: Maximum length in seconds; the song may be shorter.
     type: number
     minimum: 10
     maximum: 360
     default: 180
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
 outputs:

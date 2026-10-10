@@ -5,42 +5,62 @@ id: video.generate.wan-2.2-ti2v-5b-q8
 intent: video.generate
 display_name: WAN 2.2 TI2V 5B Q8
 purpose: Short videos from a prompt or image
-description: Minimal video.generate contract bound to the WAN 2.2 TI2V 5B Q8 ComfyUI workflow.
+description: Make a short video from a description or picture.
 source: local
 trusted: true
 inputs:
   prompt:
+    label: What to make
+    help: Describe the scene, action, and mood.
     type: string
   negative_prompt:
+    label: What to avoid
+    help: Describe anything you want left out.
     type: string
   width:
+    label: Width
+    help: Video width in pixels.
     type: integer
     minimum: 64
     maximum: 1280
   height:
+    label: Height
+    help: Video height in pixels.
     type: integer
     minimum: 64
     maximum: 704
   length:
+    label: Frame count
+    help: Number of frames in the video.
     type: integer
     minimum: 1
   frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
     type: number
     minimum: 1
     maximum: 60
   seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
   image_strength:
+    label: Picture influence
+    help: Adjust how strongly the starting picture shapes the video.
     type: number
     minimum: 0
     maximum: 1
   steps:
+    label: Refinement steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 100
     default: 20
   cfg:
+    label: Prompt influence
+    help: Adjust how closely the video follows your description.
     type: number
     minimum: 0
     maximum: 20

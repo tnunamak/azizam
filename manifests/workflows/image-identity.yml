@@ -5,21 +5,14 @@ id: image.edit.image-identity
 intent: image.edit
 display_name: Identity Scene (real people into a new scene)
 purpose: Place real people in a new scene
-description: >-
-  Put the real people from one or more reference photos into a new scene or pose and return the best
-  of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL
-  photo (never a tiny face tile), tags every input <imageN> for Qwen-Image 2.1 multi-reference edit, runs
-  up to `attempts` seeds, scores each result with ArcFace (buffalo_l + antelopev2, CPU) against the real
-  faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed; async media job by default, sync with mode=sync, JSON with
-  `likeness`) and at POST /v1/images/edits with model=image-identity (options in
-  extensions["com.azizam.workflow"]). Infant faces are scored but flagged reliability=low: the score
-  only ranks candidates, so verify a baby by eye. Measured on a family photo: 0.60 adult, 0.48 infant
-  (docs/IDENTITY_LIKENESS.md).
+description: Put the people from your photos into a new scene you describe, and keep the best result.
 source: local
 trusted: true
 typical_seconds: 100
 inputs:
   prompt:
+    label: description
+    help: Describe what you want to make.
     type: string
     required: true
     description: The new scene, poses and gaze. People are tagged automatically.
@@ -30,76 +23,98 @@ inputs:
     required: true
     description: Reference photo at full resolution. Send more photos as extra image parts.
   people:
+    label: people details
+    help: Optional details identifying the people in your reference photos.
     type: string
     description: JSON array of {label, image | images[], box [x1,y1,x2,y2], description, infant}. Several photos of one person go in images[]. Omit to auto-detect.
   attempts:
+    label: number of attempts
     type: integer
     minimum: 1
     maximum: 8
     default: 3
   seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
   resolution:
+    label: reference picture size
     type: integer
     minimum: 512
     maximum: 2048
     description: Per-reference pixel budget. Default 1536 for up to 3 images, 1280 up to 5, 1024 beyond.
   steps:
+    label: steps
+    help: More steps take longer.
     type: integer
     minimum: 1
     maximum: 60
     default: 25
   cfg:
+    label: prompt guidance
     type: number
     minimum: 0
     maximum: 10
     default: 1.0
   photo_as_canvas:
+    label: use photo as canvas
     type: boolean
     default: true
   only_listed_people:
+    label: only named people
     type: boolean
     default: true
   stop_when_pass:
+    label: stop after good match
     type: boolean
     default: true
   facing_each_other:
+    label: face each other
+    help: For two people, prefer pictures with their heads turned toward each other.
     type: boolean
     default: false
     description: Two people only. Prefer and stop early on results where both heads are turned toward each other (head turn from landmarks, not gaze).
   pooling:
+    label: photo comparison method
     type: string
     enum: ["best", "mean"]
     default: best
     description: How several reference photos of one person are scored.
   max_refs_per_person:
+    label: photos per person
     type: integer
     minimum: 1
     maximum: 5
     default: 3
     description: Reference heads sent to the generator per person. Every photo is used for scoring.
   refine:
+    label: face refinement
     type: string
     enum: ["off", "auto", "all"]
     default: auto
     description: Per-person head refinement after composing. A pass is kept only if it helps that person and hurts nobody.
   refine_attempts:
+    label: face refinement attempts
     type: integer
     minimum: 1
     maximum: 4
     default: 2
   pose_policy:
+    label: pose preference
     type: string
     enum: ["likeness", "as_written"]
     default: likeness
     description: likeness rewrites profile or forehead-touching requests to a three-quarter view and reports it in warnings.
   mode:
+    label: waiting mode
     type: string
     enum: ["auto", "sync", "async"]
     default: auto
     description: async returns a media job (poll_url, content_url). auto is async unless attempts=1 and refine=off.
   thresholds:
+    label: matching strictness
+    help: Optional settings for how closely faces must match.
     type: string
     description: JSON object overriding match, uncertain and min_margin.
 outputs:
