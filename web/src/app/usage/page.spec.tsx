@@ -105,6 +105,18 @@ test("USAGE-01 does not claim complete coverage without measurement counts", asy
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.getByText(/Measurement coverage is unavailable/)).toBeVisible();
 });
+test("Usage exposes the compact filters and named dense model table", async () => {
+  renderUsage({
+    by_model: [{ model: "default", capability: "chat", requests: 4 }],
+  });
+  const table = await screen.findByRole("table", { name: "Models" });
+  expect(table).toHaveAttribute("data-dense");
+  expect(within(table).getByRole("columnheader", { name: "Task and model" })).toBeVisible();
+  expect(within(table).getByRole("row", { name: /Chat/ })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveAttribute("data-size", "sm");
+  expect(screen.getByRole("combobox", { name: "Source" })).toHaveAttribute("data-size", "sm");
+});
+
 test("USAGE-02 chart table includes each active capability and daily total", async () => {
   renderUsage({
     by_day: [

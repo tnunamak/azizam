@@ -21,7 +21,9 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { EmptyState } from "@/components/product/empty-state";
-import { Callout, StatusLine } from "@/components/product/status-ui";
+import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
+import { Card } from "@/components/ui/card";
+import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
@@ -232,12 +234,12 @@ export function Requests() {
   }, [selectedReceiptKey, record]);
   return (
     <div className="space-y-6">
-      <p className="text-muted-foreground text-sm">
+      <p className="text-muted-foreground text-meta">
         Receipts show outcome, route and timing without request bodies.
       </p>
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-0 space-y-2">
-          <label htmlFor="request-person" className="block text-sm font-medium">
+          <label htmlFor="request-person" className="sr-only">
             Person
           </label>
           <Select
@@ -246,7 +248,7 @@ export function Requests() {
               setPerson(value === "everyone" ? "" : value)
             }
           >
-            <SelectTrigger id="request-person" className="w-[180px] max-w-full">
+            <SelectTrigger id="request-person" size="sm" className="w-44 max-w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -260,11 +262,11 @@ export function Requests() {
           </Select>
         </div>
         <div className="min-w-0 space-y-2">
-          <label htmlFor="request-source" className="block text-sm font-medium">
+          <label htmlFor="request-source" className="sr-only">
             Source
           </label>
           <Select value={source} onValueChange={setSource}>
-            <SelectTrigger id="request-source" className="w-[210px] max-w-full">
+            <SelectTrigger id="request-source" size="sm" className="w-52 max-w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -354,68 +356,69 @@ export function Requests() {
               <p>The requests already loaded are still shown.</p>
             </Callout>
           )}
-          <div className="divide-border divide-y">
-            {rows.map((row, index) => (
-              <button
-                key={keys[index]}
-                type="button"
-                aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
-                className="hover:bg-muted/40 focus-visible:outline-ring flex w-full min-w-0 items-center gap-3 py-4 text-left focus-visible:outline-2"
-                onClick={() => setSelectedReceiptKey(keys[index])}
-              >
-                <div className="bg-muted hidden size-9 shrink-0 items-center justify-center rounded-full sm:flex">
-                  <ReceiptText
-                    aria-hidden="true"
-                    className="text-muted-foreground size-4"
-                  />
-                </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-sm font-medium break-words">
-                    {requestSummary(row.receipt)}
-                    {row.receipt.parent_request_id && (
-                      <span className="text-muted-foreground ml-2 text-xs font-normal">
-                        Internal execution
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-muted-foreground truncate text-xs">
-                    <span title={`${row.person_label} · ${row.app_label}`}>
-                      {row.source?.label ?? `${row.person_label} · ${row.app_label}`}
-                    </span>
-                    {row.receipt.resolved_model || row.receipt.requested_model ? (
-                      <>
-                        {" · "}
-                        {nameModel(
-                          row.receipt.resolved_model ||
-                            row.receipt.requested_model ||
-                            "",
-                        )}
-                      </>
-                    ) : null}
-                    {row.created_at ? <> · <RelativeTime ts={row.created_at} /></> : null}
-                  </p>
-                </div>
-                <div className="shrink-0 space-y-1 text-right text-xs">
-                  <p
-                    className={
-                      row.receipt.status === "failed"
-                        ? "text-destructive"
-                        : "text-foreground"
-                    }
-                  >
-                    {outcome(row.receipt.status)}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {duration(row.receipt.latency_ms)}
-                  </p>
-                </div>
-                <ArrowRight
-                  aria-hidden="true"
-                  className="text-muted-foreground size-4 shrink-0"
-                />
-              </button>
-            ))}
-          </div>
+          <Card>
+            <Table dense aria-label="Request receipts" className="table-fixed">
+              <TableBody>
+                {rows.map((row, index) => (
+                  <TableRow key={keys[index]}>
+                    <TableCell className="p-0">
+                      <button
+                        type="button"
+                        aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
+                        className="focus-visible:outline-ring flex min-h-(--row-1-dense) w-full min-w-0 items-center gap-3 px-3 text-left focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
+                        onClick={() => setSelectedReceiptKey(keys[index])}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
+                          <p className="min-w-0 truncate text-body font-medium sm:shrink-0">
+                            {requestSummary(row.receipt)}
+                            {row.receipt.parent_request_id && (
+                              <span className="text-muted-foreground ml-2 text-meta font-normal">
+                                Internal execution
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-muted-foreground truncate text-meta">
+                            <span title={`${row.person_label} · ${row.app_label}`}>
+                              {row.source?.label ?? `${row.person_label} · ${row.app_label}`}
+                            </span>
+                            {row.receipt.resolved_model || row.receipt.requested_model ? (
+                              <>
+                                {" · "}
+                                {nameModel(
+                                  row.receipt.resolved_model ||
+                                    row.receipt.requested_model ||
+                                    "",
+                                )}
+                              </>
+                            ) : null}
+                            {row.created_at ? <> · <RelativeTime ts={row.created_at} /></> : null}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end sm:flex-row sm:items-center sm:gap-3">
+                          {["failed", "error", "backend_failed"].includes(row.receipt.status ?? "") ? (
+                            <StateBadge state="down" word={outcome(row.receipt.status)} />
+                          ) : ["running", "in_progress"].includes(row.receipt.status ?? "") ? (
+                            <StateBadge state="busy" word={outcome(row.receipt.status)} />
+                          ) : row.receipt.status === "rejected" ? (
+                            <StateBadge state="degraded" word={outcome(row.receipt.status)} />
+                          ) : (
+                            <span className="text-foreground">{outcome(row.receipt.status)}</span>
+                          )}
+                          <p className="text-muted-foreground figures">
+                            {duration(row.receipt.latency_ms)}
+                          </p>
+                        </div>
+                        <ArrowRight
+                          aria-hidden="true"
+                          className="text-muted-foreground size-4 shrink-0"
+                        />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
           <div className="flex flex-col items-center gap-4">
             {isFetchNextPageError && (
               <Callout
@@ -440,7 +443,7 @@ export function Requests() {
                 {isFetchingNextPage ? "Loading…" : "Load more"}
               </Button>
             ) : (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-meta">
                 {person || source !== "all"
                   ? "No more matching requests"
                   : "End of request receipts"}
@@ -465,7 +468,7 @@ export function Requests() {
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
-                <div className="rounded-lg border p-4 text-sm">
+                <div className="rounded-panel border p-4 text-meta">
                   <p
                     className={`font-medium ${outcomeTone(record.receipt.status)}`}
                   >
@@ -485,7 +488,7 @@ export function Requests() {
                     </p>
                   ) : null}
                 </div>
-                <dl className="space-y-4 text-sm">
+                <dl className="space-y-4 text-meta">
                   {[
                     ["Request ID", record.receipt.request_id],
                     ["Person", record.person_label],
@@ -535,7 +538,7 @@ export function Requests() {
                 </dl>
                 {outcomeNeedsAttention(record.receipt.status) &&
                   !!record.receipt.warnings?.length && (
-                    <div className="space-y-2 text-sm">
+                    <div className="space-y-2 text-meta">
                       <p className="font-medium">What to know</p>
                       {record.receipt.warnings.map((warning, i) => (
                         <p
@@ -548,14 +551,14 @@ export function Requests() {
                     </div>
                   )}
                 <details>
-                  <summary className="cursor-pointer text-sm font-medium">
+                  <summary className="cursor-pointer text-meta font-medium">
                     Technical details
                   </summary>
                   <div className="mt-4">
                     <pre
                       tabIndex={0}
                       aria-label="Technical request details"
-                      className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+                      className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-panel p-4 font-mono text-meta leading-relaxed focus-visible:outline-2"
                     >
                       <code>{JSON.stringify(record.receipt, null, 2)}</code>
                     </pre>

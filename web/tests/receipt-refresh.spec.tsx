@@ -242,7 +242,7 @@ test.each([
     remote_spend: spend,
     ...counters,
   });
-  const summary = await screen.findByRole("region", { name: "This month" });
+  const summary = await screen.findByLabelText("This month");
   expect(within(summary).queryByText("No paid requests") !== null).toBe(none);
   expect(within(summary).queryByText("Paid request count is unknown.") !== null).toBe(unknown);
   if (spend === null) expect(within(summary).getByText("Unavailable")).toBeTruthy();

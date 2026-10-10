@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Requests } from "@/app/activity/requests";
 
@@ -52,6 +52,11 @@ describe("recorded decision outcomes", () => {
         </QueryClientProvider>,
       );
       expect(await screen.findByText(label)).toBeVisible();
+      expect(screen.getByRole("table", { name: "Request receipts" })).toHaveAttribute("data-dense");
+      const table = screen.getByRole("table", { name: "Request receipts" });
+      expect(
+        within(table).getByRole("button", { name: /Request details:/ }).closest("tr"),
+      ).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: /Request details:/ }));
       expect(screen.getByRole("dialog")).toHaveTextContent(`${label} · Owner`);
       fireEvent.click(screen.getByText("Technical details"));

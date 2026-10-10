@@ -17,12 +17,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  DollarSign,
   FileText,
-  Image,
   Layers,
   Mic,
-  type LucideIcon,
 } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
@@ -59,6 +56,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Stat, StatStrip } from "@/components/product/stat-strip";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Callout, StatusLine } from "@/components/product/status-ui";
 import {
@@ -175,19 +174,6 @@ const requestNouns: Record<UsageCapability, string> = {
   other: "Other",
 };
 
-const chartColors: Record<UsageCapability, string> = {
-  chat: "var(--capability-chat)",
-  image: "var(--capability-image)",
-  video: "var(--capability-video)",
-  audio: "var(--capability-voice)",
-  voice: "var(--capability-voice)",
-  transcribe: "var(--capability-transcribe)",
-  decide: "var(--usage-decisions)",
-  embed: "var(--capability-embed)",
-  embeddings: "var(--capability-embed)",
-  rerank: "var(--capability-decide)",
-  other: "var(--vf-border-strong)",
-};
 
 export default function UsagePage() {
   const viewer = useViewer();
@@ -219,7 +205,7 @@ export default function UsagePage() {
     effectivePerson !== (owner ? "all" : "self") || source !== "all";
 
   return (
-    <div className="space-y-8 [--usage-decisions:#b45309] dark:[--usage-decisions:#fb923c]">
+    <div className="space-y-8">
       <PageHeader
         title="Usage"
         subtitle="Current month usage"
@@ -227,6 +213,7 @@ export default function UsagePage() {
           data && hasUsage ? (
             <Button
               variant="outline"
+              size="sm"
               onClick={() => setShowReceipts((value) => !value)}
               aria-expanded={showReceipts}
               aria-controls="usage-receipts"
@@ -237,7 +224,7 @@ export default function UsagePage() {
         }
         actions={
           owner ? (
-            <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <PersonFilter
                 value={effectivePerson}
                 people={data?.people ?? []}
@@ -250,7 +237,7 @@ export default function UsagePage() {
               <div className="space-y-2">
                 <label
                   htmlFor="usage-source"
-                  className="text-muted-foreground block text-xs"
+                  className="sr-only"
                 >
                   Source
                 </label>
@@ -262,7 +249,7 @@ export default function UsagePage() {
                   <SelectTrigger
                     id="usage-source"
                     size="sm"
-                    className="w-[210px] max-w-full"
+                    className="w-52 max-w-full"
                   >
                     <SelectValue placeholder="All sources" />
                   </SelectTrigger>
@@ -381,7 +368,6 @@ export default function UsagePage() {
               onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
           ) : null}
-          <CoverageNote summary={data} />
           <DailyChart days={data.byDay} />
           <ModelTable
             rows={data.byModel}
@@ -415,7 +401,7 @@ function PersonFilter({
   return (
     <div className="space-y-2">
       <label
-        className="text-muted-foreground block text-xs"
+        className="sr-only"
         htmlFor="usage-person"
       >
         Person
@@ -424,7 +410,7 @@ function PersonFilter({
         <SelectTrigger
           id="usage-person"
           size="sm"
-          className="w-[180px] max-w-full"
+          className="w-44 max-w-full"
         >
           <SelectValue placeholder="Your usage" />
         </SelectTrigger>
@@ -464,15 +450,13 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
           : "Remote spend · coverage unknown"
       : "Remote spend";
   return (
-    <section className="grid gap-4 md:grid-cols-3" aria-label="This month">
-      <MetricCard
-        icon={Activity}
+    <StatStrip label="This month">
+      <Stat
         label="Requests"
         value={formatNumber(summary.requests)}
-        detail="This month"
+        note="This month"
       />
-      <MetricCard
-        icon={DollarSign}
+      <Stat
         label={spendLabel}
         value={
           noPaidRequests ? (
@@ -483,15 +467,14 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
             <Money amount={summary.remoteSpendUsd} summary />
           )
         }
-        detail={spendCoverageDetail(summary)}
+        note={<><span>{spendCoverageDetail(summary)}</span><CoverageNote summary={summary} /></>}
       />
-      <MetricCard
-        icon={Image}
+      <Stat
         label="Media made"
         value={formatNumber(summary.mediaCount)}
-        detail="Images, video and audio"
+        note="Images, video and audio"
       />
-    </section>
+    </StatStrip>
   );
 }
 
@@ -504,41 +487,12 @@ function CoverageNote({ summary }: { summary: UsageSummary }) {
   ].filter(Boolean);
   if (!facts.length) return null;
   return (
-    <details className="text-muted-foreground text-sm">
-      <summary className="min-h-11 w-fit cursor-pointer py-3">
+    <details className="text-muted-foreground text-meta">
+      <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
         Receipt coverage
       </summary>
       <ul className="mt-1 list-inside list-disc">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
     </details>
-  );
-}
-
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  detail,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: ReactNode;
-  detail: string;
-}) {
-  return (
-    <Card className="border-0! bg-transparent! shadow-none!">
-      <CardHeader className="flex-row items-center gap-3 space-y-0">
-        <span className="bg-muted inline-flex size-10 shrink-0 items-center justify-center rounded-lg">
-          <Icon aria-hidden="true" className="text-muted-foreground size-5" />
-        </span>
-        <div>
-          <CardDescription>{label}</CardDescription>
-          <CardTitle className="mt-1 text-2xl tabular-nums">{value}</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent className="text-muted-foreground text-sm">
-        {detail}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -552,7 +506,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
   );
   const overfullDays = days.filter((day) => day.countsExceedTotal !== null).length;
   return (
-    <Card className="border-0! bg-transparent! shadow-none!">
+    <Card>
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>
@@ -577,14 +531,14 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                     dataKey="label"
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fill: "var(--vf-text-subtle)", fontSize: 11 }}
+                    tick={{ fill: "var(--subtle-foreground)", fontSize: 12 }}
                   />
                   <YAxis
                     width={32}
                     allowDecimals={false}
                     tickLine={false}
                     axisLine={false}
-                    tick={{ fill: "var(--vf-text-subtle)", fontSize: 11 }}
+                    tick={{ fill: "var(--subtle-foreground)", fontSize: 12 }}
                   />
                   <Tooltip
                     cursor={{
@@ -603,7 +557,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                       key={capability}
                       dataKey={capability}
                       stackId="capability"
-                      fill={chartColors[capability]}
+                      fill="var(--chart-1)"
                       name={capabilityLabels[capability]}
                       isAnimationActive={false}
                     />
@@ -644,7 +598,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-4 flex flex-wrap gap-3 text-xs">
+            <div className="mt-4 flex flex-wrap gap-3 text-meta">
               {active.map((capability) => (
                 <span
                   key={capability}
@@ -652,7 +606,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                 >
                   <span
                     className="size-2 rounded-full"
-                    style={{ background: chartColors[capability] }}
+                    style={{ background: "var(--chart-1)" }}
                   />
                   {capabilityLabels[capability]}
                 </span>
@@ -682,7 +636,7 @@ function ModelTable({
   const visibleRows = showAll ? sortedRows : sortedRows.slice(0, 5);
   const kinds = new Set(visibleRows.map(modelCostKind));
   return (
-    <Card className="border-0! bg-transparent! shadow-none!">
+    <Card>
       <CardHeader>
         <CardTitle>Models</CardTitle>
         <CardDescription>Top models by requests</CardDescription>
@@ -690,51 +644,49 @@ function ModelTable({
       <CardContent>
         {rows.length ? (
           <div className="space-y-4">
-            <table className="w-full text-sm">
-              <thead className="text-muted-foreground border-b text-left">
-                <tr>
-                  <th scope="col" className="py-3 pr-3 font-medium">
+            <Table dense aria-label="Models">
+              <TableHeader>
+                <TableRow>
+                  <TableHead scope="col">
                     Task and model
-                  </th>
-                  <th scope="col" className="py-3 pr-3 text-right font-medium">
+                  </TableHead>
+                  <TableHead scope="col" numeric>
                     Requests
-                  </th>
-                  <th scope="col" className="py-3 text-right font-medium">
+                  </TableHead>
+                  <TableHead scope="col" numeric>
                     Cost
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {visibleRows.map((row) => {
                   const name = row.model ? nameModel(row.model) : "";
                   return (
-                    <tr key={`${row.model}-${row.capability}`}>
+                    <TableRow key={`${row.model}-${row.capability}`}>
                       {/* max-w-0 lets a long name truncate instead of widening the page. */}
-                      <td className="w-full max-w-0 py-3 pr-3">
-                        <div className="font-medium">
-                          <CapabilityLabel capability={row.capability} />
+                      <TableCell className="w-full max-w-0 text-body font-medium">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span aria-hidden="true" className="bg-chart-1 size-2 shrink-0 rounded-full" />
+                          <span>{capabilityLabels[row.capability]}</span>
+                          {name && name !== capabilityLabels[row.capability] && (
+                            <span className="text-muted-foreground min-w-0 truncate text-meta" title={name}>
+                              · {name}
+                            </span>
+                          )}
                         </div>
-                        {name && name !== capabilityLabels[row.capability] && (
-                          <p
-                            className="text-muted-foreground mt-1 truncate text-xs"
-                            title={name}
-                          >
-                            {name}
-                          </p>
-                        )}
-                      </td>
-                      <td className="py-3 pr-3 text-right tabular-nums">
+                      </TableCell>
+                      <TableCell numeric>
                         {formatNumber(row.requests)}
-                      </td>
-                      <td className="py-3 text-right whitespace-nowrap">
+                      </TableCell>
+                      <TableCell numeric>
                         <ModelCost row={row} />
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-            <p className="text-muted-foreground text-xs">
+              </TableBody>
+            </Table>
+            <p className="text-muted-foreground text-meta">
               {[
                 kinds.has("local") ? "Local: no provider charge." : null,
                 kinds.has("unavailable")
@@ -783,7 +735,7 @@ function ModelCost({ row }: { row: UsageModel }) {
     <>
       <Money amount={row.costUsd} summary />
       {kind === "partial" ? (
-        <span className="text-muted-foreground block text-xs">partial</span>
+        <span className="text-muted-foreground ml-1 text-meta">partial</span>
       ) : null}
     </>
   );
@@ -801,10 +753,7 @@ function ReceiptsList({
   loading: boolean;
 }) {
   return (
-    <Card
-      id="usage-receipts"
-      className="border-0! bg-transparent! shadow-none!"
-    >
+    <Card id="usage-receipts">
       <CardHeader>
         <CardTitle>Receipts</CardTitle>
         <CardDescription>
@@ -830,24 +779,24 @@ function ReceiptsList({
               >
                 <CapabilityLabel capability={receipt.capability} compact />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
+                  <p className="truncate text-meta font-medium">
                     {receipt.summary}
                   </p>
                   {receipt.model && (
                     <p
-                      className="text-muted-foreground mt-1 truncate text-xs"
+                      className="text-muted-foreground mt-1 truncate text-meta"
                       title={nameModel(receipt.model)}
                     >
                       {nameModel(receipt.model)}
                     </p>
                   )}
                   {receipt.sourceLabel ? (
-                    <p className="text-muted-foreground mt-1 text-xs">
+                    <p className="text-muted-foreground mt-1 text-meta">
                       {receipt.sourceLabel}
                     </p>
                   ) : null}
                   {(receipt.createdAt || receipt.durationMs != null) ? (
-                    <p className="text-muted-foreground mt-1 text-xs">
+                    <p className="text-muted-foreground mt-1 text-meta">
                       {[receipt.createdAt ? <RelativeTime key="time" ts={receipt.createdAt} /> : null,
                         receipt.durationMs != null ? formatDuration(receipt.durationMs) : null]
                         .filter(Boolean)
@@ -856,7 +805,7 @@ function ReceiptsList({
                   ) : null}
                 </div>
                 <StatusBadge status={receipt.status} />
-                <span className="hidden text-sm sm:block">
+                <span className="hidden text-meta sm:block">
                   <ReceiptCost receipt={receipt} summary />
                 </span>
                 <ChevronRight
@@ -902,29 +851,29 @@ function ReceiptSheet({
               <SheetDescription>{receipt.summary}</SheetDescription>
             </SheetHeader>
             <div className="mt-8 space-y-6">
-              <div className="rounded-lg border p-4">
+              <div className="rounded-panel border p-4">
                 <div className="mb-3 flex items-center gap-3">
                   <CapabilityLabel capability={receipt.capability} />
                   <StatusBadge status={receipt.status} />
                 </div>
-                <p className="text-sm font-medium">
+                <p className="text-meta font-medium">
                   {receiptOutcome(receipt.status)}
                 </p>
-                <p className="text-muted-foreground mt-2 text-sm">
+                <p className="text-muted-foreground mt-2 text-meta">
                   {receiptOutcomeSummary(receipt)}
                 </p>
                 {receiptOutcomeCause(receipt) ? (
-                  <p className="text-muted-foreground mt-2 text-sm">
+                  <p className="text-muted-foreground mt-2 text-meta">
                     {receiptOutcomeCause(receipt)}
                   </p>
                 ) : null}
                 {receiptNextAction(receipt) ? (
-                  <p className="text-muted-foreground mt-2 text-sm">
+                  <p className="text-muted-foreground mt-2 text-meta">
                     {receiptNextAction(receipt)}
                   </p>
                 ) : null}
               </div>
-              <dl className="grid gap-4 text-sm sm:grid-cols-2">
+              <dl className="grid gap-4 text-meta sm:grid-cols-2">
                 <Detail
                   label="Requested model"
                   value={named(receipt.requestedModel)}
@@ -977,7 +926,7 @@ function ReceiptSheet({
                 ) : null}
               </dl>
               <details>
-                <summary className="cursor-pointer text-sm font-medium">
+                <summary className="cursor-pointer text-meta font-medium">
                   Technical details
                 </summary>
                 <div className="mt-4">
