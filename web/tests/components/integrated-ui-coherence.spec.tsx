@@ -139,11 +139,11 @@ describe("integrated UI coherence", () => {
     for (const manage of screen.getAllByText("Manage", { exact: true })) {
       await user.click(manage);
     }
-    expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(3);
-    expect(screen.getByText("$0.00 of $0.01")).toBeVisible();
-    expect(screen.getByText("$0.01 of $1.25")).toBeVisible();
-    expect(screen.getAllByText("<$0.01 of $1.25")).toHaveLength(2);
-    expect(screen.getAllByText("<$0.01 of $10.00")).toHaveLength(2);
+    expect(screen.getAllByText("USD 1.25 of USD 10.00")).toHaveLength(3);
+    expect(screen.getByText("USD 0.00 of USD 0.01")).toBeVisible();
+    expect(screen.getByText("USD 0.01 of USD 1.25")).toBeVisible();
+    expect(screen.getAllByText("Less than USD 0.01 of USD 1.25")).toHaveLength(2);
+    expect(screen.getAllByText("Less than USD 0.01 of USD 10.00")).toHaveLength(2);
     expect(screen.getByRole("cell", { name: "3" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "15" })).toBeVisible();
     await waitFor(() =>

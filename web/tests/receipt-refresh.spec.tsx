@@ -245,7 +245,7 @@ test.each([
   const summary = await screen.findByLabelText("This month");
   expect(within(summary).queryByText("No paid requests") !== null).toBe(none);
   expect(within(summary).queryByText("Paid request count is unknown.") !== null).toBe(unknown);
-  if (spend === null) expect(within(summary).getByText("Unavailable")).toBeTruthy();
+  if (spend === null) expect(within(summary).getByText("Cost not recorded")).toBeTruthy();
   if (spend === 2) expect(within(summary).getByText(/\$2/)).toBeTruthy();
   client.clear();
 });
@@ -433,14 +433,15 @@ for (const page of ["Activity", "Usage"] as const) {
       expect(within(row).queryByText(/Engine or provider failed/)).toBeNull();
       fireEvent.click(row);
       const dialog = await screen.findByRole("dialog");
-      const summary = within(dialog).getByText("The request failed.", { exact: true });
+      const summary = within(dialog).getByText("We couldn't tell where this stopped.", { exact: true });
       const paragraphs = Array.from(
         summary.parentElement!.querySelectorAll("p"),
         (node) => node.textContent,
       );
       expect(paragraphs).toEqual([
-        "Failed",
-        "The request failed.",
+        // Usage shows the outcome as the status badge above, not a paragraph.
+        ...(page === "Activity" ? ["Failed"] : []),
+        "We couldn't tell where this stopped.",
         ...(detail === null ? [] : [detail]),
         "Open Technical details for the recorded status and warnings.",
       ]);

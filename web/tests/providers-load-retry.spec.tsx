@@ -626,8 +626,8 @@ it("shows a single provider's state, spend, enabled models and allowed plans bef
     const disclosure = manage.closest("details")!;
     expect(disclosure).not.toHaveAttribute("open");
     expect(scope.getByText("Ready")).toBeVisible();
-    expect(scope.getByText("$12.00 of $50.00")).toBeVisible();
-    expect(scope.getByText("$2.00 of $5.00")).toBeVisible();
+    expect(scope.getByText("USD 12.00 of USD 50.00")).toBeVisible();
+    expect(scope.getByText("USD 2.00 of USD 5.00")).toBeVisible();
     expect(scope.getByRole("progressbar", { name: "This month spend" })).toBeVisible();
     expect(scope.getByRole("heading", { name: "Enabled models" })).toBeVisible();
     expect(scope.getByRole("heading", { name: "Access plans" })).toBeVisible();
@@ -641,7 +641,7 @@ it("shows a single provider's state, spend, enabled models and allowed plans bef
     fireEvent.click(manage);
     expect(scope.getByRole("button", { name: "Edit models" })).toBeVisible();
     fireEvent.click(manage);
-    expect(scope.getByText("$12.00 of $50.00")).toBeVisible();
+    expect(scope.getByText("USD 12.00 of USD 50.00")).toBeVisible();
     expect(scope.getByText("Family plan")).toBeVisible();
     expect(fetchMock.mock.calls.map(([input]) => String(input)).sort()).toEqual([
       "/admin/api/profiles",
@@ -659,7 +659,7 @@ it("keeps unknown spend and unset caps visible in the single-provider overview",
   const { client } = await renderProviderOverview(1, true);
   try {
     const row = within(screen.getByRole("list", { name: "Providers" })).getByRole("listitem");
-    for (const label of ["Not measured yet", "Spend unknown · No cap set"]) {
+    for (const label of ["Cost not recorded", "Spend unknown · No cap set"]) {
       const values = within(row).getAllByText(label);
       expect(values).toHaveLength(2);
       values.forEach((value) => expect(value).toBeVisible());

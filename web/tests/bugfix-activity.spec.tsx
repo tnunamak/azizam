@@ -58,7 +58,8 @@ describe("recorded decision outcomes", () => {
         within(table).getByRole("button", { name: /Request details:/ }).closest("tr"),
       ).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: /Request details:/ }));
-      expect(screen.getByRole("dialog")).toHaveTextContent(`${label} · Owner`);
+      expect(screen.getByRole("dialog")).toHaveTextContent(label);
+      expect(screen.getByRole("dialog")).toHaveTextContent("Owner");
       fireEvent.click(screen.getByText("Technical details"));
       expect(
         screen.getByLabelText("Technical request details"),

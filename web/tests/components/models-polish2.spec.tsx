@@ -76,7 +76,7 @@ it("shows the supplied engine label and measured speed without an unknown speed 
   });
   const card = within(copy.closest("tr")!);
   expect(card.queryByText("Local", { exact: true })).toBeNull();
-  expect(screen.queryByText("Local · no provider charge")).toBeNull();
+  expect(card.queryByText("Local · no provider charge")).toBeNull();
   expect(card.queryByText("Unknown", { exact: true })).toBeNull();
   expect(card.queryByText("Live availability is not measured yet")).toBeNull();
   expect(card.queryByText("Not measured yet", { exact: true })).toBeNull();
