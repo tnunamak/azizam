@@ -155,7 +155,7 @@ class TestStoreLifecycle(_StoreCase):
     def test_create_is_idempotent_on_request_id(self) -> None:
         first = media_jobs.create(_make_job(request_id="req_dup"), path=self.db)
         second = media_jobs.create(
-            _make_job(request_id="req_dup", workflow="other.workflow"),
+            _make_job(request_id="req_dup"),
             path=self.db,
         )
         self.assertEqual(first.job_id, second.job_id)

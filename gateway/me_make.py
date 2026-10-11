@@ -350,7 +350,7 @@ def _submit(
     )
     try:
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
-                                    path=jobs_path)
+                                    input_data=backend_body, path=jobs_path)
     except media_jobs.OutstandingLimitReached as exc:
         if exc.limit.scope == "person":
             raise _MakeError(
@@ -478,6 +478,8 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=5,
                                  metadata_patch={"started_at": int(time.time())}, path=jobs_path)
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            media_jobs.begin_attempt(job_id, path=jobs_path)
     except ValueError:  # Canceled before it started.
         return
     _event(job_id, "started", media_jobs.STATUS_RUNNING, jobs_path, progress=5)

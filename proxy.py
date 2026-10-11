@@ -21475,6 +21475,10 @@ async def _run_image_media_job(job_id: str) -> None:
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
             receipt.job_id = job_id
             try:
+                if attempt > 1 or job.get("status") == media_jobs.STATUS_RUNNING:
+                    job = media_jobs.begin_attempt(job_id, path=media_jobs.DB_PATH) or job
+                receipt.attempt_number = job.get("attempt_number")
+                receipt.mark_phase("started_at_ms")
                 media_jobs.append_event(
                     job_id,
                     "attempt",
@@ -22186,7 +22190,7 @@ async def _submit_audio_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
@@ -22741,7 +22745,7 @@ async def _submit_video_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_video_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
@@ -22977,7 +22981,7 @@ async def gateway_image_generations_media_job(request: Request):
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()
@@ -28102,6 +28106,7 @@ async def _forward_current_loaded_openai_request(
             )
 
             try:
+                owner.mark_phase("started_at_ms")
                 client, resp = await cancellation_span.dispatch(execution_request)
             except ClientDisconnectedBeforeHeaders:
                 await cancellation_span.aclose()
@@ -28431,6 +28436,7 @@ async def _forward_litellm_proxy_request(
         cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
         try:
+            owner.mark_phase("started_at_ms")
             client, resp = await cancellation_span.dispatch(execution_request)
         except ClientDisconnectedBeforeHeaders:
             await cancellation_span.aclose()
@@ -29635,6 +29641,7 @@ async def provider_native_request(
             content=body,
         )
         try:
+            owner.mark_phase("started_at_ms")
             upstream = await stream_context.__aenter__()
         except httpx.TimeoutException:
             await client.aclose()

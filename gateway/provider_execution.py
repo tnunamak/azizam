@@ -596,6 +596,7 @@ async def execute_paid_litellm(
         response = None
         watcher = RequestDisconnectWatcher(request.receive)
         try:
+            owner.mark_phase("started_at_ms")
             client, response = await send_llm_execution_request(execution, disconnect_watcher=watcher)
         except ClientDisconnectedBeforeHeaders:
             providers.settle_provider_spend(reservation, None, path=ledger_path)

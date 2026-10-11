@@ -500,3 +500,13 @@ def test_admission_refusal_keeps_safe_reasons_and_actions(env):
     assert payload["decision"]["next_actions"][0]["deadline"] == 456
     assert "other-person" not in json.dumps(result)
     assert "98765" not in json.dumps(result)
+
+
+def test_job_waits_through_unknown_nonterminal_state_and_exposes_phases(env):
+    env.core.polls['/gateway/v1/media/jobs/mj_1'] = [
+        {'status': 'cancel_requested'},
+        {'status': 'canceled', 'started_at': 10, 'finished_at': 20, 'attempt_number': 1},
+    ]
+    out = call(env, 'job', {'job_id': 'mj_1', 'wait_seconds': 5})['structuredContent']
+    assert out['status'] == 'canceled'
+    assert (out['started_at'], out['finished_at'], out['attempt_number']) == (10, 20, 1)
