@@ -596,7 +596,7 @@ describe("readable Try model choices", () => {
     account.params = new URLSearchParams({ capability: "chat", model: raw });
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (init?.method === "POST") return json({ choices: [{ message: { content: "OK" } }] });
-      if (url.includes("/openai/v1/models")) return json({ data: [{ id: raw }] });
+      if (url.includes("/openai/v1/models")) return json({ data: [{ id: raw, capability: "chat" }] });
       if (url.includes("/models/catalog")) {
         if (source === "fallback") return json({}, 500);
         return json(source === "catalog" ? {
