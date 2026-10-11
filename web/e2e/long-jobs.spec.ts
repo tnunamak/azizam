@@ -13,6 +13,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   let started = false;
   let finished = false;
   let renewals = 0;
+  const polls: { since: string | null; polledAt: number }[] = [];
   const job = () => ({
     job_id: "mj_long",
     intent: "image.generate",
@@ -29,10 +30,21 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
     download_url: "/expired-picture?expires=1",
     available: true,
   };
-  await page.route("**/me/api/jobs", (route) =>
-    route.fulfill({
-      json: { jobs: started ? [job()] : [], next_cursor: null },
-    }),
+  await page.route(
+    /\/me\/api\/jobs(?:\?.*)?$/,
+    (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      expect(params.get("watch")).toBe("1");
+      const polledAt = Math.floor(Date.now() / 1000);
+      polls.push({ since: params.get("since"), polledAt });
+      return route.fulfill({
+        json: {
+          jobs: started ? [job()] : [],
+          next_cursor: null,
+          polled_at: polledAt,
+        },
+      });
+    },
   );
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) => {
     started = true;
@@ -59,6 +71,10 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
     return route.fulfill({ json: { download_url: png } });
   });
   await page.goto("/ui/try/");
+  // The job starts after an empty poll and finishes on another page. The
+  // shell must discover it through its timer and the server's watermark.
+  await expect.poll(() => polls.length).toBe(1);
+  expect(polls[0].since).toBeNull();
   await page.getByRole("tab", { name: "Make a picture" }).click();
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => started).toBe(true);
@@ -67,6 +83,8 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   finished = true;
   const notice = page.getByRole("region", { name: "Picture ready" });
   await expect(notice).toBeVisible({ timeout: 75_000 });
+  expect(polls.length).toBeGreaterThanOrEqual(2);
+  expect(polls[1].since).toBe(String(polls[0].polledAt));
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ["light", "dark"]) {

@@ -194,3 +194,11 @@ it reported `task index preflight failed before repository mutation` and
 `Repository files written: no`, with an index integrity check canceled.
 The binding brief and source reads remained usable. Task creation needs a
 bounded wait and progress before it can help an incident lane.
+
+## 2026-10-11: R16 browser failure triage
+
+`ds tldr` and `ds recent` completed in the isolated worktree. Recent activity
+identified the job recovery and polling commits that touched this journey.
+The release traces supplied the decisive evidence: the browser fixtures
+missed playback renewal and query parameters on job polls. No CLI friction
+in this use; source reads and trace inspection were still necessary.
