@@ -22,7 +22,7 @@ from gateway.resource_admission import (  # noqa: E402
 class ResourceAdmissionTests(unittest.TestCase):
     def test_allows_when_service_and_resources_are_available(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(),
+            ServiceAvailability(available=True),
             ResourceEstimate(intent="chat.generate", reasons=("using primary llm",)),
         )
 
@@ -46,7 +46,7 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_degrades_when_service_is_degraded_but_available(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(degraded=True, reasons=("slow warmup",), retry_after=10),
+            ServiceAvailability(available=True, degraded=True, reasons=("slow warmup",), retry_after=10),
             ResourceEstimate(intent="chat.generate"),
         )
 
@@ -59,7 +59,7 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_denies_disabled_image_route_when_gpu_is_reserved_for_llm(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(),
+            ServiceAvailability(available=True),
             ResourceEstimate(
                 intent="image.generate",
                 resource_class="image",
@@ -95,7 +95,7 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_degrades_when_only_optional_resource_is_reserved(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(),
+            ServiceAvailability(available=True),
             ResourceEstimate(
                 intent="chat.generate",
                 required_tokens=("cpu",),
@@ -110,7 +110,7 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_denies_when_queue_is_full(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(),
+            ServiceAvailability(available=True),
             ResourceEstimate(intent="video.generate", queue_key="video"),
             AdmissionConstraints(max_queue_depth=2),
             CurrentLoad(queue_depths={"video": 2}, retry_after=120),
@@ -123,7 +123,7 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_denies_when_app_concurrency_is_full(self) -> None:
         decision = advise_resource_admission(
-            ServiceAvailability(),
+            ServiceAvailability(available=True),
             ResourceEstimate(intent="chat.generate", app_id="desktop"),
             AdmissionConstraints(max_app_concurrency={"desktop": 1}),
             CurrentLoad(active_by_app={"desktop": 1}, retry_after=5),

@@ -103,7 +103,7 @@ class ResourceClaimAdmissionTests(unittest.TestCase):
         )
         decision = evaluate_admission(
             AdmissionRequest("request-secret-id", claim),
-            CapacitySnapshot(total_vram_mb=24_000, used_vram_mb=0),
+            CapacitySnapshot(total_vram_mb=24_000, used_vram_mb=0, active_exclusive_locks=frozenset()),
         )
 
         claim_summary = summarize_claim(claim)

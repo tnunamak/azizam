@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from gateway.resource_decisions import Quality, project_decision
+
 from gateway.resource_admission import (
     AdmissionConstraints,
     AdmissionOutcome,
@@ -33,7 +35,7 @@ class RouteAdmissionHTTP:
 def advise_route_admission(
     *,
     intent: str,
-    service_available: bool = True,
+    service_available: bool | None = None,
     service_degraded: bool = False,
     service_retry_after: int | None = None,
     service_reasons: tuple[str, ...] = (),
@@ -54,6 +56,8 @@ def advise_route_admission(
     queue_depths: Mapping[str, int] | None = None,
     active_by_app: Mapping[str, int] | None = None,
     load_retry_after: int | None = None,
+    observed_at: float | None = None,
+    load_quality: Quality = "declared",
 ) -> ResourceAdmissionDecision:
     """Build admission inputs from route/runtime facts and evaluate them."""
 
@@ -63,6 +67,7 @@ def advise_route_admission(
             degraded=service_degraded,
             retry_after=service_retry_after,
             reasons=service_reasons,
+            observed_at=observed_at,
         ),
         ResourceEstimate(
             intent=intent,
@@ -87,6 +92,8 @@ def advise_route_admission(
             queue_depths=queue_depths or {},
             active_by_app=active_by_app or {},
             retry_after=load_retry_after,
+            observed_at=observed_at,
+            quality=load_quality,
         ),
     )
 
@@ -97,9 +104,17 @@ def admission_http_response(
     allowed_status: int = 200,
     degraded_status: int = 200,
     denied_status: int = 503,
+    audience: str = "client",
+    wait_deadline: float | None = None,
 ) -> RouteAdmissionHTTP:
     """Translate an admission decision into a response-ready HTTP shape."""
 
+    evidence = decision.details.as_dict(decision.outcome.value)
+    evidence["wait_deadline"] = wait_deadline
+    projected = project_decision(evidence, audience)
+    admission = decision.as_dict()
+    if audience not in {"admin", "internal", "owner"}:
+        admission["reasons"] = tuple(r["message"] for r in projected["reasons"])
     headers: dict[str, str] = {}
     if decision.retry_after is not None:
         headers["Retry-After"] = str(decision.retry_after)
@@ -111,9 +126,10 @@ def admission_http_response(
             body={
                 "error": {
                     "code": "resource_admission_denied",
-                    "message": _reason_message(decision),
+                    "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
+                    "decision": projected,
                 },
-                "admission": decision.as_dict(),
+                "admission": admission,
             },
         )
 
@@ -121,11 +137,6 @@ def admission_http_response(
     return RouteAdmissionHTTP(
         status_code=status_code,
         headers=headers,
-        body={"admission": decision.as_dict()},
+        body={"admission": admission, "decision": projected},
     )
 
-
-def _reason_message(decision: ResourceAdmissionDecision) -> str:
-    if decision.reasons:
-        return decision.reasons[0]
-    return "resource admission denied"

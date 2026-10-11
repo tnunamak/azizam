@@ -28,10 +28,10 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers, {"Retry-After": "30"})
         self.assertEqual(
-            response.body["error"],
+            {k: v for k, v in response.body["error"].items() if k != "decision"},
             {
                 "code": "resource_admission_denied",
-                "message": "image backend unavailable",
+                "message": "This service is not available right now.",
             },
         )
         self.assertEqual(response.body["admission"]["outcome"], "denied")
@@ -40,6 +40,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
 
     def test_degraded_decision_remains_successful_and_exposes_advice(self) -> None:
         decision = advise_route_admission(
+            service_available=True,
             intent="chat.generate",
             service_degraded=True,
             service_retry_after=5,
@@ -57,6 +58,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
 
     def test_route_facts_feed_profile_and_queue_limits(self) -> None:
         decision = advise_route_admission(
+            service_available=True,
             intent="image.generate",
             app_id="image-agent",
             resource_class="image",
@@ -90,6 +92,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
 
     def test_allowed_decision_uses_success_body_only(self) -> None:
         decision = advise_route_admission(
+            service_available=True,
             intent="chat.generate",
             app_id="continue-local",
             estimate_reasons=("using primary llm",),
@@ -100,7 +103,7 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers, {})
         self.assertEqual(response.body["admission"]["outcome"], "allowed")
-        self.assertEqual(response.body["admission"]["reasons"], ("using primary llm",))
+        self.assertEqual(response.body["admission"]["reasons"], ("The request has resource requirements.",))
         self.assertEqual(response.body["admission"]["reason_codes"], ("estimate_reason",))
 
 

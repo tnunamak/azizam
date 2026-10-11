@@ -77,6 +77,7 @@ from gateway import (
     prompt_memory,
     receipt_store,
     resource_admission_http,
+    resource_decisions,
     route_registry,
     service_registry,
     video_inputs,
@@ -5016,6 +5017,7 @@ async def proxy_stt_request(
             started_at = time.monotonic()
             deadline_at = started_at + execution.deadline_seconds
             lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id=receipt.request_id, config=execution)
+            receipt.resource_decision = lease.decision.details.as_dict(lease.decision.status.value)
             # Follow a replacement lease without changing cleanup order: the
             # reservation must outlive the form, files, and workspace.
             cleanup.add("capacity_lease", lambda: lease.release())
@@ -5089,6 +5091,7 @@ async def proxy_stt_request(
                     lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
                         request_id=receipt.request_id, config=replace(execution, spool_dir=workspace.parent),
                     )
+                    receipt.resource_decision = lease.decision.details.as_dict(lease.decision.status.value)
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:
                 effective_model = execution.default_model
@@ -5355,7 +5358,18 @@ async def proxy_stt_request(
             return _stt_error("STT request deadline exceeded.", status_code=504, code="stt_request_deadline")
         except stt_chunking.SttResourceLimitExceeded as error:
             owner.report(status="failed", reason="failed")
-            return _stt_error(str(error), status_code=413, code="stt_resource_limit")
+            response = _stt_error(str(error), status_code=413, code="stt_resource_limit")
+            if error.decision is not None:
+                evidence = error.decision.details.as_dict(error.decision.status.value)
+                evidence["wait_deadline"] = time.time() + 60
+                receipt.resource_decision = evidence
+                body = json.loads(response.body)
+                projected = resource_decisions.project_decision(evidence)
+                body["error"]["decision"] = projected
+                if projected["reasons"]:
+                    body["error"]["message"] = projected["reasons"][0]["message"]
+                response = Response(content=json.dumps(body), status_code=413, media_type="application/json")
+            return response
         except stt_chunking.MultiPartException as error:
             owner.report(status="failed", reason="failed")
             return _stt_error(str(error), status_code=413, code="stt_upload_limit")
@@ -14503,7 +14517,7 @@ class _SessionMakeRuntime:
         receipt.job_id = str(payload.get("job_id") or "") or None
         decision = _apply_image_route_policy(receipt, auth_context)
         # The operator may have turned this work off since the job was admitted.
-        refusal = _media_job_admission_response(str(payload.get("intent") or ""), count_queue=False)
+        refusal = _media_job_admission_response(str(payload.get("intent") or ""), count_queue=False, receipt=receipt)
         if decision.denied:
             response = _policy_denied_response(decision)
         elif refusal is not None:
@@ -14976,7 +14990,7 @@ async def _identity_submit_job(
     request: Request, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
 ) -> Response:
     """Queue an identity scene as a media job: poll /gateway/v1/media/jobs/{id}, fetch .../content."""
-    admission = _media_job_admission_response("image.generate")
+    admission = _media_job_admission_response("image.generate", auth_context=auth_context, path=str(request.url.path))
     if admission is not None:
         return admission
     profile = _profile_for_auth_context(auth_context)
@@ -21731,7 +21745,7 @@ def _media_job_queue_depth(
     max_queue_depth: int | None = None,
     *,
     admission_cfg: Mapping[str, Any] | None = None,
-) -> int:
+) -> int | None:
     cfg = admission_cfg if isinstance(admission_cfg, Mapping) else MEDIA_JOB_ADMISSION_CFG
     configured_scan_limit = _optional_int_config(cfg, "scan_limit") or 1000
     scan_limit = max(configured_scan_limit, max_queue_depth or 0)
@@ -21745,8 +21759,8 @@ def _media_job_queue_depth(
                 path=media_jobs.DB_PATH,
             )
         except Exception as exc:  # noqa: BLE001
-            print(f"[proxy] media job admission load read failed: {exc}", flush=True)
-            continue
+            print(f"[proxy] media job admission load read failed: {type(exc).__name__}", flush=True)
+            return None
         depth += sum(
             1
             for row in rows
@@ -21755,7 +21769,10 @@ def _media_job_queue_depth(
     return depth
 
 
-def _media_job_admission_response(intent: str, *, count_queue: bool = True) -> Response | None:
+def _media_job_admission_response(
+    intent: str, *, count_queue: bool = True, receipt: RouteReceipt | None = None,
+    auth_context: AuthContext | None = None, path: str = "/gateway/v1/media/jobs",
+) -> Response | None:
     """Return the operator's refusal for new media work, or None to admit it.
 
     ``count_queue=False`` skips the queue-depth limit, for a job that was
@@ -21781,6 +21798,8 @@ def _media_job_admission_response(intent: str, *, count_queue: bool = True) -> R
     )
     decision = resource_admission_http.advise_route_admission(
         intent=intent,
+        observed_at=time.time(),
+        load_quality="measured",
         service_available=COMFY_ENABLED and not service_blocked,
         service_degraded=service_degraded,
         service_retry_after=service_retry_after
@@ -21811,15 +21830,32 @@ def _media_job_admission_response(intent: str, *, count_queue: bool = True) -> R
             "queue_retry_after_seconds",
         ) or 30,
     )
+    evidence = decision.details.as_dict(decision.outcome.value)
+    # A bounded retry window, not an ETA or a reservation.
+    evidence["wait_deadline"] = time.time() + 60
+    if receipt is not None:
+        receipt.resource_decision = evidence
     if decision.allowed:
         return None
-    advised = resource_admission_http.admission_http_response(decision)
-    return Response(
-        content=json.dumps(advised.body),
-        status_code=advised.status_code,
-        media_type="application/json",
-        headers=dict(advised.headers),
-    )
+    if receipt is None and auth_context is not None:
+        identity = auth_context.identity
+        refused = RouteReceipt(protocol="gateway.media", intent=intent, path=path,
+                               app_id=identity.app_id if identity else None,
+                               owner_key_hash=identity.key_hash if identity else None,
+                               api_key_name=identity.name if identity else None,
+                               resource_decision=evidence)
+        refused.finish("rejected")
+        try:
+            receipt_store.record(refused)
+        except Exception as exc:  # Receipts are observational.
+            print(f"[proxy] admission receipt failed: {type(exc).__name__}", flush=True)
+    advised = resource_admission_http.admission_http_response(decision, wait_deadline=evidence["wait_deadline"])
+    response = Response(content=json.dumps(advised.body), status_code=advised.status_code,
+                        media_type="application/json", headers=dict(advised.headers))
+    # Trusted in-process handoff for session submission's owned receipt.
+    response.resource_decision = evidence
+    return response
+
 
 
 _AUDIO_MEDIA_JOB_INTENTS = frozenset({"audio.generate", "music.generate", "sfx.generate"})
@@ -22111,7 +22147,7 @@ async def _submit_audio_media_job(
     )
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
-    admission_response = _media_job_admission_response(intent)
+    admission_response = _media_job_admission_response(intent, auth_context=auth_context)
     if admission_response is not None:
         return admission_response
     target_decision = _workflow_target_policy_decision(
@@ -22665,7 +22701,7 @@ async def _submit_video_media_job(
     )
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
-    admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE)
+    admission_response = _media_job_admission_response(INTENT_VIDEO_GENERATE, auth_context=auth_context)
     if admission_response is not None:
         return admission_response
     target_decision = _workflow_target_policy_decision(
@@ -22892,7 +22928,7 @@ async def gateway_image_generations_media_job(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    admission_response = _media_job_admission_response("image.generate")
+    admission_response = _media_job_admission_response("image.generate", receipt=receipt)
     if admission_response is not None:
         finish_image_route_receipt(receipt, admission_response)
         return admission_response
