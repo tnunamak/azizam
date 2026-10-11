@@ -214,7 +214,14 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
                     revision = _revision(int(revision))
                 store = CategoryStore(store_path)
                 if operation == "active":
-                    return record(store.get_active())
+                    row = store.get_active()
+                    result = record(row)
+                    # created_at is when the snapshot was written; the audit row
+                    # of its latest activation says when it went live.
+                    activations = [entry for entry in store.history(limit=1000)
+                                   if entry["action"] == "activate" and entry["revision"] == row.revision]
+                    result["activated_at"] = activations[-1]["created_at"] if activations else None
+                    return result
                 if operation == "history":
                     return {"history": store.history()}
                 if operation == "revision":

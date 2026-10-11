@@ -136,6 +136,9 @@ def test_create_preview_activate_and_read(categories):
     active = client.get(PREFIX + "/active").json()
     assert active["snapshot"] == candidate["snapshot"]
     assert active["active_counter"] == 1
+    history = client.get(PREFIX + "/history").json()["history"]
+    assert active["activated_at"] == history[-1]["created_at"]
+    assert history[-1]["action"] == "activate"
     assert client.get(PREFIX + f'/revisions/{candidate["revision"]}').json()["snapshot"] == candidate["snapshot"]
     assert client.get(PREFIX + "/history").json()["history"][0]["action"] == "activate"
 
