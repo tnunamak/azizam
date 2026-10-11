@@ -74,6 +74,12 @@ cleanup() {
     kill -KILL -- "-$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
+  # Playwright starts each fixture server in its own session, so group kills
+  # miss them; stop anything still running from this run's directory.
+  pkill -TERM -f -- "$run/" 2>/dev/null || true
+  deadline=$((SECONDS + 10))
+  while pgrep -f -- "$run/" >/dev/null 2>&1 && ((SECONDS < deadline)); do sleep .2; done
+  pkill -KILL -f -- "$run/" 2>/dev/null || true
   cd "$repo"
   for directory in "${worktrees[@]}"; do
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
@@ -97,7 +103,10 @@ step() {
   local name=$1; shift
   local start=$SECONDS rc=0
   echo "== $name"
-  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 || rc=$?
+  # Run in the background and wait: a trapped INT or TERM interrupts wait at
+  # once, while a foreground child would make bash defer or drop the signal.
+  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 &
+  wait "$!" || rc=$?
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
