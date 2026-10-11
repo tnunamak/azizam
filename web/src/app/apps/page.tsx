@@ -46,6 +46,7 @@ import {
   CopyField,
   CodeBlock,
 } from "@/components/product";
+import { cn } from "@/lib/cn";
 import { preferredTerms } from "@/lib/terms";
 import { keyPromptNote } from "@/lib/prompt-memory";
 
@@ -389,7 +390,9 @@ function AppsContents() {
       await refresh();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "The key could not be created. Try again.",
+        err instanceof Error
+          ? err.message
+          : "The key could not be created. Try again.",
       );
     } finally {
       setMintingAppId(null);
@@ -488,16 +491,24 @@ function AppsContents() {
               ? null
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
+            // A notice must stay whole on a phone, where there is no hover:
+            // its meta line wraps and a row action moves under it.
+            const hasAction =
+              oldKeys.length > 0 || (needsNewKey && app.can_mint_keys);
+            const hasNotice = hasAction || blockedReason !== null;
             return (
               <ListRow
                 key={app.id}
                 id={`app-${app.id}`}
                 tabIndex={requestedApp === app.id ? -1 : undefined}
-                className={
-                  requestedApp === app.id
-                    ? "ring-ring ring-offset-background ring-2 ring-offset-2"
-                    : undefined
-                }
+                className={cn(
+                  requestedApp === app.id &&
+                    "ring-ring ring-offset-background ring-2 ring-offset-2",
+                  hasNotice &&
+                    "max-sm:py-3 max-sm:[&_[data-slot=list-row-meta]]:overflow-visible max-sm:[&_[data-slot=list-row-meta]]:whitespace-normal",
+                  hasAction &&
+                    "max-sm:flex-wrap max-sm:[&_[data-slot=list-row-trailing]]:w-full max-sm:[&_[data-slot=list-row-trailing]]:pl-7",
+                )}
                 lines={2}
                 titleAs="h2"
                 leading={<AppWindow aria-hidden="true" />}
@@ -512,7 +523,9 @@ function AppsContents() {
                       : null,
                   blockedReason ? "Can't create keys" : null,
                   `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
-                  accessPlanSummary(app) || null,
+                  accessPlanSummary(app)
+                    ? `Plan: ${accessPlanSummary(app)}`
+                    : null,
                 ]}
                 metaTitle={
                   oldKeys.length

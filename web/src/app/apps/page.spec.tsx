@@ -393,3 +393,15 @@ it("says what a new key does with prompts, from the gateway's answer", async () 
     ),
   ).toBeVisible();
 });
+
+it("names an app's access plan on its row instead of showing a bare word", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, profile: { name: "Old" } }],
+  });
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.getByText(/Plan: Old/)).toBeVisible();
+});

@@ -228,6 +228,13 @@ function reconciliationLabel(count: number | null | undefined): string {
   return `${count} charge${count === 1 ? " needs" : "s need"} checking`;
 }
 
+// Phone layout for the models table: cells stack, and a labelled cell shows
+// its column name above its value (the header is screen-reader only there).
+const phoneCell =
+  "break-words whitespace-normal max-sm:block max-sm:h-auto max-sm:min-w-0 max-sm:px-0 max-sm:py-1 max-sm:text-left";
+const phoneLabelled =
+  "max-sm:before:text-muted-foreground max-sm:before:whitespace-normal max-sm:before:text-meta max-sm:before:block max-sm:before:content-[attr(data-label)]";
+
 function decimalInputValid(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -1044,8 +1051,10 @@ function DetailCard({
             tabIndex={0}
             aria-label={`${provider.name} models`}
           >
-            <Table className="min-w-0 table-fixed">
-              <TableHeader>
+            {/* On a phone each model becomes a stacked card: the name, then labelled
+                values, so no column header has to fit 390 px. */}
+            <Table className="min-w-0 table-fixed max-sm:block">
+              <TableHeader className="max-sm:sr-only">
                 <TableRow>
                   <TableHead className="whitespace-normal">Model</TableHead>
                   <TableHead numeric className="whitespace-normal">
@@ -1057,9 +1066,9 @@ function DetailCard({
                   <TableHead className="whitespace-normal">State</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="max-sm:block">
                 {!provider.models.length && (
-                  <TableRow>
+                  <TableRow className="max-sm:block">
                     <TableCell
                       colSpan={4}
                       className="text-muted-foreground whitespace-normal"
@@ -1069,17 +1078,40 @@ function DetailCard({
                   </TableRow>
                 )}
                 {provider.models.map((model) => (
-                  <TableRow key={model.id}>
-                    <TableCell className="text-body font-medium break-words whitespace-normal">
+                  <TableRow
+                    key={model.id}
+                    className="max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
+                  >
+                    <TableCell
+                      className={cn(
+                        phoneCell,
+                        "text-body font-medium max-sm:col-span-2",
+                      )}
+                    >
                       {model.id}
                     </TableCell>
-                    <TableCell numeric className="break-words whitespace-normal">
+                    <TableCell
+                      numeric
+                      data-label="Input, USD per 1M tokens"
+                      className={cn(phoneCell, phoneLabelled)}
+                    >
                       {model.priceInput || "Unknown"}
                     </TableCell>
-                    <TableCell numeric className="break-words whitespace-normal">
+                    <TableCell
+                      numeric
+                      data-label="Output, USD per 1M tokens"
+                      className={cn(phoneCell, phoneLabelled)}
+                    >
                       {model.priceOutput || "Unknown"}
                     </TableCell>
-                    <TableCell className="break-words whitespace-normal">
+                    <TableCell
+                      data-label="State"
+                      className={cn(
+                        phoneCell,
+                        phoneLabelled,
+                        "max-sm:col-span-2",
+                      )}
+                    >
                       {model.enabled ? "Enabled" : "Disabled"}
                     </TableCell>
                   </TableRow>
