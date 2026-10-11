@@ -91,43 +91,12 @@ function PersonJobNotices({ personId }: { personId: string }) {
       /* A disabled store does not disable in-app notices. */
     }
   }, [storageKey]);
-  const { data, dataUpdatedAt } = useQuery({
-    queryKey: ["person-jobs", personId],
-    queryFn: async ({ signal }) => {
-      try {
-        const jobs: LongJob[] = [];
-        let cursor: string | null = null;
-        do {
-          const page: { jobs: LongJob[]; next_cursor?: string | null } =
-            await jobRequest(
-              `/me/api/jobs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-              signal,
-            );
-          jobs.push(...page.jobs);
-          cursor = page.next_cursor ?? null;
-        } while (cursor);
-        failures.current = 0;
-        return jobs;
-      } catch (error) {
-        failures.current += 1;
-        throw error;
-      }
-    },
-    staleTime: 5_000,
-    retry: false,
-    refetchIntervalInBackground: false,
-    refetchInterval: (query) =>
-      jobPollInterval(
-        Boolean(query.state.data?.some((job) => !terminalJob(job))),
-        unchanged.current,
-        failures.current,
-      ),
-  });
-  useEffect(() => {
-    if (!data) return;
+  // Finished jobs are events: record them when a poll arrives, not by
+  // syncing state to the query result in an effect.
+  function recordPoll(jobs: LongJob[]) {
     let changed = false;
     const completed: LongJob[] = [];
-    for (const job of data) {
+    for (const job of jobs) {
       const previous = seen.current.get(job.job_id);
       changed ||= previous !== job.status;
       if (
@@ -149,7 +118,40 @@ function PersonJobNotices({ personId }: { personId: string }) {
         ),
         ...completed,
       ]);
-  }, [data, dataUpdatedAt, startedAt]);
+  }
+  useQuery({
+    queryKey: ["person-jobs", personId],
+    queryFn: async ({ signal }) => {
+      try {
+        const jobs: LongJob[] = [];
+        let cursor: string | null = null;
+        do {
+          const page: { jobs: LongJob[]; next_cursor?: string | null } =
+            await jobRequest(
+              `/me/api/jobs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+              signal,
+            );
+          jobs.push(...page.jobs);
+          cursor = page.next_cursor ?? null;
+        } while (cursor);
+        failures.current = 0;
+        recordPoll(jobs);
+        return jobs;
+      } catch (error) {
+        failures.current += 1;
+        throw error;
+      }
+    },
+    staleTime: 5_000,
+    retry: false,
+    refetchIntervalInBackground: false,
+    refetchInterval: (query) =>
+      jobPollInterval(
+        Boolean(query.state.data?.some((job) => !terminalJob(job))),
+        unchanged.current,
+        failures.current,
+      ),
+  });
   function dismiss(id: string) {
     dismissed.current.add(id);
     setNotices((current) => current.filter((job) => job.job_id !== id));

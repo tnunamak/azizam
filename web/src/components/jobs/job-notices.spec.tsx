@@ -58,20 +58,17 @@ function mount(id = "alice") {
 }
 
 test("announces completion once, links a stable ID, and dismisses without stealing focus", async () => {
+  let jobs: unknown[] = [job];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ jobs: [job] }))),
+    vi.fn(async () => new Response(JSON.stringify({ jobs }))),
   );
   const { client } = mount();
   await waitFor(() =>
     expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
   );
-  const completed = {
-    ...job,
-    status: "succeeded",
-    assets: [{ asset_id: "vid_finished" }],
-  };
-  act(() => client.setQueryData(["person-jobs", "alice"], [completed]));
+  jobs = [{ ...job, status: "succeeded", assets: [{ asset_id: "vid_finished" }] }];
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
   const link = await screen.findByRole("link", { name: "Open result" });
   expect(link).toHaveAttribute("href", "/library?asset=vid_finished");
   expect(screen.getByLabelText("Job updates")).toHaveAttribute(
@@ -80,38 +77,24 @@ test("announces completion once, links a stable ID, and dismisses without steali
   );
   expect(link).not.toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss video update" }));
-  act(() => client.setQueryData(["person-jobs", "alice"], [{ ...completed }]));
+  // Another poll of the same finished job must not bring the notice back.
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
   expect(screen.queryByText("Video is ready")).not.toBeInTheDocument();
 });
 
 test("old completed jobs stay quiet; a new failure gets a durable details link", async () => {
+  let jobs: unknown[] = [{ ...job, status: "succeeded" }];
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ jobs: [{ ...job, status: "succeeded" }] }),
-        ),
-    ),
+    vi.fn(async () => new Response(JSON.stringify({ jobs }))),
   );
   const { client } = mount();
   await waitFor(() =>
     expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
   );
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  act(() =>
-    client.setQueryData(
-      ["person-jobs", "alice"],
-      [
-        {
-          ...job,
-          job_id: "new",
-          created_at: Date.now() / 1000,
-          status: "failed",
-        },
-      ],
-    ),
-  );
+  jobs = [{ ...job, job_id: "new", created_at: Date.now() / 1000, status: "failed" }];
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
   expect(
     await screen.findByRole("link", { name: "See details" }),
   ).toHaveAttribute("href", "/library?job=new");
