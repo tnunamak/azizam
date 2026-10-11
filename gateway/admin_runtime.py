@@ -22,7 +22,8 @@ from typing import Any, Mapping
 
 from fastapi import Request, status
 
-from gateway import admin_store, extension_packages, service_registry
+from gateway import admin_store, extension_packages, secret_store, service_registry
+from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
@@ -182,14 +183,16 @@ def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
 def _redact_oidc_setting(
     value: Mapping[str, Any], *, updated_at: Any = None
 ) -> dict[str, Any]:
+    """Describe a stored setting; the secret is only ever "set" or not."""
     out: dict[str, Any] = {}
     for key in OIDC_PROVIDER_FIELDS:
-        if key not in value:
-            continue
-        if key in OIDC_SECRET_FIELDS:
-            out[key] = _OIDC_SECRET_REDACTED if value.get(key) else ""
-            out[f"{key}_set"] = bool(value.get(key))
-        else:
+        if key == "client_secret":
+            if OIDC_CLIENT_SECRET_REF not in value and key not in value:
+                continue
+            secret_set = bool(value.get(OIDC_CLIENT_SECRET_REF))
+            out[key] = _OIDC_SECRET_REDACTED if secret_set else ""
+            out[f"{key}_set"] = secret_set
+        elif key in value:
             out[key] = value[key]
     if updated_at is not None:
         out["updated_at"] = updated_at
@@ -199,23 +202,29 @@ def _redact_oidc_setting(
 def _merge_oidc_setting(
     current: Mapping[str, Any], update: Mapping[str, Any]
 ) -> dict[str, Any]:
+    """Merge the non-secret fields; the stored secret reference is kept.
+
+    The caller stores a new secret and replaces the reference itself. A stored
+    empty ``client_secret`` is an explicit "no secret" override and is kept.
+    """
     merged: dict[str, Any] = {}
+    if current.get(OIDC_CLIENT_SECRET_REF):
+        merged[OIDC_CLIENT_SECRET_REF] = current[OIDC_CLIENT_SECRET_REF]
+    elif current.get("client_secret") == "":
+        merged["client_secret"] = ""
     for key in OIDC_PROVIDER_FIELDS:
+        if key in OIDC_SECRET_FIELDS:
+            continue
         if key in update:
             new_value = update[key]
-            if key in OIDC_SECRET_FIELDS and _is_blank_or_redacted(new_value):
-                # Preserve the existing secret when caller omits/clears it.
-                if key in current:
-                    merged[key] = current[key]
-            else:
-                # Canonical stored clears are "" for scalar fields and [] for
-                # list fields. Normalize old direct-store nulls on their next
-                # write; HTTP input never creates them.
-                merged[key] = (
-                    [] if new_value is None and key in _OIDC_LIST_FIELDS
-                    else "" if new_value is None
-                    else new_value
-                )
+            # Canonical stored clears are "" for scalar fields and [] for
+            # list fields. Normalize old direct-store nulls on their next
+            # write; HTTP input never creates them.
+            merged[key] = (
+                [] if new_value is None and key in _OIDC_LIST_FIELDS
+                else "" if new_value is None
+                else new_value
+            )
         elif key in current:
             current_value = current[key]
             merged[key] = (
@@ -232,19 +241,6 @@ def _is_blank_or_redacted(value: Any) -> bool:
     if isinstance(value, str):
         stripped = value.strip()
         return stripped == "" or stripped == _OIDC_SECRET_REDACTED
-    return False
-
-
-def _oidc_secret_changed(
-    current: Mapping[str, Any], update: Mapping[str, Any]
-) -> bool:
-    for key in OIDC_SECRET_FIELDS:
-        if key not in update:
-            continue
-        if _is_blank_or_redacted(update[key]):
-            continue
-        if str(current.get(key) or "") != str(update[key] or ""):
-            return True
     return False
 
 
@@ -1121,7 +1117,7 @@ class AdminSQLiteStore:
         return _redact_oidc_setting(value, updated_at=record.get("updated_at"))
 
     def get_oidc_config_setting_raw(self) -> Mapping[str, Any] | None:
-        """Return the raw DB-stored OIDC provider config (secret intact).
+        """Return the DB-stored OIDC provider config with its secret resolved.
 
         Internal callers (e.g. the OIDC login flow) need the secret to call
         the token endpoint. UI/API surfaces must use
@@ -1136,7 +1132,22 @@ class AdminSQLiteStore:
         value = record.get("value")
         if not isinstance(value, Mapping):
             return None
-        return dict(value)
+        return self._with_resolved_oidc_secret(value)
+
+    def _with_resolved_oidc_secret(self, stored: Mapping[str, Any]) -> dict[str, Any]:
+        value = dict(stored)
+        ref = value.pop(OIDC_CLIENT_SECRET_REF, None)
+        if value.get("client_secret"):
+            # Startup moves stored literals into the secret store; one seen
+            # here was written behind this process and is not trusted.
+            print("[admin_runtime] ignoring a plaintext OIDC client secret in settings", flush=True)
+            del value["client_secret"]
+        if ref:
+            try:
+                value["client_secret"] = secret_store.get_provider_secret(str(ref), db_path=self.path)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[admin_runtime] OIDC client secret {ref!r} unreadable: {type(exc).__name__}", flush=True)
+        return value
 
     def update_oidc_config_setting(
         self, *, data: Mapping[str, Any], actor: AdminContext,
@@ -1161,12 +1172,29 @@ class AdminSQLiteStore:
             raise admin_store.SettingsConflictError()
         current_raw = current["value"] if current else {}
         merged = _merge_oidc_setting(current_raw, data)
-        _validate_merged_oidc_setting(merged)
-        candidate_enabled = merged.get("enabled", True)
+        # Validate with the secret the login flow would use; store a reference.
+        candidate = self._with_resolved_oidc_secret(merged)
+        supplied = data.get("client_secret")
+        new_secret = None if _is_blank_or_redacted(supplied) else str(supplied)
+        if new_secret is not None and new_secret == candidate.get("client_secret"):
+            new_secret = None
+        if new_secret is not None:
+            candidate["client_secret"] = new_secret
+        _validate_merged_oidc_setting(candidate)
+        candidate_enabled = candidate.get("enabled", True)
         if self.oidc_config_validator is not None:
-            validated_enabled = self.oidc_config_validator(merged)
+            validated_enabled = self.oidc_config_validator(candidate)
             if validated_enabled is not None:
                 candidate_enabled = validated_enabled
+        old_ref = merged.get(OIDC_CLIENT_SECRET_REF)
+        new_ref = None
+        if new_secret is not None:
+            # A fresh id per write: a rejected settings write leaves the
+            # current reference pointing at the current secret.
+            new_ref = f"oidc-client-secret-{secrets.token_hex(8)}"
+            secret_store.put_provider_secret(new_ref, new_secret, db_path=self.path)
+            merged.pop("client_secret", None)
+            merged[OIDC_CLIENT_SECRET_REF] = new_ref
 
         def validate_sign_in(conn):
             row = conn.execute("SELECT value_json FROM operator_settings WHERE key = 'sign_in'").fetchone()
@@ -1174,24 +1202,31 @@ class AdminSQLiteStore:
             if mode == "oidc" and not candidate_enabled:
                 raise ValueError("Enable built-in sign-in before disabling the identity provider; at least one working sign-in method is required.")
 
-        record = admin_store.put_operator_setting_with_audit(
-            OIDC_PROVIDER_SETTING_KEY,
-            merged,
-            updated_by=actor.subject,
-            expected_revision=current_revision,
-            validate_in_transaction=validate_sign_in,
-            audit_action="operator.oidc_provider_config.update",
-            audit_actor_kind=actor.actor_kind,
-            audit_actor_id=actor.audit_actor_id,
-            audit_actor_label=actor.actor_label,
-            audit_target_kind="operator_setting",
-            audit_target_id=OIDC_PROVIDER_SETTING_KEY,
-            audit_metadata={
-                "fields": sorted(str(k) for k in data.keys()),
-                "secret_changed": _oidc_secret_changed(current_raw, data),
-            },
-            path=self.path,
-        )
+        try:
+            record = admin_store.put_operator_setting_with_audit(
+                OIDC_PROVIDER_SETTING_KEY,
+                merged,
+                updated_by=actor.subject,
+                expected_revision=current_revision,
+                validate_in_transaction=validate_sign_in,
+                audit_action="operator.oidc_provider_config.update",
+                audit_actor_kind=actor.actor_kind,
+                audit_actor_id=actor.audit_actor_id,
+                audit_actor_label=actor.actor_label,
+                audit_target_kind="operator_setting",
+                audit_target_id=OIDC_PROVIDER_SETTING_KEY,
+                audit_metadata={
+                    "fields": sorted(str(k) for k in data.keys()),
+                    "secret_changed": new_ref is not None,
+                },
+                path=self.path,
+            )
+        except BaseException:
+            if new_ref is not None:
+                secret_store.delete_provider_secret(new_ref, db_path=self.path)
+            raise
+        if new_ref is not None and old_ref:
+            secret_store.delete_provider_secret(str(old_ref), db_path=self.path)
         return {
             **_redact_oidc_setting(record["value"], updated_at=record.get("updated_at")),
             "revision": admin_store.operator_setting_revision(record),

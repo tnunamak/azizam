@@ -47,6 +47,11 @@ _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
 SCHEMA_VERSION = 5
+# The OIDC client secret lives in the encrypted secret store; the
+# oidc_provider_config setting holds only this reference to it.
+OIDC_CLIENT_SECRET_REF = "client_secret_ref"
+# The fixed secret id makes the startup move restart-safe.
+OIDC_MOVED_CLIENT_SECRET_ID = "oidc-client-secret"
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -500,8 +505,64 @@ def init_db(path: Path = DB_PATH) -> None:
     try:
         _apply_pragmas(conn)
         _exec_schema(conn)
+        _move_oidc_client_secret_to_store(conn, path)
     finally:
         conn.close()
+
+
+def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:
+    """Move a plaintext OIDC client secret from settings into the secret store.
+
+    The secret store writes through its own connection, so this runs after the
+    schema transaction. It is idempotent: the secret id is fixed, and the
+    setting changes only while it still holds the same literal. An empty
+    literal is an explicit "no secret" override, not a secret, and stays.
+    """
+    key = "oidc_provider_config"
+
+    def literal() -> tuple[dict[str, Any], str] | None:
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
+        try:
+            value = json.loads(row[0]) if row else None
+        except (TypeError, json.JSONDecodeError):
+            return None
+        secret = value.get("client_secret") if isinstance(value, dict) else None
+        return (value, secret) if isinstance(secret, str) and secret else None
+
+    found = literal()
+    if found is None:
+        return
+    from gateway import secret_store
+
+    secret_store.put_provider_secret(OIDC_MOVED_CLIENT_SECRET_ID, found[1], db_path=path)
+    # Overwrite the literal's freed bytes, then fold the WAL into the file.
+    conn.execute("PRAGMA secure_delete=ON")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = literal()
+        if current is None or current[1] != found[1]:
+            conn.rollback()
+            return
+        value = current[0]
+        del value["client_secret"]
+        value[OIDC_CLIENT_SECRET_REF] = OIDC_MOVED_CLIENT_SECRET_ID
+        ts = _now()
+        conn.execute(
+            "UPDATE operator_settings SET value_json=?, updated_at=? WHERE key=?",
+            (json.dumps(value, ensure_ascii=False, sort_keys=True), ts, key),
+        )
+        _advance_setting_revision(conn, key)
+        _record_audit_in_transaction(
+            conn, "operator.oidc_provider_config.secret_moved",
+            actor_kind=None, actor_id=None, actor_label=None,
+            target_kind="operator_setting", target_id=key,
+            metadata={"secret_ref": OIDC_MOVED_CLIENT_SECRET_ID}, now=ts,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 @contextmanager
