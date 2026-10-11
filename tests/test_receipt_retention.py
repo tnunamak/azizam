@@ -1,6 +1,10 @@
 """Receipt history stays durable unless an owner chooses expiry."""
 import sqlite3
+import json
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, Request
@@ -11,6 +15,116 @@ from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.settings_api import create_settings_router
 
 OWNER = {"test-role": "owner", "x-azizam-csrf": "csrf-fixture"}
+
+
+def test_upgrade_seeds_history_floor_from_surviving_receipts(tmp_path, monkeypatch):
+    path = tmp_path / "receipts.db"
+    now = 1_800_000_000
+    monkeypatch.setattr(receipt_store.time, "time", lambda: now)
+    # An old v2 store has already pruned the first 14 days of its history.
+    with sqlite3.connect(path) as conn:
+        conn.executescript(receipt_store._SCHEMA)
+        conn.execute("INSERT INTO schema_version VALUES (2)")
+    receipt_store.record({"request_id": "survivor"}, created_at=now - 14 * 86400, path=path)
+    receipt_store.init_db(path)
+    assert receipt_store.history_floor(path) == now - 14 * 86400
+    receipt_store.init_db(path)
+    assert receipt_store.history_floor(path) == now - 14 * 86400
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_empty_store_history_starts_at_initialization(tmp_path, monkeypatch, existing):
+    path = tmp_path / "receipts.db"
+    if existing:
+        with sqlite3.connect(path) as conn:
+            conn.executescript(receipt_store._SCHEMA)
+            conn.execute("INSERT INTO schema_version VALUES (2)")
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 1_800_000_000)
+    receipt_store.init_db(path)
+    assert receipt_store.history_floor(path) == 1_800_000_000
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 1_800_001_000)
+    receipt_store.init_db(path)
+    assert receipt_store.history_floor(path) == 1_800_000_000
+
+
+@pytest.mark.parametrize("deletion", ["prune", "save", "maintain"])
+def test_history_floor_never_retreats_after_retention_increase(tmp_path, monkeypatch, deletion):
+    path = tmp_path / "receipts.db"
+    admin_path = tmp_path / "admin.db"
+    admin_store.init_db(admin_path)
+    now = 1_800_000_000
+    monkeypatch.setattr(receipt_store.time, "time", lambda: now - 60 * 86400)
+    receipt_store.init_db(path)
+    receipt_store.record({"request_id": "old"}, created_at=now - 40 * 86400, path=path)
+    receipt_store.record({"request_id": "kept"}, created_at=now, path=path)
+    monkeypatch.setattr(receipt_store.time, "time", lambda: now)
+    save = lambda days: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
+        {"retention_days": days}, path=admin_path)
+    if deletion == "prune":
+        deleted = receipt_store.prune(30 * 86400, path=path)
+    elif deletion == "save":
+        preview = receipt_store.retention_preview(30, path=path)
+        deleted = receipt_store.save_retention(30, preview, lambda: save(30), path=path)
+    else:
+        save(30)
+        deleted = receipt_store.maintain(admin_path, path=path)
+    assert deleted == 1
+    assert receipt_store.history_floor(path) == now - 30 * 86400
+    for days in (90, 365, None):
+        preview = receipt_store.retention_preview(days, path=path)
+        assert receipt_store.save_retention(days, preview, lambda: save(days), path=path) == 0
+        assert receipt_store.maintain(admin_path, path=path) == 0
+        receipt_store.init_db(path)
+        assert receipt_store.history_floor(path) == now - 30 * 86400
+
+
+def test_compaction_busy_reader_reports_pending_and_physical_bytes(tmp_path):
+    path = tmp_path / "receipts.db"
+    receipt_store.init_db(path)
+    for i in range(40):
+        receipt_store.record({"request_id": str(i), "metadata": {"diagnostic": "a" * 4000}},
+                             created_at=i, path=path)
+    reader = sqlite3.connect(path)
+    try:
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 40
+        receipt_store.prune(int(time.time()) - 39, path=path)
+        result = receipt_store.compact(path)
+        assert result["checkpoint_pending"] is True
+        assert result["after_logical_bytes"] < result["before_logical_bytes"]
+        assert result["after_main_bytes"] == path.stat().st_size
+        assert result["after_wal_bytes"] == Path(str(path) + "-wal").stat().st_size > 0
+        assert result["after_physical_bytes"] == result["after_main_bytes"] + result["after_wal_bytes"]
+        assert result["after_physical_bytes"] > result["after_logical_bytes"]
+        assert reader.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 40
+    finally:
+        reader.close()
+    assert receipt_store.count(path) == 1
+    result = receipt_store.compact(path)
+    assert result["checkpoint_pending"] is False
+    assert result["after_wal_bytes"] == 0
+    assert receipt_store.get("39", path=path) is not None
+
+
+def test_compaction_cli_exits_nonzero_until_reader_is_idle(tmp_path):
+    path = tmp_path / "receipts.db"
+    receipt_store.init_db(path)
+    receipt_store.record({"request_id": "kept"}, path=path)
+    script = Path(__file__).resolve().parents[1] / "scripts/compact-receipts"
+    cmd = [sys.executable, str(script), "--db", str(path)]
+    reader = sqlite3.connect(path)
+    try:
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM receipts").fetchall()
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        assert result.returncode != 0
+        assert json.loads(result.stdout)["checkpoint_pending"] is True
+        assert "retry" in result.stderr.lower() and "idle" in result.stderr.lower()
+    finally:
+        reader.close()
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["checkpoint_pending"] is False
 
 
 def test_no_pruning_by_default(tmp_path):

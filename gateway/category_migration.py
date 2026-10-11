@@ -36,6 +36,35 @@ class Case:
     phase: str = "dispatch"
     fixture: str = ""
 
+    @property
+    def grant(self) -> category.Grant:
+        # Bind every non-category authorization input, including for caller-
+        # supplied cases that reuse the same synthetic service/root IDs.
+        digest = _context_digest(self.request)
+        service = self.service_id.removesuffix("@report") + f"-{digest}@report"
+        root = self.root_id.removesuffix("@report") + f"-{digest}@report"
+        kind = "workflow" if self.request.workflow is not None else "release"
+        return category.Grant(self.request.intent, service, **{kind: root})
+
+
+def _context_digest(request: PolicyRequest) -> str:
+    context = (request.backend, request.model, request.workflow, request.protocol,
+               request.remote_provider, request.requires_cloud_fallback,
+               request.remote_paid_fallback, request.native_passthrough,
+               request.native_backend, request.native_operation)
+    return hashlib.sha256(json.dumps(context).encode()).hexdigest()[:16]
+
+
+def _permission_requests(request: PolicyRequest) -> list[PolicyRequest]:
+    """Bounded modes, not a Cartesian product of arbitrary native operations."""
+    variants = [request, replace(request, requires_cloud_fallback=True),
+                replace(request, native_passthrough=True, native_backend=request.backend,
+                        native_operation="POST /generate")]
+    if request.remote_provider is not None:
+        variants += [replace(request, remote_paid_fallback=True),
+                     replace(request, requires_cloud_fallback=True, remote_paid_fallback=True)]
+    return variants
+
 
 @dataclass(frozen=True)
 class Conversion:
@@ -94,9 +123,7 @@ def convert_plan(profile: AppProfile, matrix: list[Case]) -> Conversion:
     grant_profile = _without_categories(profile)
     for case in matrix:
         if evaluate(grant_profile, case.request).allowed:
-            kind = "workflow" if case.request.workflow is not None else "release"
-            grant = category.Grant(case.request.intent, case.service_id,
-                                   **{kind: case.root_id})
+            grant = case.grant
             if grant not in seen_grants:
                 grants.append(grant)
                 seen_grants.add(grant)
@@ -125,7 +152,8 @@ def compare(profile: AppProfile, converted: Conversion, case: Case) -> Compariso
     if case.fixture == "unknown-category":
         assertions += (category.Assertion("unknown-category", "unknown", "owner", True,
                        "report", "report", "report-owner", "report-v1"),)
-    root = category.Subject(case.root_id, kind, assertions)
+    grant = case.grant
+    root = category.Subject(grant[kind], kind, assertions)
     members = (root,)
     if case.fixture in {"route-change", "helper", "retry", "cache", "release", "retrieval",
                         "download", "share", "action"}:
@@ -136,11 +164,10 @@ def compare(profile: AppProfile, converted: Conversion, case: Case) -> Compariso
             category.Assertion("legacy-tags", disallowed, "owner", True,
                                "report", "report", "report-owner", "report-v1"),))
         members += (extra,)
-    service = category.Service(case.service_id, members)
+    service = category.Service(grant.service, members)
     # Every generated selector is exact and valid. Nonmatching grants cannot
     # affect this request; project them out before the kernel's validation so
     # a matrix with thousands of grants does not require quadratic evaluation.
-    grant = category.Grant(case.request.intent, case.service_id, **{kind: case.root_id})
     person_plan = app_plan = replace(converted.plan,
         grants=(grant,) if grant in converted.grant_index else ())
     if case.fixture in {"person-mismatch", "empty-grants"}:
@@ -178,6 +205,32 @@ def adversarial_cases(profile: AppProfile, base: Case) -> list[Case]:
                     "download", "share", "action"):
         phase = fixture if fixture in category.BOUNDARIES else "dispatch"
         cases.append(replace(base, label=fixture, request=request, phase=phase, fixture=fixture))
+    # Isolate these controls from category completeness differences. Earlier
+    # protocol/model/provider restrictions can still mask a permission branch.
+    for index, variant in enumerate(_permission_requests(request)):
+        cases.append(replace(base, label=f"permission-mode-{index}", request=variant))
+    native = profile.native_passthrough
+    backend = sorted(native.allowed_backends)[0] if native.allowed_backends else request.backend
+    operation = sorted(native.allowed_operations)[0] if native.allowed_operations else "POST /generate"
+    if operation == "*":
+        operation = "POST /migration-sample"
+    elif operation.endswith(" *"):
+        operation = operation[:-1] + "/migration-sample"
+    else:
+        operation = operation.replace("*", "migration-sample")
+    candidate = replace(request, native_passthrough=True,
+                        native_backend=backend, native_operation=operation)
+    cases.append(replace(base, label="permission-native-configured", request=candidate))
+    denied_backend = "migration-other-backend"
+    while denied_backend in native.allowed_backends:
+        denied_backend += "-other"
+    denied_operation = "POST /migration-other-operation"
+    while denied_operation in native.allowed_operations:
+        denied_operation += "-other"
+    cases.append(replace(base, label="permission-native-other-backend",
+                         request=replace(candidate, native_backend=denied_backend)))
+    cases.append(replace(base, label="permission-native-other-operation",
+                         request=replace(candidate, native_operation=denied_operation)))
     return cases
 
 
@@ -272,16 +325,14 @@ def registry_matrix(registry: Mapping) -> list[Case]:
                     capability_exposure=metadata.get("exposure"),
                     capability_trust_tier=metadata.get("trust_tier"),
                     capability_resource_tier=metadata.get("resource_tier"))
-                if request in seen:
-                    continue
-                seen.add(request)
-                # Service selectors encode the non-category context so grants
-                # cannot bleed between protocols/providers of the same target.
-                context = (backend, model, workflow, protocol, provider)
-                digest = hashlib.sha256(json.dumps(context).encode()).hexdigest()[:16]
-                root = "workflow" if workflow is not None else "release"
-                cases.append(Case(f"matrix-{len(cases) + 1}", request,
-                                  f"service-{digest}@report", f"{root}-{digest}@report"))
+                for variant in _permission_requests(request):
+                    if variant in seen:
+                        continue
+                    seen.add(variant)
+                    digest = _context_digest(variant)
+                    root = "workflow" if workflow is not None else "release"
+                    cases.append(Case(f"matrix-{len(cases) + 1}", variant,
+                                      f"service-{digest}@report", f"{root}-{digest}@report"))
     return cases
 
 

@@ -32,12 +32,22 @@ The matrix includes configured disabled records because this is an access
 comparison, not an availability probe. It does not import filesystem
 catalogs, infer missing model metadata or probe running engines.
 
-Each target/protocol/provider context receives a deterministic synthetic
-service and root revision ID. These IDs end in `@report`. They satisfy the
-kernel's revision syntax but do not attest an actual reviewed revision.
+Each regular registry request adds two bounded variants: cloud fallback and
+native passthrough using the target backend with the synthetic operation
+`POST /generate`. Requests with a declared remote provider also add paid
+fallback and combined cloud/paid fallback variants. These samples exercise
+permission switches; they do not assert that these operations or routes exist.
+
+Each context receives deterministic synthetic service and root revision IDs.
+The identity includes backend, model, workflow, protocol, provider, cloud
+fallback, paid fallback, native passthrough, native backend and native operation.
+The exact grant identity also binds these inputs for caller-supplied cases.
+Category values stay outside the identity so category comparisons use the
+same non-category permissions. IDs end in `@report`; they satisfy the kernel's
+revision syntax but do not attest an actual reviewed revision.
 
 Capability/intent, protocol, model, workflow, backend, provider, fallback and
-native permissions become exact grants over this finite matrix. To decide
+native permissions become exact grants for the sampled contexts only. To decide
 which grants to create, the conversion runs the legacy evaluator with only
 its category selectors removed. Intent family matching therefore expands
 into exact capabilities. A `None` list imposes no constraint; an empty list
@@ -81,6 +91,14 @@ request permitted by its non-category restrictions. A plan with no such
 request uses the first matrix request; its earlier restrictions may mask
 later fixture differences. Fixtures are synthetic tests, not observed use.
 
+Each plan also gets permission controls with matching tags: the bounded modes
+above, one configured native backend/operation, and alternative native backend
+and operation values. Allowed and denied controls preserve the legacy decision
+when category metadata satisfies the plan. An unrestricted or wildcard native
+plan may permit the alternatives; other restrictions may deny a control before
+its native/fallback check. Paid controls require a declared provider on the base
+request. The report does not manufacture provider identities.
+
 ## Static path inventory and limits
 
 The AST scan lists `make_policy_request` and `PolicyRequest` calls in
@@ -90,6 +108,12 @@ paths that would fail the gate under a tag-restricted plan. Variable values
 and `**kwargs` are listed separately as unresolved dynamic inputs. Wrapper
 and preview calls remain visible; the inventory is not a count of runtime
 HTTP clients.
+
+Zero registry changes means agreement only on this constructed finite matrix.
+The matrix does not enumerate arbitrary native operations, all combinations of
+permission flags, or native backend overrides across every target. The scan
+does not trace production builders to resolved request values, so actual native
+and fallback client requests remain unverified.
 
 Static source cannot identify which installed clients use these paths or
 whether dynamic tags are complete. The report also cannot verify real

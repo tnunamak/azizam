@@ -11,4 +11,8 @@ from gateway import receipt_store
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--db", type=Path, required=True, help="Receipt database to compact; allow temporary space for the rebuild")
 args = parser.parse_args()
-print(json.dumps(receipt_store.compact(args.db)))
+result = receipt_store.compact(args.db)
+print(json.dumps(result))
+if result["checkpoint_pending"]:
+    print("WAL checkpoint pending: retry when database readers are idle.", file=sys.stderr)
+    sys.exit(1)
