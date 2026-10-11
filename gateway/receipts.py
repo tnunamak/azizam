@@ -15,6 +15,8 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from gateway.model_ids import display_model_id
+
+PHASE_FIELDS = ("queued_at_ms", "started_at_ms", "first_output_at_ms", "finished_at_ms")
 from gateway.backends.request_shape import (
     TERMINAL_REASONS,
     sanitize_request_shape_fields_for_admin,
@@ -50,6 +52,8 @@ CLIENT_VISIBLE_FIELDS = {
     "accepted_at_ms",
     "updated_at_ms",
     "refusal",
+    *PHASE_FIELDS,
+    "attempt_number",
 }
 
 # Machine-readable refusal facts a client may see on its own receipt. Codes
@@ -259,6 +263,12 @@ class RouteReceipt:
     refusal: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
+    # Unix milliseconds; None explicitly means unavailable, never estimated.
+    queued_at_ms: int | None = None
+    started_at_ms: int | None = None
+    first_output_at_ms: int | None = None
+    finished_at_ms: int | None = None
+    attempt_number: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     _started_at: float = field(default_factory=perf_counter, repr=False)
     owner_key_hash: str | None = None
@@ -344,8 +354,20 @@ class RouteReceipt:
         """Mark this receipt accepted before any upstream operation begins."""
         timestamp = int(now_ms if now_ms is not None else time() * 1000)
         self.status = "in_progress"
-        self.accepted_at_ms = timestamp
+        if self.accepted_at_ms is None:
+            self.accepted_at_ms = timestamp
+        if self.attempt_number is None:
+            self.attempt_number = 1
         self.updated_at_ms = timestamp
+
+    def mark_phase(self, phase: str, *, now_ms: int | None = None) -> None:
+        """Record a trusted observation once for this receipt's sole attempt."""
+        if phase not in PHASE_FIELDS:
+            raise ValueError("unknown receipt phase")
+        if self.attempt_number is None:
+            self.attempt_number = 1
+        if getattr(self, phase) is None:
+            setattr(self, phase, int(now_ms if now_ms is not None else time() * 1000))
 
     def finish(
         self,
@@ -359,6 +381,7 @@ class RouteReceipt:
             latency_ms = (perf_counter() - self._started_at) * 1000
         self.latency_ms = round(latency_ms, 3)
         self.updated_at_ms = int(now_ms if now_ms is not None else time() * 1000)
+        self.mark_phase("finished_at_ms", now_ms=self.updated_at_ms)
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
         # Some facades attach their resolved App after constructing the receipt.
@@ -408,6 +431,8 @@ class RouteReceipt:
             "effective_output_limit": self.effective_output_limit,
             "accepted_at_ms": self.accepted_at_ms,
             "updated_at_ms": self.updated_at_ms,
+            **{name: getattr(self, name) for name in PHASE_FIELDS},
+            "attempt_number": self.attempt_number,
             "metadata": dict(self.metadata),
         }
         if isinstance(self.refusal, Mapping):
@@ -417,6 +442,7 @@ class RouteReceipt:
 
 
 def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "internal") -> dict[str, Any]:
+    data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
     if audience not in {"internal", "admin", "client"}:
         raise ValueError("audience must be internal, admin, or client")
     if audience == "internal":
@@ -466,14 +492,20 @@ class ReceiptLifecycleOwner:
         finalize: Callable[[RouteReceipt], object] | None = None,
         log: Callable[[str], object] | None = None,
         on_terminal: Callable[[RouteReceipt, str], object] | None = None,
+        checkpoint: Callable[[RouteReceipt], object] | None = None,
     ) -> None:
         self.receipt = receipt
+        default_persistence = begin is None
         # Delayed import avoids the receipt_store -> receipts import cycle and
         # keeps persistence ownership here rather than in each HTTP route.
         if begin is None or finalize is None:
             from gateway import receipt_store
             begin = begin or receipt_store.begin
             finalize = finalize or receipt_store.finalize
+        if checkpoint is None and default_persistence:
+            from gateway import receipt_store
+            checkpoint = receipt_store.update_phases
+        self._checkpoint = checkpoint
         self._begin = begin
         self._finalize = finalize
         self._log = log or (lambda message: print(f"[proxy] {message}", flush=True))
@@ -495,6 +527,16 @@ class ReceiptLifecycleOwner:
     def report(self, *, status: str, reason: str) -> None:
         """Describe a normal route outcome; this never persists a terminal row."""
         self._outcome = (status, reason)
+
+    def mark_phase(self, phase: str) -> None:
+        if getattr(self.receipt, phase, None) is not None:
+            return
+        self.receipt.mark_phase(phase)
+        if self._checkpoint is not None:
+            try:
+                self._checkpoint(self.receipt)
+            except Exception as error:
+                self._log(f"receipt phase write failed: {error}")
 
     def _close(self, status: str, reason: str) -> None:
         if self._closed:
@@ -540,6 +582,10 @@ class ReceiptLifecycleOwner:
         self._stream_transferred = False
         async with self:
             async for item in source:
+                # Ignore empty chunks and SSE comments/keepalives. This is
+                # first output observed by the owner, not backend token time.
+                if item and not item.lstrip().startswith(b":") and item.strip() != b"data: [DONE]":
+                    self.mark_phase("first_output_at_ms")
                 yield item
 
 

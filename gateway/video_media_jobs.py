@@ -241,6 +241,7 @@ def video_generation_payload(
         "progress": _progress(job.get("progress", 0)),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
+        **{name: job.get(name) for name in (*media_jobs.PHASE_FIELDS, "attempt_number")},
         "completed_at": job.get("updated_at") if internal_status == media_jobs.STATUS_SUCCEEDED else None,
         "expires_at": metadata.get("expires_at"),
         "prompt": metadata.get("prompt"),
@@ -270,7 +271,8 @@ def video_generation_payload(
             if content_url:
                 payload["content_url"] = content_url
     return {key: value for key, value in payload.items() if value is not None or key in {
-        "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error"
+        "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error",
+        *media_jobs.PHASE_FIELDS, "attempt_number",
     }}
 
 

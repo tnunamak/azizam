@@ -22146,7 +22146,7 @@ async def _submit_audio_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
@@ -22701,7 +22701,7 @@ async def _submit_video_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_video_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
@@ -22937,7 +22937,7 @@ async def gateway_image_generations_media_job(request: Request):
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, path=media_jobs.DB_PATH)
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()

@@ -241,7 +241,7 @@ def _build_media_job_providers(
         *,
         audience: str,
     ) -> int:
-        return _media_jobs.append_event(
+        return _media_jobs.append_client_event(
             job_id, event_type, payload, path=store_path
         )
 
@@ -626,6 +626,9 @@ def create_gateway_router(
         try:
             created = media_job_creator(payload, audience=audience)
         except ValueError as exc:
+            from gateway.media_jobs import IdempotencyConflict
+            if isinstance(exc, IdempotencyConflict):
+                return JSONResponse(status_code=409, content=_error_payload(exc.code, str(exc)))
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content=_error_payload(
@@ -793,6 +796,8 @@ def create_gateway_router(
                 media_job_getter, job_id, request, "media_job", audience
             ) is None:
                 return job_not_found(job_id)
+            from gateway.media_jobs import validate_client_event
+            validate_client_event(event_type, event_payload)
             event_id = media_job_event_appender(
                 job_id, event_type, event_payload, audience=audience
             )

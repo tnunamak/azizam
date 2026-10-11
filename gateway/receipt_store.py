@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from gateway.receipts import RouteReceipt, serialize_receipt_for_audience
+from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 from gateway.ownership import stored_owner_key
 
@@ -67,6 +67,7 @@ _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
         "api_key_name", "requested_model", "stream",
         "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility", "owner_key_hash",
         "source_kind", "source_label", "client_hint",
+        "attempt_number",
     }
 )
 
@@ -267,6 +268,7 @@ def begin(
         data["status"] = "in_progress"
         data.setdefault("accepted_at_ms", timestamp)
         data.setdefault("updated_at_ms", timestamp)
+        data.setdefault("attempt_number", 1)
     _assert_lifecycle_data(data, terminal=False)
     created_at = int(data["accepted_at_ms"] // 1000)
     with _conn(path) as conn:
@@ -279,6 +281,23 @@ def begin(
         )
         conn.commit()
     return str(data["request_id"])
+
+
+def update_phases(receipt: RouteReceipt, *, path: Path = DB_PATH) -> None:
+    """Checkpoint observed phases without replacing concurrent terminal facts."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT receipt_json FROM receipts WHERE request_id=? AND status='in_progress'",
+                           (receipt.request_id,)).fetchone()
+        if row is None:
+            return
+        data = json.loads(row[0])
+        for name in PHASE_FIELDS:
+            if data.get(name) is None:
+                data[name] = getattr(receipt, name)
+        conn.execute("UPDATE receipts SET receipt_json=? WHERE request_id=?",
+                     (json.dumps(data, ensure_ascii=False, sort_keys=True), receipt.request_id))
+        conn.commit()
 
 
 def finalize(
@@ -308,6 +327,11 @@ def finalize(
         for field in _IMMUTABLE_ACCEPTED_FIELDS:
             if field in accepted:
                 merged[field] = accepted[field]
+        for field in PHASE_FIELDS:
+            if accepted.get(field) is not None:
+                merged[field] = accepted[field]
+        if merged.get("attempt_number") is not None and merged.get("finished_at_ms") is None:
+            merged["finished_at_ms"] = data["updated_at_ms"]
         _assert_lifecycle_data(merged, terminal=True)
         cur = conn.execute(
             "UPDATE receipts SET protocol=?, intent=?, path=?, app_profile=?, app_id=?, api_key_name=?, "

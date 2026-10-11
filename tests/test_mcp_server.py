@@ -484,3 +484,13 @@ def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
                                               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
     result = resp.json()["result"]
     assert result["isError"] is True and "secret" not in json.dumps(result)
+
+
+def test_job_waits_through_unknown_nonterminal_state_and_exposes_phases(env):
+    env.core.polls['/gateway/v1/media/jobs/mj_1'] = [
+        {'status': 'cancel_requested'},
+        {'status': 'canceled', 'started_at': 10, 'finished_at': 20, 'attempt_number': 1},
+    ]
+    out = call(env, 'job', {'job_id': 'mj_1', 'wait_seconds': 5})['structuredContent']
+    assert out['status'] == 'canceled'
+    assert (out['started_at'], out['finished_at'], out['attempt_number']) == (10, 20, 1)

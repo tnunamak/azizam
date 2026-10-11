@@ -423,6 +423,7 @@ async def openai(
             )
             providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)
             async with asyncio.timeout(DEFAULT_DECISION_TIMEOUT_S):
+                owner.mark_phase("started_at_ms")
                 payload, cost, usage, upstream_headers, upstream_content, upstream_status = await providers.call_openai_json(
                     provider,
                     "/v1/decisions",

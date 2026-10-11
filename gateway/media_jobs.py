@@ -30,6 +30,7 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import json
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -37,7 +38,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Literal, Mapping
 from uuid import uuid4
 from gateway.ownership import stored_owner_key
 
@@ -53,7 +54,20 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # Durable assets carry their own ownership; receipts retain usage and spend.
 RETAIN_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
+PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
+
+
+def is_terminal(status: str) -> bool:
+    """Whether a job state is terminal; unknown states must keep waiting."""
+    return status in TERMINAL_STATUSES
+
+
+def holds_resources(status: JobStatus) -> bool:
+    """Queued work reserves admission capacity until it becomes terminal."""
+    return not is_terminal(status)
 
 # Status values. Mirrors the minimum lifecycle in CORE_CONTRACTS.md.
 STATUS_QUEUED = "queued"
@@ -98,6 +112,8 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         "created_at",
         "updated_at",
         "parent_request_id",
+        *PHASE_FIELDS,
+        "attempt_number",
     }
 )
 
@@ -117,7 +133,7 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash"})
+INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash"})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -163,6 +179,15 @@ class MediaJob:
     # with the job so receipt retention cannot erase its ownership boundary.
     app_id: str | None = None
     owner_key_hash: str | None = None
+    owner_scope: str | None = None
+    input_hash: str | None = None
+    # Unix seconds. None means unavailable, including pre-instrumentation rows.
+    accepted_at: int | None = None
+    queued_at: int | None = None
+    started_at: int | None = None
+    first_output_at: int | None = None
+    finished_at: int | None = None
+    attempt_number: int | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -199,6 +224,10 @@ class MediaJob:
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
             "metadata": dict(self.metadata),
+            "owner_scope": self.owner_scope,
+            "input_hash": self.input_hash,
+            "attempt_number": self.attempt_number,
+            **{name: getattr(self, name) for name in PHASE_FIELDS},
         }
         return _filter_for_audience(data, audience)
 
@@ -230,6 +259,7 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
+    data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
     if audience == "internal":
         return dict(data)
     if audience == "admin":
@@ -304,10 +334,25 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) != SCHEMA_VERSION:
+    elif int(row[0]) not in (1, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
+    # Migrate under a write lock: reopening an old store is safe and retains
+    # every row. Historical events have unknown provenance, never trusted.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(media_job_events)")}
+    if "sequence" not in columns:
+        conn.execute("ALTER TABLE media_job_events ADD COLUMN sequence INTEGER")
+        conn.execute("""WITH numbered AS (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id) AS seq
+            FROM media_job_events
+        ) UPDATE media_job_events SET sequence=(SELECT seq FROM numbered WHERE numbered.id=media_job_events.id)""")
+    if "source" not in columns:
+        conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
+    conn.execute("UPDATE media_jobs_schema_version SET version=?", (SCHEMA_VERSION,))
     conn.commit()
 
 
@@ -380,6 +425,10 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
             metadata=dict(data.get("metadata") or {}),
+            owner_scope=data.get("owner_scope"),
+            input_hash=data.get("input_hash"),
+            attempt_number=data.get("attempt_number"),
+            **{name: data.get(name) for name in PHASE_FIELDS},
         )
     raise TypeError(f"job must be MediaJob or mapping, got {type(job_or_dict).__name__}")
 
@@ -424,13 +473,34 @@ class OutstandingLimitReached(Exception):
         self.limit = limit
 
 
+class IdempotencyConflict(ValueError):
+    """A request key cannot alias another owner, operation, or input."""
+
+    status_code = 409
+    code = "idempotency_conflict"
+
+    def __init__(self) -> None:
+        super().__init__("idempotency key conflicts with the owner, operation, or input")
+
+
+def _input_hash(job: MediaJob, input_data: Mapping[str, Any] | None = None) -> str:
+    # Capture immutable submission facts before workers add progress metadata.
+    data = {"intent": job.intent, "workflow": job.workflow, "backend": job.backend,
+            "metadata": job.metadata, "assets": job.assets}
+    if input_data is not None:
+        data["input"] = input_data
+    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
     outstanding_limits: Iterable[OutstandingLimit] = (),
+    input_data: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
 ) -> MediaJob:
-    """Create a new job, returning the existing one if ``request_id`` matches.
+    """Create a job; replay only matching owner, operation and submission facts.
 
     This is the safe idempotent create primitive for handlers: clients may
     retry POST /v1/videos with the same Idempotency-Key/request_id and we
@@ -441,6 +511,9 @@ def create(
     ``OutstandingLimitReached`` and stores nothing.
     """
     record = _coerce_to_job(job)
+    record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id)
+    # Never accept a caller-supplied digest as proof that the input matches.
+    record.input_hash = _input_hash(record, input_data)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
@@ -449,12 +522,20 @@ def create(
                 (record.request_id,),
             ).fetchone()
             if existing:
-                conn.rollback()
                 data = json.loads(existing[0])
+                previous = _coerce_to_job(data)
+                owner = stored_owner_key(previous.owner_key_hash, app_id=previous.app_id)
+                # Legacy records can only compare the facts they retained.
+                previous_hash = previous.input_hash or _input_hash(previous)
+                if (owner != record.owner_scope or previous.intent != record.intent
+                        or previous_hash != record.input_hash):
+                    raise IdempotencyConflict()
+                conn.rollback()
                 return _coerce_to_job(data)
         for limit in outstanding_limits:
-            clauses = ["status IN (?, ?)", "json_extract(job_json, '$.metadata.mode') = ?"]
-            params: list[Any] = [STATUS_QUEUED, STATUS_RUNNING, limit.mode]
+            states = sorted(s for s in ALL_STATUSES if holds_resources(s))
+            clauses = [f"status IN ({','.join('?' for _ in states)})", "json_extract(job_json, '$.metadata.mode') = ?"]
+            params: list[Any] = [*states, limit.mode]
             if limit.app_id is not None:
                 clauses.append("json_extract(job_json, '$.app_id') = ?")
                 params.append(limit.app_id)
@@ -464,6 +545,14 @@ def create(
             if outstanding >= limit.maximum:
                 conn.rollback()
                 raise OutstandingLimitReached(limit)
+        record.accepted_at = record.created_at
+        record.attempt_number = 1
+        if record.status == STATUS_QUEUED:
+            record.queued_at = record.created_at
+        elif record.status == STATUS_RUNNING:
+            record.started_at = record.created_at
+        elif is_terminal(record.status):
+            record.finished_at = record.created_at
         _write_job(conn, record)
         conn.commit()
     return record
@@ -507,6 +596,7 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
 
 def _clear_prompt_derivatives(job: MediaJob) -> None:
     job.metadata.pop("request_hash", None)
+    job.input_hash = None
     if job.request_id.startswith("imgjob_seeded_"):
         job.request_id = ""
     if (job.parent_request_id or "").startswith("imgjob_seeded_"):
@@ -552,7 +642,7 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
                 data = _safe_loads(payload)
                 if not isinstance(data, Mapping):
                     continue
-                if ("request_hash" not in (data.get("metadata") or {})
+                if (not data.get("input_hash") and "request_hash" not in (data.get("metadata") or {})
                         and not str(data.get("request_id") or "").startswith("imgjob_seeded_")
                         and not str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
                     continue
@@ -755,6 +845,14 @@ def update_status(
             existing_meta.update(metadata_patch)
             current["metadata"] = existing_meta
         current["updated_at"] = ts
+        # Legacy attempts remain unavailable; do not invent prior phase facts.
+        if current.get("attempt_number") is not None:
+            if status == STATUS_RUNNING and current.get("started_at") is None:
+                current["started_at"] = ts
+            if assets_list and current.get("first_output_at") is None:
+                current["first_output_at"] = ts
+            if is_terminal(status) and current.get("finished_at") is None:
+                current["finished_at"] = ts
 
         updated = _coerce_to_job(current)
         _write_job(conn, updated)
@@ -769,8 +867,9 @@ def append_event(
     *,
     now: int | None = None,
     path: Path = DB_PATH,
+    _source: Literal["gateway", "client"] = "gateway",
 ) -> int:
-    """Append one event to the job's event log. Returns the row id.
+    """Trusted adapter event write; returns a per-job cursor, never a row id.
 
     Event payloads are metadata-only. They must not carry raw prompts, image
     bytes, request/response bodies, or secrets — the safety guard rejects
@@ -782,19 +881,39 @@ def append_event(
     _assert_safe_mapping("event payload", safe_payload)
     ts = int(now if now is not None else _now())
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         exists = conn.execute(
             "SELECT 1 FROM media_jobs WHERE job_id = ?",
             (job_id,),
         ).fetchone()
         if not exists:
             raise LookupError(f"unknown job_id {job_id!r}")
-        cur = conn.execute(
-            "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json) "
-            "VALUES (?, ?, ?, ?)",
-            (job_id, ts, event_type, json.dumps(safe_payload, ensure_ascii=False, sort_keys=True)),
+        sequence = conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM media_job_events WHERE job_id=?", (job_id,)).fetchone()[0]
+        conn.execute(
+            "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json, sequence, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (job_id, ts, event_type, json.dumps(safe_payload, ensure_ascii=False, sort_keys=True), sequence, _source),
         )
         conn.commit()
-        return int(cur.lastrowid or 0)
+        return int(sequence)
+
+
+def validate_client_event(event_type: str, payload: Mapping[str, Any] | None) -> None:
+    """Client notes cannot claim lifecycle authority, even for admin audiences."""
+    if event_type not in {"progress", "note"}:
+        raise ValueError("client event_type must be progress or note; lifecycle events require a trusted writer")
+    if payload and {"phase", "status"}.intersection(payload):
+        raise ValueError("client notes cannot set phase or status")
+    for name in ("progress", "step", "total"):
+        value = (payload or {}).get(name)
+        if value is not None and (type(value) is not int or value < 0 or (name == "progress" and value > 100)):
+            raise ValueError(f"{name} must be a non-negative integer" + (" up to 100" if name == "progress" else ""))
+
+
+def append_client_event(job_id: str, event_type: str, payload: Mapping[str, Any] | None = None,
+                        *, path: Path = DB_PATH) -> int:
+    validate_client_event(event_type, payload)
+    return append_event(job_id, event_type, payload, path=path, _source="client")
 
 
 def events(
@@ -823,18 +942,18 @@ def events(
     clauses = ["job_id = ?"]
     params: list[Any] = [job_id]
     if after_id is not None:
-        clauses.append("id > ?")
+        clauses.append("sequence > ?")
         params.append(int(after_id))
     params.append(int(limit))
     where = " AND ".join(clauses)
     with _conn(path) as conn:
         rows = conn.execute(
-            f"SELECT id, created_at, event_type, payload_json FROM media_job_events "
-            f"WHERE {where} ORDER BY id ASC LIMIT ?",
+            f"SELECT sequence, created_at, event_type, payload_json, source FROM media_job_events "
+            f"WHERE {where} ORDER BY sequence ASC LIMIT ?",
             params,
         ).fetchall()
     out: list[dict[str, Any]] = []
-    for ev_id, created_at, event_type, payload_json in rows:
+    for ev_id, created_at, event_type, payload_json, source in rows:
         payload = _safe_loads(payload_json) or {}
         out.append(_filter_event_for_audience(
             {
@@ -842,6 +961,7 @@ def events(
                 "job_id": job_id,
                 "created_at": int(created_at),
                 "event_type": event_type,
+                "source": source,
                 "payload": payload if isinstance(payload, Mapping) else {},
             },
             audience,
@@ -858,6 +978,7 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
         "job_id": event.get("job_id"),
         "created_at": event.get("created_at"),
         "event_type": event.get("event_type"),
+        "source": event.get("source", "unavailable"),
     }
     if audience == "internal":
         return {**base, "payload": dict(event.get("payload") or {})}

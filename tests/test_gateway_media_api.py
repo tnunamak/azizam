@@ -304,7 +304,6 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
                 "payload": {
                     "progress": 42,
                     "queue_position": 3,
-                    "phase": "sampling",
                 },
             },
         )
@@ -321,11 +320,11 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["payload"]["queue_position"], 3)
 
-        # Client audience strips queue_position but keeps progress/phase.
+        # Client audience strips queue_position but keeps progress.
         rows = media_jobs.events(
             seeded["job_id"], audience="client", path=self.db
         )
-        self.assertEqual(rows[0]["payload"], {"progress": 42, "phase": "sampling"})
+        self.assertEqual(rows[0]["payload"], {"progress": 42})
 
     def test_append_event_unknown_job_returns_404(self) -> None:
         client = self._client()

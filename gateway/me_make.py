@@ -337,7 +337,7 @@ def _submit(
     )
     try:
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
-                                    path=jobs_path)
+                                    input_data=backend_body, path=jobs_path)
     except media_jobs.OutstandingLimitReached as exc:
         if exc.limit.scope == "person":
             raise _MakeError(
