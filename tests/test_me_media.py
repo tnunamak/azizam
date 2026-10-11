@@ -2016,5 +2016,32 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
 
 
+
+class ConservativeAssetDeleterTests(unittest.TestCase):
+    def test_owner_added_while_delete_waits_keeps_the_shared_asset(self) -> None:
+        import threading
+        from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
+
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = Path(tmp) / "asset.png"
+            asset.write_bytes(b"only copy")
+            metadata = {"owner_key_hashes": ["app:first"], "maker_person_ids": ["person-1"]}
+            deleter = me_media.conservative_asset_deleter(
+                metadata_reader=lambda asset_id: json.loads(json.dumps(metadata)),
+                asset_path_resolver=lambda asset_id: asset,
+                metadata_path_resolver=lambda asset_id: None,
+                prompt_memory_path=lambda: Path(tmp) / "jobs.db",
+            )
+            results = []
+            with CACHE_MUTATION_LOCK:  # asset storage is publishing a second maker
+                delete = threading.Thread(target=lambda: results.append(deleter("img_" + "0" * 64)))
+                delete.start()
+                delete.join(timeout=0.3)
+                metadata["owner_key_hashes"].append("app:second")
+                metadata["maker_person_ids"].append("person-2")
+            delete.join(timeout=10)
+            self.assertEqual(results, [False])
+            self.assertEqual(asset.read_bytes(), b"only copy")
+
 if __name__ == "__main__":
     unittest.main()

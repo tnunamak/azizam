@@ -409,17 +409,19 @@ def conservative_asset_deleter(
     prompt_memory_path: PathProvider | None = None,
 ) -> AssetDeleter:
     def delete(asset_id: str) -> bool:
-        metadata = metadata_reader(asset_id)
-        owners = {
-            str(owner)
-            for owner in metadata.get("owner_key_hashes") or []
-            if isinstance(owner, str)
-        }
-        if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
-            return False
         from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
         removed = False
+        # Asset storage records owners and makers under this lock. Check them
+        # under it too, so an owner added after a check cannot lose the file.
         with CACHE_MUTATION_LOCK:
+            metadata = metadata_reader(asset_id)
+            owners = {
+                str(owner)
+                for owner in metadata.get("owner_key_hashes") or []
+                if isinstance(owner, str)
+            }
+            if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
+                return False
             for path in (asset_path_resolver(asset_id), metadata_path_resolver(asset_id)):
                 if path is not None and path.exists():
                     path.unlink()
