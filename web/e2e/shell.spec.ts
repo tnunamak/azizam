@@ -4,7 +4,7 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-const ownerPages = ["Engines", "Providers", "People", "Activity", "Settings"];
+const ownerPages = ["Engines", "Providers", "People", "Categories", "Activity", "Settings"];
 
 // DESIGN.md "Shell": You is ordered by how often a household member needs
 // each place (Home, Library, Try first); Workflows stays right after Models.

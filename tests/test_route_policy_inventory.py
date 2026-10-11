@@ -112,15 +112,23 @@ def gateway(monkeypatch, tmp_path, request):
     monkeypatch.setattr(socket.socket, "connect", no_network)
     monkeypatch.setattr(socket.socket, "connect_ex", no_network)
 
-    category_mode = getattr(request, "param", "ordinary") == "categories"
+    mode = getattr(request, "param", "ordinary")
+    category_mode = mode == "categories"
+    restricted_workflow = mode == "restricted-workflow"
     # Restore the prior process-wide gate even if fixture setup fails.
     monkeypatch.setattr(category_enforcement, "_GATE", category_enforcement._GATE)
     category_enforcement.configure(None)
-    profile_id = "grant-everything" if category_mode else "grant-nothing"
+    profile_id = (
+        "restricted-workflow" if restricted_workflow
+        else "grant-everything" if category_mode else "grant-nothing"
+    )
     # Missing allow/protocol/workflow/model/backend restrictions means
     # unrestricted access; a wildcard allow-list is not the same profile.
     profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode}}
-    if not category_mode:
+    if restricted_workflow:
+        profile_body["allow"] = {"intents": ["image.edit", "image.variation"]}
+        profile_body["workflows"] = ["no-inventory-request-uses-this-workflow"]
+    elif not category_mode:
         profile_body["allow"] = {"intents": []}
     profile = admin_store.create_profile(
         profile_id, profile_body, path=paths["admin"],
@@ -148,6 +156,17 @@ def gateway(monkeypatch, tmp_path, request):
     assert auth.identity.app_id == app["id"]
     assert auth.identity.profile.id == profile_id
     assert auth.identity.person_id == user["id"]
+    if restricted_workflow:
+        assert category_enforcement._GATE is None
+        early = PolicyRequest(protocol="openai.images", intent="image.edit")
+        assert runtime_auth.evaluate_and_apply(auth.identity, early).decision == ALLOWED
+        resolved = PolicyRequest(
+            protocol="openai.images", intent="image.edit", workflow="flux2-klein-4b",
+        )
+        decision = runtime_auth.evaluate_and_apply(auth.identity, resolved)
+        assert decision.decision == POLICY_DENIED
+        assert any("workflow" in reason.lower() for reason in decision.reasons)
+        assert category_enforcement.SOURCE not in decision.sources
     if category_mode:
         # Prove that a valid active deny-all snapshot, rather than the ordinary
         # access plan or a broken snapshot, is responsible for the denial.
@@ -755,6 +774,42 @@ def _http_inventory(gateway, title=None, report=True):
         )
 
 
+@pytest.mark.parametrize("gateway", ["restricted-workflow"], indirect=True)
+@pytest.mark.parametrize("prefix", ["", "/openai"])
+@pytest.mark.parametrize("operation", ["edits", "variations"])
+def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
+    """A valid image must never be uploaded before an ordinary workflow refusal."""
+    path = f"{prefix}/v1/images/{operation}"
+    data = {"model": "flux2-klein-4b"}
+    if operation == "edits":
+        data["prompt"] = "hi"
+    gateway.calls.clear()
+    response = gateway.client.post(
+        path, headers=gateway.headers, data=data,
+        files={"image": ("inventory.png", _PNG, "image/png")},
+    )
+    # Check this first: even a subsequent policy refusal cannot undo an upload.
+    assert gateway.calls == [], f"{path}: backend calls before refusal: {gateway.calls!r}"
+    assert response.status_code == 403, f"{path}: {_validation_message(response)}"
+    reasons = []
+
+    def collect_reasons(value, reason_field=False):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                collect_reasons(child, reason_field or key in {"reason", "reasons", "policy_reasons", "message"})
+        elif isinstance(value, list):
+            for child in value:
+                collect_reasons(child, reason_field)
+        elif isinstance(value, str) and reason_field:
+            reasons.append(value)
+
+    collect_reasons(response.json())
+    assert any("workflow" in reason.lower() for reason in reasons), (
+        f"{path}: no workflow restriction in error reasons: {response.json()!r}"
+    )
+    assert not any("category rules:" in reason for reason in reasons), reasons
+
+
 def test_http_route_policy_inventory(gateway):
     _http_inventory(gateway)
 
@@ -762,6 +817,30 @@ def test_http_route_policy_inventory(gateway):
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
 def test_http_category_enforcement_inventory(gateway):
     _http_inventory(gateway)
+
+
+def _activate_decoy_snapshot(gateway, capabilities):
+    """Grant observed capabilities only on a service no inventory request targets."""
+    fact = category_policy.Assertion(
+        "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "decoy-edit",
+    )
+    decoy = category_policy.Service(
+        "decoy-service@r1", (category_policy.Subject("decoy-service@1", "workflow", (fact,)),),
+    )
+    plan = category_policy.Plan(
+        "decoy-grants",
+        tuple(category_policy.Grant(capability, decoy.id) for capability in sorted(capabilities)),
+        (category_policy.Row("aud", "audience", "in", ("general",)),),
+    )
+    snapshot = category_policy.PolicyVersion(
+        "inventory-decoy-rules",
+        {"audience": category_policy.Category("audience", "Audience", values=("general",))},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, {decoy.id: decoy},
+    )
+    store = CategoryStore(gateway.category_path)
+    active = store.get_active()
+    candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "decoy")
+    store.activate(candidate.revision, active.revision)
 
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
@@ -787,26 +866,7 @@ def test_http_category_resolved_check_inventory(gateway, monkeypatch):
     capabilities.discard("")
     assert capabilities, "the first pass reached no category check"
 
-    fact = category_policy.Assertion(
-        "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "decoy-edit",
-    )
-    decoy = category_policy.Service(
-        "decoy-service@r1", (category_policy.Subject("decoy-service@1", "workflow", (fact,)),),
-    )
-    plan = category_policy.Plan(
-        "decoy-grants",
-        tuple(category_policy.Grant(capability, decoy.id) for capability in sorted(capabilities)),
-        (category_policy.Row("aud", "audience", "in", ("general",)),),
-    )
-    snapshot = category_policy.PolicyVersion(
-        "inventory-decoy-rules",
-        {"audience": category_policy.Category("audience", "Audience", values=("general",))},
-        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, {decoy.id: decoy},
-    )
-    store = CategoryStore(gateway.category_path)
-    active = store.get_active()
-    candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "decoy")
-    store.activate(candidate.revision, active.revision)
+    _activate_decoy_snapshot(gateway, capabilities)
 
     identity = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models").identity
     early = PolicyRequest(protocol="openai.images", intent="image.generate")
@@ -820,8 +880,7 @@ def test_http_category_resolved_check_inventory(gateway, monkeypatch):
     assert all(job["status"] != "succeeded" and not job.get("assets") for job in jobs), jobs
 
 
-@pytest.mark.parametrize("gateway", ["ordinary", "categories"], indirect=True)
-def test_websocket_route_policy_inventory(gateway):
+def _websocket_inventory(gateway, title=None):
     rows = []
     for route, template, converters in _routes(proxy.app.routes):
         if not isinstance(route, WebSocketRoute):
@@ -893,7 +952,58 @@ def test_websocket_route_policy_inventory(gateway):
             row["detail"] += f" backend calls={gateway.calls!r}"
         _category_oracle(gateway, row)
         rows.append(row)
-    prefix = "Category enforcement" if gateway.category_mode else "Ordinary access plan"
+    prefix = title or ("Category enforcement" if gateway.category_mode else "Ordinary access plan")
     _report(rows, f"{prefix}: registered websocket route inventory")
-    if not rows:
-        pytest.skip("No websocket routes registered")
+    assert rows, "No websocket routes registered; inventory would be vacuous"
+    return rows
+
+
+@pytest.mark.parametrize("gateway", ["ordinary", "categories"], indirect=True)
+def test_websocket_route_policy_inventory(gateway, monkeypatch):
+    capabilities = set()
+    probes = set()
+    if gateway.category_mode:
+        real_check = category_enforcement.CategoryGate.check
+
+        def recording_check(self, identity, request):
+            capabilities.add(request.intent or "")
+            probes.add((request.protocol, request.intent))
+            return real_check(self, identity, request)
+
+        monkeypatch.setattr(category_enforcement.CategoryGate, "check", recording_check)
+
+    _websocket_inventory(gateway)
+    if not gateway.category_mode:
+        return
+
+    capabilities.discard("")
+    assert capabilities, "the first websocket pass reached no category check"
+    _activate_decoy_snapshot(gateway, capabilities)
+    identity = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models").identity
+    # Prove the decoy lets each observed early check through, while a request
+    # naming an actual (non-decoy) target remains category-denied.
+    for protocol, intent in sorted(probes):
+        if not intent:
+            continue
+        early = PolicyRequest(protocol=protocol, intent=intent)
+        assert runtime_auth.evaluate_and_apply(identity, early).decision == ALLOWED
+        resolved = PolicyRequest(
+            protocol=protocol, intent=intent, workflow="inventory-placeholder",
+        )
+        decision = runtime_auth.evaluate_and_apply(identity, resolved)
+        assert decision.decision == POLICY_DENIED
+        assert category_enforcement.SOURCE in decision.sources
+        assert any(reason.startswith("category rules:") for reason in decision.reasons)
+
+    rows = _websocket_inventory(gateway, title="Category resolved-service check")
+    unproved = [
+        row for row in rows
+        if row["outcome"] not in {"refused", "closed"}
+        or not row.get("category evidence")
+        or row["backend called"] != "no"
+        or row.get("dispatched") != "no"
+    ]
+    assert not unproved, (
+        "Every websocket route must demonstrate a category-rules refusal after "
+        f"decoy grants allow early checks; missing resolved check(s):\n{_table(unproved)}"
+    )
