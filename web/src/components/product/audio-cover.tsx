@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AudioLines, Music2, Play, Waves } from "lucide-react";
+import { AudioLines, Play } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAudioPeaks } from "@/lib/audio-peaks";
 
@@ -11,21 +11,6 @@ import { useAudioPeaks } from "@/lib/audio-peaks";
  * the same distance from its neighbours on every page.
  */
 export const mediaGridGap = "gap-1 sm:gap-1.5";
-
-/** What kind of sound a model makes, in the glossary's words. */
-export function audioKind(model?: string | null): {
-  label: "Voice" | "Music" | "Sound effect" | "Audio";
-  icon: typeof AudioLines;
-} {
-  const value = String(model ?? "").toLowerCase();
-  if (/tts|speech|voice|kokoro|chatterbox|supertonic|omnivoice/.test(value))
-    return { label: "Voice", icon: AudioLines };
-  if (/music|song|ace-?step|musicgen/.test(value))
-    return { label: "Music", icon: Music2 };
-  if (/sfx|sound|effect|stable-audio|audioldm/.test(value))
-    return { label: "Sound effect", icon: Waves };
-  return { label: "Audio", icon: AudioLines };
-}
 
 /**
  * Bars from measured peaks. With `progress` (0–1) the played part is solid
@@ -186,15 +171,14 @@ export function DayChip({
 }
 
 /**
- * An audio creation's tile face: one calm neutral surface for every clip
- * and its real waveform (or the glyph when it cannot be measured), so audio
- * keeps the grid's rhythm instead of being its loudest tile. `center` sits
- * over the middle (the play disc); the caller adds the other cues.
+ * An audio creation's tile face: one calm neutral surface for every clip.
+ * It shows the clip's measured waveform when the audio can be read, else the
+ * glyph; nothing is drawn that was not measured. `center` sits over the
+ * middle (the play disc); the caller adds the other cues. The prompt and the
+ * full date live in the viewer, not on the face.
  */
 export function AudioFace({
   peaksKey,
-  coverSeed,
-  title,
   src,
   visible,
   center,
@@ -202,9 +186,6 @@ export function AudioFace({
   className,
 }: {
   peaksKey: string;
-  /** Decorative identity only; never presented as measured audio peaks. */
-  coverSeed?: string;
-  title?: string;
   src?: string | null;
   visible: boolean;
   center?: ReactNode;
@@ -213,34 +194,15 @@ export function AudioFace({
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
-  let seed = 2166136261;
-  for (const character of coverSeed ?? "") {
-    seed = Math.imul(seed ^ character.charCodeAt(0), 16777619) >>> 0;
-  }
-  const cover = coverSeed === undefined
-    ? null
-    : Array.from({ length: 24 }, () => {
-        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-        return 0.2 + (seed / 4294967296) * 0.8;
-      });
   return (
     <div
       className={cn(
         "bg-muted text-muted-foreground relative flex size-full items-center justify-center",
-        title && "px-3 pt-8 pb-12",
         className,
       )}
     >
-      {title ? (
-        <p className="text-foreground text-body pointer-events-none relative z-10 line-clamp-2 w-full">
-          {title}
-        </p>
-      ) : null}
-      {peaks || cover ? (
-        <Waveform
-          peaks={cover ?? peaks}
-          className={cn("w-3/4 flex-none", title ? "absolute h-1/2 opacity-20" : "h-1/4")}
-        />
+      {peaks ? (
+        <Waveform peaks={peaks} className="h-1/4 w-3/4 flex-none" />
       ) : (
         <AudioLines aria-hidden="true" className="size-8" />
       )}

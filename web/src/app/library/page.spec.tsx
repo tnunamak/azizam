@@ -367,10 +367,11 @@ describe("LibraryPage batch J provenance", () => {
     );
     renderLibrary();
 
-    // The audio face now keeps the same short whole-word title visible.
-    expect(
-      await screen.findByText(/^Warm synth loop with brushed percussion .*…$/),
-    ).toHaveClass("line-clamp-2");
+    // The audio tile is quiet: the prompt is the tile's name and lives in
+    // the viewer, not as text on the face.
+    const open = await screen.findByRole("button", { name: `Open ${audioAsset.prompt}` });
+    expect(screen.queryByText(/^Warm synth loop with brushed percussion/)).toBeNull();
+    expect(open.closest("article")!.querySelectorAll("p.line-clamp-2")).toHaveLength(0);
     // The tile carries no model name or id; the viewer's facts do.
     expect(screen.queryByText("Sound model")).toBeNull();
     expect(screen.queryByText("audio.generate.test-model")).toBeNull();
@@ -1021,11 +1022,14 @@ describe("Library honesty and access", () => {
     const today = (
       await screen.findByRole("button", { name: "Open Made today" })
     ).closest("article")!;
-    expect(today).toHaveTextContent(/Made today\s*Today$/);
+    // The first tile of a day shows its day once, on the chip; the hover
+    // caption does not repeat it (PF-073).
+    expect(today).toHaveTextContent(/^Today\s*Made today$/);
+    expect(within(today).getAllByText("Today")).toHaveLength(1);
     const old = screen
       .getByRole("button", { name: "Open Made long ago" })
       .closest("article")!;
-    expect(old).toHaveTextContent(/Made long ago\s*[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
+    expect(old).toHaveTextContent(/Made long ago$/);
     // D1.6: one continuous grid (no date headers); the day rides on the
     // first tile of each day.
     expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
@@ -1233,28 +1237,22 @@ describe("Library media identity and tile playback", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "Creation makers" })).toBeNull());
   });
 
-  test("shows real audio titles and lengths with stable per-item cover variation", async () => {
+  test("keeps the audio tile quiet: length and play, no prompt text, no invented bars", async () => {
     const assets = [
       { ...audioAsset, asset_id: "cover-a", prompt: "Morning birds", duration_s: 12 },
       { ...audioAsset, asset_id: "cover-b", prompt: "Evening rain", duration_s: 73 },
     ];
     routeFetch((path) => path.startsWith("/me/api/media?") ? list(assets) : undefined);
-    const rendered = renderLibrary();
+    renderLibrary();
     const first = (await screen.findByRole("button", { name: "Open Morning birds" })).closest("article")!;
     const second = screen.getByRole("button", { name: "Open Evening rain" }).closest("article")!;
-    expect(within(first).getByText("Morning birds")).toHaveClass("text-body", "line-clamp-2");
-    expect(within(second).getByText("Evening rain")).toHaveClass("text-body");
+    expect(within(first).queryByText("Morning birds")).toBeNull();
+    expect(within(second).queryByText("Evening rain")).toBeNull();
     expect(within(first).getByRole("button", { name: "Play Morning birds" })).toHaveTextContent("0:12");
     expect(within(second).getByRole("button", { name: "Play Evening rain" })).toHaveTextContent("1:13");
-    const shape = (tile: Element) => Array.from(tile.querySelectorAll("svg rect"), (bar) => bar.getAttribute("height"));
-    const firstShape = shape(first);
-    expect(firstShape).toHaveLength(24);
-    expect(shape(second)).not.toEqual(firstShape);
-    rendered.unmount();
-    assets[0].prompt = "Renamed birds";
-    renderLibrary();
-    const again = (await screen.findByRole("button", { name: "Open Renamed birds" })).closest("article")!;
-    expect(shape(again)).toEqual(firstShape);
+    // jsdom cannot measure audio, so a drawn waveform here would be invented.
+    expect(first.querySelectorAll("svg rect")).toHaveLength(0);
+    expect(second.querySelectorAll("svg rect")).toHaveLength(0);
   });
 
   test("keeps play and type-duration visible at rest within the two-cue budget including day", async () => {

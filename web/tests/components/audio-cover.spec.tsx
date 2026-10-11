@@ -2,18 +2,15 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
   AudioFace,
-  audioKind,
   MediaBadge,
   Waveform,
 } from "@/components/product/audio-cover";
 import { Play } from "lucide-react";
 
 describe("audio faces", () => {
-  it("name the kind of sound from the model", () => {
-    expect(audioKind("tts-1").label).toBe("Voice");
-    expect(audioKind("ace-step-xl").label).toBe("Music");
-    expect(audioKind("stable-audio-sfx").label).toBe("Sound effect");
-    expect(audioKind(null).label).toBe("Audio");
+  it("do not guess a sound's kind from a model name", async () => {
+    const module = await import("@/components/product/audio-cover");
+    expect("audioKind" in module).toBe(false);
   });
   it("draw no bars without measured peaks", () => {
     const { container } = render(<Waveform peaks={null} />);

@@ -435,13 +435,14 @@ describe("Library media recovery", () => {
       { ...image, asset_id: "audio", kind: "audio", prompt: audioPrompt },
     ]);
     mount();
-    // Every tile's hover title is a short whole-word title on up to two
-    // lines (D1.5: audio tiles carry no words of their own).
+    // A picture's hover title is a short whole-word title on up to two
+    // lines; a playable audio tile carries no words of its own (PF-070).
     expect(
       await screen.findByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
     expect(screen.getByText(`X${"x".repeat(55)}…`)).toHaveClass("line-clamp-2");
-    expect(screen.getByText(`Y${"y".repeat(55)}…`)).toHaveClass("line-clamp-2");
+    expect(screen.queryByText(`Y${"y".repeat(55)}…`)).toBeNull();
+    expect(screen.getByRole("button", { name: `Open ${audioPrompt}` })).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),
     );
