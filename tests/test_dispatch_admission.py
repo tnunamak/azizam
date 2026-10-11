@@ -304,3 +304,21 @@ def test_facade_uses_its_declared_intent(dispatch_env, monkeypatch, path, body, 
     assert response.status_code == 503
     assert 'intent_disabled' in response.json()['admission']['reason_codes']
     assert not calls
+
+
+def test_unconfigured_dispatch_still_evaluates_without_inventing_availability(monkeypatch):
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {})
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
+    original = proxy.resource_admission_http.advise_route_admission
+    seen = []
+    def advise(**kwargs):
+        decision = original(**kwargs)
+        seen.append(decision)
+        return decision
+    monkeypatch.setattr(proxy.resource_admission_http, 'advise_route_admission', advise)
+    receipt = proxy.RouteReceipt(protocol='test')
+    assert proxy._dispatch_admission_response('chat.generate', resource_class='chat', receipt=receipt) is None
+    assert len(seen) == 1 and seen[0].allowed
+    available = next(fact for fact in seen[0].details.facts if fact.name == 'available')
+    assert available.value is None and available.quality == 'unavailable'
+    assert receipt.resource_decision is None

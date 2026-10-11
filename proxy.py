@@ -14792,7 +14792,7 @@ async def _decision_ensure_ready(service: str) -> Response | None:
     return await _ensure_speech_service_ready(service, label="Decision engine")
 
 
-def _decision_dispatch_admission(auth: AuthContext, service_id: str) -> Response | None:
+def _decision_dispatch_admission(auth: AuthContext, service_id: str | None) -> Response | None:
     return _dispatch_admission_response(
         "decision.systemone", auth_context=auth, service_id=service_id,
         resource_class="decision",
@@ -14832,14 +14832,15 @@ async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str,
             return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
     except decision_provider_execution.PaidDecisionError:
         return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
+    service_id = None
     if _effective_media_job_admission_cfg() or _operator_service_availability_overrides():
-        resolved = DECISION_RUNTIME.resolve(str(body.get("model") or ""))
-        admission = _decision_dispatch_admission(auth, resolved.service)
-        if admission is not None:
-            return decisions_api.DecisionDispatchResult(
-                body=json.loads(admission.body), status_code=admission.status_code,
-                headers=dict(admission.headers),
-            )
+        service_id = DECISION_RUNTIME.resolve(str(body.get("model") or "")).service
+    admission = _decision_dispatch_admission(auth, service_id)
+    if admission is not None:
+        return decisions_api.DecisionDispatchResult(
+            body=json.loads(admission.body), status_code=admission.status_code,
+            headers=dict(admission.headers),
+        )
     return await DECISION_RUNTIME.dispatch(auth, profile, body, request_id)
 
 
@@ -21949,8 +21950,7 @@ def _dispatch_admission_response(
     configured = any(cfg.get(key) for key in (
         "disabled_intents", "disabled_resource_classes", "reserved_tokens", "max_app_concurrency",
     )) or _optional_int_config(cfg, "max_queue_depth") is not None
-    if not configured and not override:
-        return None
+    enforce = configured or bool(override)
     state_name = str(override.get("state") or "").strip().lower()
     if state_name in {"disabled", "maintenance", "draining"}:
         service_available = False
@@ -21968,6 +21968,7 @@ def _dispatch_admission_response(
     decision = resource_admission_http.advise_route_admission(
         intent=intent, resource_class=resource_class,
         service_available=service_available, service_degraded=state_name == "degraded",
+        require_service_availability=enforce,
         service_retry_after=_optional_int_config(override, "retry_after_seconds"),
         service_reasons=_string_tuple_config(override, "reason"),
         app_id=identity.app_id if identity else (receipt.app_id if receipt else None),
@@ -21983,7 +21984,7 @@ def _dispatch_admission_response(
     )
     evidence = decision.details.as_dict(decision.outcome.value)
     evidence["wait_deadline"] = time.time() + 60
-    if receipt is not None:
+    if receipt is not None and enforce:
         receipt.resource_decision = evidence
     if decision.allowed:
         return None
@@ -21999,7 +22000,9 @@ def _model_dispatch_admission_response(
     resource_class: str = "chat", protocol: str = "openai",
 ) -> Response | None:
     if not _effective_media_job_admission_cfg() and not _operator_service_availability_overrides():
-        return None
+        return _dispatch_admission_response(
+            intent, auth_context=auth_context, resource_class=resource_class, protocol=protocol,
+        )
     # Resolution is declarative. Do not probe or start a backend to admit work.
     service_id = None
     available = None

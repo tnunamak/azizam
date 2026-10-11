@@ -36,6 +36,7 @@ def advise_route_admission(
     *,
     intent: str,
     service_available: bool | None = None,
+    require_service_availability: bool = True,
     service_degraded: bool = False,
     service_retry_after: int | None = None,
     service_reasons: tuple[str, ...] = (),
@@ -80,6 +81,7 @@ def advise_route_admission(
             reasons=estimate_reasons,
         ),
         AdmissionConstraints(
+            require_service_availability=require_service_availability,
             disabled_intents=disabled_intents,
             disabled_resource_classes=disabled_resource_classes,
             reserved_tokens=reserved_tokens,

@@ -1,6 +1,6 @@
 # Resource admission decisions and dispatch coverage
 
-Release A implementation, based on `33810bda` and design v2 on
+Release A implementation and dispatch gate, based on `803f8350` and design v2 on
 `design/headless-resources`. This inventory describes the checked source, not a
 probe of a running gateway.
 
@@ -61,36 +61,106 @@ effort. The workflow adapter carries the already-projected refusal into MCP.
 
 ## Dispatch inventory
 
-The direct call search is:
+All executable routes below reach `resource_admission_http.advise_route_admission`
+→ `resource_admission.advise_resource_admission`. STT also retains its separate
+`resource_claims.evaluate_admission` lease for disk and process-local concurrency.
+The new dispatch helper is at `proxy.py:21935` (`_dispatch_admission_response`); the existing
+media submission helper is at `proxy.py:22025` (`_media_job_admission_response`).
 
-```sh
-rg -n 'advise_resource_admission|evaluate_admission|advise_route_admission|admission_http_response' proxy.py gateway
-rg -n '_media_job_admission_response|GLOBAL_STT_RESOURCE_GATE.acquire' proxy.py
-```
-
-| Dispatch path | Consults an evaluator? | Source and limits |
+| Dispatch path | Admission point | Source |
 | --- | --- | --- |
-| `/gateway/v1/media/jobs` with executable image/audio/music/sfx/video input | Yes, at submission | `_dispatch_gateway_media_job_submission` selects the image handler or audio/video submitter. They call `_media_job_admission_response`, which calls `advise_route_admission` → `advise_resource_admission`. |
-| `/gateway/v1/media/jobs/image-generations` | Yes, at submission | `gateway_image_generations_media_job`; decision is attached to the existing route receipt. |
-| Async identity-scene submission, including explicitly async identity image edits | Yes, at submission | `_identity_submit_job`; same route advisor, using the image intent. |
-| Session Make image generation/editing | Yes, at submission and worker execution | `_SessionMakeRuntime.admission` and `.execute`; the worker skips the queue-depth check so it does not count itself. |
-| Regular image/audio/video media workers and identity worker | No new evaluation at worker start | `_run_image_media_job`, `_run_audio_media_job`, `_run_video_media_job`, `_run_identity_job` dispatch through their existing executor paths. Submission advice does not reserve resources for later execution. |
-| OpenAI audio transcriptions/translations, including `/openai/v1` aliases | Yes, on the bounded STT execution path | `_dispatch_selected_stt_route` → `proxy_stt_request` → `SttResourceGate.acquire` → `evaluate_admission`. Admission happens before multipart parsing and again if a changed service needs a replacement lease. Earlier format/configuration/storage checks can refuse before this evaluator. |
-| Direct OpenAI image generation/edit/variation (except async identity), audio generation, video creation/remix/edit/extension, speech | No | These handlers call their executors directly. Their other policy, availability and budget checks are separate from these two evaluators. |
-| Chat/completions/responses, Anthropic messages, Ollama chat/generate/embed, embeddings and decisions | No | Neither evaluator is called on these paths. This does not mean those routes have no policy or budget admission. |
-| MCP `run` | Depends on the selected route | `_mcp_internal_call` forwards the caller's headers through an in-process ASGI request. Native media-job submissions inherit that route's evaluation; direct media/speech/video calls inherit its absence. MCP does not add a scheduler or resource gate. |
-| Native job records with no executable submission payload; discovery/list/status | No dispatch evaluation | These are storage/discovery paths, not reservations of execution capacity. |
+| Native executable image/audio/music/sfx/video job submission | Before queue submission; existing evaluator | `proxy.py:22025` (`_media_job_admission_response`) |
+| Regular image worker | After acquiring a worker turn, before execution; each image retry also enters the synchronous gate | `proxy.py:21579` (`_run_image_media_job`) |
+| Regular audio and video workers | After acquiring a worker turn, before execution | `proxy.py:22216` (`_run_audio_media_job`), `proxy.py:22688` (`_run_video_media_job`) |
+| Identity jobs and synchronous identity/likeness routes | Submission, worker start, and the native route's policy/admission boundary | `proxy.py:15103` (`_identity_submit_job`), `proxy.py:15155` (`_run_identity_job`), `proxy.py:15235` (`_identity_admission`) |
+| Session Make | Submission and worker execution; synchronous executor checks again | `proxy.py:14472` (`_SessionMakeRuntime`) |
+| OpenAI chat, completions and embeddings, including aliases | Before dispatch preparation; selected local, current-loaded and paid paths check before handing off to transport | `proxy.py:29090` (`_handle_openai_litellm_request_once`), `proxy.py:28629` (`_forward_litellm_proxy_request`), `proxy.py:28328` (`_forward_current_loaded_openai_request`) |
+| Internal local chat execution | Before engine transport; outer caller admission remains authoritative for app attribution | `proxy.py:29280` (`_forward_internal_litellm_local_upstream`) |
+| OpenAI Responses | Before protocol loopback; underlying chat dispatch checks again | `proxy.py:27206` (`create_response`) |
+| Anthropic Messages | Before protocol loopback; underlying chat dispatch checks again | `proxy.py:26353` (`anthropic_messages`) |
+| Ollama chat/generate and both embedding APIs | Before protocol loopback; underlying chat/embedding dispatch checks again | `proxy.py:26523` (`_ollama_forward_non_streaming`), `proxy.py:26567` (`_ollama_forward_streaming`), `proxy.py:26640` (`_ollama_forward_embeddings`) |
+| System One and OpenAI Decisions | Before dispatcher handoff; local System One rechecks each selected fallback before transport | `proxy.py:14819` (`_dispatch_decision`), `proxy.py:14847` (`_openai_decisions`), `gateway/decision_routing.py:183` (`DecisionRuntime._dispatch_before_deadline`) |
+| Synchronous images: generation, edits, variations | On entry to each executor, before upstream work | `proxy.py:8068` (`proxy_comfy_request`), `proxy.py:8499` (`proxy_comfy_edit_request`), `proxy.py:9123` (`proxy_comfy_variations_request`) |
+| Synchronous audio generation | On entry to the executor | `proxy.py:24188` (`proxy_audio_generate`) |
+| Synchronous video creation, remix, editing, extension, typed workflow editing | On entry to each executor, before upstream work | `proxy.py:10879` (`proxy_comfy_video_create`), `proxy.py:12679` (`proxy_comfy_video_remix`), `proxy.py:12743` (`proxy_comfy_video_edit`), `proxy.py:11870` (`proxy_comfy_video_extend`), `proxy.py:23667` (`_execute_video_manifest_workflow`) |
+| Speech synthesis | Default and selected service checks, before readiness/transport; each fallback enters again | `proxy.py:4367` (`_proxy_tts_once`) |
+| Transcriptions/translations | Operator admission before selected service readiness, plus existing resource-claim lease before upload parsing/dispatch | `proxy.py:4812` (`_dispatch_selected_stt_route`), `proxy.py:4989` (`proxy_stt_request`) |
+| Realtime WebSocket and provider-native passthrough | Before backend transport | `proxy.py:18967` (`_handle_realtime`), `proxy.py:29957` (`provider_native_request`) |
+| MCP, A1111 and other protocol adapters | Inherit the destination route's admission through their internal request | `proxy.py:14715` (`_mcp_internal_call`) |
+| Discovery, status, stored-output retrieval, unsupported APIs, native job records without executable input | No inference dispatch; no capacity reservation | Route inventory distinguishes these from execution. |
 
-No new dispatch gate, lock acquisition, scheduler or worker-start recheck was
-added. Queue admission still has its existing check/submit race and scan bound.
-The STT gate is process-local. This change makes recorded evidence truthful;
-it does not establish global GPU capacity enforcement or stale-fact expiry.
+## Configuration and facts
+
+The existing `resource_admission.media_jobs` configuration and the owner
+`/admin/api/operator/media-job-admission` overrides now apply at dispatch too.
+No second policy store was added. `max_app_concurrency` maps app ids to integer
+limits and is accepted by that existing owner API. Resource classes are `chat`,
+`embeddings`, `decision`, `image`, `audio`, `video`, and `native`. Frontends use
+existing policy intent names (for example `chat.messages`, `chat.responses`,
+`speech.synthesis`, and `decision.systemone`); internal forwards check their own
+canonical operation as well.
+
+With no configured limits or service override, dispatch still calls the evaluator
+but does not require a service-availability observation. This explicit constraint
+preserves the previous route's availability/error behavior, including response
+bytes and headers. It does not turn unknown availability into true. Existing
+callers keep the evaluator's strict default. Clearing all limits also restores
+this behavior. No new decision evidence is attached to an unconfigured direct
+request's receipt.
+
+When admission is configured, availability comes from the selected service's
+configuration or explicit owner override and is labelled declared. A missing
+service remains unknown and refuses. The helper does not probe GPU memory,
+engine occupancy, or running requests. Direct media uses the existing database
+queue reader; other direct paths have no observed queue. Per-app active counts
+are unknown on these paths, so an applicable configured app limit refuses
+conservatively. No counter is invented from an incomplete process-local view.
+
+Worker checks run after the worker semaphore is acquired. They omit the queue
+limit because the job is already in that queue. A scoped context keeps nested
+synchronous checks from counting it again and is reset even on cancellation.
+A refused worker is marked failed before its executor runs; it does not start an
+unbounded retry loop or silently wait for resources.
+
+Refusals use the existing 503 admission status and Retry-After behavior. OpenAI
+routes return an error object, Anthropic returns `type: error` with an error
+object, and Ollama returns its string-valued `error`. Each includes the caller
+projection and admission summary. Protocol translation preserves these fields
+if a later inner dispatch recheck refuses after the outer check passed.
+A degraded decision retains the existing evaluator's allowed/degraded semantics.
+
+Admission is advice plus a refusal gate, not an atomic reservation. Queue
+check/submit races and the queue scan bound remain. Per-app limits cannot admit
+work until a trustworthy active-count producer is available. This change adds
+no scheduler, global GPU accounting, capacity measurement or stale-fact expiry.
 
 ## Verification scope
 
-Regression tests distinguish unknown from measured zero, retain simultaneous
-rejections and delays, compare legacy serialized outcomes, and test all four
-fact qualities. Receipt round trips check owner evidence and caller redaction.
-Route tests cover failed media queue reads, session attribution, STT's OpenAI
-error envelope and MCP's structured refusal. No live engine, live database,
-production port, gateway restart or browser was used.
+`tests/test_dispatch_admission.py` compares 13 successful requests against
+`tests/fixtures/dispatch_admission_baseline.json`, captured from unchanged
+production source at `803f8350` by test-only commit `e48d86a4`. It compares raw
+response bytes, every returned header and status. Inputs, backend replies,
+clocks and generated ids are fixed before execution; responses are not
+normalized. Cases cover streaming and buffered chat, Anthropic and Ollama,
+OpenAI/Ollama embeddings, both decision surfaces, synchronous image generation
+and speech. The fake transports are below the routing/translation code, except
+media and decision executors which are replaced at their execution seams.
+
+Before the implementation, all 13 corresponding disabled-resource-class tests
+failed because they reached their executor. Afterward, refusals prevent that
+execution. Additional tests cover each protocol's queue/app unknown facts,
+intent limits, service overrides, caller redaction, late streaming refusals,
+worker-start changes and the worker queue exemption.
+
+`tests/test_route_policy_inventory.py` discovers model-facing mutation routes
+and probes them with resource classes disabled. Backend dispatch and unexplained
+success fail the test. A synthetic unguarded route proves the inventory catches
+a newly added bypass. Validation/configuration refusals are not presented as
+proof that a successful execution path was exercised; the differential cases
+supply that evidence. The local decision fallback test proves that the second
+backend is not called after its recheck refuses.
+
+Tests use the hermetic Python runner, with no live engine/database, production
+port, gateway restart, browser test or web build. These checks do not establish
+live-engine behavior, distributed concurrency enforcement, or all possible
+client inputs.
