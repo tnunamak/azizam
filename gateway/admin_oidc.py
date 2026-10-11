@@ -45,6 +45,7 @@ import hmac
 import json
 import secrets
 import time
+import unicodedata
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, MutableMapping, Protocol
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
@@ -218,8 +219,10 @@ class OIDCConfig:
     # Change this if your IdP uses a different claim name (e.g. "roles",
     # "cognito:groups", "https://example.com/groups").
     groups_claim: str = "groups"
+    display_name: str = ""
 
     def __post_init__(self) -> None:
+        validate_oidc_display_name(self.display_name)
         if not self.enabled:
             return  # Disabled config doesn't need to be fully valid.
         for field_name in ("issuer", "client_id", "client_secret", "redirect_uri"):
@@ -286,6 +289,21 @@ def _coerce_scopes(values: Any) -> tuple[str, ...]:
     return cleaned
 
 
+def validate_oidc_display_name(value: Any) -> str:
+    """Accept only bounded, single-line public text; never echo rejected input."""
+    if not isinstance(value, str):
+        raise OIDCConfigError("display_name must be a string")
+    if len(value) > 80:
+        raise OIDCConfigError("display_name must be at most 80 characters")
+    if any(
+        char in "<>" or unicodedata.category(char).startswith("C")
+        or unicodedata.category(char) in {"Zl", "Zp"}
+        for char in value
+    ):
+        raise OIDCConfigError("display_name must be plain text without markup or control characters")
+    return value.strip()
+
+
 _STORED_OIDC_STRING_FIELDS = frozenset(
     {
         "issuer",
@@ -296,6 +314,7 @@ _STORED_OIDC_STRING_FIELDS = frozenset(
         "token_endpoint",
         "jwks_uri",
         "groups_claim",
+        "display_name",
     }
 )
 _STORED_OIDC_LIST_FIELDS = frozenset(
@@ -321,6 +340,8 @@ def validate_oidc_stored_override(data: Mapping[str, Any]) -> None:
     for key in _STORED_OIDC_STRING_FIELDS & data.keys():
         if not isinstance(data[key], str):
             raise OIDCConfigError(f"stored {key} must be a string")
+    if "display_name" in data:
+        validate_oidc_display_name(data["display_name"])
     for key in _STORED_OIDC_LIST_FIELDS & data.keys():
         value = data[key]
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
@@ -372,6 +393,7 @@ def load_oidc_config(
 
     Recognized keys (all optional unless ``enabled`` is true):
 
+    * ``display_name`` — optional public plain text, at most 80 characters
     * ``enabled`` — bool
     * ``issuer`` — string (no trailing slash assumed; we don't normalize)
     * ``client_id`` — string
@@ -442,6 +464,7 @@ def load_oidc_config(
 
     return OIDCConfig(
         enabled=enabled,
+        display_name=validate_oidc_display_name(data.get("display_name", "")),
         issuer=str(data.get("issuer", "")),
         client_id=str(data.get("client_id", "")),
         client_secret=str(client_secret),

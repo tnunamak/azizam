@@ -400,6 +400,7 @@ export interface OidcConfigProvenance {
 
 /** Effective, redacted OIDC configuration returned by GET /admin/api/oidc-config. */
 export interface EffectiveOidcConfig {
+  display_name: string;
   enabled: boolean;
   issuer: string;
   client_id: string;
@@ -424,6 +425,7 @@ export interface EffectiveOidcConfig {
 
 /** Write-only PUT shape; it deliberately cannot carry response provenance. */
 export interface OidcConfigUpdate {
+  display_name?: string | null;
   enabled?: boolean;
   issuer?: string | null;
   client_id?: string | null;

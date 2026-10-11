@@ -62,7 +62,14 @@ it("shows one heading and a quiet loading state before options arrive", () => {
   expect(screen.getAllByRole("heading")).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
 });
-it.each(["Household accounts", "your identity provider", ""])(
+it.each([
+  "Household accounts",
+  "Google",
+  "Vivid Fish",
+  "single sign-on",
+  "your identity provider",
+  "",
+])(
   "makes the configured provider primary with a plain fallback: %s",
   async (label) => {
     options.oidc = true;
@@ -70,8 +77,8 @@ it.each(["Household accounts", "your identity provider", ""])(
     mount();
     const provider = await screen.findByRole("link", {
       name:
-        label === "Household accounts"
-          ? "Continue with Household accounts"
+        label && label !== "your identity provider"
+          ? `Continue with ${label}`
           : "Continue with single sign-on",
     });
     expect(provider).toHaveAttribute("data-variant", "default");
@@ -244,4 +251,15 @@ it("explains provider failure without rendering untrusted error descriptions", a
     "Single sign-on didn’t finish.",
   );
   expect(screen.queryByText("untrusted")).toBeNull();
+});
+
+it("renders provider text through React escaping", async () => {
+  options.oidc = true;
+  options.oidc_label = '<img src=x onerror="alert(1)">';
+  mount();
+  const provider = await screen.findByRole("link", {
+    name: `Continue with ${options.oidc_label}`,
+  });
+  expect(provider.querySelector("img")).toBeNull();
+  expect(provider).toHaveTextContent(options.oidc_label);
 });

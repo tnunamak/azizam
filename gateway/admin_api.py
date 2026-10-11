@@ -33,6 +33,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
+from gateway.admin_oidc import validate_oidc_display_name
 from gateway.policy import (
     AppProfile,
     default_profile_id,
@@ -1480,6 +1481,7 @@ _OIDC_CONFIG_FIELDS = frozenset(
         "jwks_uri",
         "clock_skew_seconds",
         "groups_claim",
+        "display_name",
     }
 )
 _OIDC_STRING_FIELDS = frozenset(
@@ -1492,6 +1494,7 @@ _OIDC_STRING_FIELDS = frozenset(
         "token_endpoint",
         "jwks_uri",
         "groups_claim",
+        "display_name",
     }
 )
 _OIDC_LIST_FIELDS = frozenset(
@@ -1533,7 +1536,7 @@ def _validate_oidc_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             )
         # Empty is the explicit clear for bootstrap-backed scalar fields.
         # Omission remains the only patch-preserve operation.
-        out[key] = value.strip()
+        out[key] = validate_oidc_display_name(value) if key == "display_name" else value.strip()
     for key in _OIDC_LIST_FIELDS:
         if key not in payload:
             continue
