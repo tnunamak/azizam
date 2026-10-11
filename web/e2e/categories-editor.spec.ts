@@ -403,3 +403,44 @@ test.describe("Categories editor real fixture journeys", () => {
     }
   }
 });
+
+test("catalog service can be added, granted and previewed with category APIs stubbed", async ({ page }) => {
+  await surface(page, 390);
+  const base = snapshot("catalog-browser", "chat");
+  base.people.Casey[0].grants = [];
+  base.people.Casey[0].require = [];
+  base.apps.Notebook[0].grants = [];
+  const selected: Snapshot = { ...base, services: {} };
+  const sent = writes(page);
+  await page.route("**/admin/api/categories/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === root + "/active") return route.fulfill({ json: { revision: 2, snapshot: selected, reason: "Fixture", author: "owner", created_at: "2026-10-10T00:00:00Z" } });
+    if (path === root + "/history") return route.fulfill({ json: { history: [] } });
+    if (path === root + "/services") return route.fulfill({ json: { services: [{ stem: "workflow:paint", label: "Paint workflow", kind: "workflow", capabilities: ["image.generate", "image.edit"] }] } });
+    if (path === root + "/candidates" && route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      return route.fulfill({ json: { revision: 3, snapshot: body.snapshot, preview_base_revision: 2, preview: { gains: [], losses: [], reason_changes: [], scope: [] } } });
+    }
+    throw new Error("Unexpected category API: " + path);
+  });
+  await page.goto("/ui/categories/");
+  await openEditor(page);
+  const form = editor(page);
+  await pick(page, form, "Service to add", "Paint workflow");
+  await form.getByRole("button", { name: "Add service", exact: true }).click();
+  await expect(form.getByRole("group", { name: "Workflow: workflow:paint@r1", exact: true })).toBeVisible();
+  for (const name of ["Person access plans", "App access plans"]) {
+    const plans = form.getByRole("region", { name, exact: true });
+    await plans.getByRole("button", { name: "Add grant", exact: true }).click();
+    await pick(page, plans, "Service", "workflow:paint@r1");
+    await pick(page, plans, "Capability", "Image editing");
+  }
+  await form.getByLabel("Reason for changes", { exact: true }).fill("Grant image edits");
+  const candidate = await preview(page, 2);
+  expect(sent.map(({ path }) => path)).toEqual([root + "/candidates"]);
+  expect(candidate.snapshot.services["workflow:paint@r1"]).toEqual({ id: "workflow:paint@r1", members: [{ id: "workflow:paint@r1", kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
+  for (const plans of [candidate.snapshot.people.Casey, candidate.snapshot.apps.Notebook]) {
+    expect(plans[0].grants).toEqual([{ capability: "image.edit", service: "workflow:paint@r1" }]);
+  }
+  await accessible(page, 390);
+});

@@ -110,3 +110,23 @@ def test_catalog_uses_public_routes_and_omits_disabled_models(monkeypatch):
     assert "cloud-model" not in entries
     assert "disabled-model" not in entries
     assert "offline-model" not in entries
+
+
+def test_catalog_includes_protocol_only_chat_and_decision_targets(monkeypatch):
+    from gateway.capabilities import Capability
+
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {
+        "protocol-only": {"enabled": True, "config": {
+            "protocol": "openai-compatible", "base_url": "http://example.invalid/v1",
+            "models": [{"id": "protocol-chat"}],
+        }},
+    }})
+    monkeypatch.setattr(proxy, "_gateway_aliases_provider", lambda: {})
+    monkeypatch.setattr(proxy, "config", {})
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "capabilities", lambda: [
+        Capability(intent="decision.systemone", model="choose", backend="decision-service"),
+    ])
+    entries = {row["stem"]: row for row in proxy._category_service_catalog()}
+    assert entries["protocol-chat"]["capabilities"] == ["chat.completions"]
+    assert entries["choose"] == {"stem": "choose", "label": "choose", "kind": "model",
+                                "capabilities": ["decision.systemone"]}

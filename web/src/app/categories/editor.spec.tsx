@@ -503,3 +503,74 @@ it("pauses saving when the page cannot confirm the active rules", async () => {
   expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
   expect(fetch.mock.calls.filter(([path]) => path.endsWith("/activate"))).toHaveLength(0);
 });
+
+const serviceCatalog = [
+  { stem: "workflow:paint", label: "Paint workflow", kind: "workflow" as const, capabilities: ["image.generate", "image.edit"] },
+  { stem: "model:vectors", label: "Vectors model", kind: "model" as const, capabilities: ["text.embeddings"] },
+];
+function mountCatalog(snapshot: Snapshot | null = null, extra = {}) {
+  vi.mocked(adminFetch).mockImplementation(async <T,>(path: string, init?: AdminFetchInit): Promise<T> => serve(path, init) as T);
+  const props = { active: snapshot ? { revision: 2, snapshot } : null, owner: "sam", ...choices, onClose: vi.fn(), onActivated: vi.fn(), catalog: serviceCatalog, ...extra };
+  const view = render(<CategoriesEditor {...props} />);
+  return { ...view, props, user: userEvent.setup() };
+}
+it("adds catalog services with pinned workflow and route roots and next revisions across retained dependencies", async () => {
+  const snapshot = rules();
+  snapshot.retained["output-1"].id = "retained-service@r1";
+  snapshot.retained["output-1"].dependencies.push({ id: "workflow:paint@r3", checkable: true, members: [], dependencies: [] });
+  snapshot.services["workflow:paint@r1"] = { id: "workflow:paint@r1", checkable: true, members: [], dependencies: [] };
+  const { user } = mountCatalog(snapshot);
+  await pick(user, "Service to add", "Paint workflow");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await pick(user, "Service to add", "Vectors model");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await showPreview(user);
+  const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
+  for (const id of ["workflow:paint@r4", "workflow:paint@r5"]) expect(saved.services[id]).toEqual({ id, members: [{ id, kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
+  expect(saved.services["model:vectors@r1"]).toEqual({ id: "model:vectors@r1", members: [{ id: "model:vectors@r1", kind: "route", assertions: [] }], dependencies: [], checkable: true });
+  expect(saved.people).toEqual(snapshot.people);
+  expect(saved.retained).toEqual(snapshot.retained);
+});
+it("offers exact service capabilities and clears incompatible capability when switching services", async () => {
+  const snapshot = rules(); snapshot.people = {}; snapshot.apps = {};
+  const { user } = mountCatalog(snapshot);
+  for (const label of ["Paint workflow", "Vectors model"]) {
+    await pick(user, "Service to add", label);
+    await user.click(screen.getByRole("button", { name: "Add service" }));
+  }
+  await pick(user, "Person for new access plan", "Sam");
+  await user.click(screen.getByRole("button", { name: "Add person access plan" }));
+  await user.click(screen.getByRole("button", { name: "Add grant" }));
+  await pick(user, "Service", "workflow:paint@r1");
+  await pick(user, "Capability", "Image editing");
+  await pick(user, "Service", "model:vectors@r1");
+  expect(screen.getByRole("combobox", { name: "Capability" })).toHaveTextContent("Choose capability");
+  await user.click(screen.getByRole("combobox", { name: "Capability" }));
+  expect(screen.getAllByRole("option").map((node) => node.textContent)).toEqual(["Embeddings"]);
+  await user.click(screen.getByRole("option", { name: "Embeddings" }));
+  await showPreview(user);
+  expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot.people.sam[0].grants).toEqual([{ capability: "text.embeddings", service: "model:vectors@r1" }]);
+});
+it("keeps persisted unknown grants unchanged while catalog data is present", async () => {
+  const original = rules(); original.people.sam[0].grants[0].capability = "legacy.intent";
+  const { user } = mountCatalog(original);
+  expect(screen.getAllByRole("combobox", { name: "Capability" })[0]).toHaveTextContent("legacy.intent");
+  await showPreview(user);
+  expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot).toEqual(original);
+});
+it("shows catalog loading without disabling saved service editing", () => {
+  mountCatalog(rules(), { catalogLoading: true });
+  expect(screen.getByRole("status")).toHaveTextContent("Loading available services");
+  expect(screen.queryByRole("button", { name: "Add service" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Reason for changes" })).toBeEnabled();
+});
+it("shows a retryable catalog error and an empty catalog state", async () => {
+  const retry = vi.fn();
+  const { user, rerender, props } = mountCatalog(null, { catalogError: true, onCatalogRetry: retry });
+  expect(screen.getByRole("alert")).toHaveTextContent("Available services could not be loaded");
+  await user.click(screen.getByRole("button", { name: "Retry available services" }));
+  expect(retry).toHaveBeenCalledOnce();
+  rerender(<CategoriesEditor {...props} catalog={[]} catalogError={false} />);
+  expect(screen.getByText("No available services. Add a model or workflow first.")).toBeVisible();
+});

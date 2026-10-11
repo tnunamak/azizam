@@ -63,6 +63,7 @@ const candidate = {
 function serve(path: string) {
   if (path.endsWith("/active")) return active;
   if (path.endsWith("/history")) return history;
+  if (path.endsWith("/services")) return { services: [] };
   if (path.endsWith("/restore")) return candidate;
   if (path.endsWith("/preview-as")) return allow;
   if (path.endsWith("/activate")) return { revision: 3, active_counter: 3 };
@@ -252,4 +253,29 @@ it("keeps retained output bundles distinct from a service with the same revision
   } : serve(path));
   expect(await screen.findByText("Service: studio@1 · Retained output: saved-output")).toBeVisible();
   expect(screen.getByText("Service: studio@1")).toBeVisible();
+});
+
+it("loads the service catalog only for editing and retries failures without losing draft edits", async () => {
+  let attempts = 0;
+  const fetchCategory = mount((path) => {
+    if (path.endsWith("/services")) {
+      attempts++;
+      if (attempts === 1) throw new Error("catalog unavailable");
+      return { services: [{ stem: "workflow:paint", label: "Paint workflow", kind: "workflow", capabilities: ["image.edit"] }] };
+    }
+    return serve(path);
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ actor: { subject: "sam" } }) }));
+  await screen.findByText("Revision 2");
+  expect(fetchCategory.mock.calls.some(([path]) => path.endsWith("/services"))).toBe(false);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Edit rules" }));
+  await screen.findByText(/Available services could not be loaded/);
+  const editor = within(screen.getByRole("region", { name: "Edit category rules" }));
+  await waitFor(() => expect(editor.getByRole("textbox", { name: "Reason for changes" })).toBeEnabled());
+  await user.type(editor.getByRole("textbox", { name: "Reason for changes" }), "Keep this draft");
+  await user.click(editor.getByRole("button", { name: "Retry available services" }));
+  await editor.findByRole("combobox", { name: "Service to add" });
+  expect(attempts).toBe(2);
+  expect(editor.getByRole("textbox", { name: "Reason for changes" })).toHaveValue("Keep this draft");
 });

@@ -15377,16 +15377,21 @@ def _category_service_catalog() -> list[dict[str, Any]]:
     backends = service_registry.runtime_backends(registry)
     # Use the execution catalog's public names, including provider prefixes,
     # and its enabled-model filtering before deriving protocol capabilities.
-    capabilities = []
     for model, (service, record) in litellm_public_model_records(registry).items():
         routed = {**service, "config": {**service["config"], "models": [{"id": model}]}}
-        for capability in registered_model_capabilities({"services": {service["id"]: routed}}):
-            label = record.get("display_name") or record.get("title") or model
-            add(model, label, "model", capability.intent)
-    capabilities.extend(build_local_capabilities(
+        intents = {capability.intent for capability in registered_model_capabilities(
+            {"services": {service["id"]: routed}})}
+        # A declared OpenAI chat protocol is sufficient for an executable route;
+        # older service records need not repeat it in capability metadata.
+        if not intents:
+            intents.add("chat.completions")
+        label = record.get("display_name") or record.get("title") or model
+        for intent in sorted(intents):
+            add(model, label, "model", intent)
+    capabilities = build_local_capabilities(
         config, backends=backends,
         enabled_flags={"images": False, "videos": False, "audio": False},
-    ))
+    )
     for capability in capabilities:
         if not capability.model or capability.workflow:
             continue
@@ -15406,6 +15411,13 @@ def _category_service_catalog() -> list[dict[str, Any]]:
         if alias is not None:
             target = _provider_alias_model(alias.target, alias.service, alias.engine_spec or {})
             add(target, capability.title, "model", capability.intent)
+
+    for capability in DECISION_RUNTIME.capabilities():
+        add(capability.model, capability.title, "model", capability.intent)
+    for provider in decision_provider_execution.systemone_providers(registry):
+        for model in decision_provider_execution.catalog_models(provider):
+            capability = decision_provider_execution.capability_for(provider, model)
+            add(model, capability.title, "model", capability.intent)
 
     for entry in entries.values():
         entry["capabilities"].sort()
