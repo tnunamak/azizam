@@ -23,6 +23,7 @@ import {
   humanCapability,
 } from "./engine-groups";
 import { normalizeModelConfigForPatch } from "./detected-models";
+import { restoreFocus } from "@/lib/restore-focus";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 import { ErrorState } from "@/components/product/error-state";
 import { useViewer } from "@/components/shell/session";
@@ -226,12 +227,14 @@ function EditEngineDialog({
   onClose,
   onSaved,
   returnFocus,
+  fallbackFocus,
   displayName,
 }: {
   service: Service;
   onClose: () => void;
   onSaved: (registry: ServiceRegistry, options?: { close?: boolean }) => void;
   returnFocus: HTMLElement | null;
+  fallbackFocus: () => readonly (HTMLElement | null)[];
   displayName: string;
 }) {
   const [enabled, setEnabled] = useState(service.enabled);
@@ -268,7 +271,7 @@ function EditEngineDialog({
         className="w-full overflow-y-auto sm:max-w-2xl"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          returnFocus?.focus();
+          restoreFocus(returnFocus, fallbackFocus);
         }}
       >
         <SheetHeader className="pr-14">
@@ -427,8 +430,32 @@ function EnginesContents() {
   const editInvoker = useRef<HTMLElement | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
   const removeInvoker = useRef<HTMLElement | null>(null);
+  const addEngineButton = useRef<HTMLButtonElement | null>(null);
+  const focusNeighbours = useRef<HTMLElement[]>([]);
+
+  function captureFocusNeighbours(service: Service) {
+    const actions = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "[data-engine-id] button[aria-haspopup='menu']",
+      ),
+    );
+    const index = actions.findIndex(
+      (button) =>
+        button.closest("[data-engine-id]")?.getAttribute("data-engine-id") ===
+        service.id,
+    );
+    focusNeighbours.current =
+      index < 0
+        ? actions
+        : [...actions.slice(index + 1), ...actions.slice(0, index).reverse()];
+  }
+
+  function fallbackFocus() {
+    return [...focusNeighbours.current, addEngineButton.current];
+  }
 
   function openEditor(service: Service) {
+    captureFocusNeighbours(service);
     const row = document.querySelector<HTMLElement>(
       `[data-engine-id="${CSS.escape(service.id)}"]`,
     );
@@ -629,6 +656,7 @@ function EnginesContents() {
                 <OverflowMenuItem
                   danger
                   onSelect={() => {
+                    captureFocusNeighbours(service);
                     removeInvoker.current = document.querySelector<HTMLElement>(
                       `[data-engine-id="${CSS.escape(service.id)}"] button[aria-haspopup='menu']`,
                     );
@@ -685,6 +713,7 @@ function EnginesContents() {
         title="Engines"
         actions={
           <Button
+            ref={addEngineButton}
             type="button"
             size="sm"
             variant="default"
@@ -874,6 +903,7 @@ function EnginesContents() {
         <EditEngineDialog
           service={editTarget}
           returnFocus={editInvoker.current}
+          fallbackFocus={fallbackFocus}
           displayName={displayName(editTarget)}
           onClose={() => setEditTarget(null)}
           onSaved={(registry, options) => {
@@ -897,6 +927,7 @@ function EnginesContents() {
         danger
         typedName={removeTarget?.name}
         returnFocus={removeInvoker.current}
+        fallbackFocus={fallbackFocus}
         onOpenChange={(open) => !open && setRemoveTarget(null)}
         onConfirm={() => {
           if (!removeTarget) return;

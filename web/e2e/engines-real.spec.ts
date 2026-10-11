@@ -195,6 +195,19 @@ test("real registry journey preserves disabled state and unknown config through 
     }),
   ]);
   card = page.locator(`tr[data-engine-id="${record.id}"]`);
+  // Keep the visible row order before removal so the expected focus target
+  // comes from the user's current place in the table.
+  const actionButtons = page.locator(
+    "tr[data-engine-id] button[aria-haspopup='menu']:visible",
+  );
+  const rowIds = await actionButtons.evaluateAll((buttons) =>
+    buttons.map((button) =>
+      button.closest("[data-engine-id]")!.getAttribute("data-engine-id"),
+    ),
+  );
+  const removedIndex = rowIds.indexOf(record.id);
+  expect(removedIndex).toBeGreaterThanOrEqual(0);
+  const neighbourId = rowIds[removedIndex + 1] ?? rowIds[removedIndex - 1];
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Remove engine", exact: true })
@@ -217,5 +230,12 @@ test("real registry journey preserves disabled state and unknown config through 
     .getByRole("button", { name: "Remove engine", exact: true })
     .click();
   await expect(remove).not.toBeVisible();
+  await expect(card).toHaveCount(0);
+  const focusTarget = neighbourId
+    ? page.locator(
+        `tr[data-engine-id="${neighbourId}"] button[aria-haspopup='menu']`,
+      )
+    : page.getByRole("button", { name: "Add engine", exact: true }).first();
+  await expect(focusTarget).toBeFocused();
   expect((await registry()).services[record.id]).toBeUndefined();
 });

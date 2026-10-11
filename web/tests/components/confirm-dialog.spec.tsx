@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -32,6 +32,50 @@ function ConfirmFixture({ onConfirm }: { onConfirm: () => Promise<void> }) {
 }
 
 describe("ConfirmDialog", () => {
+  it.each(["disabled", "hidden", "unfocusable"])(
+    "uses the fallback when the connected invoker becomes %s",
+    async (state) => {
+      const user = userEvent.setup();
+      function Fixture() {
+        const [open, setOpen] = useState(false);
+        const [done, setDone] = useState(false);
+        const invoker = useRef<HTMLButtonElement & HTMLDivElement>(null);
+        const fallback = useRef<HTMLButtonElement>(null);
+        const Invoker = state === "unfocusable" ? "div" : "button";
+        return (
+          <>
+            <Invoker
+              ref={invoker}
+              tabIndex={done ? undefined : 0}
+              disabled={done && state === "disabled"}
+              hidden={done && state === "hidden"}
+              onClick={() => setOpen(true)}
+            >
+              Open confirmation
+            </Invoker>
+            <button ref={fallback}>Stable fallback</button>
+            <ConfirmDialog
+              open={open}
+              onOpenChange={setOpen}
+              title="Confirm change?"
+              description="Change the opener."
+              returnFocus={invoker.current}
+              fallbackFocus={() => [fallback.current]}
+              onConfirm={() => setDone(true)}
+            />
+          </>
+        );
+      }
+      render(<Fixture />);
+      await user.click(screen.getByText("Open confirmation"));
+      await user.click(screen.getByRole("button", { name: "Confirm" }));
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Stable fallback" }),
+        ).toHaveFocus(),
+      );
+    },
+  );
   it("keeps destructive confirmation pending until the mutation succeeds", async () => {
     const user = userEvent.setup();
     const mutation = deferred();
@@ -93,7 +137,9 @@ it("requires the exact typed name, blocks dismissal while pending, and resets on
   render(<TypedFixture />);
   const trigger = screen.getByRole("button", { name: "Open removal" });
   await user.click(trigger);
-  const input = screen.getByRole("textbox", { name: /Type my-engine to confirm/ });
+  const input = screen.getByRole("textbox", {
+    name: /Type my-engine to confirm/,
+  });
   const confirm = screen.getByRole("button", { name: "Remove engine" });
   expect(input).toHaveFocus();
   expect(confirm).toBeDisabled();
@@ -116,7 +162,9 @@ it("requires the exact typed name, blocks dismissal while pending, and resets on
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
   await user.click(trigger);
-  expect(screen.getByRole("textbox", { name: /Type my-engine to confirm/ })).toHaveValue("");
+  expect(
+    screen.getByRole("textbox", { name: /Type my-engine to confirm/ }),
+  ).toHaveValue("");
   expect(screen.getByRole("button", { name: "Remove engine" })).toBeDisabled();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(trigger).toHaveFocus());
