@@ -445,6 +445,7 @@ def create_gateway_router(
             return JSONResponse(status_code=status.HTTP_200_OK, content={"object": "aliases", "operations": {}})
         operations = aliases_provider(operation)
         if entry_visible is not None:
+            original_operations = operations
             operations = {
                 op: {key: [row for row in rows if entry_visible(request, {
                     "operation": op,
@@ -452,7 +453,8 @@ def create_gateway_router(
                 })] for key, rows in view.items()}
                 for op, view in operations.items()
             }
-            operations = {op: view for op, view in operations.items() if any(view.values())}
+            operations = {op: view for op, view in operations.items()
+                          if any(view.values()) or view == original_operations[op]}
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"object": "aliases", "operations": operations},

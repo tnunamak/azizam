@@ -1044,6 +1044,8 @@ def test_websocket_route_policy_inventory(gateway, monkeypatch):
 @pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
 def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
     """Full JSON bytes captured on the parent implementation remain unchanged."""
+    monkeypatch.setattr(proxy.time, "time", lambda: 123)
+    monkeypatch.setattr(proxy.ollama_protocol, "_iso_utc_now", lambda: "1970-01-01T00:02:03Z")
     monkeypatch.setattr(proxy, "_workflow_model_entry_created", lambda _path: 123)
     monkeypatch.setattr(proxy, "_entry_created_ts", lambda _path: 123)
     responses = {}
@@ -1055,3 +1057,61 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         responses[path] = response.content.decode()
     expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
     assert responses == expected
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
+    """Mixed grants keep allowed handles and hide their restricted neighbors."""
+    fact = category_policy.Assertion(
+        "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "discovery",
+    )
+    targets = {
+        "current": "chat.completions",
+        "audio.generate.ace-step-1.5-2b-base": "audio.generate",
+        "image.generate.flux2-klein-4b": "image.generate",
+        "supertonic": "speech.synthesis",
+    }
+    services = {target + "@r1": category_policy.Service(
+        target + "@r1", (category_policy.Subject(target + "@1", "workflow", (fact,)),),
+    ) for target in targets}
+    plan = category_policy.Plan(
+        "discovery-grants",
+        tuple(category_policy.Grant(intent, target + "@r1") for target, intent in targets.items())
+        + (category_policy.Grant("models.list", "current@r1"),
+           category_policy.Grant("speech.voices", "supertonic@r1")),
+        (category_policy.Row("aud", "audience", "in", ("general",)),),
+    )
+    snapshot = category_policy.PolicyVersion(
+        "discovery-rules",
+        {"audience": category_policy.Category("audience", "Audience", values=("general",))},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, services,
+    )
+    store = CategoryStore(gateway.category_path)
+    active = store.get_active()
+    candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "discovery")
+    store.activate(candidate.revision, active.revision)
+
+    def get(path):
+        gateway.calls.clear()
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, (path, response.status_code, response.text)
+        assert not gateway.calls, (path, gateway.calls)
+        return response.json()
+
+    models = {item["id"] for item in get("/v1/models")["data"]}
+    assert "current" in models and "current-fast" not in models
+    assert "flux2-klein-4b" in models and "krea2-turbo" not in models
+    assert "image-fast" in models and "image" not in models
+    assert {item["id"] for item in get("/anthropic/v1/models")["data"]} == {"current"}
+    assert {item["model"] for item in get("/api/tags")["models"]} == {"current"}
+    assert {item["id"] for item in get("/v1/audio/models")["data"]} == {"ace-step-1.5-2b-base"}
+    assert {item["id"] for item in get("/gateway/v1/workflows")["workflows"]} == {
+        "image.generate.flux2-klein-4b", "audio.generate.ace-step-1.5-2b-base",
+    }
+    aliases = get("/gateway/v1/aliases")["operations"]
+    assert {item["alias"] for item in aliases["images"]["stable"]} == {"image-fast"}
+    assert "image_edits" not in aliases
+    assert {item["title"] for item in get("/sdapi/v1/sd-models")} == {"image-fast", "flux2-klein-4b"}
+    voices = get("/v1/audio/voices")
+    assert voices["voices"]
+    assert set(voices["engines"]) == {"supertonic"}

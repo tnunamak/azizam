@@ -13676,6 +13676,10 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
     if entry.get("intent") and not operation:
         workflow = model  # Gateway workflow summaries use the manifest ID.
     target = model
+    if not operation and not workflow:
+        matching_alias = resolve_stable_alias("chat", model)
+        if matching_alias is not None:
+            target = matching_alias.target
     if operation:
         try:
             resolution = resolve_model_for_operation(operation, model)
@@ -18452,7 +18456,7 @@ async def list_voices(request: Request):
     engines = [engine for engine in engines if _category_entry_visible(
         auth_context, {"id": engine, "operation": "speech"},
     )]
-    if not engines:
+    if not engines and not _category_entry_visible(auth_context, {"id": "tts-1", "operation": "speech"}):
         mine, has_more = [], False
     page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
     if not _category_entry_visible(auth_context, {"id": "tts-1", "operation": "speech"}):
@@ -25094,6 +25098,7 @@ async def list_models(request: Request):
             item["azizam_resolves_to"] = {
                 operation: target for operation, target in item["azizam_resolves_to"].items()
                 if target and normalize_model_id(str(target)) in visible_ids
+                and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
             }
 
     upstream_payload.update(policy_metadata)
