@@ -13709,6 +13709,7 @@ async def _filter_model_list_for_profile(
     auth_context: AuthContext,
     *,
     metadata_ids: set[str] | None = None,
+    category_intents: tuple[str, ...] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
@@ -13729,7 +13730,12 @@ async def _filter_model_list_for_profile(
             if not ready:
                 item["reason"] = "provider_key_missing"
         visible.append(item)
-    filtered = [item for item in visible if _category_entry_visible(auth_context, item)]
+    filtered = []
+    for item in visible:
+        category_entries = ([{**item, "azizam_intent": intent} for intent in category_intents]
+                            if category_intents is not None else [item])
+        if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
+            filtered.append(item)
 
     allowlist = _profile_model_allowlist(auth_context)
     if allowlist is not None:
@@ -24716,7 +24722,9 @@ async def _anthropic_model_info_list(
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
     entries.extend(_current_loaded_model_entries())
-    filtered, metadata = await _filter_model_list_for_profile(entries, auth_context)
+    filtered, metadata = await _filter_model_list_for_profile(
+        entries, auth_context, category_intents=("chat.messages",),
+    )
     seen: set[str] = set()
     models: list[dict[str, Any]] = []
     for entry in filtered:
@@ -25073,7 +25081,7 @@ async def list_models(request: Request):
             data.append(entry)
 
     data = [item for item in data if _category_entry_visible(
-        auth_context, {**item, "azizam_intent": "decision.systemone"} if item["id"] in decision_ids else item,
+        auth_context, {**item, "azizam_intent": "decision.systemone"} if item.get("id") in decision_ids else item,
     )]
 
     # Preserve only upstream observations ahead of loaded-record inheritance;
@@ -26154,7 +26162,9 @@ async def _ollama_model_catalog_summaries(
 
     if not delegated_litellm_api_key:
         entries.extend(_current_loaded_model_entries())
-    filtered, _ = await _filter_model_list_for_profile(entries, auth_context)
+    filtered, _ = await _filter_model_list_for_profile(
+        entries, auth_context, category_intents=("chat.completions", "chat.generate"),
+    )
     await _annotate_model_context_windows(filtered)
     return filtered
 

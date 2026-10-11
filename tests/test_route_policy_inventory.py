@@ -1067,26 +1067,17 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         assert response.content.decode() == body, path
 
 
-@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
-def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
-    """Mixed grants keep allowed handles and hide their restricted neighbors."""
+def _activate_discovery_grants(gateway, grants):
     fact = category_policy.Assertion(
         "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "discovery",
     )
-    targets = {
-        "current": "chat.completions",
-        "audio.generate.ace-step-1.5-2b-base": "audio.generate",
-        "image.generate.flux2-klein-4b": "image.generate",
-        "supertonic": "speech.synthesis",
-    }
     services = {target + "@r1": category_policy.Service(
         target + "@r1", (category_policy.Subject(target + "@1", "workflow", (fact,)),),
-    ) for target in targets}
+    ) for target in grants}
     plan = category_policy.Plan(
         "discovery-grants",
-        tuple(category_policy.Grant(intent, target + "@r1") for target, intent in targets.items())
-        + (category_policy.Grant("models.list", "current@r1"),
-           category_policy.Grant("speech.voices", "supertonic@r1")),
+        tuple(category_policy.Grant(intent, target + "@r1")
+              for target, intents in grants.items() for intent in intents),
         (category_policy.Row("aud", "audience", "in", ("general",)),),
     )
     snapshot = category_policy.PolicyVersion(
@@ -1098,6 +1089,17 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     active = store.get_active()
     candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "discovery")
     store.activate(candidate.revision, active.revision)
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
+    """Mixed grants keep allowed handles and hide their restricted neighbors."""
+    _activate_discovery_grants(gateway, {
+        "current": ("chat.completions", "chat.messages", "models.list"),
+        "audio.generate.ace-step-1.5-2b-base": ("audio.generate",),
+        "image.generate.flux2-klein-4b": ("image.generate",),
+        "supertonic": ("speech.synthesis",),
+    })
 
     def get(path):
         gateway.calls.clear()
@@ -1142,3 +1144,22 @@ def test_category_discovery_hides_decoy_grants(gateway, path):
     assert response.status_code == 200, (path, response.status_code)
     assert not gateway.calls, (path, gateway.calls)
     assert _category_listing_empty(response), (path, _body_summary(response))
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("intent,path", [
+    ("chat.messages", "/anthropic/v1/models"),
+    ("chat.completions", "/api/tags"),
+    ("chat.generate", "/api/tags"),
+])
+def test_model_discovery_uses_the_frontends_runtime_intent(gateway, intent, path):
+    _activate_discovery_grants(gateway, {"current": (intent, "models.list")})
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    body = response.json()
+    entries = body.get("data", body.get("models"))
+    assert {item.get("id", item.get("model")) for item in entries} == {"current"}
+    other_path = "/api/tags" if path == "/anthropic/v1/models" else "/anthropic/v1/models"
+    assert _category_listing_empty(gateway.client.get(other_path, headers=gateway.headers))
