@@ -60,7 +60,6 @@ def test_catalog_stems_match_real_image_and_aliased_chat_requests(gateway, monke
 
     monkeypatch.setattr(category_enforcement.CategoryGate, "check", capture)
     # Use the actual proxy router and owner auth, not a separate catalog fixture.
-    monkeypatch.setattr(proxy.ADMIN_AUTH, "__call__", lambda request: AdminContext(subject="owner", roles=frozenset({"owner"})))
     # Special methods are resolved on the class.
     monkeypatch.setattr(type(proxy.ADMIN_AUTH), "__call__", lambda self, request: AdminContext(subject="owner", roles=frozenset({"owner"})))
     response = gateway.client.get("/admin/api/categories/services", headers=gateway.headers)
@@ -93,7 +92,7 @@ def test_catalog_uses_public_routes_and_omits_disabled_models(monkeypatch):
                        {"id": "disabled-model", "enabled": False}],
         }},
         "cloud-route": {"id": "cloud-route", "enabled": True, "config": {
-            "remote_provider": True, "provider_id": "example-provider",
+            "remote_provider": True, "provider_id": "example-provider", "api_key_env": "CATALOG_TEST_KEY",
             "protocol": "openai-compatible", "base_url": "https://example.invalid/v1",
             "models": [{"id": "cloud-model"}],
         }},
