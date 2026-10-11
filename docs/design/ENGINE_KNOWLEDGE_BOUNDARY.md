@@ -6,12 +6,16 @@
 **Status update — 2026-10-10:** The owner-supplied audit at `fdc3c9d`
 supersedes the D-1/D-2/D-3 implementation status and old code anchors below.
 The engine-named classes are now generic transforms. D-2's engine framing is
-removed. D-3 is complete. D-1 is resolved: `reasoning-effort` runs only when attached in service
-`config.transforms`. Admin schema v5 attaches it once to enabled local chat/
-completion endpoints, excluding remote providers and the execution substrate.
+removed. D-3 is complete. D-1 is resolved: `reasoning-effort-final-chat` runs
+only when attached in service `config.transforms`. Admin schema v5 appends it
+once to enabled local chat/completion endpoints, excluding remote providers
+and the execution substrate.
 Disabled services remain unchanged. Fresh bundled chat seeds declare the id as
 data; later operator removal survives startup. The built-in runs after model/
-alias defaults and retains configured budgets and validation errors.
+alias defaults, only on `/v1/chat/completions`, and retains configured budgets
+and validation errors. Existing `reasoning-effort` attachments keep their
+ordinary list position and all-path behavior. The migration preserves those
+attachments and adds the final chat step, matching the former two-stage behavior.
 The binding principle is unchanged.
 
 ---

@@ -601,9 +601,9 @@ class ReasoningEffortTransform:
 
     Registered as "reasoning-effort" in REGISTRY.
 
-    Runs in the final request phase when attached. apply() returns an error
-    string; on_request() raises TransformRequestError for the proxy to render
-    as HTTP 400. Runtime context supplies the configured effort policy.
+    Explicit attachments run in list order on every request path, using the
+    instance policy. apply() returns an error string; the legacy on_request()
+    shim only mutates the body and leaves error handling to the caller.
 
     Contract:
       1. Effort absent → preserve a valid concrete budget, else use the default
@@ -613,9 +613,6 @@ class ReasoningEffortTransform:
       4. Translate the configured effort to ``thinking_budget_tokens``.
       5. For zero budget, also set ``enable_thinking=False``.
     """
-
-    # Model and alias policies can supply effort defaults before translation.
-    request_phase = "final"
 
     # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235
     _VALID: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
@@ -680,6 +677,24 @@ class ReasoningEffortTransform:
     # Transform protocol shim — lets this live in the registry alongside
     # primitives even though it is not a _Primitive subclass.
     def on_request(self, body: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
+        self.apply(body)
+        return body
+
+    def on_response(self, payload: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
+        return payload
+
+
+class FinalChatReasoningEffortTransform(ReasoningEffortTransform):
+    """Opt-in replacement for the former automatic final chat translation.
+
+    Registered separately so existing explicit reasoning-effort attachments
+    retain their ordering, path coverage, and instance policy. Runtime context
+    supplies this step's policy; validation errors become HTTP 400 responses.
+    """
+
+    request_phase = "final"
+
+    def on_request(self, body: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
         if ctx.get("request_path", "/v1/chat/completions") != "/v1/chat/completions":
             return body
         policy = ctx.get("reasoning")
@@ -688,9 +703,6 @@ class ReasoningEffortTransform:
         if error:
             raise TransformRequestError(error, param="reasoning_effort")
         return body
-
-    def on_response(self, payload: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
-        return payload
 
 
 # ---------------------------------------------------------------------------
@@ -1019,9 +1031,10 @@ REGISTRY.register(
     },
 )
 
-# ---- reasoning-effort (reviewed opt-in built-in) --------------------------
-# Attached through service config; TransformRequestError preserves the 400 path.
+# ---- reasoning effort (reviewed opt-in built-ins) -------------------------
+# Keep explicit list-order translation separate from the final chat policy.
 REGISTRY.register_builtin("reasoning-effort", ReasoningEffortTransform())
+REGISTRY.register_builtin("reasoning-effort-final-chat", FinalChatReasoningEffortTransform())
 
 # ---- reasoning-field-normalize (Step 4a built-in) ------------------------
 # Ports _normalize_chat_completion_visible_content from proxy.py:18884.
