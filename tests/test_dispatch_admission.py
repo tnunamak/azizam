@@ -316,7 +316,7 @@ def test_unconfigured_dispatch_still_evaluates_without_inventing_availability(mo
         seen.append(decision)
         return decision
     monkeypatch.setattr(proxy.resource_admission_http, 'advise_route_admission', advise)
-    receipt = proxy.RouteReceipt(protocol='test')
+    receipt = proxy.RouteReceipt(protocol='test', intent='chat.generate')
     assert proxy._dispatch_admission_response('chat.generate', resource_class='chat', receipt=receipt) is None
     assert len(seen) == 1 and seen[0].allowed
     available = next(fact for fact in seen[0].details.facts if fact.name == 'available')
