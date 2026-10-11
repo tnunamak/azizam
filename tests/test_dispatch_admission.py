@@ -360,3 +360,20 @@ def test_enabled_transport_does_not_claim_unknown_target_is_available(dispatch_e
     assert response.status_code == 503
     assert 'service_unknown' in response.json()['admission']['reason_codes']
     assert not calls
+
+
+# The live owner's stored overrides: every key present, every value empty.
+LIVE_SHAPED_OVERRIDES = {"disabled_intents": [], "disabled_resource_classes": [],
+                         "max_queue_depth": None, "reserved_tokens": [], "retry_after_seconds": None}
+
+
+@pytest.mark.parametrize('name,path,body', CASES, ids=[c[0] for c in CASES])
+def test_empty_stored_overrides_keep_default_responses(dispatch_env, monkeypatch, name, path, body):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, '_operator_media_job_admission_overrides', lambda: dict(LIVE_SHAPED_OVERRIDES))
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
+    response = client.post(path, json=body)
+    assert response.status_code == 200, response.text
+    assert calls, 'the comparison must reach a backend executor'
+    fixture = Path(__file__).with_name('fixtures') / 'dispatch_admission_baseline.json'
+    assert snapshot(response) == json.loads(fixture.read_text())['responses'][name]
