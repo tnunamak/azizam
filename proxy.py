@@ -13658,7 +13658,7 @@ _DISCOVERY_OPERATION_INTENTS = {
     "images": "image.generate", "image_edits": "image.edit",
     "videos": "video.generate", "audio_generate": "audio.generate",
     "speech": "speech.synthesis", "transcriptions": "speech.transcription",
-    "rerank": "text.rerank", "decisions": "decision.systemone",
+    "rerank": "text.embeddings", "decisions": "decision.systemone",
 }
 
 
@@ -13696,10 +13696,21 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             return category_enforcement.visible(auth_context.identity, make_policy_request())
         else:
             target = (resolution.alias.target if resolution.alias else resolution.effective_model) or model
-        record = next((r for r in GATEWAY_WORKFLOW_REGISTRY.records()
-                       if r.intent == intent and (r.id == target or r.id.rsplit(".", 1)[-1] == target)), None)
-        if record is not None:
-            workflow = record.id
+        if intent.startswith("image."):
+            manifest = _find_image_manifest(intent, target)
+            if manifest is not None:
+                workflow = manifest["id"]
+    # Media model routes use configured workflow keys. Gateway workflow
+    # discovery uses manifest IDs because its run route accepts those IDs.
+    if operation or entry.get("azizam_workflow_id"):
+        if intent == INTENT_VIDEO_GENERATE:
+            name, _ = _resolve_video_workflow(target)
+            if name:
+                workflow = f"video.generate.{name}"
+        elif intent == INTENT_AUDIO_GENERATE:
+            name, _ = _resolve_audio_workflow(target)
+            if name:
+                workflow = f"audio.generate.{name}"
     return category_enforcement.visible(auth_context.identity, make_policy_request(
         protocol=str(entry.get("azizam_protocol") or _protocol_for_intent(intent)),
         intent=intent, model=target, workflow=workflow,
