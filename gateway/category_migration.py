@@ -41,6 +41,7 @@ class Case:
 class Conversion:
     plan: category.Plan
     categories: Mapping[str, category.Category]
+    grant_index: frozenset[category.Grant]
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ def convert_plan(profile: AppProfile, matrix: list[Case]) -> Conversion:
     Synthetic IDs denote this report's snapshot, not real reviewed revisions.
     """
     grants = []
+    seen_grants = set()
     categories = {}
     requirements = []
     for selector, request_field in SELECTORS:
@@ -95,9 +97,11 @@ def convert_plan(profile: AppProfile, matrix: list[Case]) -> Conversion:
             kind = "workflow" if case.request.workflow is not None else "release"
             grant = category.Grant(case.request.intent, case.service_id,
                                    **{kind: case.root_id})
-            if grant not in grants:
+            if grant not in seen_grants:
                 grants.append(grant)
-    return Conversion(category.Plan(profile.id, tuple(grants), tuple(requirements)), categories)
+                seen_grants.add(grant)
+    return Conversion(category.Plan(profile.id, tuple(grants), tuple(requirements)),
+                      categories, frozenset(seen_grants))
 
 
 def _assertions(request: PolicyRequest) -> tuple[category.Assertion, ...]:
@@ -127,12 +131,18 @@ def compare(profile: AppProfile, converted: Conversion, case: Case) -> Compariso
                         "download", "share", "action"}:
         # The recorded root remains allowed; the next effect adds a disallowed
         # subject to the bundle, which must also satisfy every requirement.
+        disallowed = _disallowed_tag(profile)
         extra = category.Subject("next-effect@report", "route", (
-            category.Assertion("legacy-tags", "migration-disallowed", "owner", True,
+            category.Assertion("legacy-tags", disallowed, "owner", True,
                                "report", "report", "report-owner", "report-v1"),))
         members += (extra,)
     service = category.Service(case.service_id, members)
-    person_plan = app_plan = converted.plan
+    # Every generated selector is exact and valid. Nonmatching grants cannot
+    # affect this request; project them out before the kernel's validation so
+    # a matrix with thousands of grants does not require quadratic evaluation.
+    grant = category.Grant(case.request.intent, case.service_id, **{kind: case.root_id})
+    person_plan = app_plan = replace(converted.plan,
+        grants=(grant,) if grant in converted.grant_index else ())
     if case.fixture in {"person-mismatch", "empty-grants"}:
         person_plan = replace(person_plan, grants=())
     if case.fixture == "app-mismatch":
@@ -142,13 +152,17 @@ def compare(profile: AppProfile, converted: Conversion, case: Case) -> Compariso
     return Comparison(case, exact, gated, decision)
 
 
-def adversarial_cases(profile: AppProfile, base: Case) -> list[Case]:
-    allowed = sorted(profile.allow.tags or ())
-    allowed_tag = allowed[0] if allowed else "migration-allowed"
-    # Ensure the disallowed value is outside this plan, even for unusual data.
+def _disallowed_tag(profile: AppProfile) -> str:
     disallowed = "migration-disallowed"
     while disallowed in (profile.allow.tags or ()):
         disallowed += "-other"
+    return disallowed
+
+
+def adversarial_cases(profile: AppProfile, base: Case) -> list[Case]:
+    allowed = sorted(profile.allow.tags or ())
+    allowed_tag = allowed[0] if allowed else "migration-allowed"
+    disallowed = _disallowed_tag(profile)
     variants = (
         ("missing-tags", None), ("none-tags", None), ("empty-tags", frozenset()),
         ("allowed-tags", frozenset({allowed_tag})),
@@ -219,7 +233,7 @@ def registry_matrix(registry: Mapping) -> list[Case]:
         capabilities.update(service.get("capabilities", []))
         config = service.get("config", {})
         models = config.get("models", [])
-        provider = config.get("provider_id") if service.get("kind") == "remote_provider" else None
+        provider = config.get("provider_id")
         for model in models:
             metadata = model.get("model_metadata", {})
             targets.append((service_id, model["id"], None, metadata, provider))

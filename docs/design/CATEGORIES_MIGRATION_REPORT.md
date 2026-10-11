@@ -39,6 +39,9 @@ which grants to create, the conversion runs the legacy evaluator with only
 its category selectors removed. Intent family matching therefore expands
 into exact capabilities. A `None` list imposes no constraint; an empty list
 grants no matching requests. No wildcard grants are created.
+For each comparison, the report passes the matching exact grant to the
+kernel. Nonmatching grants cannot change that decision. This avoids
+revalidating thousands of generated grants for every matrix request.
 
 Tags become the `legacy-tags` set category. Exposure, trust and resource
 selectors become three separate set categories. Category values are the

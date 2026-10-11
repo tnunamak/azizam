@@ -79,13 +79,44 @@ def test_report_adversarial_fixtures(restricted, fixture, reason):
     {"remote": RemoteProviderPolicy()},
 ])
 def test_grants_retain_non_tag_denials(changes):
-    profile = replace(AppProfile(id="p"), **changes)
+    profile = replace(AppProfile(id="p", remote=RemoteProviderPolicy(providers=frozenset({"paid"}))), **changes)
     request = Case("denied", PolicyRequest(protocol="openai", intent="chat", model="model",
                    workflow="workflow", backend="backend", remote_provider="paid"),
                    "service@report", "workflow@report")
     result = compare(profile, convert_plan(profile, [request]), request)
     assert not result.exact.allowed and not result.gated.allowed
     assert result.v3.reason == "NO_GRANT"
+
+
+@pytest.mark.parametrize("selector,field", [
+    ("exposure", "capability_exposure"), ("trust_tiers", "capability_trust_tier"),
+    ("resource_tiers", "capability_resource_tier"),
+])
+def test_scalar_selectors_convert_to_categories(selector, field):
+    profile = AppProfile(id="p", allow=CapabilitySelector(**{selector: frozenset({"allowed"})}))
+    missing = case()
+    allowed = replace(missing, request=replace(missing.request, **{field: "allowed"}))
+    denied = replace(missing, request=replace(missing.request, **{field: "other"}))
+    converted = convert_plan(profile, [missing, allowed, denied])
+    assert compare(profile, converted, missing).v3.reason == "REQUIRE_MISSING"
+    assert compare(profile, converted, missing).gated.allowed
+    assert compare(profile, converted, allowed).v3.outcome == "allow"
+    assert compare(profile, converted, denied).v3.reason == "REQUIRE_MISMATCH"
+
+
+def test_empty_tag_allowlist_does_not_convert_to_unrestricted():
+    profile = AppProfile(id="p", allow=CapabilitySelector(tags=frozenset()))
+    missing = case()
+    result = compare(profile, convert_plan(profile, [missing]), missing)
+    assert result.exact.allowed and not result.gated.allowed
+    assert result.v3.reason == "REQUIRE_MISSING"
+
+
+def test_example_limit_and_counts(restricted):
+    report = report_plan(restricted, [case()], examples=1)
+    assert report.gate_changes == 3  # matrix, missing and explicit None
+    assert report.v3_changes == 18
+    assert len(report.gate_examples) == len(report.v3_examples) == 1
 
 
 def test_scope_family_and_none_vs_empty_grants():
