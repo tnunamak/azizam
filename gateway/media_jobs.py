@@ -60,15 +60,6 @@ JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
 
 
-def is_terminal(status: str) -> bool:
-    """Whether a job state is terminal; unknown states must keep waiting."""
-    return status in TERMINAL_STATUSES
-
-
-def holds_resources(status: JobStatus) -> bool:
-    """Queued work reserves admission capacity until it becomes terminal."""
-    return not is_terminal(status)
-
 # Status values. Mirrors the minimum lifecycle in CORE_CONTRACTS.md.
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -85,6 +76,16 @@ ALL_STATUSES = frozenset({
 })
 
 TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED})
+
+
+def is_terminal(status: str) -> bool:
+    """Whether a job state is terminal; unknown states must keep waiting."""
+    return status in TERMINAL_STATUSES
+
+
+def holds_resources(status: JobStatus) -> bool:
+    """Queued work reserves admission capacity until it becomes terminal."""
+    return not is_terminal(status)
 
 # Allowed forward transitions. Idempotent same-state writes are permitted
 # regardless (e.g. running -> running progress updates).
@@ -509,6 +510,10 @@ def create(
     ``outstanding_limits`` are checked in the same write transaction as the
     insert, so concurrent creates cannot overshoot them. A full limit raises
     ``OutstandingLimitReached`` and stores nothing.
+
+    ``input_data`` covers inputs omitted from the safe job metadata. Only its
+    digest is stored. For legacy rows without a digest, only retained job
+    facts can be compared; unverifiable retries conflict rather than alias.
     """
     record = _coerce_to_job(job)
     record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id)
@@ -553,6 +558,8 @@ def create(
             record.started_at = record.created_at
         elif is_terminal(record.status):
             record.finished_at = record.created_at
+        if record.assets:
+            record.first_output_at = record.created_at
         _write_job(conn, record)
         conn.commit()
     return record
@@ -564,6 +571,12 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
     # object cannot put a forgotten prompt fingerprint back into the database.
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
+    previous = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
+    if previous:
+        data = json.loads(previous[0])
+        for name in (*PHASE_FIELDS, "attempt_number"):
+            if data.get(name) is not None:
+                setattr(job, name, data[name])
     cutoff = conn.execute(
         "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",
         ("*", job.owner_key_hash),
@@ -1053,6 +1066,11 @@ __all__ = [
     "STATUS_CANCELED",
     "ALL_STATUSES",
     "TERMINAL_STATUSES",
+    "JobStatus",
+    "PHASE_FIELDS",
+    "is_terminal",
+    "holds_resources",
+    "IdempotencyConflict",
     "CLIENT_VISIBLE_FIELDS",
     "ADMIN_ONLY_FIELDS",
     "INTERNAL_ONLY_FIELDS",
@@ -1067,6 +1085,8 @@ __all__ = [
     "list_jobs",
     "update_status",
     "append_event",
+    "append_client_event",
+    "validate_client_event",
     "events",
     "prune",
     "count",

@@ -314,6 +314,7 @@ def finalize(
     data = _coerce_to_internal_dict(receipt)
     _assert_lifecycle_data(data, terminal=True)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT created_at, receipt_json, status FROM receipts WHERE request_id = ?",
             (data["request_id"],),
@@ -330,6 +331,9 @@ def finalize(
         for field in PHASE_FIELDS:
             if accepted.get(field) is not None:
                 merged[field] = accepted[field]
+        if accepted.get("attempt_number") is None:
+            # A legacy in-progress row has no trustworthy attempt boundary.
+            merged.update(dict.fromkeys((*PHASE_FIELDS, "attempt_number")))
         if merged.get("attempt_number") is not None and merged.get("finished_at_ms") is None:
             merged["finished_at_ms"] = data["updated_at_ms"]
         _assert_lifecycle_data(merged, terminal=True)

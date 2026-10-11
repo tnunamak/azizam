@@ -207,3 +207,27 @@ def test_running_jobs_hold_limit_until_terminal(db):
     media_jobs.update_status(a.job_id, 'failed', path=db)
     media_jobs.create({'intent': 'image.generate', 'metadata': {'mode': 'test'}},
                       outstanding_limits=[limit], path=db)
+
+
+def test_stale_upsert_cannot_erase_observed_phases(db):
+    a = job(db)
+    media_jobs.update_status(a.job_id, 'running', now=200, path=db)
+    media_jobs.update_status(a.job_id, 'succeeded', now=300, path=db)
+    a.status = 'succeeded'
+    media_jobs.upsert(a, path=db)
+    row = media_jobs.get(a.job_id, path=db)
+    assert row['started_at'] == 200
+    assert row['finished_at'] == 300
+
+
+def test_first_output_detected_after_comment_in_same_chunk():
+    receipt = RouteReceipt(protocol='test', intent='chat', stream=True)
+    async def source():
+        yield b': comment\n\ndata: hello\n\n'
+    async def run():
+        owner = ReceiptLifecycleOwner(receipt, begin=lambda r: r.begin(), finalize=lambda r: None)
+        owner.report(status='succeeded', reason='completed')
+        async for _ in owner.wrap_stream(source()):
+            pass
+    asyncio.run(run())
+    assert receipt.first_output_at_ms is not None

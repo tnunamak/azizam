@@ -28062,6 +28062,7 @@ async def _forward_current_loaded_openai_request(
             )
 
             try:
+                owner.mark_phase("started_at_ms")
                 client, resp = await cancellation_span.dispatch(execution_request)
             except ClientDisconnectedBeforeHeaders:
                 await cancellation_span.aclose()
@@ -28391,6 +28392,7 @@ async def _forward_litellm_proxy_request(
         cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
         try:
+            owner.mark_phase("started_at_ms")
             client, resp = await cancellation_span.dispatch(execution_request)
         except ClientDisconnectedBeforeHeaders:
             await cancellation_span.aclose()
@@ -29595,6 +29597,7 @@ async def provider_native_request(
             content=body,
         )
         try:
+            owner.mark_phase("started_at_ms")
             upstream = await stream_context.__aenter__()
         except httpx.TimeoutException:
             await client.aclose()
