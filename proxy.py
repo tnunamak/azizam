@@ -14492,6 +14492,9 @@ class _SessionMakeRuntime:
     def drop_payload(self, job_id: str) -> None:
         _delete_image_media_job_payload(job_id)
 
+    def owns_job(self, job_id: str) -> bool:
+        return job_id in _image_media_job_scheduled
+
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
         if job_id in _image_media_job_scheduled:
             return
@@ -21960,6 +21963,18 @@ def _media_job_queue_depth(
     return depth
 
 
+def _media_job_app_load(app_id: str | None, limits: Mapping[str, int] | None) -> dict[str, int | None]:
+    if not app_id or not limits or app_id not in limits:
+        return {}
+    try:
+        return {app_id: media_jobs.active_count(
+            app_id=app_id, intents=_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT, path=media_jobs.DB_PATH,
+        )}
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] media app admission load read failed: {type(exc).__name__}", flush=True)
+        return {app_id: None}
+
+
 def _dispatch_admission_response(
     intent: str, *, auth_context: AuthContext | None = None,
     service_id: str | None = None, service_available: bool | None = None,
@@ -21969,15 +21984,17 @@ def _dispatch_admission_response(
     """Apply configured admission before execution, without guessing runtime load.
 
     Availability is a declaration of route configuration, never a health/GPU
-    measurement. Direct requests have no observed queue or app occupancy. A
-    configured limit on either therefore fails closed through the evaluator.
+    measurement. Queue/app limits apply only to tracked media work. Other
+    direct requests have no occupancy producer and do not use these limits.
     With no admission settings, the existing dispatch owns availability errors.
     """
     cfg = _effective_media_job_admission_cfg()
     override = _operator_service_availability_overrides().get(service_id, {})
+    tracks_media = queue_key == _MEDIA_JOB_QUEUE_KEY
     configured = any(cfg.get(key) for key in (
-        "disabled_intents", "disabled_resource_classes", "reserved_tokens", "max_app_concurrency",
-    )) or _optional_int_config(cfg, "max_queue_depth") is not None
+        "disabled_intents", "disabled_resource_classes", "reserved_tokens",
+    )) or (tracks_media and (bool(cfg.get("max_app_concurrency"))
+                            or _optional_int_config(cfg, "max_queue_depth") is not None))
     enforce = configured or bool(override)
     state_name = str(override.get("state") or "").strip().lower()
     if state_name in {"disabled", "maintenance", "draining"}:
@@ -21989,8 +22006,11 @@ def _dispatch_admission_response(
         if isinstance(service, Mapping):
             service_available = service.get("enabled", True) is not False
     identity = auth_context.identity if auth_context is not None else None
-    queue_limit = None if _ADMISSION_WORKER.get() else _optional_int_config(cfg, "max_queue_depth")
-    queue_key = queue_key or intent
+    count_media = tracks_media and not _ADMISSION_WORKER.get()
+    app_id = identity.app_id if identity else (receipt.app_id if receipt else None)
+    app_limits = cfg.get("max_app_concurrency") if count_media else None
+    active_by_app = _media_job_app_load(app_id, app_limits)
+    queue_limit = _optional_int_config(cfg, "max_queue_depth") if count_media else None
     queue_depths = ({queue_key: _media_job_queue_depth(queue_limit, admission_cfg=cfg)}
                     if queue_limit is not None and queue_key == _MEDIA_JOB_QUEUE_KEY else {})
     decision = resource_admission_http.advise_route_admission(
@@ -21999,14 +22019,14 @@ def _dispatch_admission_response(
         require_service_availability=enforce,
         service_retry_after=_optional_int_config(override, "retry_after_seconds"),
         service_reasons=_string_tuple_config(override, "reason"),
-        app_id=identity.app_id if identity else (receipt.app_id if receipt else None),
+        app_id=app_id, active_by_app=active_by_app,
         queue_key=queue_key, queue_depths=queue_depths,
-        observed_at=time.time(), load_quality="measured" if queue_depths else "unavailable",
+        observed_at=time.time(), load_quality="measured" if queue_depths or active_by_app else "unavailable",
         disabled_intents=_string_tuple_config(cfg, "disabled_intents"),
         disabled_resource_classes=_string_tuple_config(cfg, "disabled_resource_classes"),
         reserved_tokens=_string_tuple_config(cfg, "reserved_tokens"),
         max_queue_depth=queue_limit,
-        max_app_concurrency=cfg.get("max_app_concurrency"),
+        max_app_concurrency=app_limits,
         constraint_retry_after=_optional_int_config(cfg, "retry_after_seconds"),
         load_retry_after=_optional_int_config(cfg, "queue_retry_after_seconds") or 30,
     )
@@ -22060,6 +22080,9 @@ def _media_job_admission_response(
     already admitted and would otherwise count itself.
     """
     admission_cfg = _effective_media_job_admission_cfg()
+    app_id = (auth_context.identity.app_id if auth_context and auth_context.identity
+              else receipt.app_id if receipt else None)
+    app_limits = admission_cfg.get("max_app_concurrency") if count_queue else None
     service_override = _operator_service_availability_overrides().get("comfyui", {})
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
@@ -22087,9 +22110,8 @@ def _media_job_admission_response(
         or (30 if (not COMFY_ENABLED or service_blocked) else None),
         service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
-        app_id=(auth_context.identity.app_id if auth_context and auth_context.identity
-                else receipt.app_id if receipt else None),
-        max_app_concurrency=admission_cfg.get("max_app_concurrency"),
+        app_id=app_id, active_by_app=_media_job_app_load(app_id, app_limits),
+        max_app_concurrency=app_limits,
         queue_key=_MEDIA_JOB_QUEUE_KEY,
         requires_gpu=True,
         disabled_intents=_string_tuple_config(admission_cfg, "disabled_intents"),

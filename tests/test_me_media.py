@@ -108,6 +108,23 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/jobs").json()["jobs"], [])
         self.assertEqual(self.client.get(f"/me/api/jobs/{foreign['job_id']}").status_code, 404)
 
+    def test_job_watch_excludes_history_and_keeps_active_and_timestamp_ties(self) -> None:
+        now = int(time.time())
+        for key, status, updated in (("old", "succeeded", 1), ("active", "running", 1),
+                                     ("recent", "succeeded", now)):
+            media_jobs.create(media_jobs.MediaJob(job_id=key, intent="image.generate",
+                app_id=self.app_a["id"], status=status, created_at=updated, updated_at=updated), path=self.jobs_db)
+        with patch("gateway.me_media.time.time", return_value=now):
+            first = self.client.get("/me/api/jobs?watch=1").json()
+        self.assertEqual({job["job_id"] for job in first["jobs"]}, {"active", "recent"})
+        self.assertEqual(first["polled_at"], now)
+        # An old active job finishes at exactly the watermark's second.
+        media_jobs.update_status("active", "succeeded", now=now, path=self.jobs_db)
+        page = self.client.get(f"/me/api/jobs?watch=1&since={now}").json()
+        self.assertEqual({job["job_id"] for job in page["jobs"]}, {"active", "recent"})
+        self.assertEqual(len(self.client.get("/me/api/jobs").json()["jobs"]), 3)
+        self.assertEqual(self.client.get("/me/api/jobs?watch=1&since=bad").status_code, 400)
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
@@ -1256,6 +1273,7 @@ class _GatedMakeRuntime:
         self.release.set()
         self.fail_with: BaseException | None = None
         self.threads: list = []
+        self.scheduled: set[str] = set()
         self.limits = me_make.MakeLimits()
         self.canceled: set[str] = set()
         self.autostart = True
@@ -1278,7 +1296,11 @@ class _GatedMakeRuntime:
     def admission(self, intent: str):
         return self.refusal
 
+    def owns_job(self, job_id: str) -> bool:
+        return job_id in self.scheduled
+
     def schedule(self, job_id: str, run) -> None:
+        self.scheduled.add(job_id)
         import asyncio
         import threading
 
@@ -1608,7 +1630,9 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         _, job = self._submit_make("cancel-then-restart")
         self.assertTrue(self.runtime.started.wait(5))
         self.client.post(f"{self.make_url}/{job['job_id']}/cancel", headers=self._make_headers("cancel-then-restart"))
-        resumed = me_make.resume_jobs(runtime=self.runtime, jobs_path=self.jobs_db)
+        # A restarted process has no live worker ownership.
+        restarted = _GatedMakeRuntime(self._asset_path)
+        resumed = me_make.resume_jobs(runtime=restarted, jobs_path=self.jobs_db)
         self.assertEqual(resumed, 0)
         self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_FAILED)
 

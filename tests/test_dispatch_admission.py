@@ -151,8 +151,6 @@ def test_configured_resource_class_blocks_dispatch(dispatch_env, monkeypatch, na
 @pytest.mark.parametrize('protocol', ['openai', 'anthropic', 'ollama'])
 @pytest.mark.parametrize('cfg,override,code', [
     ({'disabled_intents': ['chat.generate']}, {}, 'intent_disabled'),
-    ({'max_queue_depth': 1}, {}, 'queue_load_unknown'),
-    ({'max_app_concurrency': {'mine': 1}}, {}, 'app_load_unknown'),
     ({}, {'state': 'maintenance', 'retry_after_seconds': 7, 'reason': 'private maintenance'}, 'service_unavailable'),
 ])
 def test_limit_facts_and_protocol_projection(monkeypatch, cfg, override, code, protocol):

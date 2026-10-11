@@ -89,6 +89,10 @@ class MakeRuntime(Protocol):
 
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None: ...
 
+    def owns_job(self, job_id: str) -> bool:
+        """Whether this process has scheduled or executing work for the job."""
+        ...
+
     def admission(self, intent: str) -> Response | None:
         """Return the operator's refusal for new work of ``intent``, or None.
 
@@ -273,6 +277,8 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
         if (job.get("metadata") or {}).get("mode") != JOB_MODE:
             continue
         job_id = str(job["job_id"])
+        if runtime.owns_job(job_id):
+            continue
         if (job.get("metadata") or {}).get("cancel_requested_at"):
             _fail(job_id, "The gateway restarted before cancellation could be confirmed", jobs_path)
             runtime.drop_payload(job_id)
@@ -512,7 +518,11 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, add_assets=assets,
                                  metadata_patch={"completed_at": int(time.time())}, path=jobs_path)
-    except ValueError:  # Canceled while running: the late result is dropped.
+    except media_jobs.CancellationPending:
+        # execute has returned, so its backend work and cleanup have finished.
+        _settle_canceled(job_id, jobs_path)
+        return
+    except ValueError:  # Already terminal: the late result is dropped.
         return
     _event(job_id, "succeeded", media_jobs.STATUS_SUCCEEDED, jobs_path, progress=100)
 

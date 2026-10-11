@@ -144,6 +144,8 @@ def admission_http_response(
 
 def admission_protocol_body(body: dict, protocol: str | None) -> dict:
     """Translate a projected gateway refusal; no policy or private facts here."""
+    if protocol == "ollama" and isinstance(body.get("error"), str):
+        return body
     body = {**body, "error": dict(body["error"])}
     if protocol == "anthropic":
         body["type"] = "error"

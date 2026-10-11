@@ -1370,9 +1370,7 @@ def _validate_media_job_admission_overrides(
     ):
         raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_operator_override",
                           "max_app_concurrency must map app ids to non-negative integers")
-    app_limits = {key: _validate_retry_after(value, field="max_app_concurrency")
-                  for key, value in app_limits.items()}
-    if any(value is None for value in app_limits.values()):
+    if any(type(value) is not int or value < 0 for value in app_limits.values()):
         raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_operator_override",
                           "max_app_concurrency limits must be non-negative integers")
     return {

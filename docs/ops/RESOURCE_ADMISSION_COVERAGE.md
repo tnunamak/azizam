@@ -112,12 +112,21 @@ When admission is configured, availability comes from the selected service's
 configuration or explicit owner override and is labelled declared. A missing
 service remains unknown and refuses. The helper does not probe GPU memory,
 engine occupancy, or running requests. Direct media uses the existing database
-queue reader; other direct paths have no observed queue. Per-app active counts
-are unknown on these paths, so an applicable configured app limit refuses
-conservatively. No counter is invented from an incomplete process-local view.
+queue reader. Queue and app limits apply only at media admission boundaries:
+`max_queue_depth` counts queued/running media jobs; `max_app_concurrency` counts
+that app's queued/running media jobs in SQLite when the request has app attribution.
+The app count is not truncated by the history scan limit. Database read failures
+remain unknown and refuse work under an applicable limit.
+
+Chat, embeddings, decisions, speech, transcription, realtime and provider-native
+direct dispatch do not join this media queue and have no active-request counter.
+Queue/app limits therefore do not apply to those paths. They still enforce intent,
+resource-class, token and selected-service policies. These limits do not measure
+or cap the concurrency of synchronous requests or unattributed Make submissions;
+Make also retains its own atomic per-person/household outstanding-job limits.
 
 Worker checks run after the worker semaphore is acquired. They omit the queue
-limit because the job is already in that queue. A scoped context keeps nested
+and app limits because the job is already counted in that queue. A scoped context keeps nested
 synchronous checks from counting it again and is reset even on cancellation.
 A refused worker is marked failed before its executor runs; it does not start an
 unbounded retry loop or silently wait for resources.
@@ -130,8 +139,8 @@ if a later inner dispatch recheck refuses after the outer check passed.
 A degraded decision retains the existing evaluator's allowed/degraded semantics.
 
 Admission is advice plus a refusal gate, not an atomic reservation. Queue
-check/submit races and the queue scan bound remain. Per-app limits cannot admit
-work until a trustworthy active-count producer is available. This change adds
+check/submit races and the queue scan bound remain. App limits are advisory
+checks against durable jobs, not atomic concurrency reservations. This change adds
 no scheduler, global GPU accounting, capacity measurement or stale-fact expiry.
 
 ## Verification scope
@@ -148,7 +157,7 @@ media and decision executors which are replaced at their execution seams.
 
 Before the implementation, all 13 corresponding disabled-resource-class tests
 failed because they reached their executor. Afterward, refusals prevent that
-execution. Additional tests cover each protocol's queue/app unknown facts,
+execution. Additional tests cover direct traffic with inapplicable queue/app limits, measured media-app occupancy,
 intent limits, service overrides, caller redaction, late streaming refusals,
 policy changes during image preparation and speech service startup,
 worker-start changes and the worker queue exemption.
@@ -158,8 +167,8 @@ and probes them with resource classes disabled. Backend dispatch and unexplained
 success fail the test. A synthetic unguarded route proves the inventory catches
 a newly added bypass. Validation/configuration refusals are not presented as
 proof that a successful execution path was exercised; the differential cases
-supply that evidence. The local decision fallback test proves that the second
-backend is not called after its recheck refuses.
+supply that evidence. The local decision fallback tests prove that a refused candidate is neither
+activated nor called, and that policy is checked again after readiness.
 
 Tests use the hermetic Python runner, with no live engine/database, production
 port, gateway restart, browser test or web build. These checks do not establish

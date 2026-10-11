@@ -198,6 +198,13 @@ class DecisionRuntime:
             # Only free local services are admitted here. Paid forwarding belongs to the provider hook.
             if service.get("cost_class", "free-local") != "free-local" or service.get("kind") == "provider":
                 raise DecisionsError(403, "remote_provider_not_allowed", "This dispatcher only serves configured local decision engines.")
+            if self.admit is not None:
+                refusal = self.admit(auth, service_id)
+                if refusal is not None:
+                    return DecisionDispatchResult(
+                        json.loads(refusal.body), status_code=refusal.status_code,
+                        headers=dict(refusal.headers), backend=service_id,
+                    )
             try:
                 policy = getattr(_profile, "target_policy", None)
                 if getattr(policy, "activation", "may_activate") == "existing_only":

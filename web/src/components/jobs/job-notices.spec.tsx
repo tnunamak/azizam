@@ -67,8 +67,12 @@ test("announces completion once, links a stable ID, and dismisses without steali
   await waitFor(() =>
     expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
   );
-  jobs = [{ ...job, status: "succeeded", assets: [{ asset_id: "vid_finished" }] }];
-  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  jobs = [
+    { ...job, status: "succeeded", assets: [{ asset_id: "vid_finished" }] },
+  ];
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
   const link = await screen.findByRole("link", { name: "Open result" });
   expect(link).toHaveAttribute("href", "/library?asset=vid_finished");
   expect(screen.getByLabelText("Job updates")).toHaveAttribute(
@@ -78,7 +82,9 @@ test("announces completion once, links a stable ID, and dismisses without steali
   expect(link).not.toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss video update" }));
   // Another poll of the same finished job must not bring the notice back.
-  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
   expect(screen.queryByText("Video is ready")).not.toBeInTheDocument();
 });
 
@@ -93,8 +99,12 @@ test("old completed jobs stay quiet; a new failure gets a durable details link",
     expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
   );
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
-  jobs = [{ ...job, job_id: "new", created_at: Date.now() / 1000, status: "failed" }];
-  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  jobs = [
+    { ...job, job_id: "new", created_at: Date.now() / 1000, status: "failed" },
+  ];
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
   expect(
     await screen.findByRole("link", { name: "See details" }),
   ).toHaveAttribute("href", "/library?job=new");
@@ -122,4 +132,127 @@ test("polling backs off for unchanged work, idle sessions, and failures", () => 
   ]);
   expect(jobPollInterval(false, 0, 0)).toBe(60000);
   expect(jobPollInterval(true, 0, 3)).toBe(120000);
+});
+
+test("notices find legacy IDs after empty assets", () => {
+  render(
+    <JobNotice
+      job={{ ...job, status: "succeeded", assets: [{}, { id: "img_legacy" }] }}
+      onDismiss={() => {}}
+    />,
+  );
+  expect(screen.getByRole("link", { name: "Open result" })).toHaveAttribute(
+    "href",
+    "/library?asset=img_legacy",
+  );
+});
+
+test("polls deltas and retains old active jobs through unchanged polls", async () => {
+  const requests: string[] = [];
+  let round = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      requests.push(url);
+      const jobs =
+        round === 0
+          ? [job]
+          : round === 2
+            ? [
+                {
+                  ...job,
+                  status: "succeeded",
+                  assets: [{ id: "vid_finished" }],
+                },
+              ]
+            : [];
+      return new Response(JSON.stringify({ jobs, polled_at: 100 + round }));
+    }),
+  );
+  const { client } = mount();
+  await waitFor(() =>
+    expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
+  );
+  expect(requests[0]).toContain("watch=1");
+  round = 1;
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
+  expect(requests[1]).toContain("since=100");
+  expect(
+    client
+      .getQueryData<LongJob[]>(["person-jobs", "alice"])
+      ?.some((item) => item.job_id === job.job_id),
+  ).toBe(true);
+  round = 2;
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
+  expect(
+    await screen.findByRole("link", { name: "Open result" }),
+  ).toHaveAttribute("href", "/library?asset=vid_finished");
+});
+
+test("job detail opens an id-only result", async () => {
+  const { JobResult } = await import("./job-notices");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            job: {
+              ...job,
+              status: "succeeded",
+              assets: [{ id: "img_legacy" }],
+            },
+          }),
+        ),
+    ),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  clients.push(client);
+  render(
+    <QueryClientProvider client={client}>
+      <JobResult jobId={job.job_id} />
+    </QueryClientProvider>,
+  );
+  expect(
+    await screen.findByRole("link", { name: "Open result" }),
+  ).toHaveAttribute("href", "/library?asset=img_legacy");
+});
+
+test("a failed delta page retains its watermark for retry", async () => {
+  const requests: string[] = [];
+  let round = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      requests.push(url);
+      if (round === 1 && url.includes("cursor="))
+        return new Response("failed", { status: 503 });
+      return new Response(
+        JSON.stringify({
+          jobs: round === 0 ? [job] : [],
+          polled_at: 100 + round,
+          next_cursor: round === 1 ? "page2" : null,
+        }),
+      );
+    }),
+  );
+  const { client } = mount();
+  await waitFor(() =>
+    expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined(),
+  );
+  round = 1;
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
+  round = 2;
+  await act(() =>
+    client.refetchQueries({ queryKey: ["person-jobs", "alice"] }),
+  );
+  expect(requests.at(-1)).toContain("since=100");
 });
