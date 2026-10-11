@@ -543,6 +543,7 @@ function routeFetch(route: Route) {
       const path = String(input);
       return (
         (await route(path)) ??
+        (path.includes("/download?") ? Response.json({ download_url: "/renewed-media" }) : undefined) ??
         Response.json({ assets: [], models: [], next_cursor: null })
       );
     }),
@@ -788,7 +789,7 @@ describe("Library honesty and access", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open First clip" }));
     const dialog = await screen.findByRole("dialog");
-    const position = within(dialog).getByRole("slider", { name: "Position" });
+    const position = await within(dialog).findByRole("slider", { name: "Position" });
     fireEvent.keyDown(position, { key: "ArrowRight" });
     fireEvent.keyDown(within(dialog).getByRole("button", { name: "Play First clip" }), {
       key: "ArrowRight",
@@ -810,6 +811,7 @@ describe("Library honesty and access", () => {
     ).toBeVisible();
 
     // The video viewer draws its own controls; its Position seeks too.
+    await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
     const video = dialog.querySelector("video")!;
     expect(video).not.toHaveAttribute("controls");
     expect(video).toHaveAccessibleName("Third clip");
@@ -833,12 +835,28 @@ describe("Library honesty and access", () => {
     renderLibrary();
     fireEvent.click(await screen.findByRole("button", { name: "Open A short film" }));
     const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
     const video = dialog.querySelector("video")!;
     video.focus();
     expect(video).toHaveFocus();
     fireEvent.keyDown(video, { key: " " });
     await waitFor(() => expect(play).toHaveBeenCalledOnce());
     play.mockRestore();
+  });
+
+  test("opening a cached creation renews an expired playback URL", async () => {
+    let renew!: (response: Response) => void;
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("expired", "An old picture", { download_url: "/expired?expires=1" })])
+      : path.includes("/download?") ? new Promise<Response>((resolve) => { renew = resolve; }) : undefined);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open An old picture" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.querySelector('img[src="/expired?expires=1"]')).toBeNull();
+    await waitFor(() => expect(renew).toBeTypeOf("function"));
+    renew(Response.json({ download_url: "/renewed?expires=2000000000" }));
+    expect(await within(dialog).findByRole("img", { name: "An old picture" })).toHaveAttribute("src", "/renewed?expires=2000000000");
+    expect(within(dialog).getByText(/Playback link expires/)).toBeVisible();
   });
 
   test("10b returns focus to the tile of the creation shown last", async () => {
@@ -921,7 +939,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(preparing);
     expect(
       vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/download?")),
-    ).toHaveLength(1);
+    ).toHaveLength(2); // Opening renews playback; Download renews independently.
     ready();
     await waitFor(() => expect(click).toHaveBeenCalledOnce());
     expect(within(dialog).getByRole("button", { name: "Download" })).toBeEnabled();

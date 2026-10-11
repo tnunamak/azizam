@@ -1,5 +1,7 @@
 "use client";
 
+import { JobNotices } from "@/components/jobs/job-notices";
+
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -882,6 +884,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               </header>
               <AlertSlot />
               <main id="main-content" className="shell-content pb-28 sm:pb-12">
+                <JobNotices />
                 {content}
               </main>
             </div>

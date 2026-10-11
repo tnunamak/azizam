@@ -214,7 +214,9 @@ def test_owned_job_access_survives_receipt_retention_and_status_updates(people):
     assert people.client.get(path, headers=people.alice.bearer).status_code == 200
     assert people.client.get(path, headers=people.bob.bearer).status_code == 404
     canceled = people.client.post(path + "/cancel", headers=people.alice.bearer, json={})
-    assert canceled.status_code == 200
+    assert canceled.status_code == 202
+    assert canceled.json()["cancel_requested"] is True
+    assert canceled.json()["status"] == media_jobs.STATUS_RUNNING
     assert media_jobs.get(people.alice.job_id, audience="internal")["app_id"] == people.alice.app["id"]
 
 

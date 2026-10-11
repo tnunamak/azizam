@@ -1193,6 +1193,22 @@
   },
   {
     "method": "GET",
+    "path": "/me/api/jobs",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.list_jobs",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/jobs/{job_id}",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_media.job_detail",
+    "schema": false
+  },
+  {
+    "method": "GET",
     "path": "/me/api/make/jobs",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",

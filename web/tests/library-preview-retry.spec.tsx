@@ -162,7 +162,8 @@ it("offers the maker's file with details from the viewer's actions", async () =>
 });
 
 it("pauses every other audio player when a card or drawer starts playing", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).includes("/download?")
+    ? Response.json({ download_url: "/renewed-audio.mp3" }) : Response.json({
     assets: ["First clip", "Second clip"].map((prompt, index) => ({
       asset_id: `audio-${index}`,
       kind: "audio",

@@ -441,6 +441,16 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
         # Client audience should not include metadata.
         self.assertNotIn("metadata", body)
 
+    def test_running_cancel_is_requested_not_confirmed(self) -> None:
+        seeded = self._seed()
+        media_jobs.update_status(seeded["job_id"], "running", path=self.db)
+        client = self._client()
+        response = client.post(f"/gateway/v1/media/jobs/{seeded['job_id']}/cancel", json={})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["status"], "running")
+        self.assertTrue(response.json()["cancel_requested"])
+        self.assertTrue(media_jobs.holds_resources(response.json()["status"]))
+
     def test_cancel_terminal_job_returns_409(self) -> None:
         seeded = self._seed()
         media_jobs.update_status(

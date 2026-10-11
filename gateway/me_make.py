@@ -217,7 +217,7 @@ def add_make_routes(
             jobs_path = _resolve(media_jobs_path)
             job = _own_make_job(job_id, str(user["id"]), admin_path=admin_path, jobs_path=jobs_path)
             finished = _MakeError("job_finished", "This job has already finished", 409)
-            if job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if media_jobs.is_terminal(job.get("status", "")):
                 raise finished
             try:  # A job that has not started stops here.
                 media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error=_CANCELED,
@@ -260,29 +260,34 @@ def run_job(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> Callable[[
         finally:
             # A job interrupted by shutdown keeps its payload so it can resume.
             job = media_jobs.get(job_id, path=jobs_path)
-            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if job is None or media_jobs.is_terminal(job.get("status", "")):
                 runtime.drop_payload(job_id)
 
     return run
 
 
-def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path) -> int:
+def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) -> int:
     """Restart unfinished make jobs after a gateway restart."""
     resumed = 0
-    for status in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
-        for job in media_jobs.recent(500, status=status, path=jobs_path):
-            if (job.get("metadata") or {}).get("mode") != JOB_MODE:
-                continue
-            job_id = str(job["job_id"])
-            if (job.get("metadata") or {}).get("cancel_requested_at"):
-                _settle_canceled(job_id, jobs_path)
-                continue
-            if runtime.load_payload(job_id) is None:
-                # A forgotten prompt lived only in memory; it cannot be resumed.
-                _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
-                continue
-            runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
-            resumed += 1
+    for job in media_jobs.unfinished(path=jobs_path):
+        if (job.get("metadata") or {}).get("mode") != JOB_MODE:
+            continue
+        job_id = str(job["job_id"])
+        if (job.get("metadata") or {}).get("cancel_requested_at"):
+            _fail(job_id, "The gateway restarted before cancellation could be confirmed", jobs_path)
+            runtime.drop_payload(job_id)
+            continue
+        if not enabled or runtime.load_payload(job_id) is None:
+            # A forgotten prompt lived only in memory; it cannot be resumed.
+            _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
+            runtime.drop_payload(job_id)
+            continue
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            _fail(job_id, "The gateway restarted before completion could be confirmed; this job was not run again", jobs_path)
+            runtime.drop_payload(job_id)
+            continue
+        runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
+        resumed += 1
     return resumed
 
 
@@ -462,7 +467,7 @@ def _owned_source(
 
 async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     job = media_jobs.get(job_id, path=jobs_path)
-    if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+    if job is None or media_jobs.is_terminal(job.get("status", "")):
         return
     payload = runtime.load_payload(job_id)
     if payload is None:
@@ -555,7 +560,7 @@ def _idempotent_request_id(app_id: str, key: str, *, forget: bool) -> str:
 
 
 def _replay_status(job: Mapping[str, Any]) -> int:
-    return 200 if job.get("status") in media_jobs.TERMINAL_STATUSES else 202
+    return 200 if media_jobs.is_terminal(job.get("status", "")) else 202
 
 
 def _client_job(job_id: str, jobs_path: Path) -> dict[str, Any]:

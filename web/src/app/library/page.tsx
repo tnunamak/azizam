@@ -1,5 +1,7 @@
 "use client";
 
+import { JobResult } from "@/components/jobs/job-notices";
+
 import {
   useEffect,
   useMemo,
@@ -1433,6 +1435,19 @@ function CreationViewer({
   /** Called with the creation shown last when the viewer closes. */
   onReturnFocus: (assetId: string) => void;
 }) {
+  const { data: renewed, isFetching: renewing, isError: renewalFailed, refetch: renew } = useQuery({
+    queryKey: ["library", "download", asset.asset_id, everyone],
+    queryFn: () => mediaRequest<{ download_url: string }>(
+      `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`,
+    ),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  });
+  const linkExpiry = renewed?.download_url
+    ? Number(new URL(renewed.download_url, window.location.origin).searchParams.get("expires")) : 0;
   const index = assets.findIndex((item) => item.asset_id === asset.asset_id);
   const previous = index > 0 ? assets[index - 1] : null;
   const next =
@@ -1540,12 +1555,15 @@ function CreationViewer({
                     </p>
                   </>
                 ) : null}
-                <Preview
-                  key={`${asset.asset_id}-${asset.download_url}`}
-                  asset={asset}
+                {renewing ? <p role="status">Opening your file…</p> : renewalFailed ? (
+                  <p role="status">Couldn’t open this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
+                ) : renewed ? <Preview
+                  key={`${asset.asset_id}-${renewed.download_url}`}
+                  asset={{ ...asset, download_url: renewed.download_url }}
                   large
                   everyone={everyone}
-                />
+                /> : null}
+                {linkExpiry > 0 ? <p className="text-muted-foreground text-sm">Playback link expires {new Date(linkExpiry * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reopen to renew.</p> : null}
               </div>
             </div>
             {previous || next ? (
@@ -1888,6 +1906,7 @@ const DAY_S = 86_400;
 export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
+  const linkedJobId = searchParams?.get("job");
   const queryClient = useQueryClient();
   const { data: modelCatalog } = useQuery({
     queryKey: ["models", "catalog"],
@@ -2326,6 +2345,7 @@ export default function LibraryPage() {
           switch, a search button and Filters, so the controls stay under a
           fifth of the screen (D1.5); the search field opens below it. The
           heading keeps a ref so the viewer can return focus to it. */}
+      {linkedJobId ? <JobResult jobId={linkedJobId} /> : null}
       <header className="mb-(--space-title) flex min-h-8 items-center">
         <h1 ref={headingRef} tabIndex={-1} className="text-title">
           Library

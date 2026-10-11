@@ -116,6 +116,7 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         *PHASE_FIELDS,
         "attempt_number",
         "previous_attempts",
+        "cancel_requested",
     }
 )
 
@@ -270,6 +271,10 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
     data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
     data.setdefault("previous_attempts", [])
+    data["cancel_requested"] = (
+        holds_resources(data.get("status", STATUS_QUEUED))
+        and bool((data.get("metadata") or {}).get("cancel_requested_at"))
+    )
     if audience == "internal":
         return dict(data)
     if audience == "admin":
@@ -776,6 +781,7 @@ def recent(
     owner_key_hashes: list[str] | None = None,
     status: str | None = None,
     since_s: int | None = None,
+    before: tuple[int, str] | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
     """Return up to ``limit`` most-recently-updated jobs, newest first."""
@@ -806,6 +812,9 @@ def recent(
     if since_s is not None:
         clauses.append("updated_at >= ?")
         params.append(int(time.time()) - int(since_s))
+    if before is not None:
+        clauses.append("(updated_at, job_id) < (?, ?)")
+        params.extend(before)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with _conn(path) as conn:
@@ -883,6 +892,9 @@ def update_status(
             raise ValueError(
                 f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"
             )
+        if (status == STATUS_SUCCEEDED
+                and (current.get("metadata") or {}).get("cancel_requested_at")):
+            raise CancellationPending("Cancel requested; waiting for resources to be released")
         current["status"] = status
         if progress is not None:
             current["progress"] = progress
@@ -912,6 +924,33 @@ def update_status(
         _write_job(conn, updated)
         conn.commit()
     return updated.to_dict("internal")
+
+
+class CancellationPending(ValueError):
+    """Output finished after cancellation; the worker must release before settling."""
+
+
+def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Cancel unstarted work atomically, or retain running work's reservation."""
+    job = get(job_id, path=path)
+    if job is None:
+        return None
+    if is_terminal(job["status"]):
+        raise ValueError("This job has already finished")
+    try:
+        return update_status(job_id, STATUS_CANCELED, expected_status=STATUS_QUEUED,
+                             error=reason or "Canceled by requester", path=path)
+    except ValueError:
+        return update_status(job_id, STATUS_RUNNING, expected_status=STATUS_RUNNING,
+                             metadata_patch={"cancel_requested_at": _now()}, path=path)
+
+
+def unfinished(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Startup snapshot, without the history endpoint's page-size ceiling."""
+    with _conn(path) as conn:
+        rows = conn.execute("SELECT job_json FROM media_jobs WHERE status IN (?, ?)",
+                            (STATUS_QUEUED, STATUS_RUNNING)).fetchall()
+    return [data for (raw,) in rows if isinstance(data := _safe_loads(raw), dict)]
 
 
 def begin_attempt(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:

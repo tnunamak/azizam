@@ -55,6 +55,8 @@ function mockAssets(assets: unknown[]) {
     vi.fn(async (input: RequestInfo | URL) =>
       String(input).includes("/poster/download")
         ? Response.json({ download_url: "/poster.png" })
+        : String(input).includes("/video/download")
+          ? Response.json({ download_url: "/video.mp4" })
         : String(input).includes("/image/download")
           ? Response.json({ download_url: "/image.png" })
           : Response.json({ assets, models: [], next_cursor: null }),
@@ -88,6 +90,7 @@ describe("Library media recovery", () => {
       screen.getByRole("button", { name: "Open Saved video" }),
     );
     const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(dialog.querySelector("video")).not.toBeNull());
     fireEvent.error(dialog.querySelector("video")!);
     expect(
       await within(dialog).findByRole("img", {
