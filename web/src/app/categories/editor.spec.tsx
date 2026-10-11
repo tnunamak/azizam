@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { adminFetch, ApiError, type AdminFetchInit } from "@/lib/api";
-import { CategoriesEditor, categoryId, isPinned, prepareSnapshot, rebuildSnapshot, updateCurrentService, validateSnapshot, valueInUse, type Snapshot } from "./editor";
+import { CategoriesEditor, categoryId, distinct, isPinned, prepareSnapshot, rebuildSnapshot, updateCurrentService, validateSnapshot, valueInUse, type Snapshot } from "./editor";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/api")>();
@@ -100,8 +100,8 @@ it("round-trips unchanged fields including provenance, selectors, legacy fields 
   const expected = copy(original);
   expected.categories.audience.label = "Audience rating";
   const { user, fetch } = mount(original);
-  await user.clear(screen.getByRole("textbox", { name: "Label for audience" }));
-  await user.type(screen.getByRole("textbox", { name: "Label for audience" }), "Audience rating");
+  await user.clear(screen.getByRole("textbox", { name: "Label for Audience" }));
+  await user.type(screen.getByRole("textbox", { name: "Label for Audience" }), "Audience rating");
   await showPreview(user);
   expect(fetch).toHaveBeenCalledWith("/admin/api/categories/candidates", { method: "POST", body: { base_revision: 2, reason: "Reviewed access", snapshot: expected } });
   expect(original.categories.audience.label).toBe("Audience");
@@ -112,7 +112,7 @@ it("blocks removal of a value used by a person or app access plan", async () => 
   const snapshot = rules(); snapshot.services = {}; snapshot.retained = {};
   const { user, fetch } = mount(snapshot);
   await user.click(screen.getByRole("button", { name: "Remove General from Audience" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("General is used by an access plan or a service.");
+  expect(screen.getByRole("alert")).toHaveTextContent("General is used by an access plan or a model or workflow.");
   expect(screen.getByRole("button", { name: "Remove General from Audience" })).toBeVisible();
   expect(fetch).not.toHaveBeenCalled();
 });
@@ -139,10 +139,12 @@ it("adds and removes an unused value without sending a request", async () => {
 it("records owner provenance and versions edited services without changing retained output evidence", async () => {
   const original = rules();
   const { user, fetch } = mount(original);
-  const accepted = screen.getByRole("group", { name: "Accepted Audience for model@1" });
+  const accepted = screen.getByRole("group", { name: "Accepted Audience for Name unavailable" });
   await user.click(within(accepted).getByRole("checkbox", { name: "Adult" }));
-  expect(screen.getByRole("region", { name: "Service grant changes" })).toHaveTextContent(/Sam · Family: studio@1 → studio@r2-[a-z0-9]+/);
-  expect(screen.getByRole("region", { name: "Service grant changes" })).toHaveTextContent(/Studio · App plan: studio@1 → studio@r2-[a-z0-9]+/);
+  const changes = screen.getByLabelText("Model and workflow changes");
+  await user.click(within(changes).getByText("Details"));
+  expect(changes).toHaveTextContent(/Sam · Family: studio@1 → studio@r2-[a-z0-9]+/);
+  expect(screen.getByLabelText("Model and workflow changes")).toHaveTextContent(/Studio · App plan: studio@1 → studio@r2-[a-z0-9]+/);
   expect(fetch).not.toHaveBeenCalled();
   await showPreview(user);
   const posted = (fetch.mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
@@ -183,7 +185,7 @@ it("shows person and app required, deny and named waiver rows in plain words", (
   mount();
   expect(screen.getAllByText("Needs Audience: General")).toHaveLength(2);
   expect(screen.getAllByText("Never: Data handling: May train")).toHaveLength(2);
-  expect(screen.getAllByText("Missing-value waiver for kids-audience: skips only this requirement when its value is missing.")).toHaveLength(2);
+  expect(screen.getAllByText("Missing information skips only this requirement.")).toHaveLength(2);
   expect(screen.getByRole("region", { name: "Person access plans" })).toBeVisible();
   expect(screen.getByRole("region", { name: "App access plans" })).toBeVisible();
 });
@@ -202,6 +204,8 @@ it("keeps optional grant selectors when editing the capability", async () => {
 it("renames a requirement and carries its named missing-value waiver with it", async () => {
   const { user, fetch } = mount();
   const section = within(screen.getByRole("region", { name: "Person access plans" }));
+  const rowDetails = section.getAllByText("Details").find((node) => node.parentElement?.querySelector("input")?.value === "kids-audience")!;
+  await user.click(rowDetails);
   const rowName = section.getAllByRole("textbox", { name: "Rule name" })[0];
   await user.clear(rowName); await user.paste("reviewed-audience");
   await showPreview(user);
@@ -222,7 +226,7 @@ it("shows returned gains, losses and reason changes before explicit compare-and-
   expect(region.getByText(/does not cover unknown future requests/)).toBeVisible();
   expect(fetch.mock.calls.filter(([path]) => path.endsWith("/activate"))).toHaveLength(0);
   await user.click(region.getByRole("button", { name: "Turn on" }));
-  await screen.findByText("Revision 3 is now selected for category previews.");
+  await screen.findByText("These category rules are now turned on.");
   expect(fetch).toHaveBeenCalledWith("/admin/api/categories/candidates/3/activate", { method: "POST", body: { expected_active_revision: 2 } });
   expect(onActivated).toHaveBeenCalledOnce();
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
@@ -235,7 +239,7 @@ it("discards an obsolete candidate after a local edit or a reason change", async
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
   await screen.findByRole("button", { name: "Turn on" });
-  await user.type(screen.getByRole("textbox", { name: "Label for audience" }), " rating");
+  await user.type(screen.getByRole("textbox", { name: "Label for Audience" }), " rating");
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
 });
 
@@ -255,8 +259,8 @@ it("rebuilds a stale candidate on fresh active rules without losing unrelated ch
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
   await user.click(await screen.findByRole("button", { name: "Rebuild on current rules" }));
   await screen.findByText("Your edit is rebuilt on the current rules. Preview changes again before turning them on.");
-  expect(screen.getByRole("textbox", { name: "Label for audience" })).toHaveValue("Latest audience");
-  expect(screen.getByRole("textbox", { name: "Label for new-category" })).toHaveValue("New category");
+  expect(screen.getByRole("textbox", { name: "Label for Audience" })).toHaveValue("Latest audience");
+  expect(screen.getByRole("textbox", { name: "Label for New category" })).toHaveValue("New category");
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
   await screen.findByRole("button", { name: "Turn on" });
   const calls = fetch.mock.calls.filter(([path]) => path.endsWith("/candidates"));
@@ -293,7 +297,7 @@ it("blocks retry after an uncertain activation until current rules are loaded", 
   });
   await showPreview(user);
   await user.click(screen.getByRole("button", { name: "Turn on" }));
-  expect(await screen.findByText("Couldn't confirm whether these rules were turned on. Load the current rules before trying again.")).toBeVisible();
+  expect(await screen.findByText("We couldn't confirm the gateway saved this selection. Reload the current rules before trying again.")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
   expect(screen.getByRole("button", { name: "Discard edit and load current rules" })).toBeVisible();
   expect(fetch.mock.calls.filter(([path]) => path.endsWith("/activate"))).toHaveLength(1);
@@ -303,7 +307,10 @@ it("shows server errors plainly and never enables activation for a failed previe
   const { user } = mount(rules(), () => { throw new ApiError("invalid_request", "Invalid category policy request.", 400); });
   await user.type(screen.getByRole("textbox", { name: "Reason for changes" }), "Reviewed");
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Invalid category policy request.");
+  // A 400 is a clear refusal, not an uncertain save: the draft stays usable.
+  expect(await screen.findByText("The gateway rejected these rules. Check them and try again.")).toBeVisible();
+  expect(screen.queryByText("Invalid category policy request.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Discard edit and load current rules" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
 });
 
@@ -313,7 +320,7 @@ it("reports duplicate categories, blank value entry and a missing reason before 
   await user.click(screen.getByRole("button", { name: "Add category" }));
   await user.type(screen.getByRole("textbox", { name: "New category label" }), "Audience");
   await user.click(screen.getByRole("button", { name: "Add category" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("A category with that ID already exists.");
+  expect(screen.getByRole("alert")).toHaveTextContent("A category with that label already exists.");
   await user.click(screen.getByRole("button", { name: "Add value to Audience" }));
   expect(screen.getByRole("alert")).toHaveTextContent("Enter a value before adding it.");
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
@@ -330,11 +337,11 @@ it("rejects duplicate row IDs and missing categories, values, unpinned grants an
   snapshot.apps.studio[0].grants[0].service = "unknown";
   snapshot.apps.studio[0].missing = { unknown: "allow" };
   const errors = validateSnapshot(snapshot).join(" ");
-  expect(errors).toContain("Rule IDs must be unique.");
+  expect(errors).toContain("Rule names must be unique.");
   expect(errors).toContain("refers to a missing category");
   expect(errors).toContain("refers to a missing value");
-  expect(errors).toContain("Use a pinned service revision for every grant.");
-  expect(errors).toContain("A missing-value waiver must name a required rule.");
+  expect(errors).toContain("Choose a saved model or workflow for every grant.");
+  expect(errors).toContain("Allow missing information only for an existing requirement.");
 });
 
 it("preserves inert unaccepted evidence but validates accepted category references", () => {
@@ -359,17 +366,23 @@ it("prevents duplicate preview submissions and closing while a request is pendin
 
 it("closes local edits without creating or activating a candidate", async () => {
   const { user, fetch, onClose } = mount();
-  await user.type(screen.getByRole("textbox", { name: "Label for audience" }), " rating");
+  await user.type(screen.getByRole("textbox", { name: "Label for Audience" }), " rating");
   await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByRole("textbox", { name: "Label for Audience" })).toHaveValue("Audience rating");
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
   expect(onClose).toHaveBeenCalledOnce();
   expect(fetch).not.toHaveBeenCalled();
 });
 
 it("preserves the local edit and blocks preview when the page learns of newer active rules", async () => {
   const { user, props, rerender, fetch } = mount();
-  await user.type(screen.getByRole("textbox", { name: "Label for audience" }), " local");
+  await user.type(screen.getByRole("textbox", { name: "Label for Audience" }), " local");
   rerender(<CategoriesEditor {...props} active={{ revision: 4, snapshot: rules() }} />);
-  expect(screen.getByRole("textbox", { name: "Label for audience" })).toHaveValue("Audience local");
+  expect(screen.getByRole("textbox", { name: "Label for Audience" })).toHaveValue("Audience local");
   expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Rebuild on current rules" })).toBeVisible();
   expect(fetch).not.toHaveBeenCalled();
@@ -385,7 +398,7 @@ it("blocks all saves until a real owner identity is available", async () => {
   rerender(<CategoriesEditor {...props} owner="" />);
   expect(screen.getByRole("alert")).toHaveTextContent("Your owner identity could not be loaded.");
   expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
-  expect(screen.getByRole("textbox", { name: "Label for audience" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Label for Audience" })).toBeDisabled();
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -397,9 +410,9 @@ it("validates completeness, category keys, duplicate or empty values and applica
   snapshot.categories.audience.applies_to = [];
   const errors = validateSnapshot(snapshot).join(" ");
   expect(errors).toContain("must keep the information check turned on");
-  expect(errors).toContain("category ID does not match");
+  expect(errors).toContain("Category label could not be matched");
   expect(errors).toContain("values cannot be empty");
-  expect(errors).toContain("value IDs must be unique");
+  expect(errors).toContain("value names must be unique");
   expect(errors).toContain("needs at least one supported member type");
 });
 
@@ -434,9 +447,9 @@ it("validates pinned subjects and optional grant selectors", () => {
   snapshot.people.sam[0].grants[0].release = "unversioned";
   snapshot.apps.studio[0].grants[0].workflow = "unversioned";
   const errors = validateSnapshot(snapshot).join(" ");
-  expect(errors).toContain("Every service member needs a pinned revision");
-  expect(errors).toContain("Use a pinned model release");
-  expect(errors).toContain("Use a pinned workflow revision");
+  expect(errors).toContain("Model or workflow information is incomplete");
+  expect(errors).toContain("Choose a saved model release");
+  expect(errors).toContain("Choose a saved workflow");
 });
 
 it("checks rule operations and service keys while allowing an empty set of in candidates", () => {
@@ -446,9 +459,9 @@ it("checks rule operations and service keys while allowing an empty set of in ca
   snapshot.apps.studio[0].deny[0].op = "exists";
   snapshot.services["studio@1"].id = "wrong@1";
   const errors = validateSnapshot(snapshot).join(" ");
-  expect(errors).toContain("Choose how to check rule no-training");
+  expect(errors).toContain("Choose a check for the category rule");
   expect(errors).toContain("checks whether a value is present");
-  expect(errors).toContain("A service ID does not match");
+  expect(errors).toContain("The saved model or workflow could not be matched");
 });
 
 it("does not reuse an occupied pinned service revision", () => {
@@ -477,7 +490,7 @@ it("pauses edits while owner identity is being refreshed, even with a cached sub
   rerender(<CategoriesEditor {...props} ownerLoading />);
   expect(screen.getByText("Loading owner identity")).toBeVisible();
   expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
-  expect(screen.getByRole("textbox", { name: "Label for audience" })).toBeDisabled();
+  expect(screen.getByRole("textbox", { name: "Label for Audience" })).toBeDisabled();
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -521,12 +534,12 @@ it("adds catalog services after retained revisions and refuses a second active r
   snapshot.retained["output-1"].dependencies.push({ id: "workflow:paint@r3", checkable: true, members: [], dependencies: [] });
   snapshot.retained["workflow:paint@r1"] = { id: "workflow:paint@r1", checkable: true, members: [], dependencies: [] };
   const { user } = mountCatalog(snapshot);
-  await pick(user, "Service to add", "Paint workflow");
-  await user.click(screen.getByRole("button", { name: "Add service" }));
-  await user.click(screen.getByRole("button", { name: "Add service" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("Paint workflow is already in these rules. Edit the existing service instead.");
-  await pick(user, "Service to add", "Vectors model");
-  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await pick(user, "Model or workflow to add", "Paint workflow");
+  await user.click(screen.getByRole("button", { name: "Add model or workflow" }));
+  await user.click(screen.getByRole("button", { name: "Add model or workflow" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Paint workflow is already in these rules. Edit the existing model or workflow instead.");
+  await pick(user, "Model or workflow to add", "Vectors model");
+  await user.click(screen.getByRole("button", { name: "Add model or workflow" }));
   await showPreview(user);
   const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
   const id = "workflow:paint@r4";
@@ -540,9 +553,9 @@ it("refuses adding an already saved stem without replacing its reviewed members 
   const snapshot = rules();
   const original = snapshot.services["studio@1"];
   const { user } = mountCatalog(snapshot, { catalog: [{ stem: "studio", label: "Studio", kind: "model", capabilities: ["image.generate"] }] });
-  await pick(user, "Service to add", "Studio");
-  await user.click(screen.getByRole("button", { name: "Add service" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("Studio is already in these rules. Edit the existing service instead.");
+  await pick(user, "Model or workflow to add", "Studio");
+  await user.click(screen.getByRole("button", { name: "Add model or workflow" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Studio is already in these rules. Edit the existing model or workflow instead.");
   await showPreview(user);
   const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
   expect(saved).toEqual(snapshot);
@@ -551,7 +564,7 @@ it("refuses adding an already saved stem without replacing its reviewed members 
 it("rejects duplicate active service stems but allows previous revisions in retained", () => {
   const snapshot = rules();
   snapshot.services["studio@r2"] = { ...copy(snapshot.services["studio@1"]), id: "studio@r2" };
-  expect(validateSnapshot(snapshot)).toContain("Keep only one active revision of each service. Older revisions belong in retained services.");
+  expect(validateSnapshot(snapshot)).toContain("Keep only one current selection for each model or workflow.");
   snapshot.retained["studio@1"] = snapshot.services["studio@1"];
   delete snapshot.services["studio@1"];
   expect(validateSnapshot(snapshot)).toEqual([]);
@@ -560,15 +573,15 @@ it("offers exact service capabilities and clears incompatible capability when sw
   const snapshot = rules(); snapshot.people = {}; snapshot.apps = {};
   const { user } = mountCatalog(snapshot);
   for (const label of ["Paint workflow", "Vectors model"]) {
-    await pick(user, "Service to add", label);
-    await user.click(screen.getByRole("button", { name: "Add service" }));
+    await pick(user, "Model or workflow to add", label);
+    await user.click(screen.getByRole("button", { name: "Add model or workflow" }));
   }
   await pick(user, "Person for new access plan", "Sam");
   await user.click(screen.getByRole("button", { name: "Add person access plan" }));
   await user.click(screen.getByRole("button", { name: "Add grant" }));
-  await pick(user, "Service", "workflow:paint@r1");
+  await pick(user, "Model or workflow", "Paint workflow");
   await pick(user, "Capability", "Image editing");
-  await pick(user, "Service", "model:vectors@r1");
+  await pick(user, "Model or workflow", "Vectors model");
   expect(screen.getByRole("combobox", { name: "Capability" })).toHaveTextContent("Choose capability");
   await user.click(screen.getByRole("combobox", { name: "Capability" }));
   expect(screen.getAllByRole("option").map((node) => node.textContent)).toEqual(["Embeddings"]);
@@ -579,22 +592,78 @@ it("offers exact service capabilities and clears incompatible capability when sw
 it("keeps persisted unknown grants unchanged while catalog data is present", async () => {
   const original = rules(); original.people.sam[0].grants[0].capability = "legacy.intent";
   const { user } = mountCatalog(original);
-  expect(screen.getAllByRole("combobox", { name: "Capability" })[0]).toHaveTextContent("legacy.intent");
+  expect(screen.getAllByRole("combobox", { name: "Capability" })[0]).toHaveTextContent("Name unavailable");
   await showPreview(user);
   expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot).toEqual(original);
 });
 it("shows catalog loading without disabling saved service editing", () => {
   mountCatalog(rules(), { catalogLoading: true });
-  expect(screen.getByRole("status")).toHaveTextContent("Loading available services");
-  expect(screen.queryByRole("button", { name: "Add service" })).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("Loading models and workflows…");
+  expect(screen.queryByRole("button", { name: "Add model or workflow" })).toBeNull();
   expect(screen.getByRole("textbox", { name: "Reason for changes" })).toBeEnabled();
 });
 it("shows a retryable catalog error and an empty catalog state", async () => {
   const retry = vi.fn();
   const { user, rerender, props } = mountCatalog(null, { catalogError: true, onCatalogRetry: retry });
-  expect(screen.getByRole("alert")).toHaveTextContent("Available services could not be loaded");
-  await user.click(screen.getByRole("button", { name: "Retry available services" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Models and workflows couldn't be loaded");
+  await user.click(screen.getByRole("button", { name: "Try again" }));
   expect(retry).toHaveBeenCalledOnce();
   rerender(<CategoriesEditor {...props} catalog={[]} catalogError={false} />);
-  expect(screen.getByText("No available services. Add a model or workflow first.")).toBeVisible();
+  expect(screen.getByText("No models or workflows are available. Add one before setting its category information.")).toBeVisible();
+});
+
+it("distinguishes required and blocked values and shows both grant constraints by name", () => {
+  mountCatalog(rules(), { catalog: [
+    { stem: "studio", label: "Studio model", kind: "model", capabilities: ["image.generate"] },
+    { stem: "model", label: "Image model", kind: "model", capabilities: ["image.generate"] },
+    { stem: "workflow", label: "Paint workflow", kind: "workflow", capabilities: ["image.generate"] },
+  ] });
+  expect(screen.getAllByRole("group", { name: "Required values" })).toHaveLength(2);
+  expect(screen.getAllByRole("group", { name: "Blocked values" })).toHaveLength(2);
+  expect(screen.queryByRole("group", { name: "Allowed values" })).toBeNull();
+  expect(screen.getAllByText("Limited to model release Image model and workflow Paint workflow.")).toHaveLength(2);
+  expect(screen.getAllByText("Model release: model@1")[0]).not.toBeVisible();
+  expect(screen.getAllByRole("checkbox", { name: "Allow when this information is missing" })).toHaveLength(2);
+});
+
+it("disables empty dependency choices with an actionable explanation", () => {
+  mountCatalog(null, { people: [], apps: [] });
+  expect(screen.getByRole("combobox", { name: "Person for new access plan" })).toBeDisabled();
+  expect(screen.getByText("No people are available")).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "App for new access plan" })).toBeDisabled();
+});
+
+it("asks for a category before a new requirement can be configured", async () => {
+  const snapshot = rules();
+  snapshot.categories = {};
+  snapshot.people.sam[0].require = []; snapshot.people.sam[0].deny = []; snapshot.people.sam[0].missing = {};
+  snapshot.apps = {};
+  const { user } = mountCatalog(snapshot);
+  await user.click(screen.getByRole("button", { name: "Add requirement" }));
+  expect(screen.getByRole("combobox", { name: "Category" })).toBeDisabled();
+  expect(screen.getByText("Add a category first")).toBeVisible();
+});
+
+it("warns before discarding an unfinished value or reason and closes a clean editor directly", async () => {
+  const { user, onClose } = mount();
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  await user.type(screen.getByRole("textbox", { name: "New value for Audience" }), "unfinished");
+  await user.click(screen.getByRole("button", { name: "Close editor" }));
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeVisible();
+});
+
+it("keeps loading and failed people lists distinct from an empty list", () => {
+  const { props, rerender } = mountCatalog(null, { people: [], peopleUnavailable: "Loading people…" });
+  expect(screen.getByRole("combobox", { name: "Person for new access plan" })).toBeDisabled();
+  expect(screen.queryByText("No people are available")).toBeNull();
+  rerender(<CategoriesEditor {...props} peopleUnavailable="People couldn't be loaded. Try again." />);
+  expect(screen.getAllByText("People couldn't be loaded. Try again.").length).toBeGreaterThan(0);
+  expect(screen.queryByText("No people are available")).toBeNull();
+});
+
+it("numbers repeated choice labels instead of showing IDs", () => {
+  expect(distinct([{ id: "a", label: "Name unavailable" }, { id: "b", label: "Chat" }, { id: "c", label: "Name unavailable" }]).map((choice) => choice.label))
+    .toEqual(["Name unavailable 1", "Chat", "Name unavailable 2"]);
 });

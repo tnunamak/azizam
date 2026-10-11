@@ -135,7 +135,7 @@ async function restore(page: Page, revision: number): Promise<Candidate> {
     new URL(result.url()).pathname === `${root}/revisions/${revision}/restore`
     && result.request().method() === "POST",
   );
-  await page.getByRole("button", { name: `Restore revision ${revision}`, exact: true }).click();
+  await page.locator("section[aria-labelledby=category-history] details").filter({ has: page.getByText(`Revision ${revision}`, { exact: true }) }).locator("../..").getByRole("button", { name: /Restore rules from/ }).click();
   const result = await response;
   expect(result.status()).toBe(200);
   const candidate: Candidate = await result.json();
@@ -164,8 +164,8 @@ test.describe("Categories real fixture journeys", () => {
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/ui/categories/");
-      await expect(page.getByText("No category rules are active", { exact: true })).toBeVisible();
-      await expect(page.getByText(/Nothing is enforced by this page yet/)).toBeVisible();
+      await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
+      await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
       await expect(page.getByRole("region", { name: "Current rules", exact: true })).toHaveCount(0);
       await expect(page.getByText("No category history yet", { exact: true })).toBeVisible();
       await accessible(page, width);
@@ -181,15 +181,19 @@ test.describe("Categories real fixture journeys", () => {
       const first = await seed(request, `browser-chat-${width}`, "chat");
       await page.reload();
       const current = page.getByRole("region", { name: "Current rules", exact: true });
-      const preview = page.getByRole("region", { name: "Preview as", exact: true });
+      const preview = page.getByRole("region", { name: "Check access", exact: true });
       const changes = page.getByRole("region", { name: "Change preview", exact: true });
 
       await test.step("API-seeded current rules are readable and dated", async () => {
+        await expect(page.locator('details:has(> section[aria-labelledby="current-rules"])')).not.toHaveAttribute("open");
+        await expect(preview).toBeVisible();
+        await expect(page.getByText("Current rules govern 1 person and 1 app.", { exact: true })).toBeVisible();
+        await page.locator('details:has(> section[aria-labelledby="current-rules"])').locator(":scope > summary").click();
         await expect(current.getByText(`Revision ${first.revision}`, { exact: true })).toBeVisible();
         await expect(current.getByText("Data location", { exact: true })).toBeVisible();
         await expect(current.getByText("Local, Remote", { exact: true })).toBeVisible();
-        await expect(current.getByText("Person: Casey", { exact: true })).toBeVisible();
-        await expect(current.getByText("App: Notebook", { exact: true })).toBeVisible();
+        await expect(current.getByText("Person: Person name unavailable", { exact: true })).toBeVisible();
+        await expect(current.getByText("App: App name unavailable", { exact: true })).toBeVisible();
         await expect(current.getByText("Access plan: Person access", { exact: true })).toBeVisible();
         await expect(current.getByText(/Needs Data location has an accepted value/)).toBeVisible();
         await expect(current.getByText("Data location: Local", { exact: true })).toBeVisible();
@@ -200,25 +204,26 @@ test.describe("Categories real fixture journeys", () => {
       });
 
       await test.step("Preview as reports real allow and deny decisions", async () => {
-        await choose(page, "Person", "Casey");
-        await choose(page, "App", "Notebook");
+        await choose(page, "Person", "Person name unavailable");
+        await choose(page, "App", "App name unavailable");
         await choose(page, "Capability", "Chat");
-        await choose(page, "Service", "local-service@r1");
+        await choose(page, "Model or workflow", "Name unavailable");
         await preview.getByRole("button", { name: "Check access", exact: true }).click();
-        await expect(preview.getByRole("status")).toContainText(`Allow · Revision ${first.revision}`);
+        await expect(preview.getByRole("status")).toContainText("Allow");
         await expect(preview.getByText("Every attached access plan allows this request.", { exact: true })).toBeVisible();
         await accessible(page, width);
 
         await choose(page, "Capability", "Embeddings");
         await preview.getByRole("button", { name: "Check access", exact: true }).click();
-        await expect(preview.getByRole("status")).toContainText(`Deny · Revision ${first.revision}`);
-        await expect(preview.getByText("An access plan does not grant this capability with this service.", { exact: true })).toBeVisible();
+        await expect(preview.getByRole("status")).toContainText("Deny");
+        await expect(preview.getByText("An access plan does not grant this capability with this model or workflow.", { exact: true })).toBeVisible();
         await accessible(page, width);
       });
 
       await test.step("Restore previews gains and losses without activation", async () => {
         const second = await seed(request, `browser-embed-${width}`, "embed");
         await page.reload();
+        await page.locator('details:has(> section[aria-labelledby="current-rules"])').locator(":scope > summary").click();
         await expect(current.getByText(`Revision ${second.revision}`, { exact: true })).toBeVisible();
         await accessible(page, width);
         await page.getByLabel("Reason for restore (optional)", { exact: true }).fill("Restore chat access");
@@ -228,8 +233,8 @@ test.describe("Categories real fixture journeys", () => {
         expect(candidate.preview.losses).toContainEqual(expect.objectContaining({ person: "Casey", app: "Notebook", capability: "embed", service: "local-service@r1" }));
         const gains = changes.getByText("Who gains access", { exact: true }).locator("..");
         const losses = changes.getByText("Who loses access", { exact: true }).locator("..");
-        await expect(gains).toContainText("Casey · Notebook · Chat · local-service@r1");
-        await expect(losses).toContainText("Casey · Notebook · Embeddings · local-service");
+        await expect(gains).toContainText("Person name unavailable · App name unavailable · Chat · Name unavailable");
+        await expect(losses).toContainText("Person name unavailable · App name unavailable · Embeddings · Name unavailable");
         await expect(changes.getByText(/Nothing has been turned on/)).toBeVisible();
         expect((await active(request))?.revision).toBe(second.revision);
         await expect(current.getByText(`Revision ${second.revision}`, { exact: true })).toBeVisible();
@@ -285,7 +290,7 @@ test.describe("Categories real fixture journeys", () => {
       // The shell's owner-page guard answers before the page renders.
       await expect(page.getByRole("heading", { name: "Owner access required", exact: true })).toBeVisible();
       await expect(page.getByRole("region", { name: "Current rules", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("region", { name: "Preview as", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "Check access", exact: true })).toHaveCount(0);
       await expect(page.getByRole("region", { name: "History", exact: true })).toHaveCount(0);
       await expect(page.getByText("Data location", { exact: true })).toHaveCount(0);
       await accessible(page, width);

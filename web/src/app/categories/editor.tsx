@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { adminFetch, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Callout, StatusLine } from "@/components/product/status-ui";
@@ -44,6 +45,17 @@ function servicesIn(snapshot: Snapshot) {
 }
 const serviceStem = (id: string) => id.includes("@") ? id.slice(0, id.lastIndexOf("@")) : id;
 const catalogService = (catalog: CatalogService[], id: string) => catalog.find((item) => item.stem === serviceStem(id));
+export const modelName = (catalog: CatalogService[], id: string) => catalogService(catalog, id)?.label || "Name unavailable";
+/** Number repeated labels ("Name unavailable 1", "… 2") so choices stay distinguishable without showing IDs. */
+export function distinct<T extends { label: string }>(choices: T[]): T[] {
+  const total = new Map<string, number>(), seen = new Map<string, number>();
+  for (const choice of choices) total.set(choice.label, (total.get(choice.label) ?? 0) + 1);
+  return choices.map((choice) => {
+    if ((total.get(choice.label) ?? 0) < 2) return choice;
+    const n = (seen.get(choice.label) ?? 0) + 1; seen.set(choice.label, n);
+    return { ...choice, label: choice.label + " " + n };
+  });
+}
 function addedService(snapshot: Snapshot, entry: CatalogService): Service {
   let revision = BigInt(1);
   for (const service of servicesIn(snapshot)) {
@@ -70,13 +82,13 @@ export function validateSnapshot(snapshot: Snapshot): string[] {
   const nonempty = (value: unknown): value is string => typeof value === "string" && value.length > 0;
   const unique = (ids: string[], label: string) => {
     if (ids.some((id) => !nonempty(id))) errors.push(label + " needs a name.");
-    if (new Set(ids).size !== ids.length) errors.push(label + " IDs must be unique.");
+    if (new Set(ids).size !== ids.length) errors.push(label + " names must be unique.");
   };
   if (!nonempty(snapshot.id)) errors.push("Give these rules a name.");
   if (snapshot.completeness_gate === false) errors.push("These rules must keep the information check turned on.");
   unique(Object.values(snapshot.categories).map((category) => category.id), "Category");
   for (const [key, category] of Object.entries(snapshot.categories)) {
-    if (key !== category.id) errors.push("A category ID does not match its saved name.");
+    if (key !== category.id) errors.push("Category label could not be matched to the saved category. Reload the current rules.");
     if (!nonempty(category.label)) errors.push("Every category needs a label.");
     if ((category.kind ?? "set") !== "set") errors.push("Only categories with a set of values can be edited.");
     if (category.values.some((value) => !nonempty(value))) errors.push(category.label + " values cannot be empty.");
@@ -97,44 +109,44 @@ export function validateSnapshot(snapshot: Snapshot): string[] {
     unique([...plan.require, ...plan.deny].map((row) => row.id), "Rule");
     for (const [kind, rows] of [["require", plan.require], ["deny", plan.deny]] as const) {
       for (const row of rows) {
-        checkValues(row.category, row.values, "Rule " + row.id);
-        if (!(kind === "require" ? ["in", "exists", "missing"] : ["in", "missing"]).includes(row.op)) errors.push("Choose how to check rule " + row.id + ".");
-        if (row.op !== "in" && row.values.length) errors.push("Rule " + row.id + " checks whether a value is present, so it cannot list values.");
+        checkValues(row.category, row.values, (kind === "require" ? "Required values" : "Blocked values"));
+        if (!(kind === "require" ? ["in", "exists", "missing"] : ["in", "missing"]).includes(row.op)) errors.push("Choose a check for the category rule.");
+        if (row.op !== "in" && row.values.length) errors.push((kind === "require" ? "Required values" : "Blocked values") + " checks whether a value is present, so it cannot list values.");
       }
     }
     for (const [row, waiver] of Object.entries(plan.missing)) {
-      if (!plan.require.some((item) => item.id === row) || waiver !== "allow") errors.push("A missing-value waiver must name a required rule.");
+      if (!plan.require.some((item) => item.id === row) || waiver !== "allow") errors.push("Allow missing information only for an existing requirement.");
     }
     for (const grant of plan.grants) {
-      if (!owns(grant, "capability") || !owns(grant, "service") || Object.entries(grant).some(([key, value]) => !["capability", "service", "release", "workflow"].includes(key) || !nonempty(value))) errors.push("Every grant needs a capability and service, with no empty selectors.");
-      if (!isPinned(grant.service)) errors.push("Use a pinned service revision for every grant.");
-      if (grant.release !== undefined && !isPinned(grant.release)) errors.push("Use a pinned model release for every grant.");
-      if (grant.workflow !== undefined && !isPinned(grant.workflow)) errors.push("Use a pinned workflow revision for every grant.");
+      if (!owns(grant, "capability") || !owns(grant, "service") || Object.entries(grant).some(([key, value]) => !["capability", "service", "release", "workflow"].includes(key) || !nonempty(value))) errors.push("Choose a capability and model or workflow for every grant.");
+      if (!isPinned(grant.service)) errors.push("Choose a saved model or workflow for every grant.");
+      if (grant.release !== undefined && !isPinned(grant.release)) errors.push("Choose a saved model release for every grant.");
+      if (grant.workflow !== undefined && !isPinned(grant.workflow)) errors.push("Choose a saved workflow for every grant.");
     }
   }
   const activeStems = Object.keys(snapshot.services).map(serviceStem);
-  if (new Set(activeStems).size !== activeStems.length) errors.push("Keep only one active revision of each service. Older revisions belong in retained services.");
+  if (new Set(activeStems).size !== activeStems.length) errors.push("Keep only one current selection for each model or workflow.");
   for (const [key, service] of Object.entries(snapshot.services)) {
-    if (key !== service.id) errors.push("A service ID does not match its saved name.");
+    if (key !== service.id) errors.push("The saved model or workflow could not be matched. Reload the current rules.");
   }
   const catalog = new Map<string, Service>();
   for (const service of servicesIn(snapshot)) {
-    if (!nonempty(service.id)) errors.push("Every service needs an ID.");
+    if (!nonempty(service.id)) errors.push("Choose a model or workflow.");
     const previous = catalog.get(service.id);
-    if (previous && !equal(previous, service)) errors.push("Service IDs must name the same reviewed members everywhere.");
+    if (previous && !equal(previous, service)) errors.push("Model or workflow information conflicts. Reload the current rules.");
     catalog.set(service.id, service);
     for (const member of service.members) {
-      if (!isPinned(member.id) || !["release", "route", "workflow"].includes(member.kind)) errors.push("Every service member needs a pinned revision and a supported type.");
+      if (!isPinned(member.id) || !["release", "route", "workflow"].includes(member.kind)) errors.push("Model or workflow information is incomplete. Reload the current rules.");
       for (const assertion of member.assertions) {
         if (typeof assertion.accepted !== "boolean") errors.push("An assertion must say whether it is accepted.");
         // Unaccepted imports are inert and retain their exact original evidence.
         if (assertion.accepted === true) {
           const values = assertionValues(assertion.value);
-          checkValues(assertion.category, values, "An accepted value on " + member.id);
+          checkValues(assertion.category, values, "Accepted category information");
           if (!values.length) errors.push("An accepted assertion needs at least one value.");
           const category = categoryFor(snapshot.categories, assertion.category);
           if (category && !category.applies_to.includes(member.kind)) errors.push(category.label + " does not apply to " + member.kind + " members.");
-          if (![assertion.source, assertion.observed_at, assertion.accepted_at, assertion.accepting_owner, assertion.mapping_version].every(nonempty)) errors.push("An accepted value on " + member.id + " needs its source, dates, owner and mapping version.");
+          if (![assertion.source, assertion.observed_at, assertion.accepted_at, assertion.accepting_owner, assertion.mapping_version].every(nonempty)) errors.push("Accepted category information" + " needs its source, dates, owner and mapping version.");
         }
       }
     }
@@ -201,7 +213,7 @@ export function rebuildSnapshot(base: Snapshot, draft: Snapshot, latest: Snapsho
         .map((key) => [key, merge(b[key], d[key], c[key], path ? path + " / " + key : key)])
         .filter(([, value]) => value !== undefined));
     }
-    throw new Error("Both edits changed " + plain(path) + ". Your edit is still here. Start from the current rules to review this change.");
+    throw new Error("Both edits changed the same field. Your edit is still here. Start from the current rules to review this change.");
   };
   return clone(merge(base, draft, latest, "") as Snapshot);
 }
@@ -210,13 +222,14 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
   const id = useId();
   return <div className="space-y-2"><label className="text-label" htmlFor={id}>{label}</label><Input id={id} value={value} onChange={(event) => onChange(event.target.value)} /></div>;
 }
-function Pick({ label, value, choices, onChange }: { label: string; value: string; choices: Choice[]; onChange: (value: string) => void }) {
+function Pick({ label, value, choices, onChange, unavailable = "" }: { unavailable?: string; label: string; value: string; choices: Choice[]; onChange: (value: string) => void }) {
   const id = useId();
-  const options = value && !choices.some((choice) => choice.id === value) ? [{ id: value, label: value }, ...choices] : choices;
+  const options = distinct(value && !choices.some((choice) => choice.id === value) ? [{ id: value, label: "Name unavailable" }, ...choices] : choices);
+  const empty = label === "Category" ? "Add a category first" : label.startsWith("Person") ? "No people are available" : label.startsWith("App") ? "No apps are available" : "Add a model or workflow first";
   return <div className="space-y-2"><label className="text-label" htmlFor={id}>{label}</label>
-    <Select value={value} onValueChange={onChange}><SelectTrigger id={id} className="w-full"><SelectValue placeholder={"Choose " + label.toLowerCase()} /></SelectTrigger>
+    <Select value={value} onValueChange={onChange} disabled={!!unavailable || !options.length}><SelectTrigger id={id} className="w-full"><SelectValue placeholder={unavailable || (options.length ? "Choose " + label.toLowerCase() : empty)} /></SelectTrigger>
       <SelectContent>{options.map((choice) => <SelectItem key={choice.id} value={choice.id}>{choice.label}</SelectItem>)}</SelectContent>
-    </Select></div>;
+    </Select>{unavailable && <p className="text-meta">{unavailable}</p>}</div>;
 }
 function Values({ category, selected, onChange, label }: { category: Category; selected: string[]; onChange: (values: string[]) => void; label: string }) {
   return <fieldset className="space-y-2"><legend className="text-label">{label}</legend>
@@ -226,8 +239,9 @@ function Values({ category, selected, onChange, label }: { category: Category; s
 }
 function CategoryCard({ category, change, remove, report }: { category: Category; change: (category: Category) => void; remove: (value: string) => void; report: (message: string) => void }) {
   const [value, setValue] = useState("");
+  const fieldLabel = useRef(category.label || "Unnamed category").current;
   return <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-    <Field label={"Label for " + category.id} value={category.label} onChange={(label) => change({ ...category, label })} />
+    <Field label={"Label for " + fieldLabel} value={category.label} onChange={(label) => change({ ...category, label })} />
     <ul className="space-y-2">{category.values.map((item) => <li key={item} className="flex items-center justify-between gap-3 text-meta"><span>{plain(item)}</span><Button type="button" variant="outline" aria-label={"Remove " + plain(item) + " from " + category.label} onClick={() => remove(item)}>Remove</Button></li>)}</ul>
     <Field label={"New value for " + category.label} value={value} onChange={setValue} />
     <Button type="button" variant="outline" onClick={() => {
@@ -238,15 +252,17 @@ function CategoryCard({ category, change, remove, report }: { category: Category
     }}>Add value to {category.label}</Button>
   </div>;
 }
-function ServiceCard({ service, categories, owner, onChange }: { service: Service; categories: Category[]; owner: string; onChange: (service: Service) => void }) {
+function ServiceCard({ service, categories, catalog, owner, onChange }: { catalog: CatalogService[]; service: Service; categories: Category[]; owner: string; onChange: (service: Service) => void }) {
   return <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-    <p className="text-body font-medium">Service: {service.id}</p>
-    {!service.members.length && <p className="text-meta">No members in this service.</p>}
+    <p className="text-body font-medium">Model or workflow: {modelName(catalog, service.id)}</p>
+    <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>{service.id}</p></details>
+    {!service.members.length && <p className="text-meta">No reviewed models or workflows are saved here.</p>}
     {service.members.map((member, index) => <fieldset key={member.kind + ":" + member.id} className="space-y-4">
-      <legend className="text-body font-medium">{plain(member.kind)}: {member.id}</legend>
+      <legend className="text-body font-medium">{member.kind === "release" ? "Model release" : plain(member.kind)}: {modelName(catalog, member.id)}</legend>
+      <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>{member.id}</p></details>
       {categories.filter((category) => category.applies_to.includes(member.kind)).map((category) => {
         const selected = [...new Set(member.assertions.filter((assertion) => assertion.accepted && assertion.category === category.id).flatMap((assertion) => assertionValues(assertion.value)).filter((value): value is string => typeof value === "string"))];
-        return <Values key={category.id} category={category} label={"Accepted " + category.label + " for " + member.id} selected={selected} onChange={(values) => {
+        return <Values key={category.id} category={category} label={"Accepted " + category.label + " for " + modelName(catalog, member.id)} selected={selected} onChange={(values) => {
           const assertions = member.assertions.flatMap((assertion) => {
             if (!assertion.accepted || assertion.category !== category.id) return [assertion];
             const kept = assertionValues(assertion.value).filter((value) => typeof value === "string" && values.includes(value));
@@ -262,7 +278,7 @@ function ServiceCard({ service, categories, owner, onChange }: { service: Servic
         }} />;
       })}
     </fieldset>)}
-    {service.dependencies.map((dependency, index) => <ServiceCard key={dependency.id} service={dependency} categories={categories} owner={owner} onChange={(next) => onChange({ ...service, dependencies: service.dependencies.map((item, at) => at === index ? next : item) })} />)}
+    {service.dependencies.map((dependency, index) => <ServiceCard key={dependency.id} service={dependency} catalog={catalog} categories={categories} owner={owner} onChange={(next) => onChange({ ...service, dependencies: service.dependencies.map((item, at) => at === index ? next : item) })} />)}
   </div>;
 }
 export function updateCurrentService(snapshot: Snapshot, updated: Service): Snapshot {
@@ -285,12 +301,12 @@ function RuleEditor({ row, kind, categories, waiver, onChange, onWaiver, onRemov
   const category = categoryFor(categories, row.category);
   return <div className="space-y-4 border-t pt-4">
     <p className="text-body font-medium">{kind === "require" ? "Needs " : "Never: "}{rowText(row, categories)}</p>
-    <Field label="Rule name" value={row.id} onChange={(id) => onChange({ ...row, id })} />
+    <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><Field label="Rule name" value={row.id} onChange={(id) => onChange({ ...row, id })} /></details>
     <Pick label="Category" value={row.category} choices={Object.values(categories).map((item) => ({ id: item.id, label: item.label }))} onChange={(id) => onChange({ ...row, category: id, values: [] })} />
     <Pick label="Check" value={row.op} choices={[{ id: "in", label: "Matches these values" }, ...(kind === "require" ? [{ id: "exists", label: "Has an accepted value" }] : []), { id: "missing", label: "Has no accepted value" }]} onChange={(op) => onChange({ ...row, op, values: op === "in" ? row.values : [] })} />
-    {category && row.op === "in" && <Values category={category} selected={row.values} label="Allowed values" onChange={(values) => onChange({ ...row, values })} />}
-    {kind === "require" && <label className="flex min-h-8 max-sm:min-h-11 items-center gap-2 text-meta"><input className="size-4 accent-primary" type="checkbox" checked={waiver} onChange={(event) => onWaiver(event.target.checked)} />Allow a missing value for {row.id || "this required rule"}</label>}
-    {waiver && <p className="text-meta">Missing-value waiver for {row.id}: skips only this requirement when its value is missing.</p>}
+    {category && row.op === "in" && <Values category={category} selected={row.values} label={kind === "require" ? "Required values" : "Blocked values"} onChange={(values) => onChange({ ...row, values })} />}
+    {kind === "require" && <label className="flex min-h-8 max-sm:min-h-11 items-center gap-2 text-meta"><input className="size-4 accent-primary" type="checkbox" checked={waiver} onChange={(event) => onWaiver(event.target.checked)} />Allow when this information is missing</label>}
+    {waiver && <p className="text-meta">Missing information skips only this requirement.</p>}
     <Button type="button" variant="outline" onClick={onRemove}>Remove {kind === "require" ? "requirement" : "blocking rule"}</Button>
   </div>;
 }
@@ -302,18 +318,18 @@ function PlanEditor({ plan, categories, services, catalog, onChange }: { plan: P
     onChange({ ...plan, [kind]: [...plan[kind], { id: prefix + "-" + number, category: "", op: "in", values: [] }] });
   };
   return <div className="space-y-4 border-t pt-4">
-    <Field label="Access plan name" value={plan.id} onChange={(id) => onChange({ ...plan, id })} />
+    <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><Field label="Access plan name" value={plan.id} onChange={(id) => onChange({ ...plan, id })} /></details>
     {plan.mode === "legacy" && <div className="space-y-3"><p className="text-meta">This access plan uses legacy tags: {plan.legacy_tags.map(plain).join(", ") || "None"}.</p><Button type="button" variant="outline" onClick={() => onChange({ ...plan, mode: "v3", legacy_tags: [] })}>Use category rules for this access plan</Button></div>}
     {plan.grants.map((grant, index) => {
       const entry = catalogService(catalog, grant.service);
       const choices = entry ? entry.capabilities.map((id) => ({ id, label: capabilities.find((item) => item.id === id)?.label ?? id })) : capabilities.filter((item) => item.id !== "text.embeddings");
       return <div key={index} className="space-y-4">
       <Pick label="Capability" value={grant.capability} choices={choices} onChange={(capability) => onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, capability } : item) })} />
-      <Pick label="Service" value={grant.service} choices={Object.keys(services).map((id) => ({ id, label: id }))} onChange={(service) => {
+      <Pick label="Model or workflow" value={grant.service} choices={Object.keys(services).map((id) => ({ id, label: modelName(catalog, id) }))} onChange={(service) => {
         const target = catalogService(catalog, service);
         onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, service, capability: target && !target.capabilities.includes(item.capability) ? "" : item.capability } : item) });
       }} />
-      {(grant.release || grant.workflow) && <p className="text-meta">Also limited to {grant.release ? "model release " + grant.release : "workflow " + grant.workflow}.</p>}
+      {(grant.release || grant.workflow) && <><p className="text-meta">Limited to {[grant.release ? "model release " + modelName(catalog, grant.release) : "", grant.workflow ? "workflow " + modelName(catalog, grant.workflow) : ""].filter(Boolean).join(" and ")}.</p><details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary>{grant.release && <p>Model release: {grant.release}</p>}{grant.workflow && <p>Workflow: {grant.workflow}</p>}</details></>}
       <Button type="button" variant="outline" onClick={() => onChange({ ...plan, grants: plan.grants.filter((_, at) => at !== index) })}>Remove grant</Button>
     </div>; })}
     <Button type="button" variant="outline" onClick={() => onChange({ ...plan, grants: [...plan.grants, { capability: "", service: "" }] })}>Add grant</Button>
@@ -330,19 +346,19 @@ function PlanEditor({ plan, categories, services, catalog, onChange }: { plan: P
     </div>)}
   </div>;
 }
-function PlansSection({ kind, entries, choices, categories, services, catalog, onChange, report }: { kind: "people" | "apps"; entries: Record<string, Plan[]>; choices: Choice[]; categories: Snapshot["categories"]; services: Snapshot["services"]; catalog: CatalogService[]; onChange: (entries: Record<string, Plan[]>) => void; report: (message: string) => void }) {
+function PlansSection({ kind, entries, choices, categories, services, catalog, onChange, report, unavailable = "" }: { unavailable?: string; kind: "people" | "apps"; entries: Record<string, Plan[]>; choices: Choice[]; categories: Snapshot["categories"]; services: Snapshot["services"]; catalog: CatalogService[]; onChange: (entries: Record<string, Plan[]>) => void; report: (message: string) => void }) {
   const [selected, setSelected] = useState("");
-  const names = [...choices, ...Object.keys(entries).filter((id) => !choices.some((choice) => choice.id === id)).map((id) => ({ id, label: id }))];
+  const names = [...choices, ...Object.keys(entries).filter((id) => !choices.some((choice) => choice.id === id)).map((id) => ({ id, label: kind === "people" ? "Person name unavailable" : "App name unavailable" }))];
   return <section className="space-y-3" aria-label={kind === "people" ? "Person access plans" : "App access plans"}>
     <h2 className="text-heading">{kind === "people" ? "Person access plans" : "App access plans"}</h2>
     {Object.entries(entries).map(([id, plans]) => <div key={id} className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-      <p className="text-body font-medium">{kind === "people" ? "Person: " : "App: "}{names.find((choice) => choice.id === id)?.label ?? id}</p>
-      {!plans.length && <p className="text-meta">No access plans. This {kind === "people" ? "person" : "app"} cannot use any service.</p>}
+      <p className="text-body font-medium">{kind === "people" ? "Person: " : "App: "}{names.find((choice) => choice.id === id)?.label ?? "Name unavailable"}</p>
+      {!plans.length && <p className="text-meta">No access plans. This {kind === "people" ? "person" : "app"} cannot use any model or workflow.</p>}
       {plans.map((plan, index) => <PlanEditor key={index} plan={plan} categories={categories} services={services} catalog={catalog} onChange={(next) => onChange({ ...entries, [id]: plans.map((item, at) => at === index ? next : item) })} />)}
     </div>)}
     <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-      <Pick label={kind === "people" ? "Person for new access plan" : "App for new access plan"} choices={names} value={selected} onChange={setSelected} />
-      <Button type="button" variant="outline" onClick={() => {
+      <Pick unavailable={unavailable} label={kind === "people" ? "Person for new access plan" : "App for new access plan"} choices={names} value={selected} onChange={setSelected} />
+      <Button type="button" variant="outline" disabled={!!unavailable || !selected} onClick={() => {
         if (!selected) return report("Choose a " + (kind === "people" ? "person" : "app") + " for the access plan.");
         const plans = owns(entries, selected) ? entries[selected] : [];
         let number = 1; while (plans.some((plan) => plan.id === "access-plan-" + number)) number++;
@@ -354,7 +370,7 @@ function PlansSection({ kind, entries, choices, categories, services, catalog, o
 
 const reasonWords: Record<string, string> = {
   ALLOW: "Every attached access plan allows this request.", NO_PLANS: "The person or app has no access plan.",
-  NO_GRANT: "An access plan does not grant this capability with this service.", EXPLICIT_DENY: "A blocking rule matches this member.",
+  NO_GRANT: "An access plan does not grant this capability with this model or workflow.", EXPLICIT_DENY: "A blocking rule matches this member.",
   DENY_INPUT_UNKNOWN: "A blocking rule cannot be checked because an accepted value is missing.",
   REQUIRE_MISMATCH: "An accepted value does not meet a required rule.", REQUIRE_MISSING: "An accepted value needed by a required rule is missing.",
   NO_APPLICABLE_SUBJECT: "There is no applicable member to check for this rule.", METADATA_INCOMPLETE: "The gateway is missing information needed to check this request.",
@@ -362,12 +378,13 @@ const reasonWords: Record<string, string> = {
   POLICY_UNAVAILABLE: "The gateway could not check the category rules.",
 };
 function DecisionText({ decision }: { decision: Decision }) {
-  return <div className="text-meta space-y-2"><p>{plain(decision.outcome)}: {Object.prototype.hasOwnProperty.call(reasonWords, decision.reason) ? reasonWords[decision.reason] : "The gateway did not provide a recognized reason."}</p>
-    {decision.rule && <p>Rule: {decision.rule}</p>}{decision.member && <p>Member: {decision.member}</p>}
+  return <div className="text-meta space-y-2"><p>{plain(decision.outcome)}: {Object.prototype.hasOwnProperty.call(reasonWords, decision.reason) ? reasonWords[decision.reason] : "We couldn't tell why the access check failed. Try again."}</p>
+    <details><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary>{decision.rule && <p>Rule: {decision.rule}</p>}{decision.member && <p>Member: {decision.member}</p>}
     {decision.waivers.map(([row, category, member], index) => <p key={index}>Missing-value waiver used: {row} · {category} · {member}</p>)}
+    </details>
   </div>;
 }
-export function CategoriesEditor({ active, owner, people, apps, onClose, onActivated, ownerLoading = false, paused = false, catalog = [], catalogLoading = false, catalogError = false, onCatalogRetry }: { active: Active | null; owner: string; catalog?: CatalogService[]; catalogLoading?: boolean; catalogError?: boolean; onCatalogRetry?: () => void; ownerLoading?: boolean; paused?: boolean; people: Choice[]; apps: Choice[]; onClose: () => void; onActivated: () => Promise<void> | void }) {
+export function CategoriesEditor({ active, owner, people, apps, onClose, onActivated, ownerLoading = false, paused = false, catalog = [], catalogLoading = false, catalogError = false, onCatalogRetry, peopleUnavailable = "", appsUnavailable = "" }: { peopleUnavailable?: string; appsUnavailable?: string; active: Active | null; owner: string; catalog?: CatalogService[]; catalogLoading?: boolean; catalogError?: boolean; onCatalogRetry?: () => void; ownerLoading?: boolean; paused?: boolean; people: Choice[]; apps: Choice[]; onClose: () => void; onActivated: () => Promise<void> | void }) {
   const [editToken] = useState(() => Date.now().toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0"));
   const [base, setBase] = useState(() => ({ revision: active?.revision ?? null, snapshot: clone(active?.snapshot ?? emptySnapshot()) }));
   const [draft, setDraft] = useState(() => clone(base.snapshot));
@@ -379,6 +396,8 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const [touched, setTouched] = useState(false);
   const inFlight = useRef(false);
   const currentChanged = active !== null && active.revision > (base.revision ?? 0);
   const needsRebuild = stale || currentChanged;
@@ -389,19 +408,23 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
   }))));
   const edit = (next: Snapshot) => { setDraft(next); setCandidate(null); setErrors([]); setNotice(""); };
   const report = (message: string) => setErrors([message]);
-  const requestName = (request: Request) => (people.find((person) => person.id === request.person)?.label ?? request.person) + " · " + (apps.find((app) => app.id === request.app)?.label ?? request.app) + " · " + (capabilities.find((item) => item.id === request.capability)?.label ?? request.capability) + " · " + request.service + (request.output ? " · Output: " + request.output : "") + (request.phase ? " · " + plain(request.phase) : "");
+  const requestName = (request: Request) => (people.find((person) => person.id === request.person)?.label ?? "Person name unavailable") + " · " + (apps.find((app) => app.id === request.app)?.label ?? "App name unavailable") + " · " + (capabilities.find((item) => item.id === request.capability)?.label ?? request.capability) + " · " + modelName(catalog, request.service) + (request.output ? " · Saved output" : "") + (request.phase ? " · " + plain(request.phase) : "");
   const loadCurrent = async () => {
     try { return await adminFetch<Active>(root + "/active"); }
     catch (error) { if (error instanceof ApiError && error.code === "no_active_snapshot") return null; throw error; }
   };
-  const run = async (action: () => Promise<void>) => {
+  // A gateway answer below 500 is a clear refusal: nothing changed, so the
+  // draft stays usable. No answer, or a server error, leaves a save uncertain.
+  const run = async (action: () => Promise<void>, kind: "save" | "load" = "save") => {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setErrors([]); setNotice("");
     try { await action(); }
     catch (error) {
       setCandidate(null);
       if (error instanceof ApiError && error.code === "stale_base") { setStale(true); }
-      else report(error instanceof ApiError ? error.message : error instanceof Error ? error.message : "The gateway could not save these rules. Try again.");
+      else if (error instanceof ApiError && error.status > 0 && error.status < 500) report(kind === "load" ? "The gateway couldn't load the current rules. Try again." : "The gateway rejected these rules. Check them and try again.");
+      else if (kind === "load") report("We couldn't load the current rules. Try again.");
+      else { setStale(true); report("We couldn't confirm the gateway saved this selection. Reload the current rules before trying again."); }
     } finally { inFlight.current = false; setBusy(false); }
   };
   const preview = () => {
@@ -420,13 +443,17 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
   const rebuild = (discard: boolean) => void run(async () => {
     const latest = await loadCurrent();
     const snapshot = latest?.snapshot ?? emptySnapshot();
-    const next = discard ? clone(snapshot) : rebuildSnapshot(base.snapshot, draft, snapshot);
+    let next: Snapshot;
+    // A conflict between two edits is not a load failure: say what to review.
+    try { next = discard ? clone(snapshot) : rebuildSnapshot(base.snapshot, draft, snapshot); }
+    catch (conflict) { report(conflict instanceof Error ? conflict.message : "Both edits changed the same field. Start from the current rules."); return; }
     setBase({ revision: latest?.revision ?? null, snapshot: clone(snapshot) }); setDraft(next);
     setCandidate(null); setStale(false); setNotice(discard ? "Current rules loaded. Add your changes and preview them again." : "Your edit is rebuilt on the current rules. Preview changes again before turning them on.");
-  });
-  return <section aria-label="Edit category rules" className="space-y-8">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-heading">Edit rules</h2><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Close editor</Button></div>
-    <p className="text-meta">Edits stay here until you preview them. Nothing is turned on until you choose Turn on.</p>
+  }, "load");
+  return <section aria-label="Edit category rules" className="space-y-8" onChangeCapture={() => setTouched(true)}>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-heading">Edit rules</h2><Button type="button" variant="outline" disabled={busy} onClick={() => { if (touched || !equal(draft, base.snapshot) || reason.trim() || label.trim()) setConfirmClose(true); else onClose(); }}>Close editor</Button></div>
+    <p className="text-meta">Your draft lasts only while this editor is open. Closing or reloading the page discards it. Nothing is turned on until you choose Turn on.</p>
+    <ConfirmDialog open={confirmClose} onOpenChange={setConfirmClose} title="Discard unsaved changes?" description="Your draft is not saved anywhere else." confirmLabel="Discard changes" cancelLabel="Keep editing" onConfirm={onClose} />
     {needsRebuild && <Callout as="div" severity="critical" title="The active rules changed. Create a new preview."><div className="flex flex-wrap gap-3">
       <Button variant="outline" disabled={busy} onClick={() => rebuild(false)}>Rebuild on current rules</Button>
       <Button variant="outline" disabled={busy} onClick={() => rebuild(true)}>Discard edit and load current rules</Button>
@@ -438,47 +465,47 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
     <fieldset disabled={busy || ownerLoading || !owner.trim()} className="space-y-8 min-w-0">
       <section aria-label="Edit categories" className="space-y-3"><h2 className="text-heading">Categories</h2>
         {Object.entries(draft.categories).map(([id, category]) => <CategoryCard key={id} category={category} report={report} change={(next) => edit({ ...draft, categories: { ...draft.categories, [id]: next } })} remove={(value) => {
-          if (valueInUse(draft, id, value)) return report(plain(value) + " is used by an access plan or a service. Remove that use before removing this value.");
+          if (valueInUse(draft, id, value)) return report(plain(value) + " is used by an access plan or a model or workflow. Remove that use before removing this value.");
           edit({ ...draft, categories: { ...draft.categories, [id]: { ...category, values: category.values.filter((item) => item !== value) } } });
         }} />)}
         <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4"><Field label="New category label" value={label} onChange={setLabel} />
           <Button type="button" variant="outline" onClick={() => {
             const id = categoryId(label);
             if (!id) return report("Enter a category label with at least one letter or number.");
-            if (Object.prototype.hasOwnProperty.call(draft.categories, id)) return report("A category with that ID already exists. Choose a different label.");
+            if (Object.prototype.hasOwnProperty.call(draft.categories, id)) return report("A category with that label already exists. Choose a different label.");
             edit({ ...draft, categories: { ...draft.categories, [id]: { id, label: label.trim(), kind: "set", values: [], applies_to: ["release", "route", "workflow"] } } }); setLabel("");
           }}>Add category</Button></div>
       </section>
-      <section aria-label="Edit services" className="space-y-3"><h2 className="text-heading">Services</h2>
-        <p className="text-meta">Changing accepted values creates new service revisions and moves current grants to them in the preview. Saved outputs keep their reviewed members.</p>
-        {!Object.keys(draft.services).length && <p className="text-meta">No services are saved in these rules yet.</p>}
-        {catalogLoading ? <p role="status" className="text-meta">Loading available services</p>
-          : catalogError ? <div className="space-y-3"><p role="alert" className="text-meta">Available services could not be loaded. Saved services can still be edited.</p><Button type="button" variant="outline" onClick={onCatalogRetry}>Retry available services</Button></div>
-          : !catalog.length ? <p className="text-meta">No available services. Add a model or workflow first.</p>
+      <section aria-label="Edit models and workflows" className="space-y-3"><h2 className="text-heading">Models and workflows</h2>
+        <p className="text-meta">Changing accepted values updates the models and workflows used by current access plans when you turn on these rules. Saved outputs keep their reviewed information.</p>
+        {!Object.keys(draft.services).length && <p className="text-meta">No models or workflows are saved in these rules yet. Add one below.</p>}
+        {catalogLoading ? <p role="status" className="text-meta">Loading models and workflows…</p>
+          : catalogError ? <div className="space-y-3"><p role="alert" className="text-meta">Models and workflows couldn&apos;t be loaded. Try again.</p><Button type="button" variant="outline" onClick={onCatalogRetry}>Try again</Button></div>
+          : !catalog.length ? <p className="text-meta">No models or workflows are available. Add one before setting its category information.</p>
           : <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-            <Pick label="Service to add" value={selectedStem} choices={catalog.map((entry) => ({ id: entry.stem, label: entry.label }))} onChange={setSelectedStem} />
+            <Pick label="Model or workflow to add" value={selectedStem} choices={catalog.map((entry) => ({ id: entry.stem, label: entry.label }))} onChange={setSelectedStem} />
             <Button type="button" variant="outline" disabled={!catalog.some((entry) => entry.stem === selectedStem)} onClick={() => {
               const entry = catalog.find((item) => item.stem === selectedStem);
               if (!entry) return;
-              if (Object.keys(draft.services).some((id) => serviceStem(id) === entry.stem)) return report(entry.label + " is already in these rules. Edit the existing service instead.");
+              if (Object.keys(draft.services).some((id) => serviceStem(id) === entry.stem)) return report(entry.label + " is already in these rules. Edit the existing model or workflow instead.");
               const service = addedService(draft, entry);
               edit({ ...draft, services: { ...draft.services, [service.id]: service } });
-            }}>Add service</Button>
+            }}>Add model or workflow</Button>
           </div>}
-        {Object.entries(draft.services).map(([id, service]) => <ServiceCard key={id} service={service} categories={Object.values(draft.categories)} owner={owner} onChange={(next) => edit(updateCurrentService(draft, next))} />)}
+        {Object.entries(draft.services).map(([id, service]) => <ServiceCard key={id} service={service} catalog={catalog} categories={Object.values(draft.categories)} owner={owner} onChange={(next) => edit(updateCurrentService(draft, next))} />)}
       </section>
-      <PlansSection kind="people" entries={draft.people} choices={people} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(people) => edit({ ...draft, people })} />
-      <PlansSection kind="apps" entries={draft.apps} choices={apps} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(apps) => edit({ ...draft, apps })} />
-      {rewrites.length > 0 && <section aria-label="Service grant changes" className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-        <h2 className="text-heading">Service grant changes</h2>
+      <PlansSection unavailable={peopleUnavailable} kind="people" entries={draft.people} choices={people} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(people) => edit({ ...draft, people })} />
+      <PlansSection unavailable={appsUnavailable} kind="apps" entries={draft.apps} choices={apps} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(apps) => edit({ ...draft, apps })} />
+      {rewrites.length > 0 && <details aria-label="Model and workflow changes" className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
+        <summary className="text-heading flex min-h-8 max-sm:min-h-11 items-center">Details</summary>
         <ul className="space-y-2 text-meta">{rewrites.map((item) => <li key={item.key}>{item.label} · {plain(item.plan)}: {item.before} → {item.after}</li>)}</ul>
-      </section>}
+      </details>}
       <Field label="Reason for changes" value={reason} onChange={(next) => { setReason(next); setCandidate(null); }} />
       {!candidate && <Button type="button" size="md" disabled={needsRebuild || paused} onClick={preview}>Preview changes</Button>}
     </fieldset>
     {candidate && !needsRebuild && <section aria-label="Change preview" className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
       <h2 className="text-heading">Change preview</h2>
-      <p className="text-meta">Compared with {candidate.preview_base_revision === null ? "no active revision" : "revision " + candidate.preview_base_revision}. Nothing has been turned on.</p>
+      <p className="text-meta">Compared with the current rules. Nothing has been turned on.</p><details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>Base revision: {candidate.preview_base_revision ?? "No active revision"}</p></details>
       <p className="text-meta">This compares {candidate.preview.scope.length} known requests. It does not cover unknown future requests.</p>
       {(["gains", "losses"] as const).map((kind) => <div key={kind} className="space-y-2"><p className="text-body font-medium">{kind === "gains" ? "Who gains access" : "Who loses access"}</p>
         {candidate.preview[kind].length ? <ul className="space-y-2 text-meta">{candidate.preview[kind].map((request, index) => <li key={index}>{requestName(request)}</li>)}</ul> : <p className="text-meta">None in the compared requests.</p>}
@@ -497,10 +524,11 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
           throw new Error("Couldn't confirm whether these rules were turned on. Load the current rules before trying again.");
         }
         setBase({ revision: candidate.revision, snapshot: clone(candidate.snapshot) }); setDraft(clone(candidate.snapshot)); setCandidate(null); setStale(false);
-        setNotice("Revision " + candidate.revision + " is now selected for category previews.");
+        setTouched(false); setReason(""); setLabel("");
+        setNotice("These category rules are now turned on.");
         await onActivated();
       })}>Turn on</Button><Button variant="outline" disabled={busy} onClick={() => setCandidate(null)}>Close preview</Button></div>
     </section>}
-    {busy && <StatusLine tone="unknown" text="Saving category revision" compact />}
+    {busy && <StatusLine tone="unknown" text="Saving category rules" compact />}
   </section>;
 }

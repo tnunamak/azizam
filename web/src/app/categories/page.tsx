@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useState } from "react";
-import { CategoriesEditor, type CatalogService } from "./editor";
+import { CategoriesEditor, distinct, modelName, type CatalogService } from "./editor";
 import { useQuery } from "@tanstack/react-query";
 import { Layers, Lock } from "lucide-react";
 import { adminFetch, ApiError, api, fetchSession } from "@/lib/api";
@@ -57,7 +57,9 @@ async function loadActive() {
   }
 }
 
-function CurrentRules({ active, personName, appName }: { active: Revision; personName: (id: string) => string; appName: (id: string) => string }) {
+const count = (n: number, one: string, many: string) => n + " " + (n === 1 ? one : many);
+
+function CurrentRules({ active, catalog, personName, appName }: { catalog: CatalogService[]; active: Revision; personName: (id: string) => string; appName: (id: string) => string }) {
   const snapshot = active.snapshot;
   const assigned = [
     ...Object.entries(snapshot.people).map(([id, plans]) => ({ key: "person:" + id, label: "Person: " + personName(id), plans })),
@@ -78,22 +80,22 @@ function CurrentRules({ active, personName, appName }: { active: Revision; perso
     </div>
     {assigned.map(({ key, label, plans }) => <div key={key} className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
       <p className="text-body font-medium">{label}</p>
-      {!plans.length && <p className="text-meta">No access plans attached. The preview denies access.</p>}
+      {!plans.length && <p className="text-meta">No access plans attached. These rules deny access.</p>}
       {plans.map((plan) => <div key={plan.id} className="space-y-2 text-meta">
         <p className="text-body font-medium">Access plan: {plain(plan.id)}</p>
         {plan.mode === "legacy" && <p>Legacy tag rules: any matching tag passes. Tags: {plan.legacy_tags.map(plain).join(", ") || "None"}.</p>}
-        {plan.grants.map((grant, index) => <p key={index}>Allows {capabilityName(grant.capability)} with {grant.service}{grant.release ? " · Model release: " + grant.release : ""}{grant.workflow ? " · Workflow: " + grant.workflow : ""}</p>)}
-        {!plan.grants.length && <p>No grants. This access plan allows no services.</p>}
+        {plan.grants.map((grant, index) => <p key={index}>Allows {capabilityName(grant.capability)} with {modelName(catalog, grant.service)}{grant.release ? " · Model release: " + modelName(catalog, grant.release) : ""}{grant.workflow ? " · Workflow: " + modelName(catalog, grant.workflow) : ""}</p>)}
+        {!plan.grants.length && <p>No grants. This access plan allows no models or workflows.</p>}
         {plan.require.map((row) => <p key={row.id}>Needs {ruleText(row, snapshot.categories)} <span className="text-muted-foreground">(rule: {row.id})</span></p>)}
         {plan.deny.map((row) => <p key={row.id}>Blocks when {ruleText(row, snapshot.categories)} <span className="text-muted-foreground">(rule: {row.id})</span></p>)}
-        {Object.entries(plan.missing).filter(([, value]) => value === "allow").map(([id]) => <p key={id}>Missing-value waiver for {id}: skips only this requirement when its value is missing.</p>)}
+        {Object.entries(plan.missing).filter(([, value]) => value === "allow").map(([id]) => <p key={id}>Allow when information is missing for {snapshot.categories[plan.require.find((row) => row.id === id)?.category ?? ""]?.label ?? "an unavailable category"}: skips only this requirement.</p>)}
       </div>)}
     </div>)}
     {[...Object.entries(snapshot.services).map(([id, service]) => ({ key: "service:" + id, service, output: "" })), ...Object.entries(snapshot.retained).map(([id, service]) => ({ key: "output:" + id, service, output: id }))].map(({ key, service, output }) => <div key={key} className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-      <p className="text-body font-medium">Service: {service.id}{output ? " · Retained output: " + output : ""}</p>
-      {!service.checkable && <p className="text-meta">The gateway cannot check every dependency. The preview denies access.</p>}
+      <p className="text-body font-medium">Model or workflow: {modelName(catalog, service.id)}{output ? " · Retained output: " + output : ""}</p>
+      {!service.checkable && <p className="text-meta">The gateway cannot check every dependency. These rules deny access.</p>}
       {rules(service).map((member) => <div key={member.kind + ":" + member.id} className="space-y-2">
-        <p className="text-body font-medium">{plain(member.kind)}: {member.id}</p>
+        <p className="text-body font-medium">{member.kind === "release" ? "Model release" : plain(member.kind)}: {modelName(catalog, member.id)}</p>
         {member.assertions.filter((assertion) => assertion.accepted).map((assertion, index) => <div key={index} className="text-meta">
           <p>{snapshot.categories[assertion.category]?.label ?? assertion.category}: {Array.isArray(assertion.value) ? assertion.value.map((value) => plain(String(value))).join(", ") : plain(String(assertion.value))}</p>
           <p className="text-muted-foreground">Source: {assertion.source || "Not recorded"}{assertion.accepted_at ? " · Accepted: " + assertion.accepted_at : ""}{assertion.accepting_owner ? " · By: " + personName(assertion.accepting_owner) : ""}{assertion.observed_at ? " · Observed: " + assertion.observed_at : ""}</p>
@@ -123,7 +125,7 @@ type HistoryEntry = { sequence: number; action: "activate" | "restore"; revision
 const reasonSentences: Record<string, string> = {
   ALLOW: "Every attached access plan allows this request.",
   NO_PLANS: "The person or app has no access plan.",
-  NO_GRANT: "An access plan does not grant this capability with this service.",
+  NO_GRANT: "An access plan does not grant this capability with this model or workflow.",
   EXPLICIT_DENY: "A blocking rule matches this member.",
   DENY_INPUT_UNKNOWN: "A blocking rule cannot be checked because an accepted value is missing.",
   REQUIRE_MISMATCH: "An accepted value does not meet a required rule.",
@@ -134,21 +136,22 @@ const reasonSentences: Record<string, string> = {
   IDENTITY_UNAVAILABLE: "The gateway could not identify the person or app.",
   POLICY_UNAVAILABLE: "The gateway could not check the category rules.",
 };
-const reasonSentence = (code: string) => Object.prototype.hasOwnProperty.call(reasonSentences, code) ? reasonSentences[code] : "The gateway did not provide a recognized reason for this result.";
+const reasonSentence = (code: string) => Object.prototype.hasOwnProperty.call(reasonSentences, code) ? reasonSentences[code] : "We couldn't tell why the access check failed. Try again.";
 
 function DecisionDetails({ decision }: { decision: Decision }) {
   return <div className="space-y-2 text-meta">
     <p>{reasonSentence(decision.reason)}</p>
-    {decision.outcome === "deny" && <dl className="space-y-1">
+    <details><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary>{decision.outcome === "deny" && <dl className="space-y-1">
       <div><dt className="inline text-muted-foreground">Failing rule: </dt><dd className="inline">{decision.rule || "Not reported"}</dd></div>
       <div><dt className="inline text-muted-foreground">Member: </dt><dd className="inline">{decision.member || "Not reported"}</dd></div>
       {decision.category && <div><dt className="inline text-muted-foreground">Category: </dt><dd className="inline">{decision.category}</dd></div>}
     </dl>}
     {decision.waivers.map(([row, category, member], index) => <p key={index}>Missing-value waiver used: {row} · {category} · {member}</p>)}
+    </details>
   </div>;
 }
 
-function PreviewAs({ active, personName, appName }: { active: Revision; personName: (id: string) => string; appName: (id: string) => string }) {
+function PreviewAs({ active, catalog, personName, appName }: { catalog: CatalogService[]; active: Revision; personName: (id: string) => string; appName: (id: string) => string }) {
   const [selection, setSelection] = useState({ person: "", app: "", capability: "", service: "" });
   const [submitted, setSubmitted] = useState<typeof selection | null>(null);
   const [validation, setValidation] = useState("");
@@ -165,14 +168,14 @@ function PreviewAs({ active, personName, appName }: { active: Revision; personNa
     { key: "person", label: "Person", options: Object.keys(snapshot.people).map((value) => ({ value, label: personName(value) })) },
     { key: "app", label: "App", options: Object.keys(snapshot.apps).map((value) => ({ value, label: appName(value) })) },
     { key: "capability", label: "Capability", options: capabilities.map((value) => ({ value, label: capabilityName(value) })) },
-    { key: "service", label: "Service", options: Object.keys(snapshot.services).map((value) => ({ value, label: value })) },
+    { key: "service", label: "Model or workflow", options: Object.keys(snapshot.services).map((value) => ({ value, label: modelName(catalog, value) })) },
   ];
   return <section aria-labelledby="preview-as" className="space-y-3">
-    <h2 id="preview-as" className="text-heading">Preview as</h2>
+    <h2 id="preview-as" className="text-heading">Check access</h2>
     <form className="rounded-panel border bg-card p-4 sm:p-6 space-y-4" onSubmit={(event) => {
       event.preventDefault();
       if (Object.values(selection).some((value) => !value)) {
-        setValidation("Choose a person, an app, a capability and a service.");
+        setValidation("Choose a person, an app, a capability and a model or workflow.");
         return;
       }
       setValidation("");
@@ -180,26 +183,26 @@ function PreviewAs({ active, personName, appName }: { active: Revision; personNa
       else setSubmitted({ ...selection });
     }}>
       <div className="grid gap-4 sm:grid-cols-2">
-        {fields.map(({ key, label, options }) => <div key={key} className="space-y-2">
+        {fields.map(({ key, label, options: named }) => { const options = distinct(named); return <div key={key} className="space-y-2">
           <label className="text-label" htmlFor={"preview-" + key}>{label}</label>
-          <Select value={selection[key]} onValueChange={(value) => {
+          <Select disabled={!options.length} value={selection[key]} onValueChange={(value) => {
             setSelection((current) => ({ ...current, [key]: value }));
             setSubmitted(null);
             setValidation("");
           }}>
-            <SelectTrigger id={"preview-" + key} className="w-full"><SelectValue placeholder={"Choose " + label.toLowerCase()} /></SelectTrigger>
+            <SelectTrigger id={"preview-" + key} className="w-full"><SelectValue placeholder={options.length ? "Choose " + label.toLowerCase() : key === "person" ? "No people in these rules" : key === "app" ? "No apps in these rules" : "No models or workflows in these rules"} /></SelectTrigger>
             <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
           </Select>
-        </div>)}
+        </div>; })}
       </div>
-      {fields.some((field) => !field.options.length) && <p className="text-meta">This revision has no complete set of people, apps, grants and services to preview.</p>}
+      {fields.some((field) => !field.options.length) && <p className="text-meta">Add people, apps and a model or workflow in Edit rules before checking access.</p>}
       {validation && <p role="alert" className="text-meta">{validation}</p>}
-      <Button size="md" type="submit" disabled={previewIsFetching}>Check access</Button>
+      <Button size="md" type="submit" disabled={previewIsFetching || fields.some((field) => !field.options.length)}>Check access</Button>
       {previewIsFetching && <StatusLine tone="unknown" text="Checking access" compact />}
-      {submitted && previewIsError && <Callout as="div" severity="critical" title="Couldn't check access"><p>Try checking again.</p></Callout>}
+      {submitted && previewIsError && <Callout as="div" severity="critical" title="Couldn't check access"><p>We couldn&apos;t tell why the access check failed. Try again.</p></Callout>}
       {submitted && previewData && !previewIsFetching && !previewIsError && <div role="status" aria-live="polite" aria-atomic="true" className="space-y-2">
-        <p className="text-body font-medium">{previewData.outcome === "allow" ? "Allow" : "Deny"} · Revision {active.revision}</p>
-        <DecisionDetails decision={previewData} />
+        <p className="text-body font-medium">{previewData.outcome === "allow" ? "Allow" : "Deny"}</p>
+        <DecisionDetails decision={previewData} /><details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>Revision {active.revision}</p></details>
       </div>}
     </form>
   </section>;
@@ -207,22 +210,22 @@ function PreviewAs({ active, personName, appName }: { active: Revision; personNa
 
 function OwnerCategories() {
   const [editing, setEditing] = useState(false);
-  const { data: catalogData, isFetching: catalogIsFetching, isError: catalogIsError, refetch: catalogRefetch } = useQuery({ queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[] }>(root + "/services"), enabled: editing, retry: false, refetchOnWindowFocus: false });
+  const { data: catalogData, isFetching: catalogIsFetching, isError: catalogIsError, refetch: catalogRefetch } = useQuery({ queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[] }>(root + "/services"), retry: false, refetchOnWindowFocus: false });
   const { data: ownerSession, isFetching: ownerSessionFetching, isError: ownerSessionError, refetch: ownerSessionRefetch } = useQuery({ queryKey: ["categories", "owner-session"], queryFn: () => fetchSession(), enabled: editing, retry: false, refetchOnWindowFocus: false });
   const { data: activeData, isError: activeIsError, isFetching: activeIsFetching, isPending: activeIsPending, refetch: activeRefetch } = useQuery({ queryKey: ["categories", "active"], queryFn: loadActive, retry: false, refetchOnWindowFocus: false });
   const { data: historyData, isError: historyIsError, isFetching: historyIsFetching, isPending: historyIsPending, refetch: historyRefetch } = useQuery({ queryKey: ["categories", "history"], queryFn: () => adminFetch<{ history: HistoryEntry[] }>(root + "/history"), retry: false, refetchOnWindowFocus: false });
-  const { data: peopleData, isError: peopleIsError } = useQuery({ queryKey: ["users"], queryFn: api.users.list });
-  const { data: appsData, isError: appsIsError } = useQuery({ queryKey: ["apps"], queryFn: api.apps.list });
+  const { data: peopleData, isError: peopleIsError, isPending: peopleIsPending, refetch: peopleRefetch } = useQuery({ queryKey: ["users"], queryFn: api.users.list });
+  const { data: appsData, isError: appsIsError, isPending: appsIsPending, refetch: appsRefetch } = useQuery({ queryKey: ["apps"], queryFn: api.apps.list });
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [restoreReason, setRestoreReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null);
   const personName = (id: string) => {
     const person = peopleData?.find((item) => item.id === id);
-    return person?.display_name || person?.name || person?.email || id;
+    return person?.display_name || person?.name || person?.email || "Person name unavailable";
   };
-  const appName = (id: string) => appsData?.find((item) => item.id === id)?.name || id;
-  const requestName = (request: PolicyRequest) => personName(request.person) + " · " + appName(request.app) + " · " + capabilityName(request.capability) + " · " + request.service + (request.output ? " · Output: " + request.output : "") + (request.phase ? " · " + plain(request.phase) : "");
+  const appName = (id: string) => appsData?.find((item) => item.id === id)?.name || "App name unavailable";
+  const requestName = (request: PolicyRequest) => personName(request.person) + " · " + appName(request.app) + " · " + capabilityName(request.capability) + " · " + modelName(catalogData?.services ?? [], request.service) + (request.output ? " · Saved output" : "") + (request.phase ? " · " + plain(request.phase) : "");
   const knownBase = !activeIsPending && !activeIsError && activeData !== undefined;
   const baseRevision = activeData?.revision ?? null;
   const refresh = async () => { await Promise.all([activeRefetch(), historyRefetch()]); };
@@ -251,7 +254,7 @@ function OwnerCategories() {
           body: { expected_active_revision: candidate!.preview_base_revision },
         });
         setCandidate(null);
-        setMessage({ error: false, text: "Revision " + revision + " is now selected for category previews." });
+        setMessage({ error: false, text: "These category rules are now turned on." });
         await refresh();
       }
     } catch (error) {
@@ -260,7 +263,7 @@ function OwnerCategories() {
         setMessage({ error: true, text: "The active rules changed. Restore again to review a new preview." });
         await refresh();
       } else {
-        setMessage({ error: true, text: action === "restore" ? "Couldn't prepare the restore. Refresh the rules and try again." : "Couldn't confirm whether the revision was turned on. Refresh the rules before trying again." });
+        setMessage({ error: true, text: action === "restore" ? "The gateway couldn't prepare the restore. Refresh the rules and try again." : "We couldn't confirm the gateway saved this selection. Reload the current rules before trying again." });
         if (action === "activate") await refresh();
       }
     } finally {
@@ -269,23 +272,29 @@ function OwnerCategories() {
   }
   const candidateMatches = candidate && candidate.preview_base_revision === baseRevision;
   return <div className="max-w-(--content-read) space-y-8">
-    <PageHeader title="Categories" subtitle="Review category rules before they apply to requests" />
-    <p className="text-meta text-muted-foreground">Nothing is enforced by this page yet. Request enforcement comes later; existing access plans still apply.</p>
+    <PageHeader title="Categories" subtitle="Manage who can use models and workflows" />
+    <p className="text-meta text-muted-foreground">Active rules apply to the people and apps listed in them. Anyone not listed keeps the access plan alone.</p>
+    {activeData && <p className="text-meta">Current rules govern {count(Object.keys(activeData.snapshot.people).length, "person", "people")} and {count(Object.keys(activeData.snapshot.apps).length, "app", "apps")}.</p>}
     <Button variant="outline" disabled={busy || activeIsFetching || historyIsFetching} onClick={() => { setCandidate(null); void refresh(); }}>Refresh</Button>
     {!editing && <Button disabled={busy || !knownBase || activeIsFetching} onClick={() => { setCandidate(null); setEditing(true); }}>Edit rules</Button>}
-    {editing && <CategoriesEditor catalog={catalogData?.services ?? []} catalogLoading={catalogIsFetching} catalogError={catalogIsError} onCatalogRetry={() => { void catalogRefetch(); }} active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
+    {peopleIsPending && <p role="status" className="text-meta text-muted-foreground">Loading people…</p>}
+    {peopleIsError && <Callout as="div" severity="critical" title="People couldn't be loaded. Try again." headerAction={<Button onClick={() => void peopleRefetch()}>Try again</Button>} />}
+    {appsIsPending && <p role="status" className="text-meta text-muted-foreground">Loading apps…</p>}
+    {appsIsError && <Callout as="div" severity="critical" title="Apps couldn't be loaded. Try again." headerAction={<Button onClick={() => void appsRefetch()}>Try again</Button>} />}
+    {!editing && catalogIsFetching && <p role="status" className="text-meta text-muted-foreground">Loading models and workflows…</p>}
+    {!editing && catalogIsError && <Callout as="div" severity="critical" title="Models and workflows couldn't be loaded. Try again." headerAction={<Button onClick={() => void catalogRefetch()}>Try again</Button>} />}
+    {editing && <CategoriesEditor peopleUnavailable={peopleIsPending ? "Loading people…" : peopleIsError ? "People couldn't be loaded. Try again." : ""} appsUnavailable={appsIsPending ? "Loading apps…" : appsIsError ? "Apps couldn't be loaded. Try again." : ""} catalog={catalogData?.services ?? []} catalogLoading={catalogIsFetching} catalogError={catalogIsError} onCatalogRetry={() => { void catalogRefetch(); }} active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
     {editing && ownerSessionError && <Button variant="outline" onClick={() => void ownerSessionRefetch()}>Refresh owner identity</Button>}
     {message && (message.error ? <Callout as="div" severity="critical" title={message.text} /> : <p role="status" className="text-meta">{message.text}</p>)}
     {activeIsPending && <div aria-busy="true" aria-label="Loading category rules"><StatusLine tone="unknown" text="Loading category rules" compact /></div>}
     {activeIsError && <Callout as="div" severity="critical" title={activeData ? "Couldn't refresh category rules" : "Couldn't load category rules"} headerAction={<Button variant="outline" onClick={() => void activeRefetch()}>Try again</Button>}>
       {activeData && <p>The rules already loaded are still shown. Changes are paused until they can be refreshed.</p>}
     </Callout>}
-    {activeData === null && !activeIsError && <EmptyState icon={Layers} title="No category rules are active" description="There are no rules to preview yet. A previous revision can be restored from History." />}
+    {activeData === null && !activeIsError && <EmptyState icon={Layers} title="Add your first category" description={historyData?.history.length ? "Choose Edit rules to add categories, or restore saved rules from History." : "Choose Edit rules to add a category and decide who it applies to."} />}
     {activeData && !editing && <>
-      <CurrentRules active={activeData} personName={personName} appName={appName} />
-      <PreviewAs key={activeData.revision} active={activeData} personName={personName} appName={appName} />
+      <PreviewAs key={activeData.revision} active={activeData} catalog={catalogData?.services ?? []} personName={personName} appName={appName} />
+      <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><CurrentRules active={activeData} catalog={catalogData?.services ?? []} personName={personName} appName={appName} /></details>
     </>}
-    {(peopleIsError || appsIsError) && <p className="text-meta text-muted-foreground">Some names couldn&rsquo;t be loaded. Their saved IDs are shown instead.</p>}
     {!editing && <section aria-labelledby="category-history" className="space-y-3">
       <h2 id="category-history" className="text-heading">History</h2>
       {historyIsPending && <div aria-busy="true" aria-label="Loading category history"><StatusLine tone="unknown" text="Loading category history" compact /></div>}
@@ -298,12 +307,12 @@ function OwnerCategories() {
         <div className="divide-y rounded-panel border bg-card">
           {[...historyData.history].reverse().map((entry) => <div key={entry.sequence} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <div className="min-w-0 space-y-1">
-              <p className="text-body font-medium">Revision {entry.revision} · {entry.action === "activate" ? "Turned on" : "Restore prepared"}{entry.revision === baseRevision && entry.action === "activate" ? " · Current" : ""}</p>
+              <p className="text-body font-medium">{entry.action === "activate" ? "Turned on" : "Restore prepared"}{entry.revision === baseRevision && entry.action === "activate" ? " · Current" : ""}</p>
               <p className="text-meta text-muted-foreground">{personName(entry.author)} · {time(entry.created_at)}</p>
               <p className="text-meta break-words">{entry.reason}</p>
-              {entry.source_revision !== null && <p className="text-meta">Restored from revision {entry.source_revision}</p>}
+              <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>Revision {entry.revision}</p>{entry.source_revision !== null && <p>Restored from revision {entry.source_revision}</p>}</details>
             </div>
-            <Button variant="outline" aria-label={"Restore revision " + entry.revision} disabled={busy || !knownBase || activeIsFetching} onClick={() => void change("restore", entry.revision)}>Restore</Button>
+            <Button variant="outline" aria-label={"Restore rules from " + time(entry.created_at)} disabled={busy || !knownBase || activeIsFetching} onClick={() => void change("restore", entry.revision)}>Restore</Button>
           </div>)}
           {!historyData.history.length && <EmptyState inCard icon={Layers} title="No category history yet" description="Restores and revisions turned on will appear here." />}
         </div>
@@ -312,8 +321,8 @@ function OwnerCategories() {
     {candidate && !editing && <section aria-labelledby="change-preview" className="space-y-3">
       <h2 id="change-preview" className="text-heading">Change preview</h2>
       <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-        <p className="text-body font-medium">Restore revision {candidate.restored_from_revision} as revision {candidate.revision}</p>
-        <p className="text-meta">Compared with {candidate.preview_base_revision === null ? "no active revision" : "revision " + candidate.preview_base_revision}. Nothing has been turned on.</p>
+        <p className="text-body font-medium">Restore saved rules</p><details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Details</summary><p>Restore revision {candidate.restored_from_revision} as revision {candidate.revision}</p></details>
+        <p className="text-meta">Compared with the current rules. Nothing has been turned on.</p>
         <p className="text-meta text-muted-foreground">This compares {candidate.preview.scope.length} known requests. It does not cover unknown future requests.</p>
         {(["gains", "losses"] as const).map((kind) => <div key={kind} className="space-y-2">
           <p className="text-body font-medium">{kind === "gains" ? "Who gains access" : "Who loses access"}</p>
@@ -336,6 +345,6 @@ function OwnerCategories() {
         </div>
       </div>
     </section>}
-    {busy && <StatusLine tone="unknown" text="Saving category revision" compact />}
+    {busy && <StatusLine tone="unknown" text="Saving category rules" compact />}
   </div>;
 }

@@ -190,7 +190,7 @@ async function preview(page: Page, base: number | null): Promise<Candidate> {
   expect(body.preview_base_revision).toBe(base);
   const changes = editor(page).getByRole("region", { name: "Change preview", exact: true });
   await expect(changes).toContainText(
-    "Compared with " + (base === null ? "no active revision" : "revision " + base) + ". Nothing has been turned on.",
+    "Compared with the current rules. Nothing has been turned on.",
   );
   return body;
 }
@@ -207,7 +207,7 @@ async function turnOn(page: Page, request: APIRequestContext, candidate: Candida
     expected_active_revision: candidate.preview_base_revision,
   });
   await expect(editor(page).getByText(
-    "Revision " + candidate.revision + " is now selected for category previews.", { exact: true },
+    "These category rules are now turned on.", { exact: true },
   )).toBeVisible();
   expect((await active(request))?.revision).toBe(candidate.revision);
 }
@@ -215,6 +215,7 @@ async function turnOn(page: Page, request: APIRequestContext, candidate: Candida
 async function closeAndRead(page: Page, revision: number) {
   await editor(page).getByRole("button", { name: "Close editor", exact: true }).click();
   const current = page.getByRole("region", { name: "Current rules", exact: true });
+  await page.locator('details:has(> section[aria-labelledby="current-rules"])').locator(":scope > summary").click();
   await expect(current.getByText("Revision " + revision, { exact: true })).toBeVisible();
   return current;
 }
@@ -251,25 +252,25 @@ test("empty rules reach an activated person and app grant through the real fixtu
   await page.goto("/ui/categories/");
   await openEditor(page);
   const form = editor(page);
-  await expect(form.getByText("No services are saved in these rules yet.", { exact: true })).toBeVisible();
-  await pick(page, form, "Service to add", service.label);
-  await form.getByRole("button", { name: "Add service", exact: true }).click();
-  await expect(form.getByRole("group", { name: "Release: " + serviceId, exact: true })).toBeVisible();
-  await form.getByRole("button", { name: "Add service", exact: true }).click();
-  await expect(form.getByRole("alert")).toHaveText(service.label + " is already in these rules. Edit the existing service instead.");
+  await expect(form.getByText("No models or workflows are saved in these rules yet. Add one below.", { exact: true })).toBeVisible();
+  await pick(page, form, "Model or workflow to add", service.label);
+  await form.getByRole("button", { name: "Add model or workflow", exact: true }).click();
+  await expect(form.getByRole("group", { name: "Model release: " + service.label, exact: true })).toBeVisible();
+  await form.getByRole("button", { name: "Add model or workflow", exact: true }).click();
+  await expect(form.getByRole("alert")).toHaveText(service.label + " is already in these rules. Edit the existing model or workflow instead.");
   await addCategory(page, "Audience", ["general"]);
-  await form.getByRole("group", { name: "Accepted Audience for " + serviceId, exact: true })
+  await form.getByRole("group", { name: "Accepted Audience for " + service.label, exact: true })
     .getByRole("checkbox", { name: "General", exact: true }).check();
   for (const kind of ["Person", "App"] as const) {
     const plans = form.getByRole("region", { name: kind + " access plans", exact: true });
     await pick(page, plans, kind + " for new access plan", kind === "Person" ? personName : app.name);
     await plans.getByRole("button", { name: "Add " + kind.toLowerCase() + " access plan", exact: true }).click();
     await plans.getByRole("button", { name: "Add grant", exact: true }).click();
-    await pick(page, plans, "Service", serviceId);
+    await pick(page, plans, "Model or workflow", service.label);
     await pick(page, plans, "Capability", "Chat");
     await plans.getByRole("button", { name: "Add requirement", exact: true }).click();
     await pick(page, plans, "Category", "Audience");
-    await plans.getByRole("group", { name: "Allowed values", exact: true })
+    await plans.getByRole("group", { name: "Required values", exact: true })
       .getByRole("checkbox", { name: "General", exact: true }).check();
   }
   await form.getByLabel("Reason for changes", { exact: true }).fill("Grant reviewed chat to this person and app");
@@ -289,13 +290,13 @@ test("empty rules reach an activated person and app grant through the real fixtu
   expect(sent.map(({ path }) => path)).toEqual([root + "/candidates", root + `/candidates/${candidate.revision}/activate`]);
   expect((await active(request))?.snapshot).toEqual(candidate.snapshot);
   await closeAndRead(page, candidate.revision);
-  const check = page.getByRole("region", { name: "Preview as", exact: true });
+  const check = page.getByRole("region", { name: "Check access", exact: true });
   await pick(page, check, "Person", personName);
   await pick(page, check, "App", app.name);
   await pick(page, check, "Capability", "Chat");
-  await pick(page, check, "Service", serviceId);
+  await pick(page, check, "Model or workflow", service.label);
   await check.getByRole("button", { name: "Check access", exact: true }).click();
-  await expect(check.getByRole("status")).toContainText("Allow · Revision " + candidate.revision);
+  await expect(check.getByRole("status")).toContainText("Allow");
   await accessible(page, 390);
 });
 
@@ -317,11 +318,11 @@ test.describe("Categories editor real fixture journeys", () => {
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/ui/categories/");
-      await expect(page.getByText("No category rules are active", { exact: true })).toBeVisible();
+      await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
       await accessible(page, width);
       await openEditor(page);
       const form = editor(page);
-      await expect(form.getByText("No services are saved in these rules yet.", { exact: true })).toBeVisible();
+      await expect(form.getByText("No models or workflows are saved in these rules yet. Add one below.", { exact: true })).toBeVisible();
       await accessible(page, width);
       await form.getByRole("button", { name: "Add category", exact: true }).click();
       await expect(form.getByRole("alert")).toHaveText(
@@ -332,12 +333,17 @@ test.describe("Categories editor real fixture journeys", () => {
 
       await addCategory(page, "Data location", ["local", "remote"]);
       await form.getByLabel("Reason for changes", { exact: true }).fill("Validate category label");
-      await form.getByLabel("Label for data-location", { exact: true }).fill("");
+      await form.getByLabel("Label for Data location", { exact: true }).fill("");
       await form.getByRole("button", { name: "Preview changes", exact: true }).click();
       await expect(form.getByRole("alert")).toContainText("Every category needs a label.");
       await accessible(page, width);
       expect(sent).toEqual([]);
       await form.getByRole("button", { name: "Close editor", exact: true }).click();
+      await expect(page.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeVisible();
+      await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await expect(form.getByLabel("Label for Data location", { exact: true })).toHaveValue("");
+      await form.getByRole("button", { name: "Close editor", exact: true }).click();
+      await page.getByRole("button", { name: "Discard changes", exact: true }).click();
       await expect(form).toHaveCount(0);
       await accessible(page, width);
     }
@@ -350,32 +356,32 @@ test.describe("Categories editor real fixture journeys", () => {
       await surface(page, width);
       const base = await seed(request, "editor-plans-" + width, "embed");
       const serviceId = Object.keys(base.snapshot.services)[0];
-      const memberId = base.snapshot.services[serviceId].members[0].id;
-      await page.goto("/ui/categories/");
+            await page.goto("/ui/categories/");
       await openEditor(page);
       const form = editor(page);
       const sent = writes(page);
       await accessible(page, width);
       await addCategory(page, "Data handling", ["private", "shared"]);
       const accepted = form.getByRole("group", {
-        name: "Accepted Data handling for " + memberId, exact: true,
+        name: "Accepted Data handling for Name unavailable", exact: true,
       });
       await accepted.getByRole("checkbox", { name: "Private", exact: true }).check();
       await accessible(page, width);
 
       for (const kind of ["Person", "App"] as const) {
         const section = form.getByRole("region", { name: kind + " access plans", exact: true });
-        await pick(page, section, kind + " for new access plan", kind === "Person" ? "Casey" : "Notebook");
+        await pick(page, section, kind + " for new access plan", kind === "Person" ? "Person name unavailable" : "App name unavailable");
         await section.getByRole("button", { name: "Add " + kind.toLowerCase() + " access plan", exact: true }).click();
         // New plan is the last plan in the sole seeded identity's card.
-        const plan = section.getByLabel("Access plan name", { exact: true }).last().locator("../..");
+        const plan = section.getByLabel("Access plan name", { exact: true }).last().locator("../../..");
+        await plan.locator(":scope > details > summary").click();
         await plan.getByLabel("Access plan name", { exact: true }).fill(kind.toLowerCase() + "-reviewed");
         await plan.getByRole("button", { name: "Add grant", exact: true }).click();
         await pick(page, plan, "Capability", "Embeddings");
-        await pick(page, plan, "Service", serviceId);
+        await pick(page, plan, "Model or workflow", "Name unavailable");
         await plan.getByRole("button", { name: "Add requirement", exact: true }).click();
         await pick(page, plan, "Category", "Data handling");
-        const allowed = plan.getByRole("group", { name: "Allowed values", exact: true });
+        const allowed = plan.getByRole("group", { name: "Required values", exact: true });
         await allowed.getByRole("checkbox", { name: "Private", exact: true }).check();
         await allowed.getByRole("checkbox", { name: "Shared", exact: true }).check();
         await accessible(page, width);
@@ -384,14 +390,15 @@ test.describe("Categories editor real fixture journeys", () => {
       // Shared is used only in plan rows, never a service assertion.
       await form.getByRole("button", { name: "Remove Shared from Data handling", exact: true }).click();
       await expect(form.getByRole("alert")).toHaveText(
-        "Shared is used by an access plan or a service. Remove that use before removing this value.",
+        "Shared is used by an access plan or a model or workflow. Remove that use before removing this value.",
       );
       await expect(form.getByRole("button", { name: "Remove Shared from Data handling", exact: true })).toBeVisible();
       await accessible(page, width);
       expect(sent).toEqual([]);
       expect((await active(request))?.revision).toBe(base.revision);
 
-      const rewrites = form.getByRole("region", { name: "Service grant changes", exact: true });
+      const rewrites = form.getByLabel("Model and workflow changes", { exact: true });
+      await rewrites.locator(":scope > summary").click();
       await expect(rewrites).toBeVisible();
       const rewriteText = await rewrites.innerText();
       const next = /→ (\S+)/.exec(rewriteText)?.[1];
@@ -400,6 +407,8 @@ test.describe("Categories editor real fixture journeys", () => {
       expect(nextService).toMatch(/@r2-[a-z0-9]+$/);
       expect(nextService).not.toBe(serviceId);
       await expect(rewrites).toContainText(serviceId + " → " + nextService);
+      // The rewrite list is a technical disclosure: it names the saved IDs
+      // (here the seeded IDs Casey and Notebook, which are not real accounts).
       await expect(rewrites).toContainText("Casey · Person reviewed");
       await expect(rewrites).toContainText("Notebook · App reviewed");
       await expect(form.getByRole("region", { name: "Change preview", exact: true })).toHaveCount(0);
@@ -416,7 +425,7 @@ test.describe("Categories editor real fixture journeys", () => {
       }));
       const changes = form.getByRole("region", { name: "Change preview", exact: true });
       await expect(changes.getByText("Who gains access", { exact: true }).locator(".."))
-        .toContainText("Casey · Notebook · Embeddings · " + nextService);
+        .toContainText("Person name unavailable · App name unavailable · Embeddings · Name unavailable");
       await accessible(page, width);
       await turnOn(page, request, candidate);
       const selected = await active(request);
@@ -424,7 +433,7 @@ test.describe("Categories editor real fixture journeys", () => {
       await accessible(page, width);
       const current = await closeAndRead(page, candidate.revision);
       await expect(current.getByText("Data handling: Private", { exact: true })).toBeVisible();
-      await expect(current.getByText("Allows Embeddings with " + nextService, { exact: true })).toHaveCount(4);
+      await expect(current.getByText("Allows Embeddings with Name unavailable", { exact: true })).toHaveCount(4);
       await expect(current.getByText("Access plan: Person reviewed", { exact: true })).toBeVisible();
       await expect(current.getByText("Access plan: App reviewed", { exact: true })).toBeVisible();
       await accessible(page, width);
@@ -438,7 +447,7 @@ test.describe("Categories editor real fixture journeys", () => {
         await page.goto("/ui/categories/");
         await openEditor(page);
         const form = editor(page);
-        await form.getByLabel("Label for location", { exact: true }).fill("Reviewed data location");
+        await form.getByLabel("Label for Data location", { exact: true }).fill("Reviewed data location");
         await form.getByLabel("Reason for changes", { exact: true }).fill("Preserve my label after concurrent activation");
         await accessible(page, width);
         const pending = stage === "activation" ? await preview(page, base.revision) : null;
@@ -464,7 +473,7 @@ test.describe("Categories editor real fixture journeys", () => {
         await expect(form.getByText(
           "Your edit is rebuilt on the current rules. Preview changes again before turning them on.", { exact: true },
         )).toBeVisible();
-        await expect(form.getByLabel("Label for location", { exact: true })).toHaveValue("Reviewed data location");
+        await expect(form.getByLabel("Label for Data location", { exact: true })).toHaveValue("Reviewed data location");
         await accessible(page, width);
         const rebuilt = await preview(page, concurrent.revision);
         if (pending) expect(rebuilt.revision).not.toBe(pending.revision);
@@ -505,13 +514,13 @@ test("catalog service can be added, granted and previewed with category APIs stu
   await page.goto("/ui/categories/");
   await openEditor(page);
   const form = editor(page);
-  await pick(page, form, "Service to add", "Paint workflow");
-  await form.getByRole("button", { name: "Add service", exact: true }).click();
-  await expect(form.getByRole("group", { name: "Workflow: workflow:paint@r1", exact: true })).toBeVisible();
+  await pick(page, form, "Model or workflow to add", "Paint workflow");
+  await form.getByRole("button", { name: "Add model or workflow", exact: true }).click();
+  await expect(form.getByRole("group", { name: "Workflow: Paint workflow", exact: true })).toBeVisible();
   for (const name of ["Person access plans", "App access plans"]) {
     const plans = form.getByRole("region", { name, exact: true });
     await plans.getByRole("button", { name: "Add grant", exact: true }).click();
-    await pick(page, plans, "Service", "workflow:paint@r1");
+    await pick(page, plans, "Model or workflow", "Paint workflow");
     await pick(page, plans, "Capability", "Image editing");
   }
   await form.getByLabel("Reason for changes", { exact: true }).fill("Grant image edits");
@@ -522,4 +531,42 @@ test("catalog service can be added, granted and previewed with category APIs stu
     expect(plans[0].grants).toEqual([{ capability: "image.edit", service: "workflow:paint@r1" }]);
   }
   await accessible(page, 390);
+});
+
+test("category labels, dual limits and safe draft dismissal at 390 px", async ({ page }) => {
+  await surface(page, 390);
+  const data: Snapshot = snapshot("phone-category-regressions", "chat");
+  const plan = data.people.Casey[0];
+  plan.grants[0] = { ...plan.grants[0], release: "local-model@r1", workflow: "paint@r1" };
+  plan.require[0] = { ...plan.require[0], op: "in", values: ["local"] };
+  plan.deny = [{ id: "blocked-remote", category: "location", op: "in", values: ["remote"] }];
+  await page.route(`**${root}/active`, (route) => route.fulfill({ json: { revision: 1, snapshot: data } }));
+  await page.route(`**${root}/history`, (route) => route.fulfill({ json: { history: [] } }));
+  await page.route(`**${root}/services`, (route) => route.fulfill({ json: { services: [
+    { stem: "local-service", label: "Local model", kind: "model", capabilities: ["chat"] },
+    { stem: "local-model", label: "Reviewed model", kind: "model", capabilities: ["chat"] },
+    { stem: "paint", label: "Paint workflow", kind: "workflow", capabilities: ["chat"] },
+  ] } }));
+  const sent = writes(page);
+  await page.goto("/ui/categories/");
+  await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
+  await expect(page.getByText(/Nothing is enforced|enforcement comes later/)).toHaveCount(0);
+  await expect(page.locator('details:has(> section[aria-labelledby="current-rules"])')).not.toHaveAttribute("open");
+  await openEditor(page);
+  const form = editor(page);
+  await expect(form.getByRole("group", { name: "Required values", exact: true })).toBeVisible();
+  await expect(form.getByRole("group", { name: "Blocked values", exact: true })).toBeVisible();
+  await expect(form.getByText("Limited to model release Reviewed model and workflow Paint workflow.", { exact: true })).toBeVisible();
+  await expect(form.getByText("Model release: local-model@r1", { exact: true })).toBeHidden();
+  await form.getByLabel("New value for Data location", { exact: true }).fill("unfinished");
+  await form.getByRole("button", { name: "Close editor", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeVisible();
+  await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+  await expect(form.getByLabel("New value for Data location", { exact: true })).toHaveValue("unfinished");
+  await accessible(page, 390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await form.getByRole("button", { name: "Close editor", exact: true }).click();
+  await page.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await expect(form).toHaveCount(0);
+  expect(sent).toEqual([]);
 });
