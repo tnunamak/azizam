@@ -121,6 +121,75 @@ def test_sd_models_lists_aliases_first_then_sync_image_workflows_only(env):
     assert all({"title", "model_name", "hash", "filename"} <= set(m) for m in models)
 
 
+@pytest.mark.parametrize("gate_configured", [False, True])
+def test_sd_models_reads_one_catalog_snapshot_for_large_catalog(tmp_path, monkeypatch, gate_configured):
+    from gateway import category_enforcement
+
+    entries = [_gen(f"model-{i}", [], {"prompt": {"type": "string"}}) for i in range(100)]
+    catalog_calls = []
+
+    def catalog():
+        catalog_calls.append(True)
+        return entries
+
+    gate = category_enforcement.CategoryGate(tmp_path / "categories.db") if gate_configured else None
+    monkeypatch.setattr(category_enforcement, "_GATE", gate)
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+                     catalog=catalog, aliases=lambda: {}, owner_of=lambda auth: auth.owner)
+    app = FastAPI()
+    a1111_api.register_a1111_routes(app, deps)
+    response = TestClient(app).get("/sdapi/v1/sd-models")
+    assert response.status_code == 200, response.text
+    assert [row["title"] for row in response.json()] == [entry["short_id"] for entry in entries]
+    assert len(catalog_calls) == 1
+
+
+def test_sd_models_preserves_title_order_and_first_entry_resolution(monkeypatch):
+    from gateway import category_enforcement
+
+    entries = [_gen("primary", ["shared", "other"], {"prompt": {"type": "string"}}),
+               _gen("shared", ["primary", "late", "image.generate.primary"], {"prompt": {"type": "string"}})]
+    resolved = []
+
+    def visible(identity, request):
+        resolved.append((request.model, request.workflow))
+        return request.workflow == "image.generate.shared"
+
+    monkeypatch.setattr(category_enforcement, "visible", visible)
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+                     catalog=lambda: entries,
+                     aliases=lambda: {"images": {"stable": [{"alias": "shared"}, {"alias": "late"}]}},
+                     owner_of=lambda auth: auth.owner)
+    app = FastAPI()
+    a1111_api.register_a1111_routes(app, deps)
+    response = TestClient(app).get("/sdapi/v1/sd-models")
+    assert response.status_code == 200, response.text
+    assert resolved == [("shared", "image.generate.primary"), ("late", "image.generate.shared"),
+                        ("other", "image.generate.primary"), ("primary", "image.generate.primary"),
+                        ("image.generate.primary", "image.generate.primary")]
+    assert [row["title"] for row in response.json()] == ["late"]
+
+
+def test_sd_models_does_not_refresh_catalog_between_titles(monkeypatch):
+    from gateway import category_enforcement
+
+    monkeypatch.setattr(category_enforcement, "_GATE", None)
+    catalog_calls = []
+
+    def catalog():
+        catalog_calls.append(True)
+        return [KREA, KLEIN] if len(catalog_calls) == 1 else []
+
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+                     catalog=catalog, aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
+    app = FastAPI()
+    a1111_api.register_a1111_routes(app, deps)
+    response = TestClient(app).get("/sdapi/v1/sd-models")
+    assert response.status_code == 200, response.text
+    assert [row["title"] for row in response.json()] == ["image", "image-fast", "krea", "klein"]
+    assert len(catalog_calls) == 1
+
+
 def test_set_model_is_remembered_per_key_and_validated(env):
     assert env.client.post("/sdapi/v1/options", json={"sd_model_checkpoint": "klein"}, headers=H).status_code == 200
     assert env.client.get("/sdapi/v1/options", headers=H).json()["sd_model_checkpoint"] == "klein"

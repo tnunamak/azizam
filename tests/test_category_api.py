@@ -1,5 +1,6 @@
 """Owner authorization, snapshot codec and durable category API contracts."""
 from copy import deepcopy
+import json
 
 import pytest
 from fastapi import FastAPI
@@ -402,6 +403,173 @@ def test_unchanged_retained_assertions_keep_their_own_provenance(categories):
         "base_revision": first.revision, "reason": "unchanged facts", "snapshot": edited})
     assert response.status_code == 200, response.text
     assert response.json()["snapshot"] == body
+
+
+def _duplicate_evidence_body():
+    body = snapshot_to_json(snapshot())
+    assertions = body["services"]["service@1"]["members"][0]["assertions"]
+    assertions.append({**assertions[0], "observed_at": "observation-B", "mapping_version": "mapping@2"})
+    body["retained"] = {}
+    return body
+
+
+def _create_and_activate_body(client, body):
+    response = client.post(PREFIX + "/candidates", json={
+        "base_revision": None, "reason": "initial evidence", "snapshot": body})
+    assert response.status_code == 200, response.text
+    first = response.json()
+    assert activate(client, first["revision"]).status_code == 200
+    return first
+
+
+def _resave_body(client, first, body):
+    return client.post(PREFIX + "/candidates", headers={"test-owner": "second-owner"}, json={
+        "base_revision": first["revision"], "reason": "preserve evidence", "snapshot": body})
+
+
+def test_noop_save_keeps_duplicate_evidence_byte_for_byte(categories):
+    client, path = categories
+    first = _create_and_activate_body(client, _duplicate_evidence_body())
+    response = _resave_body(client, first, first["snapshot"])
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert json.dumps(saved["snapshot"], sort_keys=True) == json.dumps(first["snapshot"], sort_keys=True)
+    assert CategoryStore(path).get(saved["revision"]).body == first["snapshot"]
+
+
+def test_reordering_duplicate_evidence_keeps_each_records_provenance(categories):
+    client, _ = categories
+    first = _create_and_activate_body(client, _duplicate_evidence_body())
+    body = deepcopy(first["snapshot"])
+    body["services"]["service@1"]["members"][0]["assertions"].reverse()
+    response = _resave_body(client, first, body)
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == body
+
+
+def test_duplicate_observations_ignore_forged_acceptance_fields(categories):
+    client, _ = categories
+    first = _create_and_activate_body(client, _duplicate_evidence_body())
+    body = deepcopy(first["snapshot"])
+    for assertion in assertion_rows(body):
+        assertion.update(accepting_owner="forged-owner", accepted_at="forged-time")
+    response = _resave_body(client, first, body)
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == first["snapshot"]
+
+
+def test_identical_duplicate_evidence_preserves_multiplicity(categories):
+    client, _ = categories
+    body = _duplicate_evidence_body()
+    assertions = body["services"]["service@1"]["members"][0]["assertions"]
+    assertions[1] = deepcopy(assertions[0])
+    first = _create_and_activate_body(client, body)
+    response = _resave_body(client, first, first["snapshot"])
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == first["snapshot"]
+
+
+def _two_service_evidence_body():
+    body = snapshot_to_json(snapshot())
+    a = body["services"].pop("service@1")
+    a["id"] = "a@1"
+    b = deepcopy(a)
+    b["id"] = "b@1"
+    b["members"][0]["assertions"][0].update(observed_at="observation-B", mapping_version="mapping@2")
+    body["services"] = {"a@1": a, "b@1": b}
+    body["retained"] = {}
+    for group in (body["people"], body["apps"]):
+        for plans in group.values():
+            plans[0]["grants"] = [{"capability": "run", "service": name} for name in body["services"]]
+    return body
+
+
+def _move_b_to_retained(body):
+    moved = deepcopy(body)
+    b = moved["services"].pop("b@1")
+    moved["retained"]["old-b"] = deepcopy(b)
+    b["id"] = "b@2"
+    moved["services"]["b@2"] = b
+    for group in (moved["people"], moved["apps"]):
+        for plans in group.values():
+            plans[0]["grants"][1]["service"] = "b@2"
+    return moved
+
+
+def test_retained_move_and_successor_keep_source_bundle_provenance(categories):
+    client, _ = categories
+    first = _create_and_activate_body(client, _two_service_evidence_body())
+    body = _move_b_to_retained(first["snapshot"])
+    response = _resave_body(client, first, body)
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == body
+
+
+@pytest.mark.parametrize("operation", ["noop", "reorder", "move"])
+def test_trusted_historical_duplicate_evidence_stays_distinct(categories, operation):
+    client, path = categories
+    body = _two_service_evidence_body() if operation == "move" else _duplicate_evidence_body()
+    assertions = list(assertion_rows(body))
+    # For noop/reorder only the server-owned acceptance fields distinguish records.
+    assertions[1].update(observed_at=assertions[0]["observed_at"],
+                         mapping_version=assertions[0]["mapping_version"],
+                         accepting_owner="historical-owner", accepted_at="historical-time")
+    store = CategoryStore(path)
+    row = store.create_candidate(body, None, "original-owner", "trusted history")
+    store.activate(row.revision, None)
+    first = {"revision": row.revision, "snapshot": body}
+    edited = _move_b_to_retained(body) if operation == "move" else deepcopy(body)
+    if operation == "reorder":
+        edited["services"]["service@1"]["members"][0]["assertions"].reverse()
+    if operation == "move":
+        for assertion in assertion_rows(edited):
+            assertion.update(accepting_owner="forged-owner", accepted_at="forged-time")
+        expected = _move_b_to_retained(body)
+    else:
+        expected = edited
+    response = _resave_body(client, first, edited)
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == expected
+
+
+@pytest.mark.parametrize("location", ["local", "global"])
+def test_ambiguous_duplicate_evidence_is_rejected_without_insertion(categories, location):
+    client, path = categories
+    first = _create_and_activate_body(client, _duplicate_evidence_body())
+    body = deepcopy(first["snapshot"])
+    if location == "global":
+        service = body["services"].pop("service@1")
+        service["id"] = "unrelated@1"
+        body["services"][service["id"]] = service
+        for group in (body["people"], body["apps"]):
+            for plans in group.values():
+                plans[0]["grants"][0]["service"] = service["id"]
+    for assertion in assertion_rows(body):
+        assertion.update(observed_at="unmatched-observation", mapping_version="unmatched-mapping",
+                         accepting_owner="forged-owner", accepted_at="forged-time")
+    history = CategoryStore(path).history()
+    response = _resave_body(client, first, body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "ambiguous" in response.json()["error"]["message"].lower()
+    assert CategoryStore(path).history() == history
+
+
+def test_forged_acceptance_fields_cannot_resolve_ambiguous_history(categories):
+    client, path = categories
+    body = _duplicate_evidence_body()
+    assertions = list(assertion_rows(body))
+    assertions[1].update(observed_at=assertions[0]["observed_at"],
+                         mapping_version=assertions[0]["mapping_version"],
+                         accepting_owner="historical-owner", accepted_at="historical-time")
+    store = CategoryStore(path)
+    row = store.create_candidate(body, None, "original-owner", "trusted history")
+    store.activate(row.revision, None)
+    for assertion in assertion_rows(body):
+        assertion.update(accepting_owner="forged-owner", accepted_at="forged-time")
+    response = _resave_body(client, {"revision": row.revision}, body)
+    assert response.status_code == 400, response.text
+    assert "ambiguous" in response.json()["error"]["message"].lower()
 
 
 @pytest.mark.parametrize("field,value", [

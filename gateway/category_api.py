@@ -20,6 +20,10 @@ from gateway.category_store import (
 )
 
 
+class _AmbiguousProvenanceError(ValueError):
+    """Distinct stored records are equally eligible to supply provenance."""
+
+
 def _object(value, required, optional=()):
     if type(value) is not dict or not all(type(k) is str for k in value):
         raise ValueError("Expected an object")
@@ -141,33 +145,70 @@ def _stamp_acceptance(before, after, owner, accepted_at):
                 json.dumps(assertion.value, sort_keys=True, separators=(",", ":")),
                 assertion.source, assertion.accepted)
 
+    def add(records, fact_key, assertion):
+        candidates = records.setdefault(fact_key, [])
+        if assertion not in candidates:
+            candidates.append(assertion)
+
     stored = {}
     stored_by_bundle = {}
+    stored_by_service = {}
+    active_by_stem = {}
+    retained_by_stem = {}
     if before is not None:
         for group in ("services", "retained"):
             for identifier, service in getattr(before, group).items():
                 local = {}
+                by_service = stored_by_service.setdefault(service.id, {})
+                by_stem = (active_by_stem if group == "services" else retained_by_stem).setdefault(
+                    service.id.rsplit("@", 1)[0], {})
                 for subject in policy.resolve(service):
                     for assertion in subject.assertions:
-                        local.setdefault(key(subject, assertion), assertion)
-                        stored.setdefault(key(subject, assertion), assertion)
-                stored_by_bundle[group, identifier] = local
+                        fact_key = key(subject, assertion)
+                        for records in (local, by_service, by_stem, stored):
+                            add(records, fact_key, assertion)
+                stored_by_bundle[group, identifier] = (service.id, local)
 
-    def service_copy(service, local):
+    def sources(group, identifier, service):
+        service_id, local = stored_by_bundle.get((group, identifier), (None, {}))
+        # Retained keys name outputs, not services; a reused key is not identity.
+        if service_id != service.id:
+            local = {}
+        stem = service.id.rsplit("@", 1)[0]
+        return (local, stored_by_service.get(service.id, {}),
+                active_by_stem.get(stem, {}), retained_by_stem.get(stem, {}), stored)
+
+    def assertion_copy(subject, assertion, source_records):
+        fact_key = key(subject, assertion)
+        for records in source_records:
+            candidates = records.get(fact_key, [])
+            if not candidates:
+                continue
+            # Submitted provenance can identify a stored record, but only the
+            # complete server-stored record is ever returned as authority.
+            exact = [item for item in candidates if item == assertion]
+            observation = [item for item in candidates
+                           if (item.observed_at, item.mapping_version) ==
+                           (assertion.observed_at, assertion.mapping_version)]
+            eligible = exact or observation or candidates
+            if len(eligible) != 1:
+                raise _AmbiguousProvenanceError()
+            return eligible[0]
+        return replace(assertion, accepting_owner=owner, accepted_at=accepted_at)
+
+    def service_copy(service, source_records):
         members = []
         for subject in service.members:
-            assertions = tuple(
-                local.get(key(subject, assertion)) or stored.get(key(subject, assertion)) or replace(
-                    assertion, accepting_owner=owner, accepted_at=accepted_at)
-                for assertion in subject.assertions)
+            assertions = tuple(assertion_copy(subject, assertion, source_records)
+                               for assertion in subject.assertions)
             members.append(replace(subject, assertions=assertions))
         return replace(service, members=tuple(members),
-                       dependencies=tuple(service_copy(item, local) for item in service.dependencies))
+                       dependencies=tuple(service_copy(item, source_records) for item in service.dependencies))
 
     return replace(after,
-                   services={key: service_copy(value, stored_by_bundle.get(("services", key), {}))
+                   services={key: service_copy(value, sources("services", key, value))
                              for key, value in after.services.items()},
-                   retained={key: service_copy(value, stored_by_bundle.get(("retained", key), {}))
+                   retained={key: service_copy(value, sources("retained", key, value))
                              for key, value in after.retained.items()})
 
 
@@ -336,6 +377,8 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 if operation == "preview":
                     return _json(policy.deny("POLICY_UNAVAILABLE", "snapshot"))
                 return _error(503, "policy_unavailable", "The policy store is unavailable.")
+            except _AmbiguousProvenanceError:
+                return _error(400, "invalid_request", "Ambiguous stored assertion provenance.")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 return _error(400, "invalid_request", "Invalid category policy request.")
         # The endpoint reads path params itself; declare them for the OpenAPI schema.

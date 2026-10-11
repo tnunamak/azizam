@@ -128,8 +128,9 @@ def _image_aliases(deps: A1111Deps) -> list[str]:
     return [str(a["alias"]) for a in stable if a.get("alias")]
 
 
-def model_titles(deps: A1111Deps) -> list[str]:
-    entries = _image_entries(deps)
+def model_titles(deps: A1111Deps, *, entries: list[dict[str, Any]] | None = None) -> list[str]:
+    if entries is None:
+        entries = _image_entries(deps)
     titles = [a for a in _image_aliases(deps) if any(a in (e.get("aliases") or []) or a == e["short_id"] for e in entries)]
     for entry in entries:
         for name in [*(entry.get("aliases") or []), entry["short_id"]]:
@@ -372,11 +373,17 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
         return JSONResponse(None)
 
     async def sd_models(request: Request, auth: Any, session: Session) -> Response:
+        entries = _image_entries(deps)
+        by_title = {}
+        for entry in entries:
+            for title in (entry["short_id"], entry["id"], *(entry.get("aliases") or [])):
+                # Match resolve_model's first-entry precedence for collisions.
+                by_title.setdefault(title, entry)
         return JSONResponse([{"title": t, "model_name": t, "hash": None, "sha256": None, "filename": t, "config": None}
-                             for t in model_titles(deps)
+                             for t in model_titles(deps, entries=entries)
                              if category_enforcement.visible(getattr(auth, "identity", None), PolicyRequest(
                                  protocol="openai.images", intent="image.generate",
-                                 model=t, workflow=resolve_model(deps, t)["id"],
+                                 model=t, workflow=by_title[t]["id"],
                              ))])
 
     async def samplers(request: Request, auth: Any, session: Session) -> Response:
