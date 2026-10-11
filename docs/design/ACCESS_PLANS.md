@@ -1,7 +1,11 @@
 # Access plans (design v1)
 
-Status: proposed design, not implemented. 2026-10-11. Needs an independent
-red-team before any build starts (P20).
+Status: proposed design, not implemented. 2026-10-11. Red-team: partial. An
+independent Codex pass stalled after 30 minutes. Before it stalled it named
+three bypass paths (LiteLLM key delegation, signed creation links,
+configurable public paths). I checked all three in the code and they are
+covered in §2.5. A full independent red-team is still required before any
+build starts (P20).
 
 This design replaces the built-in default access, the "Legacy …" plans and the
 separate category-rule plans with one kind of thing: an **access plan** that
