@@ -43,7 +43,12 @@ export default function SignInPage() {
       new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
     );
   }, []);
-  const options = useQuery({
+  const {
+    data: optionsData,
+    isPending: optionsIsPending,
+    isError: optionsIsError,
+    refetch: optionsRefetch,
+  } = useQuery({
     queryKey: ["auth", "options", returnTo],
     enabled: returnTo !== null,
     queryFn: () =>
@@ -51,7 +56,12 @@ export default function SignInPage() {
         `/auth/api/options?return_to=${encodeURIComponent(returnTo!)}`,
       ),
   });
-  const setup = useQuery({
+  const {
+    data: setupData,
+    isPending: setupIsPending,
+    isError: setupIsError,
+    refetch: setupRefetch,
+  } = useQuery({
     queryKey: ["auth", "setup"],
     queryFn: () => authFetch<{ owner_exists: boolean }>("/setup/api/state"),
   });
@@ -76,10 +86,10 @@ export default function SignInPage() {
   useEffect(() => {
     if (login.isError) errorRef.current?.focus();
   }, [login.isError, login.error]);
-  const loading = options.isPending || setup.isPending;
-  const unavailable = options.isError || setup.isError;
-  const firstRun = setup.data?.owner_exists === false && !reset;
-  const data = options.data;
+  const loading = optionsIsPending || setupIsPending;
+  const unavailable = optionsIsError || setupIsError;
+  const firstRun = setupData?.owner_exists === false && !reset;
+  const data = optionsData;
   const provider = data?.oidc_label?.trim();
   const providerLabel =
     provider && provider !== "your identity provider"
@@ -126,8 +136,8 @@ export default function SignInPage() {
                 className="min-h-11"
                 variant="outline"
                 onClick={() => {
-                  void options.refetch();
-                  void setup.refetch();
+                  void optionsRefetch();
+                  void setupRefetch();
                 }}
               >
                 Try again

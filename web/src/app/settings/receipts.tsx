@@ -37,7 +37,13 @@ interface Preview {
 
 export function ReceiptsSection() {
   const owner = useViewer().role === "owner";
-  const query = useQuery({
+  const {
+    data: queryData,
+    isPending: queryIsPending,
+    isError: queryIsError,
+    error: queryError,
+    refetch: queryRefetch,
+  } = useQuery({
     queryKey: receiptsKey,
     queryFn: () =>
       adminFetch<RetentionResponse>("/admin/api/settings/receipts"),
@@ -53,20 +59,20 @@ export function ReceiptsSection() {
         <p className="text-muted-foreground text-meta p-4">
           Only the owner can change this.
         </p>
-      ) : query.isPending ? (
+      ) : queryIsPending ? (
         <p role="status" className="text-muted-foreground text-meta p-4">
           Loading receipt settings…
         </p>
-      ) : query.isError ? (
+      ) : queryIsError ? (
         <div className="p-4">
           <ErrorState
             heading="Couldn’t load receipt settings"
-            error={query.error}
-            onRetry={() => void query.refetch()}
+            error={queryError}
+            onRetry={() => void queryRefetch()}
           />
         </div>
       ) : (
-        <RetentionForm key={query.data.revision} initial={query.data} />
+        <RetentionForm key={queryData.revision} initial={queryData} />
       )}
     </SettingsSection>
   );
@@ -81,7 +87,13 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
   const [choice, setChoice] = useState<Choice>(saved);
   const changed = choice !== saved;
   const finite = choice !== "forever";
-  const preview = useQuery({
+  const {
+    data: previewData,
+    isFetching: previewIsFetching,
+    isError: previewIsError,
+    error: previewError,
+    refetch: previewRefetch,
+  } = useQuery({
     queryKey: ["settings", "receipts-preview", choice, initial.revision],
     queryFn: () =>
       adminFetch<Preview>(
@@ -96,7 +108,7 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
         method: "PUT",
         body: {
           retention_days: finite ? Number(choice) : null,
-          preview: finite ? preview.data : null,
+          preview: finite ? previewData : null,
         },
         headers: { "If-Match": initial.revision },
       }),
@@ -112,12 +124,12 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
     },
     onError: () => {
       void client.invalidateQueries({ queryKey: receiptsKey });
-      void preview.refetch();
+      void previewRefetch();
     },
   });
   const ready =
     changed &&
-    (!finite || (preview.data && !preview.isFetching && !preview.isError));
+    (!finite || (previewData && !previewIsFetching && !previewIsError));
   return (
     <form
       onSubmit={(event) => {
@@ -155,18 +167,18 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
       <div className="space-y-3 p-4">
         {changed &&
           finite &&
-          (preview.isFetching ? (
+          (previewIsFetching ? (
             <p role="status">Counting older receipts…</p>
-          ) : preview.isError ? (
+          ) : previewIsError ? (
             <ErrorState
               heading="Couldn’t preview deletion"
-              error={preview.error}
-              onRetry={() => void preview.refetch()}
+              error={previewError}
+              onRetry={() => void previewRefetch()}
             />
-          ) : preview.data ? (
+          ) : previewData ? (
             <p role="status">
               Saving will permanently delete{" "}
-              {preview.data.delete_count.toLocaleString()} receipts older than{" "}
+              {previewData.delete_count.toLocaleString()} receipts older than{" "}
               {choices[choice].toLowerCase()}. Nothing is deleted until you
               save.
             </p>
