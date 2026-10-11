@@ -702,5 +702,30 @@ class TestReceiptStore(unittest.TestCase):
         self.assertEqual(len(receipt_store.recent(path=self.db, outer_only=False)), 2)
 
 
+    def test_cost_update_racing_finalize_keeps_both_outcome_and_cost(self) -> None:
+        import threading
+        from unittest.mock import patch
+
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        receipt.finish("succeeded", now_ms=2_000)
+        cost = {"usd": 0.25, "source": "owner-reported", "reconciliation_status": "settled"}
+        finished = []
+        terminal = threading.Thread(target=lambda: finished.append(receipt_store.finalize(receipt, path=self.db)))
+        real_loads = receipt_store._safe_loads
+        def finalize_after_cost_read(text):
+            if not terminal.is_alive() and not finished:
+                terminal.start()  # finalize arrives after update_cost read the row
+                terminal.join(timeout=0.3)
+            return real_loads(text)
+        with patch.object(receipt_store, "_safe_loads", finalize_after_cost_read):
+            self.assertTrue(receipt_store.update_cost(receipt.request_id, cost, path=self.db))
+        terminal.join(timeout=10)
+        self.assertEqual(finished, [True])
+        stored = receipt_store.get(receipt.request_id, path=self.db)
+        self.assertEqual(stored["status"], "succeeded")
+        self.assertEqual(stored["cost"]["usd"], 0.25)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

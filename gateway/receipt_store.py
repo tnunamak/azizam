@@ -312,6 +312,10 @@ def finalize(
             merged.update(dict.fromkeys((*PHASE_FIELDS, "attempt_number")))
         if merged.get("attempt_number") is not None and merged.get("finished_at_ms") is None:
             merged["finished_at_ms"] = data["updated_at_ms"]
+        cost = accepted.get("cost")
+        if isinstance(cost, Mapping) and cost.get("reconciliation_status") == "settled":
+            # A reconciled cost recorded before the terminal write outranks the caller's estimate.
+            merged = _with_cost(merged, cost)
         _assert_lifecycle_data(merged, terminal=True)
         cur = conn.execute(
             "UPDATE receipts SET protocol=?, intent=?, path=?, app_profile=?, app_id=?, api_key_name=?, "
@@ -432,27 +436,21 @@ def update_cost(
     if not path.exists():
         return False
     with _conn(path) as conn:
+        # Read under the write lock, as finalize and update_phases do, so a
+        # terminal write cannot land between this read and the update.
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT receipt_json FROM receipts WHERE request_id = ?",
             (request_id,),
         ).fetchone()
         if row is None:
+            conn.rollback()
             return False
         data = _safe_loads(row[0])
         if not isinstance(data, Mapping):
+            conn.rollback()
             raise ValueError("cannot update malformed stored receipt")
-        updated = dict(data)
-        updated["remote"] = True
-        updated["cost"] = dict(cost)
-        metadata = updated.get("metadata")
-        if isinstance(metadata, Mapping):
-            metadata = dict(metadata)
-            decisions = metadata.get("decisions")
-            if isinstance(decisions, Mapping):
-                decisions = dict(decisions)
-                decisions["cost_usd"] = cost.get("usd")
-                metadata["decisions"] = decisions
-                updated["metadata"] = metadata
+        updated = _with_cost(data, cost)
         _assert_safe(updated)
         conn.execute(
             "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
@@ -460,6 +458,23 @@ def update_cost(
         )
         conn.commit()
         return True
+
+
+def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy ``data`` with a reconciled cost block; only cost-owned fields change."""
+    updated = dict(data)
+    updated["remote"] = True
+    updated["cost"] = dict(cost)
+    metadata = updated.get("metadata")
+    if isinstance(metadata, Mapping):
+        metadata = dict(metadata)
+        decisions = metadata.get("decisions")
+        if isinstance(decisions, Mapping):
+            decisions = dict(decisions)
+            decisions["cost_usd"] = cost.get("usd")
+            metadata["decisions"] = decisions
+            updated["metadata"] = metadata
+    return updated
 
 
 def get(
