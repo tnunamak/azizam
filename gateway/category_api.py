@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 
@@ -161,7 +161,8 @@ def _pairs(pairs):
     return result
 
 
-def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
+def create_category_router(*, auth: AdminAuth, store_path: Path,
+                           service_catalog: Callable[[], list[dict]] = lambda: []) -> APIRouter:
     router = APIRouter(prefix="/admin/api/categories", tags=["Categories"])
     # Delayed initialization means unauthorized calls never access the store.
 
@@ -210,6 +211,8 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
             if "owner" not in ctx.roles:
                 return _error(403, "owner_required", "Only the gateway owner can manage categories.")
             try:
+                if operation == "services":
+                    return {"services": service_catalog()}
                 body = {}
                 if method == "POST":
                     body = json.loads(await request.body(), object_pairs_hook=_pairs,
@@ -297,6 +300,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
         router.add_api_route(path, endpoint, methods=[method], name="categories_" + operation,
                              openapi_extra={"parameters": params} if "{revision}" in path else None)
 
+    install("/services", "GET", "services")
     install("/active", "GET", "active")
     install("/history", "GET", "history")
     install("/revisions/{revision}", "GET", "revision")

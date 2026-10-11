@@ -15352,8 +15352,62 @@ app.include_router(create_settings_router(
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
+def _category_service_catalog() -> list[dict[str, Any]]:
+    """Configured policy targets, independent of the rules being edited.
+
+    Reuse the routing catalogs without health probes or caller-policy filtering.
+    Stable chat aliases are rewritten before policy, so publish their targets.
+    """
+    registry = ADMIN_STORE.get_service_registry()
+    entries: dict[str, dict[str, Any]] = {}
+
+    def add(stem: str, label: str | None, kind: str, intent: str) -> None:
+        if not stem:
+            return
+        entry = entries.setdefault(stem, {
+            "stem": stem, "label": label or stem, "kind": kind, "capabilities": [],
+        })
+        if intent not in entry["capabilities"]:
+            entry["capabilities"].append(intent)
+
+    for record in GATEWAY_WORKFLOW_REGISTRY.records():
+        if record.supported_backends:
+            add(record.id, record.manifest.get("display_name"), "workflow", record.intent)
+
+    backends = service_registry.runtime_backends(registry)
+    capabilities = registered_model_capabilities(registry)
+    capabilities.extend(build_local_capabilities(
+        config, backends=backends,
+        enabled_flags={"images": False, "videos": False, "audio": False},
+    ))
+    for capability in capabilities:
+        if not capability.model or capability.workflow:
+            continue
+        if capability.backend not in backends or not backends[capability.backend].get("enabled", True):
+            continue
+        add(capability.model, capability.title, "model", capability.intent)
+        # The role catalog advertises both forms; chat accepts the bare name.
+        if capability.model.startswith("role:"):
+            add(capability.model.removeprefix("role:"), capability.title, "model", capability.intent)
+
+    for capability in build_alias_capabilities(_gateway_aliases_provider()):
+        # Media aliases reach policy as a manifest workflow, listed above.
+        if capability.intent not in {"chat.completions", "text.embeddings"}:
+            continue
+        operation = "embeddings" if capability.intent == "text.embeddings" else "chat"
+        alias = resolve_stable_alias(operation, capability.model)
+        if alias is not None:
+            target = _provider_alias_model(alias.target, alias.service, alias.engine_spec or {})
+            add(target, capability.title, "model", capability.intent)
+
+    for entry in entries.values():
+        entry["capabilities"].sort()
+    return [entries[stem] for stem in sorted(entries)]
+
+
 app.include_router(create_category_router(
-    auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db"))
+    auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db",
+    service_catalog=_category_service_catalog))
 from gateway import category_enforcement  # noqa: E402
 category_enforcement.configure(ADMIN_DB_PATH.parent / "categories.db")
 app.include_router(build_setup_api_router(lambda request: {
