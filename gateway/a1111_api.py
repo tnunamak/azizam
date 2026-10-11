@@ -39,6 +39,8 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from gateway import category_enforcement
+from gateway.policy import PolicyRequest
 from gateway.workflow_call import BuiltRequest, CallError, build_request, effective_schema, error_from, validate_inputs
 
 DEFAULT_MODEL = "image"
@@ -371,7 +373,11 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
 
     async def sd_models(request: Request, auth: Any, session: Session) -> Response:
         return JSONResponse([{"title": t, "model_name": t, "hash": None, "sha256": None, "filename": t, "config": None}
-                             for t in model_titles(deps)])
+                             for t in model_titles(deps)
+                             if category_enforcement.visible(getattr(auth, "identity", None), PolicyRequest(
+                                 protocol="openai.images", intent="image.generate",
+                                 model=t, workflow=resolve_model(deps, t)["id"],
+                             ))])
 
     async def samplers(request: Request, auth: Any, session: Session) -> Response:
         names = [DEFAULT_SAMPLER] + [SAMPLER_DISPLAY.get(v, v) for v in _enum_values(deps, "sampler")]

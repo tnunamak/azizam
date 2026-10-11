@@ -13653,6 +13653,50 @@ async def _current_loaded_model_policy_decision(
     )
 
 
+_DISCOVERY_OPERATION_INTENTS = {
+    "chat": "chat.completions", "embeddings": "text.embeddings",
+    "images": "image.generate", "image_edits": "image.edit",
+    "videos": "video.generate", "audio_generate": "audio.generate",
+    "speech": "speech.synthesis", "transcriptions": "speech.transcription",
+    "rerank": "text.rerank", "decisions": "decision.systemone",
+}
+
+
+def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any]) -> bool:
+    """Resolve catalog handles to the target and intent used for execution."""
+    model = str(entry.get("id") or "")
+    operations = entry.get("azizam_resolves_to")
+    if isinstance(operations, Mapping):
+        return any(_category_entry_visible(auth_context, {"id": model, "operation": op})
+                   for op in operations)
+    operation = str(entry.get("operation") or "")
+    intent = str(entry.get("azizam_intent") or entry.get("intent")
+                 or _DISCOVERY_OPERATION_INTENTS.get(operation, "chat.completions"))
+    workflow = entry.get("azizam_workflow_id")
+    if entry.get("intent") and not operation:
+        workflow = model  # Gateway workflow summaries use the manifest ID.
+    target = model
+    if operation:
+        try:
+            resolution = resolve_model_for_operation(operation, model)
+        except ModelCompatibilityError:
+            # Ungoverned callers retain unresolved aliases in discovery.
+            pass
+        else:
+            target = (resolution.alias.target if resolution.alias else resolution.effective_model) or model
+        record = next((r for r in GATEWAY_WORKFLOW_REGISTRY.records()
+                       if r.intent == intent and (r.id == target or r.id.rsplit(".", 1)[-1] == target)), None)
+        if record is not None:
+            workflow = record.id
+    return category_enforcement.visible(auth_context.identity, make_policy_request(
+        protocol=_protocol_for_intent(intent), intent=intent, model=target, workflow=workflow,
+    ))
+
+
+def _gateway_discovery_visible(request: Request, entry: Mapping[str, Any]) -> bool:
+    return _category_entry_visible(_auth_context_from_scope(request), entry)
+
+
 async def _filter_model_list_for_profile(
     data: list[Any],
     auth_context: AuthContext,
@@ -13678,7 +13722,7 @@ async def _filter_model_list_for_profile(
             if not ready:
                 item["reason"] = "provider_key_missing"
         visible.append(item)
-    filtered = visible
+    filtered = [item for item in visible if _category_entry_visible(auth_context, item)]
 
     allowlist = _profile_model_allowlist(auth_context)
     if allowlist is not None:
@@ -14258,6 +14302,7 @@ app.include_router(
     create_gateway_router(
         GATEWAY_WORKFLOW_REGISTRY,
         aliases_provider=_gateway_aliases_provider,
+        entry_visible=_gateway_discovery_visible,
         alias_resolver=_gateway_alias_resolver,
         audience_resolver=_gateway_audience_resolver,
         capabilities_provider=_gateway_capabilities_provider,
@@ -18404,8 +18449,17 @@ async def list_voices(request: Request):
     except custom_voices.VoiceError as exc:
         return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
     engines = _custom_voice_engines()
+    engines = [engine for engine in engines if _category_entry_visible(
+        auth_context, {"id": engine, "operation": "speech"},
+    )]
+    if not engines:
+        mine, has_more = [], False
     page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
-    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": _speech_engine_voices(), **page}
+    if not _category_entry_visible(auth_context, {"id": "tts-1", "operation": "speech"}):
+        voices = []
+    engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
+                     if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
+    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": engine_voices, **page}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
@@ -24075,6 +24129,11 @@ async def audio_models(request: Request):
             continue
         if allowlist is not None and name not in allowlist:
             continue
+        if not category_enforcement.visible(auth_context.identity, make_policy_request(
+            protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
+            model=name, workflow=f"audio.generate.{name}",
+        )):
+            continue
         models.append({
             "id": name,
             "owned_by": "local",
@@ -25005,6 +25064,8 @@ async def list_models(request: Request):
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
+
+    data = [item for item in data if _category_entry_visible(auth_context, item)]
 
     # Preserve only upstream observations ahead of loaded-record inheritance;
     # values added by the annotation pass may be static alias configuration.

@@ -301,6 +301,7 @@ def create_gateway_router(
     record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
+    entry_visible: Callable[[Request, Mapping[str, Any]], bool] | None = None,
     prefix: str = "/gateway/v1",
 ) -> APIRouter:
     """Build a read-only gateway router.
@@ -400,6 +401,8 @@ def create_gateway_router(
         audience = _resolve_request_audience(resolve_audience, request)
         try:
             catalog = registry.summarize_catalog(audience=audience)
+            if entry_visible is not None:
+                catalog["workflows"] = [row for row in catalog["workflows"] if entry_visible(request, row)]
         except Exception as exc:  # noqa: BLE001 — translate to protocol error
             return _internal_error(audience, exc)
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
@@ -437,12 +440,22 @@ def create_gateway_router(
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
 
     @router.get("/aliases")
-    def list_aliases(operation: str | None = Query(None)) -> JSONResponse:
+    def list_aliases(request: Request, operation: str | None = Query(None)) -> JSONResponse:
         if aliases_provider is None:
             return JSONResponse(status_code=status.HTTP_200_OK, content={"object": "aliases", "operations": {}})
+        operations = aliases_provider(operation)
+        if entry_visible is not None:
+            operations = {
+                op: {key: [row for row in rows if entry_visible(request, {
+                    "operation": op,
+                    "id": row.get("alias") or row.get("engine") or row.get("match") or "",
+                })] for key, rows in view.items()}
+                for op, view in operations.items()
+            }
+            operations = {op: view for op, view in operations.items() if any(view.values())}
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"object": "aliases", "operations": aliases_provider(operation)},
+            content={"object": "aliases", "operations": operations},
         )
 
     @router.get("/aliases/resolve")

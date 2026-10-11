@@ -10,6 +10,7 @@ import json
 import re
 import socket
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -120,15 +121,15 @@ def gateway(monkeypatch, tmp_path, request):
     category_enforcement.configure(None)
     profile_id = (
         "restricted-workflow" if restricted_workflow
-        else "grant-everything" if category_mode else "grant-nothing"
+        else "grant-everything" if category_mode or mode == "discovery" else "grant-nothing"
     )
     # Missing allow/protocol/workflow/model/backend restrictions means
     # unrestricted access; a wildcard allow-list is not the same profile.
-    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode}}
+    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode or mode == "discovery"}}
     if restricted_workflow:
         profile_body["allow"] = {"intents": ["image.edit", "image.variation"]}
         profile_body["workflows"] = ["no-inventory-request-uses-this-workflow"]
-    elif not category_mode:
+    elif not category_mode and mode != "discovery":
         profile_body["allow"] = {"intents": []}
     profile = admin_store.create_profile(
         profile_id, profile_body, path=paths["admin"],
@@ -659,16 +660,41 @@ def _probe_request(headers):
 _STATUS_PROBES = {("GET", "/api/ps"), ("GET", "/ollama/api/ps")}
 
 
-def _decoy_oracle(method, template, row, gateway):
+_CATEGORY_LISTINGS = {
+    "/v1/models", "/openai/v1/models", "/anthropic/v1/models",
+    "/v1/audio/models", "/openai/v1/audio/models", "/v1/audio/voices",
+    "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices",
+    "/api/tags", "/ollama/api/tags", "/gateway/v1/workflows",
+    "/gateway/v1/aliases", "/sdapi/v1/sd-models",
+}
+
+
+def _category_listing_empty(response):
+    body = response.json()
+    if isinstance(body, list):
+        return body == []
+    collections = [body[key] for key in ("data", "models", "voices", "engines", "workflows", "operations")
+                   if key in body]
+    return bool(collections) and all(value in ([], {}) for value in collections)
+
+
+def _decoy_oracle(method, template, row, gateway, response):
     """Classify the decoy pass, where the member holds grants on a decoy service.
 
-    Discovery is allowed and is not proof. Anything that runs a model must still
+    Restricted discovery must be empty. Anything that runs a model must still
     be refused, and a backend call from any other route stays a violation.
     """
     status = row["status"]
     if row.get("dispatched") == "yes":
         return  # A dispatched receipt stays a violation.
-    if ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
+    if method == "GET" and template in _CATEGORY_LISTINGS and status == 200 and not gateway.calls:
+        if _category_listing_empty(response):
+            row["outcome"], row["rule"] = "scoped-empty", "category discovery hides ungranted services"
+            row["detail"] = ""
+        else:
+            row["outcome"], row["rule"] = "VIOLATION", "category discovery exposes ungranted services"
+            row["detail"] = row.get("body", "")
+    elif ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
             and set(gateway.calls) <= {"health", "model-state", "HTTP backend"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
@@ -758,7 +784,7 @@ def _http_inventory(gateway, title=None, report=True):
                 row["rule"] = "backend call overrides response classification"
                 row["detail"] += f" backend calls={gateway.calls!r}"
             if getattr(gateway, "decoy", False):
-                _decoy_oracle(method, template, row, gateway)
+                _decoy_oracle(method, template, row, gateway, response)
             _category_oracle(gateway, row)
             rows.append(row)
     assert rows, "No model-facing HTTP routes discovered; inventory would be vacuous"
@@ -1013,3 +1039,19 @@ def test_websocket_route_policy_inventory(gateway, monkeypatch):
         "Every websocket route must demonstrate a category-rules refusal after "
         f"decoy grants allow early checks; missing resolved check(s):\n{_table(unproved)}"
     )
+
+
+@pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
+def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
+    """Full JSON bytes captured on the parent implementation remain unchanged."""
+    monkeypatch.setattr(proxy, "_workflow_model_entry_created", lambda _path: 123)
+    monkeypatch.setattr(proxy, "_entry_created_ts", lambda _path: 123)
+    responses = {}
+    for path in sorted(_CATEGORY_LISTINGS):
+        gateway.calls.clear()
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, (path, response.status_code)
+        assert not gateway.calls, (path, gateway.calls)
+        responses[path] = response.content.decode()
+    expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
+    assert responses == expected
