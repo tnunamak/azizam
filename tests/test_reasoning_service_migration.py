@@ -69,6 +69,14 @@ def fixture_registry(service_id, existing):
 @pytest.mark.parametrize("effort", ["absent", None, "none", "minimal", "low", "medium", "high", "xhigh", "invalid", 42])
 def test_upstream_bytes_equal_before_and_after(tmp_path, service_id, existing, stream, effort):
     old_registry = fixture_registry(service_id, existing)
+    parsed = assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effort)
+    if effort == "absent":
+        assert parsed["thinking_budget_tokens"] == (
+            0 if existing else proxy.config["reasoning"]["effort_budgets"]["high"]
+        )
+
+
+def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effort):
     db = legacy_database(tmp_path, old_registry)
     admin_store.init_db(db)
     first = snapshot(db)
@@ -116,10 +124,29 @@ def test_upstream_bytes_equal_before_and_after(tmp_path, service_id, existing, s
     assert captured[0] == captured[1]
     parsed = json.loads(captured[1])
     assert "reasoning_effort" not in parsed
-    if effort == "absent":
-        assert parsed["thinking_budget_tokens"] == (
-            0 if existing else proxy.config["reasoning"]["effort_budgets"]["high"]
-        )
+    return parsed
+
+
+# Every distinct base/alias policy pair in the enabled local service from the
+# private 2026-10-10 snapshot. Model/connection names are replaced by fixtures;
+# the request-transform data is unchanged. Disabled services are not migrated.
+CURRENT_POLICIES = json.loads((FIXTURES / "current_policies.json").read_text())
+
+
+@pytest.mark.parametrize("service_id,policy", [
+    (sid, policy)
+    for sid, service in CURRENT_POLICIES.items() if service["enabled"]
+    for policy in service["policies"]
+])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("effort", ["absent", None, "none", "minimal", "low", "medium", "high", "xhigh", "invalid", 42])
+def test_current_registry_policy_upstream_bytes(tmp_path, service_id, policy, stream, effort):
+    registry = fixture_registry(service_id, False)
+    cfg = registry["services"][service_id]["config"]
+    cfg["transforms"] = CURRENT_POLICIES[service_id]["transforms"]
+    cfg["models"][0]["transforms"] = policy["base"]
+    cfg["models"][1]["policy_overlay"] = policy["alias"]
+    assert_upstream_bytes_equal(tmp_path, registry, service_id, stream, effort)
 
 
 def test_migration_scope_generation_and_opt_out(tmp_path):
@@ -198,6 +225,21 @@ def test_fresh_seed_declares_opt_in_as_data():
         assert "reasoning-effort" in seed["services"][service_id]["config"]["transforms"]
     custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
+
+
+@pytest.mark.parametrize("preset", ["openai-compatible", "vllm", "ollama", "tabbyapi", "lmstudio"])
+def test_local_chat_preset_declares_overridable_attachment(preset):
+    form = {"preset": preset, "base_url": "http://127.0.0.1:5111/v1"}
+    raw = service_registry.service_form_to_raw(form)
+    assert raw["transforms"] == ["reasoning-effort"]
+    raw["transforms"].clear()
+    assert service_registry.provider_preset(preset)["transforms"] == ["reasoning-effort"]
+    assert service_registry.service_form_to_raw({**form, "transforms": []})["transforms"] == []
+
+
+def test_media_and_unselected_presets_do_not_attach_reasoning():
+    for form in ({"preset": "comfyui"}, {}):
+        assert "transforms" not in service_registry.service_form_to_raw(form)
 
 
 def test_migration_rolls_back_registry_generation_and_version_together(tmp_path):

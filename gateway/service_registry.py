@@ -910,6 +910,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
+        "transforms": ["reasoning-effort"],
     },
     {
         "id": "vllm",
@@ -919,6 +920,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
+        "transforms": ["reasoning-effort"],
     },
     {
         "id": "ollama",
@@ -928,6 +930,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
+        "transforms": ["reasoning-effort"],
     },
     {
         "id": "tabbyapi",
@@ -937,6 +940,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions", "vision"],
         "native_passthrough": True,
+        "transforms": ["reasoning-effort"],
     },
     {
         "id": "lmstudio",
@@ -946,6 +950,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
+        "transforms": ["reasoning-effort"],
     },
     {
         "id": "comfyui",
@@ -1189,6 +1194,8 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
         if preset.get("default_port") and "port" not in raw:
             raw["port"] = int(preset["default_port"])
         raw.setdefault("native_passthrough", preset["native_passthrough"])
+        if "transforms" in preset and "transforms" not in form:
+            raw["transforms"] = copy.deepcopy(preset["transforms"])
         # The preset's protocol is what makes the service routable through the
         # LiteLLM substrate (openai-compatible). It's a config default the
         # operator rarely needs to see; an explicit form `protocol` overrides it.
