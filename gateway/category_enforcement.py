@@ -126,6 +126,6 @@ def apply(identity: Any, request: PolicyRequest, decision: PolicyDecision) -> Po
     denial = _GATE.check(identity, request)
     if denial is None:
         return decision
+    # The access plan's allow reasons do not explain a denial; callers show reasons[0].
     return PolicyDecision(decision=DENIED, sources=decision.sources + denial.sources,
-                          reasons=decision.reasons + denial.reasons,
-                          visibility_level=decision.visibility_level)
+                          reasons=denial.reasons, visibility_level=decision.visibility_level)

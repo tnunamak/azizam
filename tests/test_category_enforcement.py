@@ -72,7 +72,7 @@ def test_a_governed_request_that_fails_a_required_value_is_denied(gate):
     _activate(gate, _snapshot(value="adult"))
     decision = category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW)
     assert decision.decision == DENIED
-    assert "category rules: REQUIRE_MISMATCH" in decision.reasons[-1]
+    assert decision.reasons == ("category rules: REQUIRE_MISMATCH kids:aud audience flux@1",)
     assert category_enforcement.SOURCE in decision.sources
 
 
