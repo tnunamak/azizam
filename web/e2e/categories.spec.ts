@@ -143,14 +143,24 @@ async function restore(page: Page, revision: number): Promise<Candidate> {
   return candidate;
 }
 
-// The fixture has no category reset endpoint. Run empty checks at both widths
-// before mutation, then use CAS against the actual active revision, never IDs
-// assumed from ordering. This suite requires the fresh configured fixture.
+// The fixture has no category reset endpoint and may already hold rules from
+// another file in the same shard: every journey uses compare-and-swap against
+// the actual active revision, never IDs assumed from ordering.
 test.describe("Categories real fixture journeys", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("empty category store at desktop and phone widths", async ({ page, request }) => {
-    expect(await active(request)).toBeNull();
+  test("empty category store at desktop and phone widths", async ({ page }) => {
+    // CI shards reuse one fixture per shard and other files may have written
+    // rules first, so the empty store is answered by stubbing only these two
+    // reads. No write is sent; the real API is exercised by the journeys below.
+    const writes: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith(root)) writes.push(request.url());
+    });
+    await page.route(`**${root}/active`, (route) => route.fulfill({
+      status: 409, json: { error: { code: "no_active_snapshot", message: "No policy snapshot has been activated." } },
+    }));
+    await page.route(`**${root}/history`, (route) => route.fulfill({ json: { history: [] } }));
     for (const width of widths) {
       await surface(page, width);
       await page.goto("/ui/categories/");
@@ -160,6 +170,7 @@ test.describe("Categories real fixture journeys", () => {
       await expect(page.getByText("No category history yet", { exact: true })).toBeVisible();
       await accessible(page, width);
     }
+    expect(writes).toEqual([]);
   });
 
   for (const width of widths) {
