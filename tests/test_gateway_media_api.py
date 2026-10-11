@@ -311,7 +311,8 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["event_type"], "progress")
         self.assertEqual(body["job_id"], seeded["job_id"])
-        self.assertGreater(body["id"], 0)
+        self.assertNotIn("id", body)  # callers never see the household-wide event id
+        self.assertGreaterEqual(body["sequence"], 1)
 
         # Stored internally we keep the full payload.
         rows = media_jobs.events(
@@ -542,7 +543,8 @@ class GatewayMediaJobsExplicitProviderTests(unittest.TestCase):
                 json={"event_type": "progress", "payload": {"progress": 1}},
             )
             self.assertEqual(r.status_code, 201)
-            self.assertEqual(r.json()["id"], 99)
+            self.assertNotIn("id", r.json())  # the provider's global id stays internal
+            self.assertEqual(r.json()["event_type"], "progress")
             self.assertEqual(captured["event_payload"], {"progress": 1})
 
             r = client.post(
