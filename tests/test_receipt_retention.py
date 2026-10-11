@@ -151,7 +151,8 @@ def test_default_maintenance_keeps_history_and_visibility(history):
     assert [r["request_id"] for r in receipt_store.recent(app_ids=["theirs"], outer_only=False, path=path)] == ["child"]
 
 
-def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path):
+def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path, monkeypatch):
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 1_800_000_000)
     path = tmp_path / "receipts.db"
     receipt_store.init_db(path)
     # Exercise conversion of an existing file whose auto_vacuum was disabled.
@@ -162,6 +163,7 @@ def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path):
         receipt_store.record({"request_id": str(i), "metadata": {"diagnostic": "a" * 4000}}, created_at=i, path=path)
     receipt_store.prune(retain_s=int(time.time()) - 99, path=path)
     before = receipt_store.get("99", path=path)
+    assert before is not None
     result = receipt_store.compact(path)
     assert result["after_bytes"] < result["before_bytes"]
     assert receipt_store.get("99", path=path) == before
@@ -177,7 +179,8 @@ def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path):
         pages = conn.execute("PRAGMA page_count").fetchone()[0]
     receipt_store.maintain(admin_path, path=path)
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA page_count").fetchone()[0] < pages
+        after_pages = conn.execute("PRAGMA page_count").fetchone()[0]
+        assert 0 < pages - after_pages <= 256
 
 
 def test_saved_setting_retries_after_deletion_failure(history, monkeypatch):
