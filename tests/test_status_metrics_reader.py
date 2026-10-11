@@ -53,11 +53,11 @@ class TestStatusMetricsReader(unittest.TestCase):
                         # Mixed rollup/raw-only metrics exercise both fallback paths.
                         if i % 2 == 0:
                             conn.execute(
-                                "INSERT INTO samples_1min VALUES (?,?,?,?,?,?,?)",
+                                "INSERT INTO samples_1min (ts, metric, tags, avg_value, min_value, max_value, count) VALUES (?,?,?,?,?,?,?)",
                                 (now - age, metric, metrics_store._serialize_tags(tags),
                                  value, value - 1, value + 1, j + 1),
                             )
-                conn.execute("INSERT INTO samples VALUES (?,?,?,?)",
+                conn.execute("INSERT INTO samples (ts, metric, tags, value) VALUES (?,?,?,?)",
                              (now, "request", "invalid-json", 1))
                 conn.commit()
             with (
