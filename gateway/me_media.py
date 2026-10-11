@@ -652,7 +652,7 @@ def _media_items(
         path=media_jobs_path,
     )
     receipts = _receipts_by_request_id(
-        [str(job.get("request_id") or "") for job in jobs],
+        [request_id for job in jobs for request_id in _job_receipt_ids(job)],
         path=receipts_path,
     )
     out: list[dict[str, Any]] = []
@@ -660,7 +660,7 @@ def _media_items(
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
     for job in jobs:
-        receipt = receipts.get(str(job.get("request_id") or ""))
+        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
         if receipt is not None and not _receipt_in_scope(receipt, scope):
             continue
         if receipt is None and not _job_in_scope(job, scope):
@@ -789,6 +789,17 @@ def _media_items(
                 "source": source,
             })
     return sorted(out, key=lambda item: (int(item.get("created_at") or 0), str(item.get("asset_id") or "")), reverse=True)
+
+
+def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
+    """Receipt keys for a job: its request ID, then the request that created it.
+
+    A finished job's request ID is cleared when a new job takes it over (replay
+    release) or by prompt erasure. Seeded and idempotent image jobs use a derived
+    request ID. ``parent_request_id`` still names the creating request's receipt.
+    """
+    ids = [str(job.get("request_id") or ""), str(job.get("parent_request_id") or "")]
+    return [value for index, value in enumerate(ids) if value and value not in ids[:index]]
 
 
 def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[str, Mapping[str, Any]]:
@@ -1324,12 +1335,15 @@ def _usage_summary(
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
     for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
                                  status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
-        request_id = str(job.get("request_id") or "")
-        job_receipt = receipts_by_id.get(request_id)
-        if job_receipt is None and request_id:
-            job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+        job_receipt = None
+        for request_id in _job_receipt_ids(job):
+            job_receipt = receipts_by_id.get(request_id)
+            if job_receipt is None:
+                job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+                if job_receipt is not None:
+                    _annotate_receipt_source(job_receipt, sources, admin_db_path)
             if job_receipt is not None:
-                _annotate_receipt_source(job_receipt, sources, admin_db_path)
+                break
         if job_receipt is not None:
             if (
                 int(job_receipt.get("_stored_at") or 0) >= start

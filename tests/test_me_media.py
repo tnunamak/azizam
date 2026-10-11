@@ -530,6 +530,22 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(owner_usage.status_code, 200, owner_usage.text)
         self.assertEqual(owner_usage.json()["media_count"], 1)
 
+    def test_job_with_released_request_id_keeps_its_receipt_link(self) -> None:
+        # After a replay release (or erasure of a seeded ID) only the creating request's ID remains.
+        self._receipt(self.app_a["id"], "req_parent")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="", parent_request_id="req_parent", intent="image.generate",
+            status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
+        ), path=self.jobs_db)
+        assets = self.client.get("/me/api/media").json()["assets"]
+        self.assertEqual([item["asset_id"] for item in assets], ["img_" + "7" * 64])
+        self.assertEqual(assets[0]["model"], "local-image")
+        self.assertEqual(assets[0]["source"]["app_id"], self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["media_count"], 1)
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["media_count"], 0)
+
     def test_usage_job_fallback_excludes_previous_month_receipt_assets(self) -> None:
         now = datetime.now(timezone.utc)
         start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
