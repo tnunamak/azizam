@@ -694,10 +694,18 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertEqual(speech.status_code, 503, speech.text)
         self.assertEqual(speech.headers["retry-after"], "31")
-        self.assertEqual(speech.json()["error"]["message"], "tts reserved for operator")
+        speech_error = speech.json()["error"]
+        self.assertEqual(speech_error["code"], "resource_admission_denied")
+        self.assertEqual(speech_error["message"], "This service is not available right now.")
+        self.assertTrue(speech_error["decision"]["reasons"])
+        self.assertNotIn("tts reserved for operator", speech.text)
         self.assertEqual(transcription.status_code, 503, transcription.text)
         self.assertEqual(transcription.headers["retry-after"], "32")
-        self.assertEqual(transcription.json()["error"]["message"], "stt paused")
+        transcription_error = transcription.json()["error"]
+        self.assertEqual(transcription_error["code"], "resource_admission_denied")
+        self.assertEqual(transcription_error["message"], "This service is not available right now.")
+        self.assertTrue(transcription_error["decision"]["reasons"])
+        self.assertNotIn("stt paused", transcription.text)
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_full_openai_profile_allows_models_route(self) -> None:

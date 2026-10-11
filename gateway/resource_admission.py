@@ -72,6 +72,7 @@ class AdmissionConstraints:
     max_app_concurrency: Mapping[str, int] = field(default_factory=dict)
     retry_after: int | None = None
     reasons: tuple[str, ...] = ()
+    require_service_availability: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "disabled_intents", _clean_tokens(self.disabled_intents))
@@ -181,15 +182,15 @@ def advise_resource_admission(
     availability = CapacityFact("available", "service", service.available, service.observed_at, service.quality)
     facts.append(availability)
     facts.append(CapacityFact("degraded", "service", service.degraded, service.observed_at, service.quality))
-    if availability.value is None:
+    if constraints.require_service_availability and availability.value is None:
         record("service_unknown", "rejection", "service", ("service availability is not advertised",),
                service.observed_at, "unavailable")
         _append_retry_after(retry_after_values, service.retry_after)
-    elif not availability.value:
+    elif constraints.require_service_availability and not availability.value:
         record("service_unavailable", "rejection", "service", service.reasons or ("service unavailable",),
                service.observed_at, service.quality)
         _append_retry_after(retry_after_values, service.retry_after)
-    elif service.degraded:
+    elif constraints.require_service_availability and service.degraded:
         record("service_degraded", "delay", "service", service.reasons or ("service degraded",),
                service.observed_at, service.quality)
         _append_retry_after(retry_after_values, service.retry_after)

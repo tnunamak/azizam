@@ -319,6 +319,7 @@ _MEDIA_ADMISSION_FIELDS = frozenset(
         "disabled_resource_classes",
         "reserved_tokens",
         "max_queue_depth",
+        "max_app_concurrency",
         "retry_after_seconds",
     }
 )
@@ -1363,6 +1364,17 @@ def _validate_media_job_admission_overrides(
             max_queue_depth,
             field="max_queue_depth",
         )
+    app_limits = payload.get("max_app_concurrency", {})
+    if not isinstance(app_limits, Mapping) or any(
+        not isinstance(key, str) or not key.strip() for key in app_limits
+    ):
+        raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_operator_override",
+                          "max_app_concurrency must map app ids to non-negative integers")
+    app_limits = {key: _validate_retry_after(value, field="max_app_concurrency")
+                  for key, value in app_limits.items()}
+    if any(value is None for value in app_limits.values()):
+        raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_operator_override",
+                          "max_app_concurrency limits must be non-negative integers")
     return {
         "disabled_intents": _validate_string_list(
             payload.get("disabled_intents"),
@@ -1376,6 +1388,7 @@ def _validate_media_job_admission_overrides(
             payload.get("reserved_tokens"),
             field="reserved_tokens",
         ),
+        **({"max_app_concurrency": app_limits} if "max_app_concurrency" in payload else {}),
         "max_queue_depth": max_queue_depth,
         "retry_after_seconds": _validate_retry_after(
             payload.get("retry_after_seconds"),

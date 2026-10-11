@@ -36,6 +36,7 @@ def advise_route_admission(
     *,
     intent: str,
     service_available: bool | None = None,
+    require_service_availability: bool = True,
     service_degraded: bool = False,
     service_retry_after: int | None = None,
     service_reasons: tuple[str, ...] = (),
@@ -80,6 +81,7 @@ def advise_route_admission(
             reasons=estimate_reasons,
         ),
         AdmissionConstraints(
+            require_service_availability=require_service_availability,
             disabled_intents=disabled_intents,
             disabled_resource_classes=disabled_resource_classes,
             reserved_tokens=reserved_tokens,
@@ -106,6 +108,7 @@ def admission_http_response(
     denied_status: int = 503,
     audience: str = "client",
     wait_deadline: float | None = None,
+    protocol: str | None = None,
 ) -> RouteAdmissionHTTP:
     """Translate an admission decision into a response-ready HTTP shape."""
 
@@ -120,18 +123,16 @@ def admission_http_response(
         headers["Retry-After"] = str(decision.retry_after)
 
     if decision.outcome is AdmissionOutcome.DENIED:
-        return RouteAdmissionHTTP(
-            status_code=denied_status,
-            headers=headers,
-            body={
-                "error": {
-                    "code": "resource_admission_denied",
-                    "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
-                    "decision": projected,
-                },
-                "admission": admission,
+        body = {
+            "error": {
+                "code": "resource_admission_denied",
+                "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
+                "decision": projected,
             },
-        )
+            "admission": admission,
+        }
+        body = admission_protocol_body(body, protocol)
+        return RouteAdmissionHTTP(status_code=denied_status, headers=headers, body=body)
 
     status_code = degraded_status if decision.degraded else allowed_status
     return RouteAdmissionHTTP(
@@ -139,3 +140,18 @@ def admission_http_response(
         headers=headers,
         body={"admission": admission, "decision": projected},
     )
+
+
+def admission_protocol_body(body: dict, protocol: str | None) -> dict:
+    """Translate a projected gateway refusal; no policy or private facts here."""
+    body = {**body, "error": dict(body["error"])}
+    if protocol == "anthropic":
+        body["type"] = "error"
+        body["error"]["type"] = "overloaded_error"
+    elif protocol == "ollama":
+        body["decision"] = body["error"]["decision"]
+        body["code"] = body["error"]["code"]
+        body["error"] = body["error"]["message"]
+    elif protocol == "openai":
+        body["error"].update(type="service_unavailable", param=None)
+    return body

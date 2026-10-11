@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+import json
 import asyncio
 import math
 from collections.abc import Callable, Mapping
@@ -37,11 +38,13 @@ class DecisionRuntime:
     """Resolve, authorize and start configured services; expose observed placement."""
 
     def __init__(self, config: Callable[[], Mapping[str, Any]], authorize: Callable,
-                 ensure_ready: Callable, catalog_authorize: Callable | None = None):
+                 ensure_ready: Callable, catalog_authorize: Callable | None = None,
+                 admit: Callable | None = None):
         self.config = config
         self.authorize = authorize
         self.catalog_authorize = catalog_authorize or authorize
         self.ensure_ready = ensure_ready
+        self.admit = admit
         self.observed: dict[str, tuple[float, str | None]] = {}
 
     def available(self, _name: str, spec: Mapping[str, Any]) -> bool:
@@ -206,6 +209,13 @@ class DecisionRuntime:
             if readiness is not None:
                 fallbacks.append(f"{service_id}:unavailable")
                 continue
+            if self.admit is not None:
+                refusal = self.admit(auth, service_id)
+                if refusal is not None:
+                    return DecisionDispatchResult(
+                        json.loads(refusal.body), status_code=refusal.status_code,
+                        headers=dict(refusal.headers), backend=service_id,
+                    )
             spec = section.get(engine_id, {})
             forwarded = {**body, "model": spec.get("model") or resolved.upstream_model}
             try:

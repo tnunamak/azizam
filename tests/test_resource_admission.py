@@ -179,3 +179,14 @@ class ResourceAdmissionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_explicit_unconfigured_availability_constraint_keeps_unknown_fact():
+    decision = advise_resource_admission(
+        ServiceAvailability(), ResourceEstimate('chat.generate'),
+        AdmissionConstraints(require_service_availability=False),
+    )
+    assert decision.allowed
+    available = next(fact for fact in decision.details.facts if fact.name == 'available')
+    assert available.value is None and available.quality == 'unavailable'
+    assert advise_resource_admission(ServiceAvailability(), ResourceEstimate('chat.generate')).denied

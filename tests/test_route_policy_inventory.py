@@ -1548,3 +1548,53 @@ def test_rerank_discovery_uses_the_runtime_embedding_intent(gateway):
     response = gateway.client.get("/v1/models", headers=gateway.headers)
     assert response.status_code == 200
     assert "rerank" in {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize('gateway', ['discovery'], indirect=True)
+def test_resource_admission_route_inventory(gateway, monkeypatch):
+    """A new executable route must refuse before any model transport is reached.
+
+    Invalid/unsupported inputs are allowed to fail before admission. Successful
+    mutation routes require an explicit non-dispatch contract below; a new route
+    that silently returns generated output cannot inherit a blanket 2xx exemption.
+    The successful dispatch cases are exercised by test_dispatch_admission.py.
+    """
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {
+        'disabled_resource_classes': ['chat', 'embeddings', 'decision', 'image', 'audio', 'video', 'native'],
+    })
+    monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})
+    failures = []
+    for route, template, converters in _routes(proxy.app.routes):
+        if isinstance(route, WebSocketRoute):
+            continue  # The existing websocket inventory owns handshake coverage.
+        methods = set(getattr(route, 'methods', ())) & {'POST', 'PUT', 'PATCH'}
+        for method in sorted(methods):
+            gateway.calls.clear()
+            path = _concrete_path(template, converters)
+            kwargs = _request_kwargs(route, path, method, gateway)
+            try:
+                response = gateway.client.request(method, path, headers=gateway.headers, **kwargs)
+            except Exception as exc:
+                failures.append(f'{method} {template}: {type(exc).__name__}; calls={gateway.calls}')
+                continue
+            backend_calls = [call for call in gateway.calls if call not in {'health', 'model-state'}]
+            if backend_calls:
+                failures.append(f'{method} {template}: backend reached {backend_calls}')
+            if response.status_code < 400 and (method, template) not in _METADATA_CONTRACT:
+                # These wrappers report an inner refusal rather than changing their wire status.
+                body = response.json()
+                wrapped = (template == '/me/api/connection-test' and body.get('ok') is False)
+                if not wrapped:
+                    failures.append(f'{method} {template}: unexplained success {response.status_code}')
+    assert not failures, '\n'.join(failures)
+
+
+@pytest.mark.parametrize('gateway', ['discovery'], indirect=True)
+def test_resource_inventory_detects_a_new_route_without_admission(gateway, monkeypatch):
+    from fastapi.routing import APIRoute
+    async def unguarded():
+        return {'generated': 'unguarded output'}
+    route = APIRoute('/v1/inventory-unguarded-generation', unguarded, methods=['POST'])
+    monkeypatch.setattr(proxy.app.router, 'routes', [route, *proxy.app.router.routes])
+    with pytest.raises(AssertionError, match='inventory-unguarded-generation: unexplained success'):
+        test_resource_admission_route_inventory(gateway, monkeypatch)
