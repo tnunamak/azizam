@@ -82,18 +82,21 @@ def _has_success(receipts_path: Path) -> bool:
                             "AND parent_request_id IS NULL)").fetchone()[0] == 1
 
 
-def _external_client_evidence(receipts_path: Path) -> dict[str, Any]:
-    # Legacy receipts predate UI attribution; their app/LAN source is inferred.
-    # New UI tests carry gateway-ui, while internal hops never qualify.
+def _external_client_evidence(receipts_path: Path) -> tuple[dict[str, Any], bool]:
+    """Observed app or local-network use, and whether an older request might be.
+
+    Only a recorded source proves it: new UI tests carry gateway-ui and
+    internal hops never qualify. Legacy receipts predate source attribution,
+    so their origin is unknown and they cannot complete the step.
+    """
     with sqlite3.connect(f"file:{receipts_path}?mode=ro", uri=True) as conn:
-        row = conn.execute(
-            "SELECT MAX(created_at) FROM receipts WHERE status = 'succeeded' "
-            "AND parent_request_id IS NULL AND "
-            "COALESCE(json_extract(receipt_json, '$.source_kind'), "
-            "CASE WHEN app_id IS NULL THEN 'local-network' ELSE 'app' END) "
-            "IN ('app', 'local-network')"
+        observed, unattributed = conn.execute(
+            "SELECT MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IN ('app', 'local-network') "
+            "THEN created_at END), "
+            "MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IS NULL THEN created_at END) "
+            "FROM receipts WHERE status = 'succeeded' AND parent_request_id IS NULL"
         ).fetchone()
-    return {"recorded": row[0] is not None, "source": "receipt", "observed_at_s": row[0]}
+    return {"recorded": observed is not None, "source": "receipt", "observed_at_s": observed}, unattributed is not None
 
 
 def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
@@ -559,14 +562,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         )
         succeeded = _has_success(receipts_path())
         evidence = _setup_evidence(store.path, context.subject)
-        external_client = _external_client_evidence(receipts_path())
+        external_client, unattributed_use = _external_client_evidence(receipts_path())
         app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
         invited = _invitation_created(store.path)
         steps = [
             {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
             {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/ui/admin/services/"},
             {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/ui/home/#connect"},
-            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
+            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
             {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/ui/people/"},
         ]
         dismissed = "checklist_dismissed" in evidence

@@ -227,7 +227,7 @@ function buildMediaPath(filters: {
   search: string;
   owner: string;
   source: string;
-}) {
+}, everyoneByDefault: boolean) {
   const params = new URLSearchParams({ limit: "40" });
   if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
   if (filters.model !== "all") params.set("model", filters.model);
@@ -239,7 +239,10 @@ function buildMediaPath(filters: {
     );
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
-  if (filters.owner === "everyone") params.set("scope", "everyone");
+  // The API starts everyone on their own work, so the owner's default
+  // "Everyone" view asks for it.
+  if (filters.owner === "everyone" || (filters.owner === "default" && everyoneByDefault))
+    params.set("scope", "everyone");
   else if (filters.owner === "mine") params.set("scope", "me");
   else if (filters.owner !== "default") params.set("person", filters.owner);
   if (filters.source !== "all") params.set("source", filters.source);
@@ -1959,7 +1962,7 @@ export default function LibraryPage() {
   });
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
-  const mediaPath = buildMediaPath(filters);
+  const mediaPath = buildMediaPath(filters, canChooseOwner);
   const deepLinkedAssetId = searchParams?.get("asset") ?? "";
   function clearFilters() {
     setKind("all");

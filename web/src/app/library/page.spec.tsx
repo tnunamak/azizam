@@ -680,6 +680,24 @@ describe("Library honesty and access", () => {
     ).toBeVisible();
   });
 
+  test("9 asks for everyone's work explicitly in the owner's default view", async () => {
+    // The API starts every role on their own work (PF-183).
+    for (const [role, expected] of [["owner", "scope=everyone"], ["member", null]] as const) {
+      session.viewer = { role, name: "Alex" };
+      session.home = { receipts: [], user: { id: "alex" }, apps: [] };
+      const paths: string[] = [];
+      routeFetch((path) => {
+        if (path.startsWith("/me/api/media?")) paths.push(path);
+        return undefined;
+      });
+      const view = renderLibrary();
+      await waitFor(() => expect(paths.length).toBeGreaterThan(0));
+      if (expected) expect(paths[0]).toContain(expected);
+      else expect(paths[0]).not.toContain("scope=");
+      view.unmount();
+    }
+  });
+
   test("9a never leaves another person's results openable after the person filter changes", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     session.home = { receipts: [], user: { id: "alex" }, apps: [] };

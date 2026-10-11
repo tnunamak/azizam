@@ -343,7 +343,6 @@ class _MediaScope:
     user_ids: list[str] | None = None
     owner_keys: frozenset[str] | None = None
     audit_everyone: bool = False
-    owner_default: bool = False
 
 
 def _actor_from_request(
@@ -471,14 +470,17 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if person == "local-network":
             return _MediaScope(app_ids=None, person_id="local-network", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
-    if raw_scope is None and actor.owner:
-        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True, owner_default=True)
+    # Everyone starts with their own work; "everyone" is an explicit owner choice.
     scope = str(raw_scope or "me")
     if scope == "everyone":
         if not actor.owner:
             raise PublicFailure("owner_required", 403, param="scope")
         return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
     return _member_media_scope(actor.user_id, admin_db_path)
+
+
+def _scope_requested(request: Request) -> bool:
+    return any(request.query_params.get(name) for name in ("scope", "owner", "person"))
 
 
 def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None, viewer_person_id: str | None = None) -> _MediaScope:
@@ -546,7 +548,7 @@ def _list_media(
         "schema_version": 1,
         "authenticated": True,
         "scope": "everyone" if scope.app_ids is None else "me",
-        "default_scope": "owner_instance" if scope.owner_default else "explicit",
+        "default_scope": "explicit" if _scope_requested(request) else "self",
         "source": source_filter,
         "sources": sources,
         "assets": page,
@@ -696,7 +698,8 @@ def _media_items(
                 "media_type": media_type,
                 "size_bytes": int(path.stat().st_size) if path and path.exists() else None,
                 "created_at": created_at,
-                "updated_at": int(job.get("updated_at") or created_at),
+                "file_modified_at": _file_modified_at(path) if created_at is None else None,
+                "updated_at": job.get("updated_at") or created_at,
                 "job_id": job.get("job_id"),
                 "request_id": job.get("request_id"),
                 "status": job.get("status"),
@@ -748,6 +751,7 @@ def _media_items(
                 "media_type": asset_media_type_resolver(asset_id, path),
                 "size_bytes": int(path.stat().st_size),
                 "created_at": created_at,
+                "file_modified_at": _file_modified_at(path) if created_at is None else None,
                 "updated_at": int(metadata.get("updated_at") or path.stat().st_mtime),
                 "job_id": None,
                 "request_id": (receipt or embedded).get("request_id"),
@@ -926,6 +930,10 @@ def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
     return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
 
 
+# Nothing recorded where the request came from.
+_UNKNOWN_SOURCE = {"kind": "unknown", "label": "Source unknown", "profile": None, "client_hint": None}
+
+
 def _source_projection(
     receipt: Mapping[str, Any] | None,
     admin_db_path: Path,
@@ -982,12 +990,9 @@ def _source_projection(
                 "client_hint": None,
                 "recovered_from": "asset_owner_key",
             }
-        return {
-            "kind": "local-network",
-            "label": "Local network · no key",
-            "profile": profile,
-            "client_hint": None,
-        }
+        return dict(_UNKNOWN_SOURCE, profile=profile or None)
+    if not receipt.get("source_kind"):  # Older receipts did not record where a request came from.
+        return dict(_UNKNOWN_SOURCE, profile=profile or None)
     hint = _client_hint(receipt)
     base_label = str((receipt or {}).get("source_label") or "Local network · no key")
     return {
@@ -1067,21 +1072,14 @@ def _media_source_filter(request: Request, scope: _MediaScope) -> str | None:
 
 
 def _client_hint(receipt: Mapping[str, Any] | None) -> str | None:
-    for value in (
-        (receipt or {}).get("client_hint"),
-        _nested(receipt, "metadata", "client_hint"),
-        _nested(receipt, "metadata", "user_agent_hint"),
-        _nested(receipt, "metadata", "user_agent"),
-        (receipt or {}).get("api_key_name"),
-    ):
+    """The client name recorded with the request, if any.
+
+    Key names and raw user agents are not evidence of a client, so nothing is
+    guessed from them here.
+    """
+    for value in ((receipt or {}).get("client_hint"), _nested(receipt, "metadata", "client_hint")):
         if isinstance(value, str) and value.strip():
-            lower = value.lower()
-            if "sillytavern" in lower:
-                return "SillyTavern"
-            if "open webui" in lower or "open-webui" in lower:
-                return "Open WebUI"
-            if "daisy" in lower or "raspberry" in lower or " pi" in lower:
-                return "Daisy/pi"
+            return value.strip()
     return None
 
 
@@ -1104,7 +1102,7 @@ def _asset_kind(asset_id: str, asset: Mapping[str, Any]) -> str:
 def _asset_created_at(
     path: Path | None, job: Mapping[str, Any], receipt: Mapping[str, Any] | None,
     embedded: Mapping[str, Any] | None = None,
-) -> int:
+) -> int | None:
     recorded = (embedded or {}).get("created_at")
     if isinstance(recorded, str):
         try:
@@ -1116,7 +1114,11 @@ def _asset_created_at(
     accepted_ms = receipt.get("accepted_at_ms") if receipt else None
     if isinstance(accepted_ms, int):
         return accepted_ms // 1000
-    return int(path.stat().st_mtime) if path and path.exists() else 0
+    return None
+
+
+def _file_modified_at(path: Path | None) -> int | None:
+    return int(path.stat().st_mtime) if path is not None and path.exists() else None
 
 
 def _model_for_asset(asset: Mapping[str, Any], job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> str | None:
@@ -1145,7 +1147,7 @@ def _provenance(
     receipt: Mapping[str, Any] | None,
     embedded: Mapping[str, Any] | None = None,
     *,
-    created_at: int,
+    created_at: int | None,
     prompt: str | None = None,
 ) -> dict[str, Any]:
     embedded = embedded or {}
@@ -1179,12 +1181,14 @@ def _prompt_title(prompt: str | None) -> str | None:
     return first_line[:120] or None
 
 
-def _media_title(prompt: str | None, kind: str, created_at: int, source: Mapping[str, Any]) -> str:
+def _media_title(prompt: str | None, kind: str, created_at: int | None, source: Mapping[str, Any]) -> str:
     private = _prompt_title(prompt)
     if private:
         return private
     noun = {"image": "Picture", "audio": "Audio", "video": "Video"}.get(kind, "Item")
     maker = str(source.get("label") or "unknown maker")
+    if created_at is None:
+        return f"{noun} by {maker}"
     date = datetime.fromtimestamp(created_at).strftime("%b %-d at %-I:%M %p")
     return f"{noun} by {maker} · {date}"
 
@@ -1348,10 +1352,9 @@ def _usage_summary(
                 if receipt is not None and not _receipt_in_scope(receipt, media_scope):
                     continue
                 source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids)
-                if (
-                    _asset_created_at(path, {}, receipt, embedded) >= start
-                    and _source_matches_filter(source, source_filter)
-                ):
+                # A file without a recorded creation time counts by its file time.
+                made_at = _asset_created_at(path, {}, receipt, embedded) or _file_modified_at(path) or 0
+                if made_at >= start and _source_matches_filter(source, source_filter):
                     made.add(asset_id)
     receipt_list = []
     for internal in receipts[:USAGE_RECEIPT_LIMIT]:
@@ -1369,9 +1372,11 @@ def _usage_summary(
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
     retention_days = receipt_store.retention_days(admin_db_path)
     coverage_start = max(start, receipt_store.history_floor(receipts_path))
-    coverage_note = "Requests cover retained receipts; media totals also include retained assets."
-    if coverage_start > start:
-        coverage_note = "Partial receipt history for this month. " + coverage_note
+    aggregate_complete = coverage_start <= start
+    coverage_note = ("Request totals include saved activity only. "
+                     "Creation totals also include files still in your Library.")
+    if not aggregate_complete:
+        coverage_note = "This month is partial; earlier activity isn't included. " + coverage_note
     return {
         "schema_version": 1, "period": "month", "scope": scope_label,
         "source": source_filter, "sources": sources,
@@ -1379,13 +1384,15 @@ def _usage_summary(
         "failed_requests": failed_requests if outcomes_known else None,
         "remote_spend": round(spend, 6), "remote_spend_available": measured > 0,
         "remote_spend_source": "receipt costs" if measured else "not_available",
-        "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
+        "remote_spend_coverage": "This total includes recorded request costs only; other charges may be missing.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
         "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": coverage_note,
         "truncated": False, "receipts_limit": USAGE_RECEIPT_LIMIT,
+        "aggregate_complete": aggregate_complete,
+        "receipt_list_has_more": len(receipts) > USAGE_RECEIPT_LIMIT,
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
@@ -1395,9 +1402,7 @@ def _usage_summary(
 
 def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tuple[list[str] | None, str, list[str] | None]:
     person = request.query_params.get("person")
-    if not person:
-        if actor.owner:
-            return None, "everyone", None
+    if not person:  # Owners too: "Everyone" is an explicit choice.
         return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if not actor.owner:
         raise PublicFailure("owner_required", 403, param="person")
@@ -1413,7 +1418,7 @@ def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tu
 def _usage_people(actor: _Actor, admin_db_path: Path) -> list[dict[str, str]]:
     people = [
         {"id": "all", "label": "Everyone"},
-        {"id": "self", "label": "Your apps"},
+        {"id": "self", "label": "You"},
         {"id": "local-network", "label": "Local network · no key"},
     ]
     for user in admin_store.list_users(path=admin_db_path):

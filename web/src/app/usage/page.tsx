@@ -410,7 +410,7 @@ function PersonFilter({
         <SelectContent>
           {[
             { id: "all", label: "Everyone" },
-            { id: "self", label: "Your apps" },
+            { id: "self", label: "You" },
             ...people.filter((item) => !["all", "self"].includes(item.id)),
           ].map((item) => (
             <SelectItem key={item.id} value={item.id}>
