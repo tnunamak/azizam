@@ -3,10 +3,29 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { EmptyOperationalState, IncidentBanner } from "@/components/ui";
+import { StatusIcon } from "@/components/ui/icons";
 
 afterEach(cleanup);
 
 describe("shared operational primitives", () => {
+  it.each([
+    ["ok", "text-success"],
+    ["warn", "text-warning"],
+    ["bad", "text-danger"],
+    ["info", "text-info"],
+    ["neutral", "text-muted-foreground"],
+  ] as const)("renders the explicit %s StatusIcon colour class", (tone, colourClass) => {
+    render(<StatusIcon tone={tone} label="Engine state" className="fixture" />);
+    expect(screen.getByRole("img", { name: "Engine state" })).toHaveClass(
+      "vf-status-icon",
+      `vf-status-icon-${tone}`,
+      "size-[1em]",
+      "flex-none",
+      colourClass,
+      "fixture",
+    );
+  });
+
   it.each(["warn", "bad", "info"] as const)(
     "preserves the %s incident role, content and tone",
     (tone) => {
@@ -22,6 +41,7 @@ describe("shared operational primitives", () => {
       expect(banner).toHaveClass(
         "vf-incident-banner",
         `vf-incident-banner-${tone}`,
+        "bg-transparent",
         "fixture",
       );
       expect(screen.getByText("Engine unavailable")).toHaveClass(
@@ -76,7 +96,12 @@ describe("shared operational primitives", () => {
       expect(title).toHaveClass("vf-empty-operational-title");
       expect(title.parentElement).toHaveClass("vf-empty-operational", "fixture");
       if (tone !== "neutral") expect(title).toHaveClass(`text-vf-${tone}`);
-      else expect(title.className).toBe("vf-empty-operational-title");
+      else {
+        expect(title).toHaveClass("vf-empty-operational-title", "text-foreground");
+        for (const toneClass of ["text-vf-warn", "text-vf-bad", "text-vf-info"]) {
+          expect(title).not.toHaveClass(toneClass);
+        }
+      }
       expect(screen.getByText("Add an engine to start.")).toHaveClass(
         "vf-empty-operational-body",
       );
@@ -87,8 +112,8 @@ describe("shared operational primitives", () => {
 
   it("keeps a neutral empty state minimal when optional content is absent", () => {
     const { container } = render(<EmptyOperationalState title="No engines" />);
-    expect(screen.getByText("No engines").className).toBe(
-      "vf-empty-operational-title",
+    expect(screen.getByText("No engines")).toHaveClass(
+      "vf-empty-operational-title", "text-foreground",
     );
     expect(container.querySelector(".vf-empty-operational-body")).toBeNull();
     expect(container.querySelector(".vf-empty-operational-actions")).toBeNull();

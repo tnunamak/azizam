@@ -147,8 +147,16 @@ export function MenuIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+const statusIconToneClasses: Record<StatusIconTone, string> = {
+  ok: "vf-status-icon-ok text-success",
+  warn: "vf-status-icon-warn text-warning",
+  bad: "vf-status-icon-bad text-danger",
+  info: "vf-status-icon-info text-info",
+  neutral: "vf-status-icon-neutral text-muted-foreground",
+};
+
 /** Generic operational-state glyph. Pair it with visible state text whenever
- * it communicates meaning; the tone class is token-derived in brand CSS. */
+ * it communicates meaning; each explicit tone class uses the current theme tokens. */
 export function StatusIcon({
   tone = "neutral",
   label,
@@ -159,7 +167,7 @@ export function StatusIcon({
     <svg
       {...base({
         ...props,
-        className: `vf-status-icon vf-status-icon-${tone}${className ? ` ${className}` : ""}`,
+        className: `vf-status-icon size-[1em] flex-none ${statusIconToneClasses[tone]}${className ? ` ${className}` : ""}`,
         "aria-hidden": label ? undefined : true,
         "aria-label": label,
         role: label ? "img" : undefined,

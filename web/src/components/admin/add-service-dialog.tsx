@@ -286,7 +286,7 @@ export function AddServiceDialogContent({
                 ref={errorSummaryRef}
                 role="alert"
                 tabIndex={-1}
-                className="text-vf-small text-vf-bad"
+                className="text-[length:var(--text-sm)] text-danger"
               >
                 {formError}
               </p>
@@ -362,7 +362,7 @@ export function AddServiceDialogContent({
               Test connection
             </Button>
             {probe && (
-              <div className="rounded-vf-md flex items-center gap-2 border px-3 py-2 text-sm">
+              <div className="rounded-[var(--radius)] flex items-center gap-2 border px-3 py-2 text-sm">
                 <span>
                   {probe.ok
                     ? `Connected (HTTP ${probe.status ?? "ok"}) — ${probe.url}`
