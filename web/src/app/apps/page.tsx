@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { ListCard, ListRow } from "@/components/product/list-card";
 import {
   Select,
@@ -61,6 +62,7 @@ const CLIENTS = [
 ];
 type Reveal = {
   secret: string;
+  appId: string;
   app: string;
   client: string;
   oldIds: string[];
@@ -71,6 +73,45 @@ type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
 
 function accessPlanSummary(app: AccountApp): string {
   return app.profile?.name ?? "";
+}
+
+/** Why this app cannot get a key. The API sends only the boolean, so the
+ * reason comes from the fields that set it (gateway/user_runtime.py). */
+function mintBlockedReason(app: AccountApp): string {
+  if (app.disabled_at) return "This app is turned off, so it can't get keys.";
+  if (app.profile?.missing)
+    return "This app's access plan was removed. Ask the owner to choose one.";
+  return "You can't create keys for this app. Ask the owner to update its access.";
+}
+
+// A rotation whose old keys could not all be revoked. The new key is already
+// saved, so the member may finish later; the old key ids (never secrets) are
+// kept until revoked, across reloads.
+const unfinishedRotationsKey = "azizam:unfinished-key-rotations";
+type UnfinishedRotations = Record<string, string[]>;
+
+function readUnfinishedRotations(): UnfinishedRotations {
+  if (typeof window === "undefined") return {};
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(unfinishedRotationsKey) ?? "{}",
+    );
+    return value && typeof value === "object"
+      ? (value as UnfinishedRotations)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeUnfinishedRotations(value: UnfinishedRotations) {
+  const entries = Object.entries(value).filter(([, ids]) => ids.length);
+  if (entries.length)
+    window.localStorage.setItem(
+      unfinishedRotationsKey,
+      JSON.stringify(Object.fromEntries(entries)),
+    );
+  else window.localStorage.removeItem(unfinishedRotationsKey);
 }
 
 function AppsContents() {
@@ -96,6 +137,11 @@ function AppsContents() {
   const [name, setName] = useState("");
   const [client, setClient] = useState(CLIENTS[0]);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
+  // True only when this dialog created the app, so a key failure on an
+  // existing app does not claim the app was just created.
+  const [appIsNew, setAppIsNew] = useState(false);
+  const [mintingAppId, setMintingAppId] = useState<string | null>(null);
+  const [unfinished, setUnfinished] = useState<UnfinishedRotations>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
@@ -119,6 +165,18 @@ function AppsContents() {
     }
   }, [createFromCommand, accountData?.authenticated]);
 
+  useEffect(() => setUnfinished(readUnfinishedRotations()), []);
+
+  function updateUnfinished(
+    change: (current: UnfinishedRotations) => UnfinishedRotations,
+  ) {
+    setUnfinished((current) => {
+      const next = change(current);
+      writeUnfinishedRotations(next);
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (!requestedApp || !accountData) return;
     document.getElementById(`app-${requestedApp}`)?.focus();
@@ -128,6 +186,7 @@ function AppsContents() {
     setName("");
     setClient(CLIENTS[0]);
     setCreatedApp(null);
+    setAppIsNew(false);
     setError(null);
   }
 
@@ -149,6 +208,7 @@ function AppsContents() {
       const app = createdApp ?? (await accountApi.createApp(name.trim()));
       setCreatedApp(app);
       if (!createdApp) {
+        setAppIsNew(true);
         queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
           current
             ? {
@@ -169,6 +229,7 @@ function AppsContents() {
       );
       setReveal({
         secret: key.api_key,
+        appId: app.id,
         app: appName,
         client,
         oldIds: [],
@@ -177,6 +238,7 @@ function AppsContents() {
       setSaved(false);
       setCreating(false);
       setCreatedApp(null);
+      setAppIsNew(false);
       setName("");
       await refresh();
     } catch (err) {
@@ -204,6 +266,7 @@ function AppsContents() {
         );
         setReveal({
           secret: key.api_key,
+          appId: action.app.id,
           app: appName,
           client: "Other app",
           oldIds: ids,
@@ -268,13 +331,68 @@ function AppsContents() {
       setReveal(null);
       await refresh();
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "The new key is saved, but an old key could not be revoked. Try again.",
-      );
+      setError(err instanceof Error ? err.message : null);
       await refresh();
     } finally {
+      setBusy(false);
+    }
+  }
+
+  // Close the key dialog with old keys still active; the app row keeps a
+  // notice and a "Revoke old keys" action until they are gone.
+  function finishLater() {
+    if (!reveal) return;
+    const { appId, oldIds } = reveal;
+    updateUnfinished((current) => ({ ...current, [appId]: oldIds }));
+    setReveal(null);
+    setError(null);
+  }
+
+  async function revokeUnfinished(appId: string, ids: string[]) {
+    setBusy(true);
+    try {
+      for (const id of ids) {
+        await accountApi.revokeKey(id);
+        updateUnfinished((current) => ({
+          ...current,
+          [appId]: (current[appId] ?? []).filter((oldId) => oldId !== id),
+        }));
+      }
+      toast.success("Old keys revoked");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Old keys could not be revoked. Try again.",
+      );
+    } finally {
+      await refresh();
+      setBusy(false);
+    }
+  }
+
+  async function mintFromMenu(app: AccountApp, appName: string) {
+    setBusy(true);
+    setMintingAppId(app.id);
+    setError(null);
+    try {
+      const key = await accountApi.mintKey(app.id, appName);
+      setSaved(false);
+      setReveal({
+        secret: key.api_key,
+        appId: app.id,
+        app: appName,
+        client: "Other app",
+        oldIds: [],
+        note: keyPromptNote(key.prompt_memory),
+      });
+      await refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "The key could not be created. Try again.",
+      );
+    } finally {
+      setMintingAppId(null);
       setBusy(false);
     }
   }
@@ -286,6 +404,11 @@ function AppsContents() {
   const actionDescription = action
     ? [
         accessPlanSummary(action.app),
+        action.kind === "rotate" &&
+        action.app.kind === "personal" &&
+        action.app.credentials.some((key) => key.created_by === null)
+          ? "A new key saves your prompts"
+          : null,
         action.kind === "rotate"
           ? "Save the replacement key first. Old keys stop after you confirm."
           : action.kind === "remove"
@@ -307,16 +430,6 @@ function AppsContents() {
           </Button>
         }
       />
-      {apps.some(
-        (app) =>
-          app.kind === "personal" &&
-          app.credentials.some((credential) => credential.created_by === null),
-      ) ? (
-        <p className="text-muted-foreground text-meta">
-          Older keys with no recorded creator keep working, but no longer save
-          media prompts. Create a new key to use your prompt settings.
-        </p>
-      ) : null}
       {accountPending ? (
         <div
           role="status"
@@ -361,6 +474,20 @@ function AppsContents() {
                   : latest,
               null,
             );
+            const activeIds = new Set(app.credentials.map((key) => key.id));
+            // Old keys from a rotation finished later, still active.
+            const oldKeys = (unfinished[app.id] ?? []).filter((id) =>
+              activeIds.has(id),
+            );
+            // Keys with no recorded creator still work but cannot save the
+            // member's prompts; only a personal app's key acts as its member.
+            const needsNewKey =
+              app.kind === "personal" &&
+              app.credentials.some((key) => key.created_by === null);
+            const blockedReason = app.can_mint_keys
+              ? null
+              : mintBlockedReason(app);
+            const minting = mintingAppId === app.id;
             return (
               <ListRow
                 key={app.id}
@@ -375,10 +502,25 @@ function AppsContents() {
                 titleAs="h2"
                 leading={<AppWindow aria-hidden="true" />}
                 title={appName}
+                // A notice leads the line, so a phone's trailing action
+                // cuts the key count, not the notice.
                 meta={[
+                  oldKeys.length
+                    ? "Old keys still work"
+                    : needsNewKey && app.can_mint_keys
+                      ? "Needs a new key"
+                      : null,
+                  blockedReason ? "Can't create keys" : null,
                   `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
                   accessPlanSummary(app) || null,
                 ]}
+                metaTitle={
+                  oldKeys.length
+                    ? "Your new key is saved. Some old keys still work."
+                    : needsNewKey && app.can_mint_keys
+                      ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
+                      : (blockedReason ?? undefined)
+                }
                 facts={[
                   lastUsed !== null ? (
                     <span key="used">
@@ -388,10 +530,26 @@ function AppsContents() {
                 ]}
                 trailing={
                   <>
-                    {!app.credentials.length && (
+                    {minting ? (
+                      <span
+                        role="status"
+                        className="text-muted-foreground text-meta inline-flex items-center gap-2"
+                      >
+                        <Spinner />
+                        Creating key…
+                      </span>
+                    ) : oldKeys.length ? (
                       <Button
                         variant="outline"
-                        disabled={!app.can_mint_keys || busy}
+                        disabled={busy}
+                        onClick={() => void revokeUnfinished(app.id, oldKeys)}
+                      >
+                        Revoke old keys
+                      </Button>
+                    ) : !app.credentials.length && app.can_mint_keys ? (
+                      <Button
+                        variant="outline"
+                        disabled={busy}
                         onClick={() => {
                           resetDraft();
                           setCreatedApp(app);
@@ -401,7 +559,18 @@ function AppsContents() {
                       >
                         Create key
                       </Button>
-                    )}
+                    ) : needsNewKey && app.can_mint_keys ? (
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => {
+                          setAction({ kind: "rotate", app });
+                          setError(null);
+                        }}
+                      >
+                        Replace key
+                      </Button>
+                    ) : null}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -413,35 +582,14 @@ function AppsContents() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        {blockedReason && (
+                          <p className="text-muted-foreground text-meta max-w-64 px-2 py-1.5">
+                            {blockedReason}
+                          </p>
+                        )}
                         <DropdownMenuItem
                           disabled={!app.can_mint_keys || busy}
-                          onSelect={async () => {
-                            setBusy(true);
-                            setError(null);
-                            try {
-                              const key = await accountApi.mintKey(
-                                app.id,
-                                appName,
-                              );
-                              setSaved(false);
-                              setReveal({
-                                secret: key.api_key,
-                                app: appName,
-                                client: "Other app",
-                                oldIds: [],
-                                note: keyPromptNote(key.prompt_memory),
-                              });
-                              await refresh();
-                            } catch (err) {
-                              toast.error(
-                                err instanceof Error
-                                  ? err.message
-                                  : "Could not create key",
-                              );
-                            } finally {
-                              setBusy(false);
-                            }
-                          }}
+                          onSelect={() => void mintFromMenu(app, appName)}
                         >
                           {app.credentials.length
                             ? "Create another key"
@@ -534,7 +682,7 @@ function AppsContents() {
             </div>
             {error && (
               <p role="alert" className="text-destructive text-meta">
-                {createdApp
+                {appIsNew
                   ? "Your app was created, but its key could not be created. Retry to finish. "
                   : ""}
                 {error}
@@ -694,17 +842,20 @@ console.log(await client.models.list());`,
                   />
                 </div>
               </details>
-              {error && (
+              {saved && !busy && reveal.oldIds.length > 0 && (
                 <div role="alert">
-                  <p className="text-destructive text-meta">{error}</p>
-                  <Button
-                    className="mt-3"
-                    size="md"
-                    disabled={busy}
-                    onClick={() => void saveKey()}
-                  >
-                    Retry revoking old keys
-                  </Button>
+                  <p className="text-destructive text-meta">
+                    Your new key is saved. Some old keys still work.
+                    {error ? ` ${error}` : ""}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="md" onClick={() => void saveKey()}>
+                      Retry revoking old keys
+                    </Button>
+                    <Button size="md" variant="outline" onClick={finishLater}>
+                      Finish later
+                    </Button>
+                  </div>
                 </div>
               )}
               {saved && busy && (

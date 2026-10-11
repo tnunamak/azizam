@@ -4,11 +4,12 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AppsPage from "./page";
-import type { Credential } from "@/lib/api";
+import type { Credential, MintedCredential } from "@/lib/api";
 import {
   accountApi,
   type AccountApp,
@@ -24,6 +25,7 @@ vi.mock("@/lib/account-api", () => ({
     discovery: vi.fn(),
     createApp: vi.fn(),
     mintKey: vi.fn(),
+    revokeKey: vi.fn(),
   },
 }));
 
@@ -51,7 +53,10 @@ beforeEach(() => {
     .mockReset()
     .mockRejectedValue(new Error("Key creation failed"));
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 function renderApps() {
   const client = new QueryClient({
@@ -64,7 +69,29 @@ function renderApps() {
   );
 }
 
-it("shows one prompt memory notice for legacy keys without a creator", async () => {
+const mintedKey: MintedCredential = {
+  id: "new-key",
+  subject_kind: "app",
+  subject_id: app.id,
+  app_id: app.id,
+  profile_id: null,
+  prefix: "test",
+  display_name: "My laptop",
+  scopes: [],
+  created_at: 1800000000,
+  expires_at: null,
+  revoked_at: null,
+  last_used_at: null,
+  api_key: "test-key-only",
+};
+
+function openMenu(appName: string) {
+  const trigger = screen.getByRole("button", { name: `Actions for ${appName}` });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter" });
+}
+
+it("marks only the personal app whose key has no recorded creator, with a Replace action", async () => {
   const oldKey = {
     id: "old-key",
     created_by: null,
@@ -78,15 +105,33 @@ it("shows one prompt memory notice for legacy keys without a creator", async () 
         kind: "personal",
         credentials: [oldKey, { ...oldKey, id: "second-key" }],
       },
+      {
+        ...app,
+        id: "fresh-app",
+        name: "Phone",
+        kind: "personal",
+        credentials: [{ ...oldKey, id: "fresh-key", created_by: "member" }],
+      },
     ],
   });
   renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.getByText(/Needs a new key/)).toBeVisible();
+  const fresh = within(
+    screen.getByRole("heading", { name: "Phone" }).closest("li")!,
+  );
+  expect(fresh.queryByText(/Needs a new key/)).toBeNull();
+  expect(fresh.queryByRole("button", { name: "Replace key" })).toBeNull();
+  expect(screen.queryByText(/Older keys with no recorded creator/)).toBeNull();
+  fireEvent.click(row.getByRole("button", { name: "Replace key" }));
   expect(
-    await screen.findAllByText(/Older keys with no recorded creator/),
-  ).toHaveLength(1);
+    screen.getByRole("heading", { name: "Rotate keys for My laptop?" }),
+  ).toBeVisible();
 });
 
-it("does not advise household app owners to create a key for personal prompt settings", async () => {
+it("does not mark household app keys that lack a creator", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
     apps: [
@@ -98,7 +143,131 @@ it("does not advise household app owners to create a key for personal prompt set
   });
   renderApps();
   await screen.findByRole("heading", { name: "My laptop" });
-  expect(screen.queryByText(/Older keys with no recorded creator/)).toBeNull();
+  expect(screen.queryByText(/Needs a new key/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Replace key" })).toBeNull();
+});
+
+it("lets a member finish a failed rotation later and keeps a notice until old keys are revoked", async () => {
+  const withKey = {
+    ...app,
+    credentials: [{ id: "old-key", created_by: "member" } as Credential],
+  };
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [withKey],
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  vi.mocked(accountApi.revokeKey)
+    .mockReset()
+    .mockRejectedValueOnce(new Error("The gateway did not answer."));
+  renderApps();
+  await screen.findByRole("heading", { name: "My laptop" });
+  openMenu("My laptop");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Rotate keys" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create replacement key" }));
+  fireEvent.click(await screen.findByRole("button", { name: /saved/i }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your new key is saved. Some old keys still work. The gateway did not answer.",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const row = within(
+    screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
+  );
+  expect(row.getByText(/Old keys still work/)).toBeVisible();
+  expect(localStorage.getItem("azizam:unfinished-key-rotations")).toBe(
+    JSON.stringify({ [app.id]: ["old-key"] }),
+  );
+  vi.mocked(accountApi.revokeKey).mockResolvedValue({} as never);
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...withKey, credentials: [] }],
+  });
+  fireEvent.click(row.getByRole("button", { name: "Revoke old keys" }));
+  await waitFor(() =>
+    expect(row.queryByText(/Old keys still work/)).toBeNull(),
+  );
+  expect(accountApi.revokeKey).toHaveBeenLastCalledWith("old-key");
+  expect(localStorage.getItem("azizam:unfinished-key-rotations")).toBeNull();
+});
+
+it("does not claim an existing keyless app was just created when its key fails", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [app] });
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  fireEvent.click(row.getByRole("button", { name: "Create key" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Create key",
+    }),
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Key creation failed");
+  expect(alert).not.toHaveTextContent("Your app was created");
+});
+
+it("says why keys cannot be created for an app", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        can_mint_keys: false,
+        profile: { name: "Gone", missing: true },
+      },
+    ],
+  });
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.getByText(/Can't create keys/)).toBeVisible();
+  expect(row.queryByRole("button", { name: "Create key" })).toBeNull();
+  openMenu("My laptop");
+  expect(
+    await screen.findByText(
+      "This app's access plan was removed. Ask the owner to choose one.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("menuitem", { name: "Create key" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+it("shows a row-level wait while a key is created from the menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      {
+        ...app,
+        credentials: [{ id: "old-key", created_by: "member" } as Credential],
+      },
+    ],
+  });
+  let finish!: (value: MintedCredential) => void;
+  vi.mocked(accountApi.mintKey).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  renderApps();
+  await screen.findByRole("heading", { name: "My laptop" });
+  openMenu("My laptop");
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Create another key" }),
+  );
+  const row = within(
+    screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
+  );
+  expect(await row.findByRole("status")).toHaveTextContent("Creating key…");
+  finish(mintedKey);
+  expect(
+    await screen.findByRole("heading", { name: "Connect My laptop" }),
+  ).toBeVisible();
+  expect(row.queryByRole("status")).toBeNull();
 });
 
 it("refreshes a partially created app, clears the cancelled draft, and resumes key creation", async () => {
