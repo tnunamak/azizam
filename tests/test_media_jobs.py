@@ -404,22 +404,17 @@ class TestRecentAndPrune(_StoreCase):
         media_jobs.create(_make_job(request_id="rz"), path=self.db)
         self.assertEqual(media_jobs.recent(limit=0, path=self.db), [])
 
-    def test_prune_removes_old_jobs_and_events(self) -> None:
-        old = media_jobs.create(_make_job(request_id="r_old"), path=self.db)
-        media_jobs.append_event(old.job_id, "x", {"progress": 1}, path=self.db)
-        # Force the row to look old.
+    def test_restart_keeps_old_jobs_and_events_in_every_state(self) -> None:
+        for status in ALL_STATUSES:
+            job = media_jobs.create(_make_job(request_id=status, status=status), path=self.db)
+            media_jobs.append_event(job.job_id, "x", {"progress": 1}, path=self.db)
         with media_jobs._conn(self.db) as conn:
-            conn.execute(
-                "UPDATE media_jobs SET updated_at = ? WHERE job_id = ?",
-                (int(time.time()) - 999_999, old.job_id),
-            )
+            conn.execute("UPDATE media_jobs SET updated_at = 1, created_at = 1")
             conn.commit()
-        fresh = media_jobs.create(_make_job(request_id="r_new"), path=self.db)
-        result = media_jobs.prune(retain_s=60, path=self.db)
-        self.assertEqual(result["jobs"], 1)
-        self.assertGreaterEqual(result["events"], 1)
-        self.assertIsNone(media_jobs.get(old.job_id, path=self.db))
-        self.assertIsNotNone(media_jobs.get(fresh.job_id, path=self.db))
+        media_jobs.init_db(self.db)
+        self.assertEqual(media_jobs.count(self.db), len(ALL_STATUSES))
+        for job in media_jobs.recent(path=self.db, audience="internal"):
+            self.assertEqual(len(media_jobs.events(job["job_id"], path=self.db)), 1)
 
 
 class TestStoreSafety(_StoreCase):

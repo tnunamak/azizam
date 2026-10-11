@@ -80,17 +80,16 @@ class MigrationTests(unittest.TestCase):
         media_jobs.init_db(self.db)  # must not raise a schema-version mismatch
         self.assertIn("p1", video_job_records.load_all(path=self.db))
 
-    def test_save_load_remove_prune_roundtrip(self) -> None:
+    def test_save_load_remove_keeps_unrelated_old_records(self) -> None:
         now = int(time.time())
         video_job_records.save("new", {"created_at": now, "prompt": "pé", "deleted_at": None}, path=self.db)
         video_job_records.save("old", {"created_at": now - 1000}, path=self.db)
         loaded = video_job_records.load_all(path=self.db)
         self.assertNotIn("prompt", loaded["new"])
         self.assertNotIn("pé", self.db.read_bytes().decode("utf-8", errors="ignore"))
-        self.assertEqual(video_job_records.prune(500, path=self.db), 1)
-        self.assertEqual(set(video_job_records.load_all(path=self.db)), {"new"})
+        self.assertEqual(set(video_job_records.load_all(path=self.db)), {"new", "old"})
         video_job_records.remove("new", path=self.db)
-        self.assertEqual(video_job_records.load_all(path=self.db), {})
+        self.assertEqual(set(video_job_records.load_all(path=self.db)), {"old"})
 
 
 class OwnershipAfterRestartTests(VideoRegistryTestCase):
@@ -218,13 +217,15 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
         self._restart()
         self.assertEqual(proxy._unfinished_openai_video_jobs(), 0)
 
-    def test_gc_removes_expired_rows_from_the_store(self) -> None:
-        old = int(time.time()) - proxy._VIDEO_JOB_RECORD_RETAIN - 10
+    def test_gc_and_restart_keep_old_records(self) -> None:
+        old = 1
         proxy._video_job_records["p1"] = self._record(created_at=old)
         proxy._persist_video_record("p1")
         proxy._gc_video_job_records_locked(time.time())
-        self.assertNotIn("p1", proxy._video_job_records)
-        self.assertEqual(video_job_records.load_all(path=media_jobs.DB_PATH), {})
+        self.assertIn("p1", proxy._video_job_records)
+        self._restart()
+        self.assertIn("p1", proxy._video_job_records)
+        self.assertIn("p1", video_job_records.load_all(path=media_jobs.DB_PATH))
 
 
 if __name__ == "__main__":

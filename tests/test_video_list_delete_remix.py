@@ -693,11 +693,11 @@ class TestVideoJobRecordGC(VideoRegistryTestCase):
         proxy._gc_video_job_records_locked(now)
         self.assertIn("p1", proxy._video_job_records)
 
-    def test_completed_job_is_reaped_after_the_full_ttl(self) -> None:
+    def test_completed_job_survives_indefinitely(self) -> None:
         self._seed("p1", created_at=1000, completed_at=1000)
-        now = 1000 + proxy._VIDEO_JOB_RECORD_RETAIN + 1
+        now = 1000 + 100 * 365 * 86400
         proxy._gc_video_job_records_locked(now)
-        self.assertNotIn("p1", proxy._video_job_records)
+        self.assertIn("p1", proxy._video_job_records)
 
     def test_tombstone_is_retained_briefly_then_reaped(self) -> None:
         self._seed("p1", created_at=1000, completed_at=1000, deleted_at=1000)

@@ -9427,7 +9427,6 @@ def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool
 
 # Persisted records are kept this long. ComfyUI's /history is the bytes' source
 # of truth; this only needs to outlive typical client use of a video id.
-_VIDEO_JOB_RECORD_RETAIN = 14 * 24 * 3600
 
 
 def _persist_video_record(prompt_id: str) -> None:
@@ -9452,7 +9451,6 @@ def _forget_video_record_row(prompt_id: str) -> None:
 def _hydrate_video_job_records() -> int:
     """Load persisted records into `_video_job_records` (startup)."""
     try:
-        video_job_records.prune(_VIDEO_JOB_RECORD_RETAIN, path=media_jobs.DB_PATH)
         loaded = video_job_records.load_all(path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] video record hydrate failed: {type(exc).__name__}: {exc}", flush=True)
@@ -9708,23 +9706,9 @@ _VIDEO_JOB_RECORD_DELETED_RETAIN = 5 * 60
 
 
 def _gc_video_job_records_locked(now: float) -> None:
-    """Reap `_video_job_records` on its OWN retention, independent of
-    `_video_progress`/`_video_workflows`'s sweep.
+    """Forget explicitly deleted video records after the polling grace period.
 
-    This used to piggyback on `_video_progress`'s own GC (reaping whenever
-    THAT dict's entries aged out), which is the root cause of a real bug:
-    `_video_progress`'s terminal-entry sweep runs on a much shorter window
-    (`_VIDEO_RECONCILE_RETAIN`, 5 minutes) than its own full-entry sweep
-    (`_VIDEO_PROGRESS_TTL`, 6 hours) -- so a completed job's list/delete-
-    facing record vanished 5 minutes after completion while status/content
-    (which read ComfyUI's own /history directly, on its own, much longer
-    retention) kept serving it. `_video_job_records` is the one place list,
-    delete, get, and content all agree on for "does this job exist" (see its
-    own docstring), so it needs one independent retention rule, not
-    borrowed side effects of a dict that happens to get cleaned up by
-    unrelated code.
-
-    Caller must hold `_video_progress_lock`.
+    Caller must hold `_video_progress_lock`. Other records have no expiry.
     """
     drop: list[str] = []
     for pid, rec in _video_job_records.items():
@@ -9733,9 +9717,6 @@ def _gc_video_job_records_locked(now: float) -> None:
             if now - deleted_at > _VIDEO_JOB_RECORD_DELETED_RETAIN:
                 drop.append(pid)
             continue
-        created_at = rec.get("created_at") or 0
-        if now - created_at > _VIDEO_JOB_RECORD_RETAIN:
-            drop.append(pid)
     for pid in drop:
         _video_job_records.pop(pid, None)
         _forget_video_record_row(pid)
@@ -13135,12 +13116,10 @@ async def lifespan(app: FastAPI):
 
     try:
         media_jobs.init_db()
-        pruned = media_jobs.prune()
         _fail_orphaned_identity_jobs()
         print(f"[proxy] Hydrated {_hydrate_video_job_records()} persisted video job record(s)", flush=True)
         print(
-            f"[proxy] Media job store initialized (db={media_jobs.DB_PATH}, "
-            f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
+            f"[proxy] Media job store initialized (db={media_jobs.DB_PATH})",
             flush=True,
         )
         _recover_media_jobs()
@@ -21169,17 +21148,13 @@ def _delete_image_media_job_payload(job_id: str) -> None:
                 pass
 
 
-def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
+def _prune_orphaned_media_job_payloads() -> int:
+    """Remove spools only when their job is absent or terminal."""
     with _MEDIA_PAYLOAD_LOCK:
-        """Remove old or terminal request spools left by an interrupted worker."""
         removed = 0
-        cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            payload = _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
-            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
-                    or job.get("status") == "stale"
-                    or int(payload.get("created_at") or 0) < cutoff):
+            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
                 _release_ephemeral_media_job_payload(job_id)
                 removed += 1
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -21188,8 +21163,7 @@ def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
             job_id = path.name.split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
-                    or path.stat().st_mtime < cutoff):
+            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed

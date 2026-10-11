@@ -133,10 +133,6 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
         status_endpoint._record_backend_health_samples = lambda backends: record_samples(
             [row for row in backends or [] if row.get("key") not in unobserved]
         )
-    from functools import partial
-
-    media_jobs.RETAIN_S = 31 * 86400
-    media_jobs.prune = partial(media_jobs.prune, retain_s=31 * 86400)
 
 import uvicorn
 

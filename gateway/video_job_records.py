@@ -98,8 +98,8 @@ def remove(prompt_id: str, *, path: Path | None = None) -> None:
         conn.close()
 
 
-def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dict[str, dict]:
-    """Return every stored record, oldest first. ``max_age_s`` skips old rows."""
+def load_all(*, path: Path | None = None) -> dict[str, dict]:
+    """Return every stored record, oldest first."""
     conn = _connect(path)
     try:
         rows = conn.execute(
@@ -118,11 +118,8 @@ def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dic
         conn.commit()
     finally:
         conn.close()
-    cutoff = time.time() - max_age_s if max_age_s else None
     out: dict[str, dict] = {}
     for prompt_id, blob, created_at in rows:
-        if cutoff is not None and created_at < cutoff:
-            continue
         try:
             data = json.loads(blob)
         except ValueError:
@@ -131,15 +128,3 @@ def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dic
             data.pop("prompt", None)
             out[prompt_id] = data
     return out
-
-
-def prune(older_than_s: float, *, path: Path | None = None) -> int:
-    conn = _connect(path)
-    try:
-        cur = conn.execute(
-            "DELETE FROM video_job_records WHERE created_at < ?", (int(time.time() - older_than_s),)
-        )
-        conn.commit()
-        return cur.rowcount
-    finally:
-        conn.close()

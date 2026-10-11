@@ -50,10 +50,6 @@ from gateway.redaction import (
 _default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
 DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB") else _default_db
 
-# Job coordination records expire after 14 days, independently of receipts.
-# Durable assets carry their own ownership; receipts retain usage and spend.
-RETAIN_S = 14 * 24 * 3600
-
 SCHEMA_VERSION = 2
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
@@ -1144,31 +1140,6 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
     return out
 
 
-def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> dict[str, int]:
-    """Delete jobs (and their events) older than ``retain_s`` seconds.
-
-    Returns the number of jobs and events removed.
-    """
-    cutoff = int(time.time()) - int(retain_s)
-    with _conn(path) as conn:
-        old = conn.execute(
-            "SELECT job_id FROM media_jobs WHERE updated_at < ?",
-            (cutoff,),
-        ).fetchall()
-        job_ids = [r[0] for r in old]
-        events_removed = 0
-        if job_ids:
-            placeholders = ",".join("?" for _ in job_ids)
-            cur = conn.execute(
-                f"DELETE FROM media_job_events WHERE job_id IN ({placeholders})",
-                job_ids,
-            )
-            events_removed = cur.rowcount or 0
-        cur = conn.execute("DELETE FROM media_jobs WHERE updated_at < ?", (cutoff,))
-        conn.commit()
-        return {"jobs": int(cur.rowcount or 0), "events": int(events_removed)}
-
-
 def count(path: Path = DB_PATH) -> int:
     with _conn(path) as conn:
         row = conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()
@@ -1192,7 +1163,6 @@ def _safe_loads(text: str) -> Any:
 
 __all__ = [
     "DB_PATH",
-    "RETAIN_S",
     "SCHEMA_VERSION",
     "STATUS_QUEUED",
     "STATUS_RUNNING",
@@ -1224,7 +1194,6 @@ __all__ = [
     "append_client_event",
     "validate_client_event",
     "events",
-    "prune",
     "count",
     "schema_version",
 ]

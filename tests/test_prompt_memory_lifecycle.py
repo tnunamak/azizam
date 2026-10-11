@@ -250,7 +250,7 @@ def test_forget_payload_byte_cap_refuses_without_disk_fallback(stores, monkeypat
     assert "busy" in json.loads(response.body)["error"]["message"].lower()
 
 
-def test_stale_ephemeral_payload_releases_capacity(stores, monkeypatch):
+def test_old_active_ephemeral_payload_keeps_its_capacity(stores, monkeypatch):
     _root, _admin, jobs, _user, _app, auth = stores
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_COUNT", 1)
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_MAX_BYTES", 10_000)
@@ -258,9 +258,9 @@ def test_stale_ephemeral_payload_releases_capacity(stores, monkeypatch):
     job = media_jobs.create(media_jobs.MediaJob(job_id="mj_cap_stale", intent="image.generate"), path=jobs)
     proxy._persist_image_media_job_payload(job.job_id, body=forget, request=request(), auth_context=auth)
     stale = proxy._load_image_media_job_payload(job.job_id)
-    stale["created_at"] = int(time.time()) - media_jobs.RETAIN_S - 1
-    assert proxy._prune_orphaned_media_job_payloads() == 1
-    proxy._persist_image_media_job_payload("mj_after_stale", body=forget, request=request(), auth_context=auth)
+    stale["created_at"] = 1
+    assert proxy._prune_orphaned_media_job_payloads() == 0
+    assert proxy._load_image_media_job_payload(job.job_id) == stale
 
 
 def test_cancel_clears_upstream_video_prompt_and_all_execution_payloads(stores):
@@ -273,3 +273,16 @@ def test_cancel_clears_upstream_video_prompt_and_all_execution_payloads(stores):
     assert prompt_memory.get("video_cancel", user["id"], path=jobs) is None
     proxy._purge_prompt_payload_files()
     assert job.job_id not in proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS
+
+
+@pytest.mark.parametrize("status", [media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING])
+def test_old_active_disk_payload_survives_cleanup(stores, status):
+    import os
+    _root, _admin, jobs, _user, _app, _auth = stores
+    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", status=status), path=jobs)
+    path = proxy._image_media_job_payload_path(job.job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"created_at": 1, "body": {"prompt": "keep"}}')
+    os.utime(path, (1, 1))
+    assert proxy._prune_orphaned_media_job_payloads() == 0
+    assert path.exists()
