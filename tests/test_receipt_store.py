@@ -61,8 +61,8 @@ class TestReceiptStore(unittest.TestCase):
 
     def test_upgrade_from_v1_recreates_table(self) -> None:
         # A pre-v2 receipts DB (no app_id column) is recreated, not migrated:
-        # receipts are short-lived diagnostics and old rows have no owning-App
-        # id, so they're discarded rather than unsafely attributed. The upgrade
+        # old rows have no owning-App id, so they are discarded rather than
+        # unsafely attributed. The upgrade
         # must succeed (not raise) and leave a clean v2 schema with app_id.
         import sqlite3
 
