@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from starlette.responses import Response
 
 import proxy
-from gateway import media_jobs, receipt_store
+from gateway import media_jobs, receipt_store, receipts, media_ingestion
 from gateway.policy import AppProfile
 from test_anthropic_schema_conformance import chat_completion, chunk, sse
 
@@ -35,7 +35,7 @@ CASES = [
     ('embeddings', '/v1/embeddings', {'model': 'test', 'input': 'hi'}),
     ('ollama-embed', '/api/embed', {'model': 'test', 'input': 'hi'}),
     ('decisions', '/v1/decisions', {'model': 'test', 'input': 'hi'}),
-    ('systemone', '/v1/systemone', {'model': 'test', 'state': 'hi', 'questions': {'q': {'type': 'choice', 'options': ['a', 'b']}}}),
+    ('systemone', '/v1/systemone', {'model': 'test', 'state': 'hi', 'questions': {'q': {'type': 'choice', 'criteria': {'a': 'A', 'b': 'B'}}}}),
     ('image', '/v1/images/generations', {'model': 'flux2-klein-4b', 'prompt': 'hi', 'response_format': 'b64_json'}),
     ('speech', '/v1/audio/speech', {'model': 'tts-1', 'input': 'hi', 'voice': 'alloy', 'response_format': 'wav'}),
 ]
@@ -55,10 +55,14 @@ def dispatch_env(monkeypatch, tmp_path):
         db = tmp_path / (module.__name__ + '.db')
         module.init_db(db)
         monkeypatch.setattr(module, 'DB_PATH', db)
+        connect = module._conn
+        monkeypatch.setattr(module, '_conn', lambda _path, fn=connect, path=db: fn(path))
     monkeypatch.setattr(proxy.uuid, 'uuid4', lambda: UUID(int=1))
+    monkeypatch.setattr(receipts, 'uuid4', lambda: UUID(int=1))
+    monkeypatch.setattr(media_ingestion.media_delivery, 'attach_provenance', lambda content, *a, **kw: content)
     monkeypatch.setattr(proxy.time, 'time', lambda: 1800000000.0)
     monkeypatch.setattr(proxy.time, 'monotonic_ns', lambda: 1800000000000000000)
-    monkeypatch.setattr(proxy.ollama_protocol, '_now_rfc3339', lambda: '2027-01-15T08:00:00Z', raising=False)
+    monkeypatch.setattr(proxy.ollama_protocol, '_iso_utc_now', lambda: '2027-01-15T08:00:00Z')
     monkeypatch.setattr(proxy, 'resolve_stable_alias', lambda *a, **kw: None)
     monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: None)
     monkeypatch.setattr(proxy, '_prepare_litellm_local_llm_request', AsyncMock(side_effect=lambda *a, **kw: (None, kw['body_json'])))
@@ -76,7 +80,7 @@ def dispatch_env(monkeypatch, tmp_path):
     async def backend(request):
         calls.append(str(request.url))
         if request.url.path.endswith('/audio/speech'):
-            return httpx.Response(200, content=b'RIFF-test-audio', headers={'content-type': 'audio/wav'})
+            return httpx.Response(200, content=__import__('test_sync_media_routes')._wav_bytes(), headers={'content-type': 'audio/wav'})
         body = json.loads(request.content)
         if request.url.path.endswith('/embeddings'):
             return httpx.Response(200, json={'object': 'list', 'model': 'test', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [0.1, 0.2]}], 'usage': {'prompt_tokens': 1, 'total_tokens': 1}})
@@ -102,7 +106,7 @@ def dispatch_env(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy.decision_provider_execution, 'openai', decision)
     async def systemone(*a, **kw):
         calls.append('systemone-executor')
-        return proxy.decisions_api.DecisionDispatchResult(body={'model': 'test', 'answers': {'q': {'choice': 'a', 'probabilities': {'a': 1.0, 'b': 0.0}}}})
+        return proxy.decisions_api.DecisionDispatchResult(body={'model': 'test', 'usage': {}, 'answers': {'q': {'type': 'choice', 'choice': 'a', 'confidence': 1.0, 'probabilities': {'a': 1.0, 'b': 0.0}}}})
     monkeypatch.setattr(proxy.DECISION_RUNTIME, 'dispatch', systemone)
     return TestClient(proxy.app), calls
 
