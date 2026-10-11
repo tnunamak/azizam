@@ -46,7 +46,7 @@ import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { ReceiptLink } from "./receipt-link";
 import { VoicePicker, selectedVoice, type SpeechVoices } from "./voice-picker";
 import { ServiceNotice, serviceUnavailable } from "@/components/product/service-notice";
-import { accountApi, type AccountApp } from "@/lib/account-api";
+import { accountApi } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
 import {
   workflowAvailabilityView,
@@ -180,6 +180,42 @@ type Result = {
 const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
 /** "Don't keep this prompt", remembered for the browser session. */
 const FORGET_SESSION_KEY = "azizam.try.forget";
+/** This browser's Try key. It works only for the sign-in that made it. */
+const TRY_KEY_STORAGE_KEY = "azizam.try.key";
+type StoredTryKey = { id: string; secret: string; appName: string };
+
+function readStoredTryKey(): StoredTryKey | null {
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(TRY_KEY_STORAGE_KEY) ?? "null",
+    );
+    if (!value || typeof value !== "object") return null;
+    const { id, secret, appName } = value as Record<string, unknown>;
+    return typeof id === "string" &&
+      typeof secret === "string" &&
+      typeof appName === "string"
+      ? { id, secret, appName }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeTryKey(key: StoredTryKey) {
+  try {
+    localStorage.setItem(TRY_KEY_STORAGE_KEY, JSON.stringify(key));
+  } catch {
+    // A blocked store only means the next visit makes a new key.
+  }
+}
+
+function forgetStoredTryKey() {
+  try {
+    localStorage.removeItem(TRY_KEY_STORAGE_KEY);
+  } catch {
+    // Nothing was stored.
+  }
+}
 
 const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
   chat: { model: "chat", prompt: "Reply with one short sentence." },
@@ -1235,19 +1271,22 @@ export default function TryPage() {
       const account = await accountApi.session();
       if (!account.authenticated)
         throw new Error("Sign in to create a Try key.");
-      let app: AccountApp | undefined = account.apps.find(
-        (item) => item.name.toLowerCase() === "try",
-      );
-      app ??= await accountApi.createApp("Try");
-      const minted = await accountApi.mintKey(app.id, "Try session");
-      setKey({ id: minted.id, secret: minted.api_key, appName: app.name });
-      const preparedCatalog = await loadCatalog(minted.api_key);
-      return {
-        id: minted.id,
-        secret: minted.api_key,
-        appName: app.name,
-        catalog: preparedCatalog,
+      // The gateway shows a secret once, so this browser keeps it until the
+      // key ends with the sign-in. The gateway decides whether it is reusable.
+      const cached = readStoredTryKey();
+      const credential = await accountApi.tryKey(cached?.id ?? null);
+      const secret = credential.reused ? cached?.secret : credential.api_key;
+      if (!secret || (credential.reused && cached?.id !== credential.id))
+        throw new Error("Could not prepare a Try key. Try again.");
+      const prepared = {
+        id: credential.id,
+        secret,
+        appName: credential.app_name,
       };
+      if (!credential.reused) storeTryKey(prepared);
+      setKey(prepared);
+      const preparedCatalog = await loadCatalog(secret);
+      return { ...prepared, catalog: preparedCatalog };
     } catch (error) {
       setKeyError(
         error instanceof Error
@@ -1266,6 +1305,7 @@ export default function TryPage() {
     setKeyError(null);
     try {
       await accountApi.revokeKey(key.id);
+      forgetStoredTryKey();
       setKey(null);
     } catch (error) {
       setKeyError(
@@ -2073,7 +2113,7 @@ export default function TryPage() {
           </div>
         ) : (
           <p>
-            Try uses a temporary key
+            Try uses a temporary key that ends when you sign out
             <span aria-hidden="true"> · </span>
             <button
               type="button"

@@ -1328,6 +1328,14 @@
     "schema": false
   },
   {
+    "method": "POST",
+    "path": "/me/api/try-key",
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "proxy.user_portal_try_key",
+    "schema": false
+  },
+  {
     "method": "GET",
     "path": "/me/api/usage/summary",
     "auth": "session-only",

@@ -138,8 +138,12 @@ def _key_prefix(api_key: str) -> str:
 
 
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
-    blocked = {"hash", "api_key", "key", "secret"}
-    return {k: v for k, v in record.items() if k not in blocked}
+    blocked = {"hash", "api_key", "key", "secret", "session_id"}
+    out = {k: v for k, v in record.items() if k not in blocked}
+    if "session_id" in record:
+        # Name the binding, never the sign-in session it is bound to.
+        out["session_bound"] = record["session_id"] is not None
+    return out
 
 
 def _copy_override_value(value: Mapping[str, Any]) -> dict[str, Any]:

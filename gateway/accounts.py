@@ -176,6 +176,9 @@ def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
                      "ON CONFLICT(session_id) DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)",
                      (session_id, expires_at))
         conn.execute("DELETE FROM account_sessions WHERE session_id=?", (session_id,))
+        # Keys bound to this sign-in (the Try page's) end with it.
+        conn.execute("UPDATE credentials SET revoked_at=? WHERE session_id=? AND revoked_at IS NULL",
+                     (int(time.time()), session_id))
 
 
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):

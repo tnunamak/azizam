@@ -191,6 +191,7 @@ from gateway.user_runtime import (
     build_user_portal_snapshot,
     create_user_app,
     delete_user_app,
+    ensure_try_session_key,
     get_user_app_credential,
     get_user_receipt,
     mint_user_app_key,
@@ -16210,6 +16211,38 @@ async def user_portal_mint_key(app_id: str, request: Request):
         return _user_action_response_error(exc)
     return JSONResponse(
         status_code=201,
+        content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/try-key", include_in_schema=False)
+async def user_portal_try_key(request: Request):
+    """Reuse or mint the Try page's key for this sign-in session."""
+    try:
+        session = _require_user_session(request)
+        _require_user_self_service()
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reuse_id = body.get("reuse_id") if isinstance(body, Mapping) else None
+    try:
+        credential = ensure_try_session_key(
+            session,
+            reuse_id=str(reuse_id) if reuse_id else None,
+            default_profile_id=_default_profile_id_for_session(session),
+            path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200 if credential["reused"] else 201,
         content={"credential": credential},
         headers={"cache-control": "no-store"},
     )

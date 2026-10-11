@@ -163,6 +163,8 @@ CREATE TABLE IF NOT EXISTS credentials (
   expires_at INTEGER,
   revoked_at INTEGER,
   last_used_at INTEGER,
+  -- A key bound to a browser sign-in session; revoked when it signs out.
+  session_id TEXT,
   FOREIGN KEY(app_id) REFERENCES apps(id),
   FOREIGN KEY(profile_id) REFERENCES profiles(id)
 );
@@ -315,6 +317,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
     if "created_by" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
+    if "session_id" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
+        _revoke_unbound_try_keys(conn)
+    conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
     # Keys made on a session App before the trigger existed stop working.
     conn.execute(
         "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
@@ -417,6 +423,34 @@ def _freeze_missing_prompt_memory_preferences(
         "(user_id, remember, retention, updated_at, updated_by) "
         "SELECT id, ?, 'never', ?, NULL FROM users",
         (1 if remember else 0, ts),
+    )
+
+
+TRY_APP_NAME = "Try"
+TRY_KEY_LABEL = "Try session"
+
+
+def _revoke_unbound_try_keys(conn: sqlite3.Connection) -> None:
+    """Revoke Try page keys minted before they were bound to a sign-in session.
+
+    They never expired, and their secret lived only in a closed page, so no
+    one can still use them as intended. Runs once, when the column appears.
+    """
+    ts = _now()
+    ids = [row[0] for row in conn.execute(
+        "SELECT c.id FROM credentials c JOIN apps a ON a.id = c.app_id "
+        "WHERE c.subject_kind = 'app' AND c.revoked_at IS NULL AND c.display_name = ? "
+        "AND lower(a.name) = lower(?) AND a.owner_user_id IS NOT NULL ORDER BY c.id",
+        (TRY_KEY_LABEL, TRY_APP_NAME),
+    )]
+    if not ids:
+        return
+    conn.executemany("UPDATE credentials SET revoked_at = ? WHERE id = ?", [(ts, i) for i in ids])
+    _record_audit_in_transaction(
+        conn, "credential.try_session_revoke",
+        actor_kind=None, actor_id=None, actor_label=None,
+        target_kind="credential", target_id=None,
+        metadata={"reason": "unbound_try_key", "credential_ids": ids}, now=ts,
     )
 
 
@@ -1491,6 +1525,7 @@ def create_credential_hash(
     scopes: Iterable[str] | None = None,
     created_by: str | None = None,
     expires_at: int | None = None,
+    session_id: str | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -1540,7 +1575,8 @@ def create_credential_hash(
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
             "profile_id, hash, prefix, display_name, scopes_json, "
-            "created_at, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, created_by, expires_at, session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 cred_id,
                 subject_kind,
@@ -1554,6 +1590,7 @@ def create_credential_hash(
                 ts,
                 created_by,
                 expires_at,
+                session_id,
             ),
         )
         conn.commit()

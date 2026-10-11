@@ -12,14 +12,14 @@ import TryPage from "./page";
 const mocks = vi.hoisted(() => ({
   params: new URLSearchParams(),
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => mocks.params }));
 vi.mock("@/lib/account-api", () => ({
   accountApi: {
     session: mocks.session,
-    mintKey: mocks.mintKey,
+    tryKey: mocks.tryKey,
     revokeKey: mocks.revokeKey,
   },
 }));
@@ -62,7 +62,13 @@ beforeEach(() => {
     authenticated: true,
     apps: [{ id: "app", name: "Try" }],
   });
-  mocks.mintKey.mockResolvedValue({ id: "key", api_key: "test-secret" });
+  mocks.tryKey.mockResolvedValue({
+    id: "key",
+    api_key: "test-secret",
+    reused: false,
+    app_name: "Try",
+  });
+  localStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -86,12 +92,12 @@ test.each([false, true])(
       fireEvent.click(screen.getByRole("button", { name: "Run" }));
       await screen.findByText(/Try uses a temporary key/);
     }
-    const minted = mocks.mintKey.mock.calls.length;
+    const minted = mocks.tryKey.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Record" }));
     const alert = await screen.findByText(/Recording is not available/);
     fireEvent.click(alert.closest('[role="alert"]')!.querySelector("button")!);
     await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
-    expect(mocks.mintKey).toHaveBeenCalledTimes(minted);
+    expect(mocks.tryKey).toHaveBeenCalledTimes(minted);
     expect(mocks.revokeKey).not.toHaveBeenCalled();
   },
 );
@@ -263,4 +269,48 @@ test("empty workflow catalog disables the selector and Run", async () => {
     "No options available",
   );
   expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+});
+
+function bearerOfLastRun() {
+  const call = fetchMock.mock.calls.findLast(
+    ([, init]) => init?.method === "POST",
+  );
+  return new Headers(call?.[1]?.headers).get("authorization");
+}
+test("a later visit reuses this sign-in's Try key instead of minting", async () => {
+  const first = render(<TryPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await screen.findByText(
+    /Try uses a temporary key that ends when you sign out/,
+  );
+  expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
+  await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
+  first.unmount();
+
+  mocks.tryKey.mockResolvedValue({ id: "key", reused: true, app_name: "Try" });
+  fetchMock.mockClear();
+  render(<TryPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await screen.findByText(/Try uses a temporary key/);
+  expect(mocks.tryKey).toHaveBeenLastCalledWith("key");
+  await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
+});
+test("a new key replaces the stored one and Revoke forgets it", async () => {
+  localStorage.setItem(
+    "azizam.try.key",
+    JSON.stringify({ id: "old", secret: "old-secret", appName: "Try" }),
+  );
+  render(<TryPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await screen.findByText(/Try uses a temporary key/);
+  expect(mocks.tryKey).toHaveBeenLastCalledWith("old");
+  expect(JSON.parse(localStorage.getItem("azizam.try.key")!)).toMatchObject({
+    id: "key",
+    secret: "test-secret",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  await waitFor(() => expect(mocks.revokeKey).toHaveBeenCalledWith("key"));
+  await waitFor(() =>
+    expect(localStorage.getItem("azizam.try.key")).toBeNull(),
+  );
 });

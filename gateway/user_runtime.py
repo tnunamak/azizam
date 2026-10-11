@@ -8,6 +8,7 @@ Profiles or changes App ownership; those remain admin-plane actions.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -40,8 +41,12 @@ class UserPortalError(ValueError):
 
 
 def _sanitize_credential(record: Mapping[str, Any]) -> dict[str, Any]:
-    blocked = {"hash", "api_key", "key", "secret"}
-    return {k: v for k, v in record.items() if k not in blocked}
+    blocked = {"hash", "api_key", "key", "secret", "session_id"}
+    out = {k: v for k, v in record.items() if k not in blocked}
+    if "session_id" in record:
+        # Name the binding, never the sign-in session it is bound to.
+        out["session_bound"] = record["session_id"] is not None
+    return out
 
 
 def _key_prefix(api_key: str) -> str:
@@ -429,9 +434,14 @@ def mint_user_app_key(
     *,
     label: str | None = None,
     default_profile_id: str | None = None,
+    expires_at: int | None = None,
+    session_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Create an API key for an App already owned by ``session.subject``."""
+    """Create an API key for an App already owned by ``session.subject``.
+
+    ``session_id`` binds the key to that sign-in, which revokes it on sign-out.
+    """
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
     _app_profile_for_self_service(
@@ -447,6 +457,8 @@ def mint_user_app_key(
         prefix=_key_prefix(api_key),
         display_name=label or "Self-service key",
         created_by=str(user["id"]),
+        expires_at=expires_at,
+        session_id=session_id,
         path=path,
     )
     admin_store.record_audit(
@@ -463,6 +475,63 @@ def mint_user_app_key(
     out["api_key"] = api_key
     out["prompt_memory"] = app_key_prompt_memory(app, record)
     return out
+
+
+def ensure_try_session_key(
+    session: AdminSession,
+    *,
+    reuse_id: str | None = None,
+    default_profile_id: str | None = None,
+    now: int | None = None,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Return the Try page's key for this sign-in, minting one only if needed.
+
+    The key expires with the sign-in session and is revoked when it signs
+    out. The secret is shown once, so the browser keeps it and passes its id
+    as ``reuse_id``; while that key is live for this session it is returned
+    without a secret (``reused``). Each new mint revokes this session's
+    older Try keys except the newest one, so a second open tab keeps working.
+    """
+    ts = int(time.time()) if now is None else int(now)
+    expires_at = int(session.expires_at)
+    if not session.session_id or expires_at <= ts:
+        raise UserPortalError("login_required", "Sign in again to use Try.", status_code=401)
+    user = _user_from_session(session, path=path)
+    apps = [
+        app for app in admin_store.list_apps_for_user(str(user["id"]), path=path)
+        if str(app.get("name") or "").lower() == admin_store.TRY_APP_NAME.lower()
+        and not admin_store.is_session_app(str(app["id"]), path=path)
+    ]
+    if apps:
+        app = _app_belongs_to_user(str(apps[0]["id"]), str(user["id"]), path=path)
+    else:
+        created = create_user_app(
+            session, name=admin_store.TRY_APP_NAME,
+            default_profile_id=default_profile_id, path=path,
+        )["app"]
+        app = admin_store.get_app(str(created["id"]), path=path) or created
+    app_name = str(app.get("name") or admin_store.TRY_APP_NAME)
+    session_keys = [
+        record for record in admin_store.list_active_credentials(
+            subject_kind="app", app_id=str(app["id"]), now=ts, path=path,
+        )
+        if record.get("session_id") == session.session_id
+    ]
+    reused = next((record for record in session_keys if record["id"] == reuse_id), None)
+    if reused is not None:
+        out = _sanitize_credential(reused)
+        out.update(active=True, reused=True, app_name=app_name)
+        return out
+    for record in sorted(session_keys, key=lambda item: (item["created_at"], item["id"]))[:-1]:
+        admin_store.revoke_credential(str(record["id"]), now=ts, path=path)
+    minted = mint_user_app_key(
+        session, str(app["id"]), label=admin_store.TRY_KEY_LABEL,
+        default_profile_id=default_profile_id, expires_at=expires_at,
+        session_id=session.session_id, path=path,
+    )
+    minted.update(reused=False, app_name=app_name)
+    return minted
 
 
 def create_user_app(
