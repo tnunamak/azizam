@@ -324,6 +324,8 @@ test("library audio plays independently and video uses its recorded poster", asy
   wav.writeUInt32LE(16000, 40);
   const posterUrl = mediaFixture.assets[0].download_url;
   const posterRequests: string[] = [];
+  const audioRenewals: string[] = [];
+  const renewedAudioUrl = "/test-audio.wav?renewed=1";
   await page.route("**/me/api/media?**", (route) =>
     route.fulfill({
       json: {
@@ -338,9 +340,14 @@ test("library audio plays independently and video uses its recorded poster", asy
       },
     }),
   );
-  await page.route("**/test-audio.wav", (route) =>
+  await page.route("**/test-audio.wav*", (route) =>
     route.fulfill({ contentType: "audio/wav", body: wav }),
   );
+  // Opening the viewer renews playback independently of the tile's URL.
+  await page.route("**/me/api/media/asset_audio_1/download?*", (route) => {
+    audioRenewals.push(route.request().url());
+    return route.fulfill({ json: { download_url: renewedAudioUrl } });
+  });
   await page.route("**/me/api/media/video-poster/download*", (route) => {
     posterRequests.push(route.request().url());
     return route.fulfill({ json: { download_url: posterUrl } });
@@ -377,7 +384,10 @@ test("library audio plays independently and video uses its recorded poster", asy
   const detail = page.getByRole("dialog");
   // The viewer has its own designed player: play, position and time.
   const viewerAudio = detail.getByLabel("Generated audio");
-  await expect(viewerAudio).toHaveAttribute("src", "/test-audio.wav");
+  await expect(viewerAudio).toHaveAttribute("src", renewedAudioUrl);
+  expect(audioRenewals).toHaveLength(1);
+  expect(new URL(audioRenewals[0]).searchParams.get("scope")).toBe("everyone");
+  await expect(audio).toHaveAttribute("src", "/test-audio.wav");
   await expect(detail.getByRole("slider", { name: "Position" })).toBeVisible();
   await detail
     .getByRole("button", { name: `Play ${mediaFixture.assets[2].prompt}` })
