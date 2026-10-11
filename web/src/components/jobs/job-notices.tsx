@@ -60,7 +60,7 @@ export function jobPollInterval(
   unchanged: number,
   failed: number,
 ) {
-  if (failed) return Math.min(120_000, 15_000 * 2 ** Math.min(failed, 3));
+  if (failed) return Math.min(120_000, 60_000 * 2 ** Math.min(failed - 1, 1));
   return active
     ? Math.min(30_000, 5_000 * 2 ** Math.min(unchanged, 3))
     : 60_000;
@@ -78,6 +78,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
   const [startedAt] = useState(() => Math.floor(Date.now() / 1000));
   const seen = useRef(new Map<string, string>());
   const unchanged = useRef(0);
+  const failures = useRef(0);
   const [notices, setNotices] = useState<LongJob[]>([]);
   const storageKey = `azizam:job-notices:v1:${personId}`;
   const dismissed = useRef(new Set<string>());
@@ -93,18 +94,24 @@ function PersonJobNotices({ personId }: { personId: string }) {
   const { data, dataUpdatedAt } = useQuery({
     queryKey: ["person-jobs", personId],
     queryFn: async ({ signal }) => {
-      const jobs: LongJob[] = [];
-      let cursor: string | null = null;
-      do {
-        const page: { jobs: LongJob[]; next_cursor?: string | null } =
-          await jobRequest(
-            `/me/api/jobs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-            signal,
-          );
-        jobs.push(...page.jobs);
-        cursor = page.next_cursor ?? null;
-      } while (cursor);
-      return jobs;
+      try {
+        const jobs: LongJob[] = [];
+        let cursor: string | null = null;
+        do {
+          const page: { jobs: LongJob[]; next_cursor?: string | null } =
+            await jobRequest(
+              `/me/api/jobs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+              signal,
+            );
+          jobs.push(...page.jobs);
+          cursor = page.next_cursor ?? null;
+        } while (cursor);
+        failures.current = 0;
+        return jobs;
+      } catch (error) {
+        failures.current += 1;
+        throw error;
+      }
     },
     staleTime: 5_000,
     retry: false,
@@ -113,7 +120,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
       jobPollInterval(
         Boolean(query.state.data?.some((job) => !terminalJob(job))),
         unchanged.current,
-        query.state.fetchFailureCount,
+        failures.current,
       ),
   });
   useEffect(() => {

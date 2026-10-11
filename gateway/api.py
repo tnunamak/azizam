@@ -269,7 +269,7 @@ def _build_media_job_providers(
     def store_canceler(
         job_id: str, *, audience: str, reason: str | None = None
     ) -> dict[str, Any] | None:
-        updated = _media_jobs.request_cancel(job_id, path=store_path)
+        updated = _media_jobs.request_cancel(job_id, reason=reason, path=store_path)
         if updated is None:
             return None
         return _media_jobs.get(job_id, audience=audience, path=store_path)

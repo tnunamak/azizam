@@ -930,7 +930,7 @@ class CancellationPending(ValueError):
     """Output finished after cancellation; the worker must release before settling."""
 
 
-def request_cancel(job_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Cancel unstarted work atomically, or retain running work's reservation."""
     job = get(job_id, path=path)
     if job is None:
@@ -939,7 +939,7 @@ def request_cancel(job_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | Non
         raise ValueError("This job has already finished")
     try:
         return update_status(job_id, STATUS_CANCELED, expected_status=STATUS_QUEUED,
-                             error="Canceled by requester", path=path)
+                             error=reason or "Canceled by requester", path=path)
     except ValueError:
         return update_status(job_id, STATUS_RUNNING, expected_status=STATUS_RUNNING,
                              metadata_patch={"cancel_requested_at": _now()}, path=path)

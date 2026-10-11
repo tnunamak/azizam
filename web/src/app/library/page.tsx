@@ -1906,6 +1906,7 @@ const DAY_S = 86_400;
 export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
+  const linkedJobId = searchParams?.get("job");
   const queryClient = useQueryClient();
   const { data: modelCatalog } = useQuery({
     queryKey: ["models", "catalog"],
@@ -2344,7 +2345,7 @@ export default function LibraryPage() {
           switch, a search button and Filters, so the controls stay under a
           fifth of the screen (D1.5); the search field opens below it. The
           heading keeps a ref so the viewer can return focus to it. */}
-      {searchParams?.get("job") ? <JobResult jobId={searchParams?.get("job")!} /> : null}
+      {linkedJobId ? <JobResult jobId={linkedJobId} /> : null}
       <header className="mb-(--space-title) flex min-h-8 items-center">
         <h1 ref={headingRef} tabIndex={-1} className="text-title">
           Library
