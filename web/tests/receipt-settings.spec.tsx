@@ -48,7 +48,7 @@ async function choose(label: string) {
   await user.click(
     await screen.findByRole("combobox", { name: "Keep receipts" }),
   );
-  await user.click(screen.getByRole("option", { name: label, exact: true }));
+  await user.click(screen.getByRole("option", { name: label }));
   return user;
 }
 

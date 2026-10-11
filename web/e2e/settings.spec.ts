@@ -158,6 +158,7 @@ for (const theme of ["light", "dark"] as const) {
           "Sign-in",
           "Defaults",
           "Prompts",
+          "Receipts",
           "Media admission",
           "Extensions",
           "Advanced",
@@ -172,8 +173,12 @@ for (const theme of ["light", "dark"] as const) {
           .click();
         if (state === "error") {
           await expect(
+            page.getByRole("region", { name: "Receipts", exact: true })
+              .getByText("Couldn’t load receipt settings"),
+          ).toBeVisible();
+          await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(9);
+          ).toHaveCount(10);
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),

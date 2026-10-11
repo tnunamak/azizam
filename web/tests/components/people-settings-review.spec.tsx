@@ -697,7 +697,9 @@ describe("People and Settings red-team regressions", () => {
       container.querySelectorAll("[data-slot=settings-section]"),
     ).toHaveLength(8);
     const receipts = screen.getByRole("region", { name: "Receipts" });
-    expect(within(receipts).getByRole("combobox", { name: "Keep receipts" })).toHaveTextContent("Forever");
+    expect(
+      within(receipts).getByRole("combobox", { name: "Keep receipts" }),
+    ).toHaveTextContent("Forever");
   });
   it("wraps long instance names and URLs in the settings summary", async () => {
     responses["/admin/api/settings/instance"] = {
