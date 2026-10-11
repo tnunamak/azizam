@@ -68,6 +68,14 @@ it.each(["rejected", "missing URL", "JSON null", "invalid JSON"])(
     fireEvent.error(await screen.findByRole("img", { name: "Saved image" }));
     fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
     await waitFor(() => expect(finish).toBeTypeOf("function"));
+    // Retry first tries the old address; when that fails again while the
+    // fresh link is pending, the tile shows a disabled pending Retry.
+    fireEvent.error(await screen.findByRole("img", { name: "Saved image" }));
+    const pending = screen.getByRole("button", { name: "Loading…" });
+    expect(pending).toBeDisabled();
+    fireEvent.click(pending);
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).includes("/image/download"))).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "Image preview unavailable" })).toBeVisible();
     finish();
     expect(
       await screen.findByRole("img", { name: "Image preview unavailable" }),

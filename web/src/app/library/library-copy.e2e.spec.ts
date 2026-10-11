@@ -251,7 +251,9 @@ test("library missing asset deep link keeps a retryable target", async ({
 
   await page.goto("/ui/library/?asset=asset_recovered");
   await expect(
-    page.getByText("That library item could not be loaded. Try again."),
+    page.getByText(
+      "The gateway couldn’t open this creation. Try again or return to your library.",
+    ),
   ).toBeVisible();
   await expect(page).toHaveURL(/asset=asset_recovered/);
   await page.getByRole("button", { name: /try again/i }).click();

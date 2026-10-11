@@ -14,6 +14,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import LibraryPage from "./page";
+import { productApi } from "@/lib/product-api";
+
 
 const navigation = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
@@ -743,6 +745,7 @@ describe("Library honesty and access", () => {
             }),
             picture("lost3", "", { available: false, unavailable_reason: null }),
           ])
+        : path.includes("/download?") ? Response.json({}, { status: 404 })
         : path.startsWith("/me/api/receipts/")
           ? Response.json({})
           : undefined,
@@ -944,7 +947,7 @@ describe("Library honesty and access", () => {
         : path.includes("/download?")
           ? Response.json({ download_url: "https://signed.example/p1.png" })
           : path === "https://signed.example/p1.png"
-            ? new Response(new Blob(["png"], { type: "image/png" }))
+            ? new Response("png", { headers: { "content-type": "image/png" } })
             : undefined,
     );
     const share = vi.fn(async () => undefined);
@@ -1376,5 +1379,177 @@ describe("Library media identity and tile playback", () => {
     expect(screen.queryByText("Playback didn't start. Try again.")).toBeNull();
     fireEvent.ended(video);
     expect(screen.getByRole("button", { name: "Play Retry film" })).toBeVisible();
+  });
+});
+
+
+describe("Library response and media boundaries", () => {
+  const originalShare = Object.getOwnPropertyDescriptor(navigator, "share");
+  const originalCanShare = Object.getOwnPropertyDescriptor(navigator, "canShare");
+  beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/");
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    if (originalShare) Object.defineProperty(navigator, "share", originalShare);
+    else Reflect.deleteProperty(navigator, "share");
+    if (originalCanShare) Object.defineProperty(navigator, "canShare", originalCanShare);
+    else Reflect.deleteProperty(navigator, "canShare");
+    vi.unstubAllGlobals();
+  });
+
+  test.each(["invalid JSON", "null", "wrong shape"])("rejects %s library data as a typed unreadable response", async (kind) => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? kind === "invalid JSON" ? new Response("{")
+        : Response.json(kind === "null" ? null : { assets: [{}] })
+      : undefined);
+    const { queryClient } = renderLibrary();
+    expect(await screen.findByText("The gateway returned an unreadable response. Try again.")).toBeVisible();
+    const query = queryClient.getQueryCache().findAll().find((query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object");
+    expect(query?.state.error).toMatchObject({ stage: "library", reason: "unreadable" });
+    queryClient.clear();
+  });
+
+  test("deep link opens, becomes unavailable, and can return to the library", async () => {
+    navigation.searchParams = new URLSearchParams("asset=missing");
+    let finish!: (response: Response) => void;
+    routeFetch((path) => path.startsWith("/me/api/media/missing")
+      ? new Promise<Response>((resolve) => { finish = resolve; })
+      : undefined);
+    const { queryClient } = renderLibrary();
+    expect(await screen.findByText("Opening that creation…")).toBeVisible();
+    await act(async () => finish(Response.json({}, { status: 404 })));
+    expect(await screen.findByText("That creation is unavailable")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    await waitFor(() => expect(screen.queryByText("That creation is unavailable")).toBeNull());
+    queryClient.clear();
+  });
+
+  test.each([0, "0", null, ""])("keeps recorded cost %j distinct from missing", async (usd) => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("zero", "Zero charge", { request_id: "zero-receipt" })])
+      : path.includes("/receipts/") ? Response.json({ cost: { usd }, remote: true }) : undefined);
+    const { queryClient } = renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Zero charge" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(factValue(dialog, "Charge")).toHaveTextContent(usd === 0 || usd === "0" ? "USD 0.00" : "Cost not recorded"));
+    queryClient.clear();
+  });
+
+  test("successful renewal clears the selected unavailable warning", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("recovered", "Recovered image", { available: false, unavailable_reason: "missing_or_expired" })])
+      : undefined);
+    const { queryClient } = renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Recovered image" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("img", { name: "Recovered image" })).toBeVisible();
+    expect(within(dialog).queryByText(/no longer stores this file/)).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Download" })).toBeEnabled();
+    queryClient.clear();
+  });
+
+  test("shares a generic binary response as the gateway's declared media type", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?")
+        ? list([{ ...picture("p2", "Octet cake"), media_type: "image/png" }])
+        : path.includes("/download?")
+          ? Response.json({ download_url: "https://signed.example/p2" })
+          : path === "https://signed.example/p2"
+            ? new Response("png", { headers: { "content-type": "application/octet-stream" } })
+            : undefined,
+    );
+    const share = vi.fn(async () => undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    try {
+      renderLibrary();
+      fireEvent.click(await screen.findByRole("button", { name: "Open Octet cake" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
+      await waitFor(() => expect(share).toHaveBeenCalledOnce());
+      const shared = (share.mock.calls[0] as unknown as [{ files: File[] }])[0];
+      expect(shared.files[0].type).toBe("image/png");
+      expect(shared.files[0].name).toBe("Octet cake.png");
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+      Reflect.deleteProperty(navigator, "canShare");
+    }
+  });
+
+  test.each([
+    [500, "image/png"],
+    [200, "text/html"],
+    [200, "application/json"],
+    [200, "audio/mpeg"],
+  ])("refuses share response %i %s and locks equivalent actions", async (status, type) => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+    Object.defineProperty(navigator, "canShare", { configurable: true, value: vi.fn(() => true) });
+    let finish!: (response: Response) => void;
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("share", "Share image", { workflow_download_url: "/workflow" })])
+      : path === "/renewed-media" ? new Promise<Response>((resolve) => { finish = resolve; }) : undefined);
+    const { queryClient } = renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Share image" }));
+    const dialog = await screen.findByRole("dialog");
+    const button = await within(dialog).findByRole("button", { name: "Share" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(within(dialog).getAllByRole("button", { name: "Preparing…" })).toHaveLength(2);
+    for (const action of within(dialog).getAllByRole("button", { name: "Preparing…" })) expect(action).toBeDisabled();
+    expect(vi.mocked(fetch).mock.calls.filter(([path]) => path === "/renewed-media")).toHaveLength(1);
+    await act(async () => finish(new Response("not a file", { status, headers: { "content-type": type } })));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled());
+    expect(share).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+
+
+  test("receipt retry replaces its failure with recorded zero", async () => {
+    let attempts = 0;
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("receipt-retry", "Receipt retry", { request_id: "retry" })])
+      : path.includes("/receipts/") ? ++attempts === 1
+        ? Response.json({ error: { message: "internal exception" } }, { status: 500 })
+        : Response.json({ cost: { usd: 0 } }) : undefined);
+    const { queryClient } = renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Receipt retry" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Retry receipt" }));
+    await waitFor(() => expect(factValue(dialog, "Charge")).toHaveTextContent("USD 0.00"));
+    expect(within(dialog).queryByText("internal exception")).toBeNull();
+    queryClient.clear();
+  });
+
+  test.each(["models", "home"] as const)("shows a quiet wait, then failure and retry for %s", async (method) => {
+    const label = method === "models" ? "model names" : "running work";
+    let reject!: (error: Error) => void;
+    vi.spyOn(productApi, method).mockImplementationOnce(() => new Promise<never>((_resolve, fail) => { reject = fail; }));
+    routeFetch(() => undefined);
+    const { queryClient } = renderLibrary();
+    // A supporting query's wait stays quiet (P1); only its failure shows.
+    await screen.findByRole("heading", { name: "Library" });
+    expect(screen.queryByText(new RegExp(`couldn’t load ${label}`))).toBeNull();
+    await act(async () => reject(new Error("network")));
+    fireEvent.click(await screen.findByRole("button", { name: `Retry ${label}` }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: `Retry ${label}` })).toBeNull());
+    queryClient.clear();
+  });
+
+  test("audio buffering ends when media can play", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([{ ...audioAsset, prompt: "Buffer test" }]) : undefined);
+    const { queryClient, container } = renderLibrary();
+    await screen.findByRole("button", { name: "Play Buffer test" });
+    const audio = container.querySelector("audio")!;
+    fireEvent.waiting(audio);
+    expect(screen.getByText("Loading audio…")).toBeVisible();
+    fireEvent.canPlay(audio);
+    expect(screen.queryByText("Loading audio…")).toBeNull();
+    queryClient.clear();
   });
 });

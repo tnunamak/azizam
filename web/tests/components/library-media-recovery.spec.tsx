@@ -282,7 +282,7 @@ describe("Library media recovery", () => {
       target: { value: "unavailable search" },
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Library results could not be refreshed.",
+      "The gateway couldn’t refresh your library. Try again.",
     );
     expect(
       screen.getByRole("button", { name: "Open Saved image" }),

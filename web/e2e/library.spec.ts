@@ -461,7 +461,7 @@ for (const width of [390, 1440]) {
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await expect(
       page.getByRole("alert").filter({
-        hasText: "More library items could not be loaded.",
+        hasText: "The gateway couldn’t load more library items. Try again.",
       }),
     ).toBeVisible();
     await expect(

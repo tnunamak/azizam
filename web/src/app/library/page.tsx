@@ -267,16 +267,109 @@ function hasActiveFilters(filters: {
   );
 }
 
+type LibraryStage = "library" | "prepare" | "download" | "share" | "delete";
+class LibraryFailure extends Error {
+  constructor(
+    readonly stage: LibraryStage,
+    readonly reason: "gateway" | "unreadable" | "unknown",
+  ) {
+    super(reason === "unknown"
+      ? "We couldn't tell where this stopped. Try again."
+      : reason === "unreadable"
+        ? "The gateway returned an unreadable response. Try again."
+        : stage === "library"
+          ? "The gateway couldn't load your library. Try again."
+          : stage === "prepare"
+            ? "The gateway couldn't prepare this file. Try again."
+            : stage === "download"
+              ? "The file couldn't be downloaded. Try again."
+              : stage === "delete"
+                ? "The gateway couldn't delete this creation. Try again."
+                : "This browser couldn't share the file. Use Download.");
+  }
+}
+function failureCopy(error: unknown) {
+  return error instanceof LibraryFailure
+    ? error.message
+    : "We couldn't tell where this stopped. Try again.";
+}
+function record(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function validAsset(value: unknown): boolean {
+  if (!record(value)) return false;
+  return typeof value.asset_id === "string" && !!value.asset_id &&
+    typeof value.kind === "string" && isMediaKind(value.kind) &&
+    (value.prompt == null || typeof value.prompt === "string") &&
+    (value.model == null || typeof value.model === "string") &&
+    (value.available == null || typeof value.available === "boolean") &&
+    ["download_url", "workflow_download_url", "poster_asset_id", "request_id", "unavailable_reason", "owner_name"]
+      .every((key) => value[key] == null || typeof value[key] === "string") &&
+    (value.created_at == null || typeof value.created_at === "string" || typeof value.created_at === "number") &&
+    (value.media_type == null || typeof value.media_type === "string") &&
+    (value.source == null || (record(value.source) &&
+      typeof value.source.kind === "string" && typeof value.source.label === "string" &&
+      ["id", "app_id", "person_id"].every((key) => value.source && record(value.source) &&
+        (value.source[key] == null || typeof value.source[key] === "string"))));
+}
+function validPayload(path: string, value: unknown): boolean {
+  if (!record(value)) return false;
+  const route = path.split("?")[0];
+  if (route.endsWith("/download"))
+    return typeof value.download_url === "string" && !!value.download_url.trim();
+  if (route === "/me/api/session")
+    return typeof value.csrf_token === "string" && !!value.csrf_token;
+  if (route === "/me/api/media")
+    return Array.isArray(value.assets) && value.assets.every(validAsset) &&
+      (value.next_cursor == null || typeof value.next_cursor === "string") &&
+      (value.models == null || (Array.isArray(value.models) && value.models.every((model) => typeof model === "string"))) &&
+      (value.sources == null || (Array.isArray(value.sources) && value.sources.every((source) =>
+        record(source) && typeof source.id === "string" && typeof source.label === "string")));
+  if (route.startsWith("/me/api/receipts/"))
+    return ["resolved_workflow", "resolved_model", "requested_model"].every((key) =>
+      value[key] == null || typeof value[key] === "string") &&
+      (value.remote == null || typeof value.remote === "boolean") &&
+      (value.cost == null || (record(value.cost) &&
+        (value.cost.usd == null || typeof value.cost.usd === "number" || typeof value.cost.usd === "string")));
+  if (route.startsWith("/me/api/media/")) return validAsset(value.asset);
+  return false;
+}
+
 async function mediaRequest<T>(
   path: string,
   init: RequestInit = {},
+  stage: LibraryStage = "library",
 ): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...init });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok)
-    throw new Error(
-      payload?.error?.message ?? "Library data could not be loaded. Try again.",
-    );
+  let response: Response;
+  try {
+    response = await fetch(path, { credentials: "same-origin", ...init });
+  } catch {
+    throw new LibraryFailure(stage, "unknown");
+  }
+  if (!response.ok) throw new LibraryFailure(stage, "gateway");
+  if (init.method === "DELETE" && response.status === 204) return undefined as T;
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new LibraryFailure(stage, "unreadable");
+  }
+  if (init.method === "DELETE" ? !record(payload) : !validPayload(path, payload))
+    throw new LibraryFailure(stage, "unreadable");
+  // Missing model names remain unknown; string consumers receive an empty value.
+  // Sizes and times come from free-form job metadata: a value that is not a
+  // finite number is unknown, not a reason to refuse the whole library.
+  if (record(payload)) {
+    const assets = Array.isArray(payload.assets) ? payload.assets : record(payload.asset) ? [payload.asset] : [];
+    for (const asset of assets) {
+      if (!record(asset)) continue;
+      if (asset.model == null) asset.model = "";
+      for (const key of ["width", "height", "generation_ms", "duration_s"]) {
+        const number = typeof asset[key] === "string" && asset[key].trim() ? Number(asset[key]) : asset[key];
+        asset[key] = typeof number === "number" && Number.isFinite(number) ? number : null;
+      }
+    }
+  }
   return payload as T;
 }
 
@@ -332,9 +425,11 @@ function UnavailablePreview({
   kind,
   copy,
   onRetry,
+  retrying = false,
 }: {
   kind: MediaKind;
   copy: string;
+  retrying?: boolean;
   onRetry?: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const Icon = kindIcon(kind);
@@ -351,8 +446,10 @@ function UnavailablePreview({
           size="xs"
           className="relative z-20 max-sm:min-h-11"
           onClick={onRetry}
+          disabled={retrying}
+          aria-busy={retrying || undefined}
         >
-          Retry
+          {retrying ? "Loading…" : "Retry"}
         </Button>
       ) : null}
     </div>
@@ -369,14 +466,7 @@ async function prepareDownload(
   withDetails = false,
 ) {
   const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}${withDetails ? "&metadata=full" : ""}`;
-  const response = await fetch(path, { credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error("Download could not be prepared. Try again.");
-  }
-  const payload = (await response.json()) as { download_url?: string };
-  if (!payload.download_url) {
-    throw new Error("Download could not be prepared. Try again.");
-  }
+  const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
   const link = document.createElement("a");
   link.href = payload.download_url;
   link.download = assetTitle(asset);
@@ -391,22 +481,42 @@ async function prepareDownload(
  */
 async function shareCreation(asset: MediaAsset, everyone: boolean) {
   const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
-  const response = await fetch(path, { credentials: "same-origin" });
-  const payload = response.ok
-    ? ((await response.json()) as { download_url?: string })
-    : null;
-  if (!payload?.download_url)
-    throw new Error("The file could not be prepared. Try again.");
-  const blob = await (await fetch(payload.download_url)).blob();
-  // The gateway's media type first; the response's as a fallback.
-  const type = asset.media_type || blob.type;
+  const payload = await mediaRequest<{ download_url: string }>(path, {}, "prepare");
+  let media: Response;
+  try {
+    media = await fetch(payload.download_url);
+  } catch {
+    throw new LibraryFailure("download", "unknown");
+  }
+  if (!media.ok) throw new LibraryFailure("download", "gateway");
+  // An error page (HTML, JSON) must not become a shared "file". A generic
+  // binary type falls back to the gateway's declared media type.
+  const header = media.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+  const declared = asset.media_type?.toLowerCase();
+  const type = header?.startsWith(`${asset.kind}/`)
+    ? header
+    : (!header || header === "application/octet-stream") && declared?.startsWith(`${asset.kind}/`)
+      ? declared
+      : null;
+  if (!type) throw new LibraryFailure("download", "unreadable");
+  let blob: Blob;
+  try {
+    blob = await media.blob();
+  } catch {
+    throw new LibraryFailure("download", "unknown");
+  }
   const extension = type.split("/")[1]?.split(";")[0] ?? "bin";
   const file = new File([blob], `${shortTitle(asset)}.${extension}`, {
     type,
   });
-  if (navigator.canShare?.({ files: [file] }))
+  try {
+    if (!navigator.canShare?.({ files: [file] }))
+      throw new LibraryFailure("share", "gateway");
     await navigator.share({ files: [file], title: shortTitle(asset) });
-  else throw new Error("This browser cannot share files. Use Download.");
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new LibraryFailure("share", "gateway");
+  }
 }
 
 function absolute(ts: MediaAsset["created_at"]) {
@@ -439,6 +549,7 @@ function AudioTile({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [measuredDuration, setMeasuredDuration] = useState<number | null>(
     duration ?? null,
   );
@@ -475,11 +586,16 @@ function AudioTile({
         title={captionTitle(title, title, 56)}
         src={src}
         visible={visible}
-        status={errorText ? <span role="status">{errorText}</span> : null}
+        status={errorText || buffering ? <span role="status">{errorText || "Loading audio…"}</span> : null}
       />
       <audio
         ref={audioRef}
         preload="none"
+        // "waiting" means playback needs data; preload="none" never
+        // reaches canplay, so loadstart would show a wait that never ends.
+        onWaiting={() => setBuffering(true)}
+        onCanPlay={() => setBuffering(false)}
+        onPlaying={() => setBuffering(false)}
         onLoadedMetadata={(event) => {
           setError(null);
           setMeasuredDuration(event.currentTarget.duration);
@@ -489,10 +605,14 @@ function AudioTile({
           setError(null);
           setIsPlaying(true);
         }}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => {
+          setIsPlaying(false);
+          setBuffering(false);
+        }}
         onEnded={() => setIsPlaying(false)}
         onError={() => {
           setIsPlaying(false);
+          setBuffering(false);
           setError("media");
         }}
       />
@@ -556,6 +676,7 @@ function LargeAudioPlayer({
   const [time, setTime] = useState(0);
   const [length, setLength] = useState<number | null>(duration ?? null);
   const [blocked, setBlocked] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const peaks = useAudioPeaks(peaksKey, src, true, 64);
   return (
     <div
@@ -567,7 +688,10 @@ function LargeAudioPlayer({
         src={src}
         preload="metadata"
         aria-label="Generated audio"
-        onError={onFailed}
+        onWaiting={() => setBuffering(true)}
+        onCanPlay={() => setBuffering(false)}
+        onPlaying={() => setBuffering(false)}
+        onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
           pauseOtherAudio(event.currentTarget);
           setBlocked(false);
@@ -631,6 +755,7 @@ function LargeAudioPlayer({
           {length != null ? formatDuration(length) : "–:––"}
         </span>
       </div>
+      {buffering ? <p role="status">Loading audio…</p> : null}
       {blocked ? (
         <p role="status" className="text-meta">
           Playback didn&apos;t start. Try again.
@@ -662,6 +787,7 @@ function LargeVideoPlayer({
   const [length, setLength] = useState<number | null>(null);
   const [muted, setMuted] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   async function toggle() {
     const video = videoRef.current;
     if (!video) return;
@@ -702,7 +828,10 @@ function LargeVideoPlayer({
             );
           }
         }}
-        onError={onFailed}
+        onWaiting={() => setBuffering(true)}
+        onCanPlay={() => setBuffering(false)}
+        onPlaying={() => setBuffering(false)}
+        onError={() => { setBuffering(false); onFailed(); }}
         onPlay={(event) => {
           pauseOtherAudio(event.currentTarget);
           setBlocked(false);
@@ -769,6 +898,7 @@ function LargeVideoPlayer({
           {muted ? <VolumeX aria-hidden /> : <Volume2 aria-hidden />}
         </Button>
       </div>
+      {buffering ? <p role="status">Loading video…</p> : null}
       {blocked ? (
         <p role="status" className="text-chrome-foreground text-meta px-3 pb-2">
           Playback didn&apos;t start. Try again.
@@ -797,10 +927,13 @@ function Preview({
   const [retryKey, setRetryKey] = useState(0);
   const [retrySrc, setRetrySrc] = useState<string | null>(null);
   const [recovered, setRecovered] = useState(false);
+  const retryPending = useRef(false);
+  const [retrying, setRetrying] = useState(false);
   const tileVideoRef = useRef<HTMLVideoElement>(null);
   const [tilePlaying, setTilePlaying] = useState(false);
   const [tileStarted, setTileStarted] = useState(false);
   const [tileBlocked, setTileBlocked] = useState(false);
+  const [tileBuffering, setTileBuffering] = useState(false);
   const [tileDuration, setTileDuration] = useState(asset.duration_s);
   const {
     data: poster,
@@ -849,8 +982,13 @@ function Preview({
       <UnavailablePreview
         kind={asset.kind}
         copy={unavailableCopy(asset)}
+        retrying={retrying}
         onRetry={(event) => {
           event.stopPropagation();
+          if (retryPending.current) return;
+          retryPending.current = true;
+          setRetrying(true);
+          // Try the current address again while a fresh link is fetched.
           setMediaFailed(false);
           setPosterFailed(false);
           setRetryKey((value) => value + 1);
@@ -873,7 +1011,10 @@ function Preview({
               setMediaFailed(true);
               setPosterFailed(true);
             },
-          );
+          ).finally(() => {
+            retryPending.current = false;
+            setRetrying(false);
+          });
           void queryClient.invalidateQueries({ queryKey: ["library"] });
         }}
       />
@@ -917,6 +1058,9 @@ function Preview({
           preload="metadata"
           muted
           playsInline
+          onWaiting={() => setTileBuffering(true)}
+          onCanPlay={() => setTileBuffering(false)}
+          onPlaying={() => setTileBuffering(false)}
           onLoadedMetadata={(event) => {
             const video = event.currentTarget;
             if (Number.isFinite(video.duration) && video.duration >= 0) {
@@ -935,6 +1079,7 @@ function Preview({
           onEnded={() => setTilePlaying(false)}
           onError={() => {
             setTilePlaying(false);
+            setTileBuffering(false);
             setMediaFailed(true);
             setTileBlocked(true);
           }}
@@ -997,6 +1142,7 @@ function Preview({
               : null}
           </TileMeta>
         </button>
+        {tileBuffering ? <p role="status" className="bg-media-badge text-media-badge-foreground absolute inset-x-2 top-2">Loading video…</p> : null}
         {tileBlocked ? (
           <p role="status" className="bg-media-badge text-media-badge-foreground text-badge absolute inset-x-2 top-10 z-30 rounded-badge px-2">
             {mediaFailed ? "Preview unavailable" : "Playback didn't start. Try again."}
@@ -1051,12 +1197,13 @@ function Preview({
 type PersonLookup = (asset: MediaAsset) => string | null;
 
 function usePeople(enabled: boolean, sources: MediaSource[]) {
-  const { data: users } = useQuery({
+  const query = useQuery({
     queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled,
     retry: false,
   });
+  const users = query.data;
   const people = useMemo(
     () =>
       (users ?? [])
@@ -1079,7 +1226,7 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
     )?.owner_user_id;
     return people.find((person) => person.id === owner)?.name ?? null;
   };
-  return { people, lookup };
+  return { people, lookup, query };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1395,11 +1542,15 @@ interface ReceiptCost {
 }
 
 function costText(receipt: ReceiptCost): string {
-  const usd = Number(receipt.cost?.usd);
-  if (receipt.cost && Number.isFinite(usd) && usd > 0)
+  const recorded = receipt.cost?.usd;
+  const usd = typeof recorded === "number" || (typeof recorded === "string" && recorded.trim())
+    ? Number(recorded) : NaN;
+  if (Number.isFinite(usd) && usd > 0)
     return usd < 0.01 ? "Less than USD 0.01" : `USD ${usd.toFixed(2)}`;
   if (receipt.remote === false && receipt.cost?.cost_class === "local")
     return "Local · no provider charge";
+  // A recorded zero is a fact; a missing amount is not zero.
+  if (usd === 0) return "USD 0.00";
   return "Cost not recorded";
 }
 
@@ -1408,6 +1559,25 @@ function presentFacts(
   facts: [key: string, value: ReactNode][],
 ): KeyValueItem[] {
   return facts.filter(([, value]) => value != null && value !== "");
+}
+
+/**
+ * A supporting query's failure, with its own Retry. Its wait and an empty
+ * answer stay quiet (P1): the page works without them.
+ */
+function QueryFeedback({ label, query }: {
+  label: string;
+  query: { isFetching: boolean; isError: boolean; refetch: () => unknown };
+}) {
+  if (!query.isError) return null;
+  return (
+    <p role="status" className="text-meta">
+      The gateway couldn’t load {label}.{" "}
+      <Button variant="link" disabled={query.isFetching} onClick={() => void query.refetch()}>
+        {query.isFetching ? "Loading…" : `Retry ${label}`}
+      </Button>
+    </p>
+  );
 }
 
 function CreationViewer({
@@ -1420,6 +1590,7 @@ function CreationViewer({
   person,
   downloading,
   onDownload,
+  onShare,
   maker,
   onDelete,
   onReturnFocus,
@@ -1433,6 +1604,7 @@ function CreationViewer({
   person: string | null;
   downloading: boolean;
   onDownload: (asset: MediaAsset, withDetails?: boolean) => void;
+  onShare: (asset: MediaAsset) => void;
   /**
    * The viewer made this item. Only the maker learns whether a prompt was
    * kept; anyone else sees no prompt and no sign that one exists.
@@ -1461,6 +1633,8 @@ function CreationViewer({
     data: receipt,
     isPending: receiptPending,
     isError: receiptFailed,
+    isFetching: receiptFetching,
+    refetch: retryReceipt,
   } = useQuery({
     queryKey: ["library", "receipt", asset.request_id, everyone],
     enabled: Boolean(asset.request_id),
@@ -1473,7 +1647,7 @@ function CreationViewer({
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
-  const { data: promptMemory } = useQuery({
+  const promptMemoryQuery = useQuery({
     queryKey: promptMemoryKey,
     queryFn: accountApi.promptMemory,
     enabled: maker && !prompt,
@@ -1482,6 +1656,7 @@ function CreationViewer({
   useEffect(() => {
     if (viewer.id) markCreationOpened(viewer.id, asset.asset_id);
   }, [viewer.id, asset.asset_id]);
+  const promptMemory = promptMemoryQuery.data;
   const notSavedReason = promptNotSavedReason(
     tryKeepState(promptMemory?.prompt_memory),
     Boolean(viewer.admin),
@@ -1495,8 +1670,9 @@ function CreationViewer({
   const title = shortTitle(asset);
   // The gateway offers the file with details only to its maker, while the
   // prompt is kept.
+  const fileAvailable = !!renewed?.download_url && !renewalFailed;
   const detailsDownload =
-    Boolean(asset.workflow_download_url) && asset.available !== false;
+    Boolean(asset.workflow_download_url) && (fileAvailable || asset.available !== false);
   const charge = !asset.request_id
     ? null
     : receiptPending
@@ -1565,10 +1741,10 @@ function CreationViewer({
                   </>
                 ) : null}
                 {renewing ? <p role="status">Opening your file…</p> : renewalFailed ? (
-                  <p role="status">Couldn’t open this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
+                  <p role="status">The gateway couldn’t prepare this file. <button className="text-link min-h-11 px-3 underline" onClick={() => void renew()}>Try again</button></p>
                 ) : renewed ? <Preview
                   key={`${asset.asset_id}-${renewed.download_url}`}
-                  asset={{ ...asset, download_url: renewed.download_url }}
+                  asset={{ ...asset, download_url: renewed.download_url, available: true, unavailable_reason: null }}
                   large
                   everyone={everyone}
                 /> : null}
@@ -1636,10 +1812,11 @@ function CreationViewer({
                           // inside the file, as Photos' "Export Unmodified
                           // Original" sits apart from Share.
                           <DropdownMenuItem
+                            disabled={downloading}
                             onSelect={() => onDownload(asset, true)}
                           >
                             <FileDown aria-hidden />
-                            Download with details
+                            {downloading ? "Preparing…" : "Download with details"}
                           </DropdownMenuItem>
                         ) : null}
                         {onDelete ? (
@@ -1680,7 +1857,7 @@ function CreationViewer({
                   </span>
                 ) : null}
               </p>
-              {asset.available === false ? (
+              {asset.available === false && !fileAvailable ? (
                 <p className="bg-muted rounded-control text-meta p-3">
                   {confirmedGone(asset.unavailable_reason)
                     ? "The gateway no longer stores this file."
@@ -1691,26 +1868,19 @@ function CreationViewer({
               {/* Share (the file itself) is the primary at 40 where the
                   browser has a share sheet; every other action is 32. */}
               <div className="flex flex-wrap items-center gap-2">
-                {asset.available !== false && canShare ? (
+                {(fileAvailable || asset.available !== false) && canShare ? (
                   <Button
                     type="button"
                     size="md"
-                    onClick={() =>
-                      void shareCreation(asset, everyone).catch((error) => {
-                        // Closing the share sheet is not a failure.
-                        if (
-                          error instanceof Error &&
-                          error.name !== "AbortError"
-                        )
-                          toast.error(error.message);
-                      })
-                    }
+                    disabled={downloading}
+                    aria-busy={downloading || undefined}
+                    onClick={() => onShare(asset)}
                   >
                     <Share aria-hidden="true" />
-                    Share
+                    {downloading ? "Preparing…" : "Share"}
                   </Button>
                 ) : null}
-                {asset.available !== false ? (
+                {fileAvailable || asset.available !== false ? (
                   <Button
                     type="button"
                     size="sm"
@@ -1753,6 +1923,8 @@ function CreationViewer({
                   </Button>
                 ) : null}
               </div>
+              {receiptFailed ? <p role="status">The gateway couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
+              {maker && !prompt ? <QueryFeedback label="prompt settings" query={promptMemoryQuery} /> : null}
               <KeyValueList
                 className="figures"
                 items={presentFacts([
@@ -1916,10 +2088,12 @@ export default function LibraryPage() {
   const searchParams = useSearchParams();
   const linkedJobId = searchParams?.get("job");
   const queryClient = useQueryClient();
-  const { data: modelCatalog } = useQuery({
+  const modelCatalogQuery = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
+  const modelCatalog = modelCatalogQuery.data;
+  const preparing = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const removedAssetIds = useRef(new Set<string>());
   const deletingAssetId = useRef<string | null>(null);
@@ -1934,7 +2108,7 @@ export default function LibraryPage() {
   const [owner, setOwner] = useState("default");
   const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
-  const closedDeepLinkId = useRef<string | null>(null);
+  const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
@@ -1948,7 +2122,7 @@ export default function LibraryPage() {
     model === "all" &&
     source === "all" &&
     !debouncedSearch.trim();
-  const { data: home } = useQuery({
+  const homeQuery = useQuery({
     queryKey: ["account", "home"],
     queryFn: productApi.home,
     retry: false,
@@ -1960,6 +2134,7 @@ export default function LibraryPage() {
         ? 15_000
         : false,
   });
+  const home = homeQuery.data;
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters, canChooseOwner);
@@ -1973,14 +2148,14 @@ export default function LibraryPage() {
     setSource("all");
   }
   function openAsset(asset: MediaAsset) {
-    closedDeepLinkId.current = null;
+    setClosedDeepLinkId(null);
     setSelected(asset);
     const params = new URLSearchParams(window.location.search);
     params.set("asset", asset.asset_id);
     window.history.replaceState(null, "", `?${params.toString()}`);
   }
   function closeAsset() {
-    if (selected) closedDeepLinkId.current = selected.asset_id;
+    setClosedDeepLinkId(selected?.asset_id ?? deepLinkedAssetId);
     setSelected(null);
     const params = new URLSearchParams(window.location.search);
     params.delete("asset");
@@ -1995,6 +2170,7 @@ export default function LibraryPage() {
     data,
     isLoading,
     isError,
+    error: libraryError,
     isFetching,
     isFetchingNextPage,
     isFetchNextPageError,
@@ -2053,7 +2229,10 @@ export default function LibraryPage() {
     );
   }, [mediaPages, kind]);
   const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
-  const { people, lookup: personFor } = usePeople(canChooseOwner, sources);
+  const { people, lookup: personFor, query: peopleQuery } = usePeople(canChooseOwner, sources);
+  useEffect(() => {
+    setSelected((current) => current ? assets.find((item) => item.asset_id === current.asset_id) ?? current : null);
+  }, [assets]);
   const viewerPerson =
     viewer.name && viewer.name !== "Your account" ? viewer.name : null;
   const hasLoadedAssets = assets.length > 0;
@@ -2084,10 +2263,10 @@ export default function LibraryPage() {
   });
   useEffect(() => {
     if (!deepLinkedAssetId) {
-      closedDeepLinkId.current = null;
+      setClosedDeepLinkId(null);
       return;
     }
-    if (closedDeepLinkId.current === deepLinkedAssetId) return;
+    if (closedDeepLinkId === deepLinkedAssetId) return;
     if (selected?.asset_id === deepLinkedAssetId) return;
     if (listedDeepLinkedAsset) {
       setSelected(listedDeepLinkedAsset);
@@ -2097,11 +2276,13 @@ export default function LibraryPage() {
       setSelected(deepLinkedAsset.asset);
       return;
     }
+    setSelected(null);
   }, [
     deepLinkedAsset,
     deepLinkedAssetId,
     listedDeepLinkedAsset,
     selected?.asset_id,
+    closedDeepLinkId,
   ]);
   const models = useMemo(
     () =>
@@ -2256,6 +2437,7 @@ export default function LibraryPage() {
             "x-azizam-csrf": session.csrf_token,
           },
         },
+        "delete",
       );
     },
     onSuccess: (_result, asset) => {
@@ -2264,10 +2446,7 @@ export default function LibraryPage() {
       closeAsset();
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
-    onError: (error) =>
-      toast.error(
-        error instanceof Error ? error.message : "Delete failed. Try again.",
-      ),
+    onError: (error) => toast.error(failureCopy(error)),
   });
   const personOptions = canChooseOwner
     ? [
@@ -2483,14 +2662,21 @@ export default function LibraryPage() {
             </Button>
           ) : null}
         </section>
-        {deepLinkedAssetError ? (
+        <QueryFeedback label="model names" query={modelCatalogQuery} />
+        {canChooseOwner ? <QueryFeedback label="people" query={peopleQuery} /> : null}
+        {showRunningMedia ? <QueryFeedback label="running work" query={homeQuery} /> : null}
+        {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetFetching ? <p role="status">Opening that creation…</p> : null}
+        {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetError ? (
           <div className="mb-4">
             <ErrorState
-              heading="Couldn’t open that creation"
-              message="That library item could not be loaded. Try again."
+              heading="That creation is unavailable"
+              message="The gateway couldn’t open this creation. Try again or return to your library."
               onRetry={() => void refetchDeepLinkedAsset()}
               retrying={deepLinkedAssetFetching}
             />
+            <Button variant="outline" className="mt-2" onClick={closeAsset}>
+              Back to library
+            </Button>
           </div>
         ) : null}
         {isLoading ? (
@@ -2512,7 +2698,7 @@ export default function LibraryPage() {
         {showInitialError ? (
           <ErrorState
             heading="Couldn’t load your library"
-            message={null}
+            message={failureCopy(libraryError)}
             onRetry={() => void refetch()}
             retrying={isFetching}
           />
@@ -2637,8 +2823,8 @@ export default function LibraryPage() {
         >
           <span>
             {isFetchNextPageError
-              ? "More library items could not be loaded."
-              : "Library results could not be refreshed."}
+              ? "The gateway couldn’t load more library items. Try again."
+              : "The gateway couldn’t refresh your library. Try again."}
           </span>
           <Button
             variant="outline"
@@ -2673,21 +2859,32 @@ export default function LibraryPage() {
           everyone={instanceView}
           nameModel={nameModel}
           person={selectedPerson}
-          downloading={downloadingAssetId === selected.asset_id}
+          downloading={downloadingAssetId !== null}
           maker={isMaker(selected)}
+          onShare={(asset) => {
+            if (preparing.current) return;
+            preparing.current = true;
+            setDownloadingAssetId(asset.asset_id);
+            void shareCreation(asset, instanceView).catch((error) => {
+              if (!(error instanceof Error && error.name === "AbortError")) toast.error(failureCopy(error));
+            }).finally(() => {
+              preparing.current = false;
+              setDownloadingAssetId(null);
+            });
+          }}
           onDownload={(asset, withDetails) => {
+            if (preparing.current) return;
+            preparing.current = true;
             setDownloadingAssetId(asset.asset_id);
             void prepareDownload(asset, instanceView, withDetails).then(
               () => {
+                preparing.current = false;
                 toast.success("Download ready.");
                 setDownloadingAssetId(null);
               },
               (error) => {
-                toast.error(
-                  error instanceof Error
-                    ? error.message
-                    : "Download could not be prepared. Try again.",
-                );
+                preparing.current = false;
+                toast.error(failureCopy(error));
                 setDownloadingAssetId(null);
               },
             );
