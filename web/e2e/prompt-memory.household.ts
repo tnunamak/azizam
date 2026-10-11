@@ -264,6 +264,28 @@ test.describe("Library: the prompt is the maker's alone", () => {
   });
 });
 
+// Read every Library page: the fixture clock is frozen, so new clips tie on
+// created_at with older ones and need not land on the first page.
+type AudioItem = { asset_id: string; prompt: string | null };
+type AudioPage = { assets: AudioItem[]; next_cursor: string | null };
+async function allAudioPages(
+  request: import("@playwright/test").APIRequestContext,
+  scope: "me" | "everyone",
+): Promise<AudioItem[]> {
+  const assets: AudioItem[] = [];
+  let cursor: string | null = null;
+  do {
+    const query: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const response = await request.get(
+      `/me/api/media?scope=${scope}&kind=audio&limit=100${query}`,
+    );
+    const body: AudioPage = await response.json();
+    assets.push(...body.assets);
+    cursor = body.next_cursor;
+  } while (cursor);
+  return assets;
+}
+
 test.describe("Try: Don't keep this prompt", () => {
   // Read text aloud: the household's picture jobs cannot deliver content in
   // this fixture (the job content route has no route policy without a
@@ -276,24 +298,7 @@ test.describe("Try: Don't keep this prompt", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.member_email, baseURL!);
-    // Read every page: the fixture clock is frozen, so new clips tie on
-    // created_at with older ones and need not land on the first page.
-    type AudioItem = { asset_id: string; prompt: string | null };
-    type AudioPage = { assets: AudioItem[]; next_cursor: string | null };
-    const allAudio = async (): Promise<AudioItem[]> => {
-      const assets: AudioItem[] = [];
-      let cursor: string | null = null;
-      do {
-        const query: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-        const response = await page.request.get(
-          `/me/api/media?scope=me&kind=audio&limit=100${query}`,
-        );
-        const body: AudioPage = await response.json();
-        assets.push(...body.assets);
-        cursor = body.next_cursor;
-      } while (cursor);
-      return assets;
-    };
+    const allAudio = () => allAudioPages(page.request, "me");
     const audioIds = async () =>
       new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
@@ -362,11 +367,7 @@ test.describe("Try: Don't keep this prompt", () => {
 
     // The owner sees Robin's clips without their words.
     const owner = await as(browser, seed.owner_email, baseURL!);
-    const everyone = await (
-      await owner.page.request.get(
-        "/me/api/media?scope=everyone&kind=audio&limit=50",
-      )
-    ).json();
+    const everyone = { assets: await allAudioPages(owner.page.request, "everyone") };
     const ids = everyone.assets.map((a: { asset_id: string }) => a.asset_id);
     expect(ids).toContain(keptItem!.asset_id);
     expect(ids).toContain(newest!.asset_id);
