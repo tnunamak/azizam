@@ -178,3 +178,22 @@ def test_compaction_preserves_rows_enables_incremental_reclaim(tmp_path):
     receipt_store.maintain(admin_path, path=path)
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA page_count").fetchone()[0] < pages
+
+
+def test_saved_setting_retries_after_deletion_failure(history, monkeypatch):
+    client, admin_path, path, _ = history
+    original = receipt_store.save_retention
+    def fail_after_save(days, preview, save_setting, *, path):
+        save_setting()
+        raise sqlite3.OperationalError("receipt database busy")
+    monkeypatch.setattr(receipt_store, "save_retention", fail_after_save)
+    preview = client.get("/admin/api/settings/receipts/preview?retention_days=30", headers=OWNER).json()
+    response = _save(client, 30, preview=preview)
+    assert response.status_code == 202
+    assert response.json()["cleanup_pending"] is True
+    assert response.json()["retention_days"] == 30
+    assert response.json()["revision"] == "1"
+    assert receipt_store.count(path, outer_only=False) == 12
+    monkeypatch.setattr(receipt_store, "save_retention", original)
+    assert receipt_store.maintain(admin_path, path=path) == preview["delete_count"]
+    assert receipt_store.count(path, outer_only=False) == 3

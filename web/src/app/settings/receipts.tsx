@@ -143,9 +143,9 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(choices).map(([value, label]) => (
+              {(["forever", "365", "90", "30"] as const).map((value) => (
                 <SelectItem key={value} value={value}>
-                  {label}
+                  {choices[value]}
                 </SelectItem>
               ))}
             </SelectContent>

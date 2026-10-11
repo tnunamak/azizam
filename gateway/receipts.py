@@ -1,7 +1,7 @@
 """Route receipt helpers.
 
-Receipts are compact diagnostics. They record decisions and routing facts, not
-raw request bodies or secrets.
+Receipts record decisions, routing, usage and spend facts without raw request
+bodies or secrets.
 """
 
 from __future__ import annotations

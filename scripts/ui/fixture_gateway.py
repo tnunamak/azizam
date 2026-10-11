@@ -72,8 +72,9 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
 
     _freeze_household_clock(int(os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW))
     import proxy  # noqa: F401
-    # Keep the profile's thirty-day operational history across startup pruning.
-    from gateway import receipt_store, media_jobs, media_delivery
+    # Receipts keep the household's history by default; job coordination uses
+    # the fixture's separate month-long window.
+    from gateway import media_jobs, media_delivery
     from pathlib import Path
 
     from gateway import default_profiles, admin_store
@@ -134,9 +135,7 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
         )
     from functools import partial
 
-    receipt_store.RETAIN_S = 31 * 86400
     media_jobs.RETAIN_S = 31 * 86400
-    receipt_store.prune = partial(receipt_store.prune, retain_s=31 * 86400)
     media_jobs.prune = partial(media_jobs.prune, retain_s=31 * 86400)
 
 import uvicorn

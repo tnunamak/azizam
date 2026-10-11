@@ -982,6 +982,17 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIn("coverage_start", usage)
         self.assertEqual(usage["people"], [])
 
+    def test_usage_reports_saved_retention_without_changing_member_scope(self) -> None:
+        self._receipt(self.app_a["id"], "req_mine")
+        self._receipt(self.app_b["id"], "req_theirs")
+        for days in (365, 90, 30, None):
+            admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
+                                            {"retention_days": days}, path=self.admin_db)
+            usage = self.client.get("/me/api/usage/summary").json()
+            self.assertEqual(usage["retention_days"], days)
+            self.assertEqual(usage["requests"], 1)
+            self.assertEqual([r["request_id"] for r in usage["receipts"]], ["req_mine"])
+
     def test_usage_excludes_children_and_preserves_unknown_costs(self) -> None:
         self._receipt(self.app_a["id"], "req_outer")
         receipt_store.record({"request_id": "req_child", "app_id": self.app_a["id"],

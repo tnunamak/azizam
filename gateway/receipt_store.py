@@ -1,6 +1,6 @@
 """SQLite-backed durable store for route receipts.
 
-Receipts are compact diagnostics about routing decisions. This module persists
+Receipts keep routing, usage and spend metadata. This module persists
 the *internal* audience shape of a receipt so admin/client views can be derived
 later by re-filtering, without ever having stored raw prompts, image bytes,
 secrets, or request bodies.
@@ -567,7 +567,7 @@ def retention_days(admin_path: Path) -> int | None:
 
     record = admin_store.get_operator_setting(RETENTION_SETTING_KEY, path=admin_path)
     days = record["value"].get("retention_days") if record else None
-    if isinstance(days, bool) or days not in RETENTION_DAYS:
+    if (days is not None and type(days) is not int) or days not in RETENTION_DAYS:
         raise ValueError("invalid receipt retention setting")
     return days
 

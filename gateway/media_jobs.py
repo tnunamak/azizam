@@ -17,7 +17,7 @@ how ComfyUI submits a workflow or how a TTS engine streams. It owns:
 
 The shape is parallel to ``gateway/receipt_store.py`` but distinct:
 
-- Receipts are immutable diagnostics about a routing decision.
+- Receipts keep routing, usage and spend facts.
 - Jobs are mutable durable records about ongoing work. They progress through
   states, accrue events, and reference assets.
 

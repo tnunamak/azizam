@@ -156,7 +156,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def receipts_response(**extra: Any) -> JSONResponse:
         record = admin_store.get_operator_setting(receipt_store.RETENTION_SETTING_KEY, path=admin_path)
         return JSONResponse({
-            "retention_days": receipt_store.retention_days(admin_path),
+            "retention_days": record["value"].get("retention_days") if record else None,
             "revision": admin_store.operator_setting_revision(record),
             "source": "admin.db", "apply_mode": "live", **extra,
         }, headers={"Cache-Control": "no-store"})

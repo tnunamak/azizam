@@ -4,7 +4,9 @@ import AxeBuilder from "@axe-core/playwright";
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/settings/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    const body = path.includes("instance")
+    const body = path.includes("receipts")
+      ? { revision: "7", retention_days: null }
+      : path.includes("instance")
       ? {
           revision: "7",
           instance: {
