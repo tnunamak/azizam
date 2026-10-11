@@ -109,3 +109,11 @@ class ResourceAdmissionHTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_refusal_message_prioritizes_rejection_over_simultaneous_delay():
+    decision = advise_route_admission(intent="image.generate", service_available=True,
+                                     service_degraded=True, disabled_intents=("image.generate",))
+    response = admission_http_response(decision)
+    assert response.body["error"]["message"] == "This kind of work is disabled."
+    assert {r["effect"] for r in response.body["error"]["decision"]["reasons"]} == {"rejection", "delay"}
