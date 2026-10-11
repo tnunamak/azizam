@@ -90,9 +90,18 @@ def gateway(monkeypatch, tmp_path, request):
     monkeypatch.setattr(proxy, "is_model_loaded", tripwire("model-state", False))
     for name in ("send_llm_execution_request", "_forward_current_loaded_openai_request"):
         monkeypatch.setattr(proxy, name, tripwire(name, RuntimeError("backend reached")))
-    monkeypatch.setattr(
-        httpx.AsyncClient, "send", tripwire("HTTP backend", RuntimeError("backend reached")),
-    )
+    # Translators (A1111, MCP) call the gateway's own routes in process through
+    # httpx.ASGITransport; those calls meet the gateway's policy again and are
+    # not backend calls. Any other transport is a backend call.
+    real_send = httpx.AsyncClient.send
+    backend_send = tripwire("HTTP backend", RuntimeError("backend reached"))
+
+    async def send(self, *args, **kwargs):
+        if isinstance(self._transport, httpx.ASGITransport):
+            return await real_send(self, *args, **kwargs)
+        return await backend_send(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
 
     def no_network(*_args, **_kwargs):
         calls.append("network connection")
