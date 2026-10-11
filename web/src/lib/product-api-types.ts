@@ -325,8 +325,20 @@ export interface ModelArchitecture {
   output_modalities: Array<"text" | "image" | "audio" | "video" | "embedding">;
 }
 
+export interface SpeechVoice {
+  id: string;
+  name: string;
+}
+
+export interface SpeechVoiceCatalog {
+  voices: Array<SpeechVoice>;
+  default_voice: string | null;
+  allow_other: boolean;
+}
+
 export interface CatalogRow {
   workflow?: string | null;
+  speech_voices?: SpeechVoiceCatalog;
   capability?: string;
   recommended?: boolean;
   capability_title?: string;

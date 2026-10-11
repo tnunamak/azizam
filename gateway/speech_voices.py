@@ -4,9 +4,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from gateway.transforms import TransformRegistry, ValueMapTransform
+from gateway.product_contracts import SpeechVoiceCatalog
 
 
-def speech_voice_catalog(spec: Mapping[str, Any], registry: TransformRegistry) -> dict[str, Any]:
+def speech_voice_catalog(
+    spec: Mapping[str, Any], registry: TransformRegistry,
+) -> SpeechVoiceCatalog:
     mapping = dict(spec.get("voice_map") or {})
     default = spec.get("default_voice")
     native = list(mapping.values())
@@ -16,7 +19,8 @@ def speech_voice_catalog(spec: Mapping[str, Any], registry: TransformRegistry) -
         # Only a single declarative voice map establishes a complete list.
         # An opaque/composed transform is not evidence for arbitrary IDs.
         primitives = registry.resolve(str(transform))
-        if len(primitives) != 1 or not isinstance(primitives[0], ValueMapTransform) or primitives[0]._param != "voice":
+        if (len(primitives) != 1 or not isinstance(primitives[0], ValueMapTransform)
+                or primitives[0]._param != "voice"):
             return {"voices": [], "default_voice": None, "allow_other": False}
         mapping = dict(primitives[0]._map)
         default = primitives[0]._default

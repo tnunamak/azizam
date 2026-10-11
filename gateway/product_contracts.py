@@ -308,7 +308,20 @@ class ModelArchitecture(TypedDict):
     output_modalities: list[OutputModality]
 
 
+class SpeechVoice(TypedDict):
+    id: str
+    name: str
+
+
+class SpeechVoiceCatalog(TypedDict):
+    voices: list[SpeechVoice]
+    default_voice: str | None
+    allow_other: bool
+
+
 class CatalogRow(TypedDict):
+    workflow: NotRequired[str | None]
+    speech_voices: NotRequired[SpeechVoiceCatalog]
     capability: NotRequired[str]
     recommended: NotRequired[bool]
     capability_title: NotRequired[str]

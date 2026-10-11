@@ -2,11 +2,8 @@
 
 import { Input } from "@/components/ui/input";
 
-export type SpeechVoices = {
-  voices: { id: string; name: string }[];
-  default_voice: string | null;
-  allow_other: boolean;
-};
+export type { SpeechVoiceCatalog as SpeechVoices } from "@/lib/product-api-types";
+import type { SpeechVoiceCatalog as SpeechVoices } from "@/lib/product-api-types";
 
 export function selectedVoice(
   choices: SpeechVoices | undefined,
