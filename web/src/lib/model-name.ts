@@ -69,6 +69,7 @@ export function prettifyModelId(id: string): string {
 }
 
 interface CatalogNameRow {
+  workflow?: string | null;
   id: string;
   title?: string | null;
   display_name?: string | null;
@@ -90,9 +91,11 @@ export function modelDisplayName(
   model: string,
   catalog?: { aliases?: CatalogNameRow[]; models?: CatalogNameRow[] },
   capabilities: CapabilityNameRow[] = [],
+  workflow?: string | null,
 ): string {
-  const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
-    (item) => item.id === model,
+  const rows = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])];
+  const row = rows.find((item) => item.id === model) ?? rows.find(
+    (item) => item.workflow && item.workflow === (workflow || model),
   );
   const titled = [row?.title, row?.display_name].find(
     (name) => name && name.trim() && name !== model,
@@ -103,7 +106,9 @@ export function modelDisplayName(
   const capability = capabilities.find(
     (item) =>
       item.recommended_model &&
-      [item.use_name, item.model, ...(item.use_names ?? [])].includes(model),
+      // Grouped capabilities pool every workflow's use_names. Those names
+      // share a capability, not the recommended model's identity.
+      [item.use_name, item.model].includes(model),
   );
   if (capability?.recommended_model) {
     const name = capability.recommended_model;

@@ -15941,7 +15941,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         *_build_workflow_model_entries(),
         *_current_loaded_model_entries(),
     ]
-    return build_models_catalog(
+    catalog = build_models_catalog(
         model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
         alias_views=_gateway_aliases_provider(),
         capability_sets=capability_sets,
@@ -15954,6 +15954,22 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             for record in GATEWAY_WORKFLOW_REGISTRY.records()
         ],
     )
+    # The browser has a session, not a public API key. Carry the configured
+    # voice contract on each already-authorized speech row so it can choose
+    # a voice before creating its temporary Try key.
+    from gateway.speech_voices import speech_voice_catalog
+    for row in [*catalog["aliases"], *catalog["models"]]:
+        if not any(cap["intent"] == "speech.synthesis" for cap in row["capabilities"]):
+            continue
+        try:
+            resolution = resolve_model_for_operation("speech", row["id"])
+            spec = resolution.alias.engine_spec if resolution.alias else None
+            if spec is not None:
+                row["speech_voices"] = speech_voice_catalog(spec, _TRANSFORM_REGISTRY)
+        except (ModelCompatibilityError, KeyError):
+            # Unknown choices remain empty rather than borrowing another model's voices.
+            continue
+    return catalog
 
 
 def _catalog_model_metadata(

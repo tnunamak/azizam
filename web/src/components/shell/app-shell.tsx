@@ -43,6 +43,7 @@ import {
   type StateTone,
 } from "@/lib/capability-state";
 import { useOwnerAlertTarget } from "./use-owner-alert";
+import { ServiceNotice } from "@/components/product/service-notice";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/product/brand-mark";
 import { PersonMark } from "@/components/product/person-mark";
@@ -558,32 +559,12 @@ function AlertSlot() {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, [pathname, viewer.admin]);
-  if (!alert || onStatus) return null;
+  if (!alert || onStatus || canonicalDestinationPath(pathname) === "/try") return null;
   return (
     <div
-      className="bg-warning-tint text-foreground border-warning/30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-5 py-2.5 text-sm sm:px-8 lg:px-12"
-      role="status"
+      className="bg-warning-tint text-foreground border-warning/30 border-b px-5 py-2.5 sm:px-8 lg:px-12"
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <span
-          aria-hidden="true"
-          className="bg-warning-fill size-2 shrink-0 rounded-full"
-        />
-        {alert.message}
-      </span>
-      <Button variant="ghost" size="sm" asChild>
-        <Link
-          href={`/status#${alert.section.toLowerCase()}`}
-          onClick={() => {
-            // Repeated activation on Status must still move focus.
-            if (canonicalDestinationPath(pathname) === "/status")
-              window.dispatchEvent(new HashChangeEvent("hashchange"));
-          }}
-        >
-          View status
-          <ChevronRight />
-        </Link>
-      </Button>
+      <ServiceNotice message={alert.message} section={alert.section} />
     </div>
   );
 }

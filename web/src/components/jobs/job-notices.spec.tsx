@@ -256,3 +256,36 @@ test("a failed delta page retains its watermark for retry", async () => {
   );
   expect(requests.at(-1)).toContain("since=100");
 });
+
+test("following Open result dismisses across a remount in the same session", async () => {
+  const now = Date.now() / 1000;
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [{ ...job, created_at: now, updated_at: now, status: "succeeded", assets: [{ asset_id: "ready" }] }] })));
+  const first = mount();
+  fireEvent.click(await screen.findByRole("link", { name: "Open result" }));
+  expect(screen.queryByText("Video is ready")).toBeNull();
+  first.unmount();
+  const second = mount();
+  await waitFor(() => expect(second.client.getQueryData(["person-jobs", "alice"])).toBeDefined());
+  expect(screen.queryByText("Video is ready")).toBeNull();
+});
+
+test.each([true, false])("opening a Library creation acknowledges it before or after polling: %s", async (beforePoll) => {
+  const { markCreationOpened } = await import("./opened-creations");
+  const now = Date.now() / 1000;
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [{ ...job, created_at: now, updated_at: now, status: "succeeded", assets: [{ asset_id: "viewed" }] }] })));
+  if (beforePoll) markCreationOpened("alice", "viewed");
+  const first = mount();
+  await waitFor(() => expect(first.client.getQueryData(["person-jobs", "alice"])).toBeDefined());
+  if (!beforePoll) {
+    expect(screen.getByText("Video is ready")).toBeVisible();
+    act(() => markCreationOpened("alice", "viewed"));
+  }
+  expect(screen.queryByText("Video is ready")).toBeNull();
+  first.unmount();
+  const second = mount();
+  await waitFor(() => expect(second.client.getQueryData(["person-jobs", "alice"])).toBeDefined());
+  expect(screen.queryByText("Video is ready")).toBeNull();
+  second.unmount();
+  mount("bob");
+  expect(await screen.findByText("Video is ready")).toBeVisible();
+});

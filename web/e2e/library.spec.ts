@@ -97,6 +97,7 @@ for (const mode of ["light", "dark"] as const) {
         mediaRequests.push(route.request().url());
         return route.fulfill({ json: mediaFixture });
       });
+      await page.route("**/me/api/media/asset_image_1/download?*", (route) => route.fulfill({ json: { download_url: mediaFixture.assets[0].download_url } }));
       await page.goto("/ui/library/");
       // Tiles are named by their prompt; the caption shows its subject.
       const tile = page.getByRole("button", {
@@ -143,6 +144,8 @@ for (const mode of ["light", "dark"] as const) {
           items.map((item) => item.getBoundingClientRect().height),
         );
       expect(Math.max(...cards) - Math.min(...cards)).toBeLessThan(2);
+      await expect(page.getByText(/Playback link expires|Reopen to renew/)).toHaveCount(0);
+      if (mode === "light") await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/library-viewer-light-${width}.png` });
       await page.screenshot({
         path: `test-results/screens/library-sheet-${mode}-${width}.png`,
         fullPage: false,

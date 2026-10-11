@@ -129,4 +129,11 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
     viewer.getByRole("img", { name: "A quiet lake" }),
   ).toHaveAttribute("src", png);
   expect(renewals).toBe(1);
+  await expect(notice).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(notice).toBeHidden();
+  await page.getByRole("button", { name: "Close", exact: true }).first().click();
+  await page.getByRole("link", { name: "Status", exact: true }).first().click();
+  await expect(notice).toBeHidden();
 });

@@ -21,7 +21,7 @@ const navigation = vi.hoisted(() => ({
 
 // The signed-in person and their own home payload; owner tests change both.
 const session = vi.hoisted(() => ({
-  viewer: { role: "member", name: "Alex" } as { role: string; name: string },
+  viewer: { role: "member", name: "Alex" } as { role: string; name: string; id?: string },
   home: { receipts: [] } as Record<string, unknown>,
 }));
 
@@ -52,6 +52,8 @@ vi.mock("@/lib/product-api", () => ({
     models: async () => ({
       aliases: [],
       models: [
+        { id: "first-music", title: "First music model", workflow: "audio.generate.first-music" },
+        { id: "yue2-song", title: "YuE2 Song", workflow: "audio.generate.yue2-song" },
         { id: "image", title: "Image model", display_name: "Image model" },
         {
           id: "audio.generate.test-model",
@@ -594,6 +596,43 @@ describe("Library honesty and access", () => {
     vi.unstubAllGlobals();
   });
 
+  test("two workflows sharing an intent keep their own name in the viewer", async () => {
+    session.home = { receipts: [], capabilities: [{ use_name: "audio.generate.first-music", use_names: ["audio.generate.first-music", "audio.generate.yue2-song"], recommended_model: "First music model" }] };
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("song", "My song", { kind: "audio", model: "audio.generate.yue2-song", request_id: "song-receipt" })])
+      : path.includes("/receipts/") ? Response.json({ resolved_model: "yue2-song", resolved_workflow: "audio.generate.yue2-song" }) : undefined);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open My song" }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(factValue(dialog, "Model")).toHaveTextContent("YuE2 Song"));
+    expect(dialog).not.toHaveTextContent("First music model");
+    fireEvent.click(within(dialog).getByText("Details"));
+    expect(factValue(dialog, "Model name")).toHaveTextContent("yue2-song");
+  });
+
+  test("renewal failure offers a retry and hides expiry copy after recovery", async () => {
+    let attempts = 0;
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("retry", "Retry picture")])
+      : path.includes("/download?") ? ++attempts === 1 ? new Response("failed", { status: 503 }) : Response.json({ download_url: "/fresh?expires=2000000000" }) : undefined);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Retry picture" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Try again" }));
+    expect(await within(dialog).findByRole("img", { name: "Retry picture" })).toHaveAttribute("src", "/fresh?expires=2000000000");
+    expect(dialog).not.toHaveTextContent("Playback link expires");
+    expect(attempts).toBe(2);
+  });
+
+  test("opening from Library records the creation for this person's session", async () => {
+    session.viewer = { role: "member", name: "Alex", id: "alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("opened", "Opened picture")]) : undefined);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open Opened picture" }));
+    await screen.findByRole("dialog");
+    await waitFor(() => expect(JSON.parse(sessionStorage.getItem("azizam:opened-creations:v1:alex") ?? "[]")).toContain("opened"));
+    sessionStorage.clear();
+  });
+
   test("9a offers Delete in Everyone view only for the viewer's own creations", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     session.home = {
@@ -856,7 +895,7 @@ describe("Library honesty and access", () => {
     await waitFor(() => expect(renew).toBeTypeOf("function"));
     renew(Response.json({ download_url: "/renewed?expires=2000000000" }));
     expect(await within(dialog).findByRole("img", { name: "An old picture" })).toHaveAttribute("src", "/renewed?expires=2000000000");
-    expect(within(dialog).getByText(/Playback link expires/)).toBeVisible();
+    expect(within(dialog).queryByText(/Playback link expires|Reopen to renew/)).toBeNull();
   });
 
   test("10b returns focus to the tile of the creation shown last", async () => {

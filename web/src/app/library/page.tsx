@@ -91,6 +91,7 @@ import {
 import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
+import { markCreationOpened } from "@/components/jobs/opened-creations";
 import { api, queryKeys } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import {
@@ -109,7 +110,7 @@ import {
   type InProgressItem,
 } from "./library-format";
 
-type NameModel = (model: string) => string;
+type NameModel = (model: string, workflow?: string | null) => string;
 
 type MediaKind = "image" | "video" | "audio";
 type DateFilter = "all" | "7d" | "30d" | "90d";
@@ -1383,6 +1384,9 @@ function MoreFilters({
 /* ------------------------------------------------------------------ */
 
 interface ReceiptCost {
+  resolved_workflow?: string | null;
+  resolved_model?: string | null;
+  requested_model?: string | null;
   remote?: boolean | null;
   cost?: { cost_class?: string; usd?: string | number | null } | null;
 }
@@ -1446,8 +1450,6 @@ function CreationViewer({
     refetchOnReconnect: false,
     retry: false,
   });
-  const linkExpiry = renewed?.download_url
-    ? Number(new URL(renewed.download_url, window.location.origin).searchParams.get("expires")) : 0;
   const index = assets.findIndex((item) => item.asset_id === asset.asset_id);
   const previous = index > 0 ? assets[index - 1] : null;
   const next =
@@ -1474,6 +1476,9 @@ function CreationViewer({
     enabled: maker && !prompt,
     retry: false,
   });
+  useEffect(() => {
+    if (viewer.id) markCreationOpened(viewer.id, asset.asset_id);
+  }, [viewer.id, asset.asset_id]);
   const notSavedReason = promptNotSavedReason(
     tryKeepState(promptMemory?.prompt_memory),
     Boolean(viewer.admin),
@@ -1482,7 +1487,8 @@ function CreationViewer({
   const [canShare, setCanShare] = useState(false);
   useEffect(() => setCanShare(typeof navigator.share === "function"), []);
   const created = toDateValue(asset.created_at);
-  const model = asset.model ? nameModel(asset.model) : "";
+  const recordedModel = receipt?.resolved_model || receipt?.requested_model || asset.model;
+  const model = recordedModel ? nameModel(recordedModel, receipt?.resolved_workflow) : "";
   const title = shortTitle(asset);
   // The gateway offers the file with details only to its maker, while the
   // prompt is kept.
@@ -1563,7 +1569,6 @@ function CreationViewer({
                   large
                   everyone={everyone}
                 /> : null}
-                {linkExpiry > 0 ? <p className="text-muted-foreground text-sm">Playback link expires {new Date(linkExpiry * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. Reopen to renew.</p> : null}
               </div>
             </div>
             {previous || next ? (
@@ -1820,9 +1825,9 @@ function CreationViewer({
                     ],
                     [
                       "Model name",
-                      asset.model ? (
+                      recordedModel ? (
                         <span className="text-meta font-mono break-all">
-                          {safeModelId(asset.model)}
+                          {safeModelId(recordedModel)}
                         </span>
                       ) : (
                         ""
@@ -2181,8 +2186,8 @@ export default function LibraryPage() {
       ? cachedStatus.capabilities
       : []),
   ];
-  const nameModel: NameModel = (id) =>
-    modelDisplayName(id, modelCatalog, nameCapabilities);
+  const nameModel: NameModel = (id, workflowId) =>
+    modelDisplayName(id, modelCatalog, nameCapabilities, workflowId);
   // Delete only what the viewer made. In a person or "Everyone" view that must
   // be shown by the creation's app; if it cannot be, Delete is not offered.
   const viewerUserId = home?.user?.id ?? null;

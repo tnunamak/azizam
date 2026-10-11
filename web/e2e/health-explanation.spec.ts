@@ -62,7 +62,7 @@ test("health popover explains a measured outage and links to Status", async ({
     .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText(
-    "Image engine is down. Check its connection on Status.",
+    "Image engine can’t take requests right now.",
   );
   await expect(explanation).toContainText("GatewayReachable");
   expect(
@@ -77,10 +77,10 @@ test("health popover explains a measured outage and links to Status", async ({
   // Off-page owner alerts hand keyboard focus to the affected section. The
   // target page already shows those diagnostics and must not repeat the banner.
   const banner = page.getByRole("status").filter({
-    hasText: "Image engine is down. Check its connection on Status.",
+    hasText: "Image engine can’t take requests right now.",
   });
   await expect(banner).toBeVisible();
-  const action = banner.getByRole("link", { name: "View status", exact: true });
+  const action = banner.getByRole("link", { name: "See Status", exact: true });
   await action.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
