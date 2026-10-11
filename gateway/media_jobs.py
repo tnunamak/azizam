@@ -463,13 +463,13 @@ def upsert(
     *,
     path: Path = DB_PATH,
 ) -> MediaJob:
-    """Insert or replace a job row.
+    """Insert a job row or update the row with the same ``job_id``.
 
     Idempotent on ``job_id``: writing the same record twice is a no-op apart
-    from updating ``updated_at`` and ``job_json``. Idempotent on a non-empty
-    ``request_id``: a second call with the same ``request_id`` but a different
-    job_id will conflict (the unique index enforces this) — callers should
-    re-look-up by ``request_id`` first to get the existing job.
+    from updating ``updated_at`` and ``job_json``. A non-empty ``request_id``
+    held by a different job raises ``sqlite3.IntegrityError`` and changes
+    nothing; callers should look up by ``request_id`` first. An existing
+    row's request ID is never restored after it was cleared.
     """
     record = _coerce_to_job(job)
     with _conn(path) as conn:
@@ -604,8 +604,12 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     # object cannot put a forgotten prompt fingerprint back into the database.
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
-    previous = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
+    previous = conn.execute("SELECT job_json, request_id FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
     if previous:
+        # A stored request ID only changes by being cleared (replay release or
+        # erasure). A stale caller copy must not restore or re-point it.
+        if job.request_id and job.request_id != previous[1]:
+            job.request_id = previous[1] or ""
         data = json.loads(previous[0])
         preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
         stale_attempt = data.get("attempt_number") != job.attempt_number
@@ -618,11 +622,19 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     ).fetchone()[0]
     if cutoff is not None and job.created_at <= cutoff:
         _clear_prompt_derivatives(job)
+    # Update by job_id only. A request ID held by another job raises
+    # IntegrityError instead of deleting that job, as INSERT OR REPLACE did.
     conn.execute(
-        "INSERT OR REPLACE INTO media_jobs "
+        "INSERT INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "
         " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(job_id) DO UPDATE SET request_id=excluded.request_id, intent=excluded.intent, "
+        "workflow=excluded.workflow, backend=excluded.backend, status=excluded.status, "
+        "progress=excluded.progress, error=excluded.error, created_at=excluded.created_at, "
+        "updated_at=excluded.updated_at, app_profile=excluded.app_profile, "
+        "api_key_name=excluded.api_key_name, parent_request_id=excluded.parent_request_id, "
+        "job_json=excluded.job_json",
         (
             job.job_id,
             job.request_id or None,

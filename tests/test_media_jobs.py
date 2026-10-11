@@ -185,6 +185,27 @@ class TestStoreLifecycle(_StoreCase):
             self.assertEqual(kept["request_id"], "")
             self.assertEqual(len(media_jobs.events(first.job_id, path=self.db)), 1)
 
+    def test_stale_write_of_released_job_keeps_the_new_owner_of_its_request_id(self) -> None:
+        import sqlite3
+        for with_events in (False, True):
+            request_id = f"req_stale_{with_events}"
+            old = media_jobs.create(_make_job(request_id=request_id, status=STATUS_SUCCEEDED), path=self.db)
+            self._age(old.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            new = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            if with_events:
+                media_jobs.append_event(new.job_id, "x", {"progress": 1}, path=self.db)
+            old.progress = 100  # a worker still holds the object from before the release
+            media_jobs.upsert(old, path=self.db)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+            self.assertIsNotNone(media_jobs.get(new.job_id, path=self.db))
+            kept = media_jobs.get(old.job_id, audience="internal", path=self.db)
+            self.assertEqual((kept["request_id"], kept["progress"]), ("", 100))
+            other = _make_job(request_id=request_id)  # a different job claiming the same ID
+            with self.assertRaises(sqlite3.IntegrityError):
+                media_jobs.upsert(other, path=self.db)
+            self.assertIsNone(media_jobs.get(other.job_id, path=self.db))
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+
     def test_recent_or_active_request_id_still_replays(self) -> None:
         recent = media_jobs.create(_make_job(request_id="req_recent", status=STATUS_FAILED), path=self.db)
         self._age(recent.job_id, media_jobs.REPLAY_WINDOW_S - 60)
