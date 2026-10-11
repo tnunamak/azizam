@@ -5,7 +5,8 @@
   },
   "POST /admin/api/admin-keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key",
+    "success_status": 201
   },
   "GET /admin/api/apps": {
     "tag": "apps and keys",
@@ -13,7 +14,8 @@
   },
   "POST /admin/api/apps": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "DELETE /admin/api/apps/{app_id}": {
     "tag": "apps and keys",
@@ -29,7 +31,8 @@
   },
   "POST /admin/api/apps/{app_id}/keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "GET /admin/api/audit": {
     "tag": "usage and receipts",
@@ -153,7 +156,8 @@
   },
   "POST /admin/api/operator/litellm/keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "POST /admin/api/operator/litellm/keys/delete": {
     "tag": "apps and keys",
@@ -185,7 +189,8 @@
   },
   "POST /admin/api/operator/services": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "POST /admin/api/operator/services/detect-models": {
     "tag": "engines and providers",
@@ -253,7 +258,8 @@
   },
   "POST /admin/api/profiles": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "DELETE /admin/api/profiles/{profile_id}": {
     "tag": "people and plans",
@@ -273,7 +279,8 @@
   },
   "POST /admin/api/providers": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "GET /admin/api/providers/-/catalog": {
     "tag": "engines and providers",
@@ -341,7 +348,8 @@
   },
   "POST /admin/api/runtime-profile-mappings": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
   },
   "DELETE /admin/api/runtime-profile-mappings/{mapping_id}": {
     "tag": "people and plans",

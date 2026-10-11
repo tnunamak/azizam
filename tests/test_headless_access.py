@@ -16,7 +16,7 @@ from gateway import admin_store
 from gateway.admin_api import AdminAuthError
 from gateway.admin_oidc import CookieConfig, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS
-from test_proxy_admin_integration import ProxyAdminIntegrationTests
+import test_proxy_admin_integration as admin_integration
 
 FIXTURES = Path(__file__).parent / "fixtures"
 INVENTORY = json.loads((FIXTURES / "headless_routes.json").read_text())
@@ -71,10 +71,10 @@ def test_existing_data_plane_schema_is_byte_equivalent():
         assert _digest(schema["components"]["schemas"][name]) == expected, name
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def principals():
     # Reuse the existing integration scaffolding and real SQLite admin-key mint.
-    case = ProxyAdminIntegrationTests(methodName="runTest")
+    case = admin_integration.ProxyAdminIntegrationTests(methodName="runTest")
     case.setUp()
     try:
         app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "auth-fixture"})
@@ -146,6 +146,7 @@ def test_every_owner_route_accepts_real_owner_credential_at_auth_boundary(row, p
         raise AdminAuthError("Owner credential accepted", status_code=299, code="test_owner_accepted")
 
     path, body = _request(row)
+    principals.client.cookies.clear()
     with patch.object(type(proxy.ADMIN_AUTH), "__call__", checkpoint):
         response = principals.client.request(row["method"], path, json=body,
             headers=principals._auth(), follow_redirects=False)

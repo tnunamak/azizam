@@ -9,7 +9,7 @@ it does not change permissions or make session routes accept bearer keys.
 
 On the gateway host, use the existing helper with the deployment's database
 configuration. It prints a one-time secret; save its last line in a private file
-and keep its full output out of shared logs. The default role is `owner`.
+and keep its full output out of shared logs. Its default role is `owner`, which is required for the owner-only operations in the table below.
 
 ```sh
 umask 077
@@ -53,15 +53,20 @@ silently retry a rejected mutation with a newer revision.
 
 ## Use Restish 2.3.0
 
-Restish builds commands from OpenAPI; no Azizam CLI is needed. Install Restish
-in a private tool directory. Its v1 `api configure` command does not work in v2.
+Install Restish in a private tool directory to build commands from OpenAPI
+without an Azizam CLI. Its v1 `api configure` command does not work in v2.
 Use a separate config file to avoid ambient profiles. Register the trusted
-schema explicitly and pass the auth header on calls:
+schema explicitly, configure an environment-backed token, and pass the auth header on calls:
 
 ```sh
 RSH_CONFIG="$PWD/restish-owner.json"
 export RSH_CONFIG
-restish api connect azizam "$AZIZAM_URL" --spec "$AZIZAM_URL/openapi.json" --yes
+umask 077
+test -e "$RSH_CONFIG" || printf '{}\n' > "$RSH_CONFIG"
+chmod 600 "$RSH_CONFIG"
+restish api connect azizam "$AZIZAM_URL" \
+  'prompt.credentials.OwnerBearer.token: env:AZIZAM_OWNER_KEY' \
+  --spec "$AZIZAM_URL/openapi.json" --yes
 restish azizam owner-get-admin-api-apps \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
 restish azizam owner-post-admin-api-apps-app-id-keys "$APP_ID" \

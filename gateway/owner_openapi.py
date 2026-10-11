@@ -44,6 +44,11 @@ def augment_owner_openapi(schema: dict, routes: list) -> None:
                 r"[^a-zA-Z0-9]+", "_", route.path).strip("_")
             operation["tags"] = [metadata["tag"]]
             operation["security"] = [{"OwnerBearer": []}]
+            parameters = operation.setdefault("parameters", [])
+            for name in re.findall(r"\{([^}:]+)(?::[^}]+)?\}", route.path):
+                if not any(p.get("in") == "path" and p.get("name") == name for p in parameters):
+                    parameters.append({"name": name, "in": "path", "required": True,
+                                       "schema": {"type": "string"}})
             operation["description"] = (operation.get("description", "") + "\n\nAuthorization: "
                 + metadata["gate"] + ". Browser session mutations require CSRF/action headers; bearer calls do not."
                 + (" Drain writes accept bearer credentials only." if method == "POST" and route.path.endswith("/drain") else "")).strip()
@@ -53,8 +58,13 @@ def augment_owner_openapi(schema: dict, routes: list) -> None:
                 operation["requestBody"] = {"required": False, "content": {
                     "application/json": {"schema": {"type": "object", "additionalProperties": True}}}}
             for code in ("401", "403"):
-                operation["responses"].setdefault(code, {"description": "Authentication or role denied"})
+                operation["responses"].setdefault(code, {"description": "Authentication or role denied",
+                    "content": {"application/json": {"schema": {"type": "object",
+                        "properties": {"error": {"type": "object", "properties": {
+                            "code": {"type": "string"}, "message": {"type": "string"}}}}}}}})
+            if "success_status" in metadata:
+                operation["responses"][str(metadata["success_status"])] = operation["responses"].pop("200")
             if route.path == "/admin/api/config/export":
                 operation["responses"]["200"] = {"description": "Canonical configuration YAML",
-                    "content": {"application/yaml": {"schema": {"type": "string"}}}}
+                    "content": {"text/plain": {"schema": {"type": "string"}}}}
             schema["paths"].setdefault(route.path, {})[method.lower()] = operation
