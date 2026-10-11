@@ -385,10 +385,6 @@ def _check_quarantine_frozen(source: str | None = None) -> list[str]:
 # behavior/config tests are needed for each migration. P2-7 lives in web TSX
 # and is outside this Python-only guard.
 _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
-    "P2-1 voice compiler": {
-        "gateway/voice_design.py": {"_CATEGORIES", "_ORDER", "_NOISE", "design_instruct"},
-        "proxy.py": {"_design_voice"},
-    },
     "P2-2 reasoning dialect": {
         "gateway/transforms.py": {"ReasoningEffortTransform", "apply_thinking_suppression"},
     },
@@ -412,24 +408,46 @@ _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
 }
 
 
+# Findings migrated to service data. Their compiled tables must not return;
+# the differential proof is tests/test_engine_p2_differential.py.
+_MIGRATED_POLICY_SYMBOLS: dict[str, dict[str, set[str]]] = {
+    "P2-1 voice compiler": {
+        "gateway/voice_design.py": {"_CATEGORIES", "_ORDER", "_NOISE", "VOCABULARY"},
+    },
+}
+
+
+def _top_level_names(rel: str) -> set[str]:
+    tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
+    found = {
+        node.name for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    found.update(
+        node.target.id for node in tree.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    )
+    found.update(
+        target.id for node in tree.body if isinstance(node, ast.Assign)
+        for target in node.targets if isinstance(target, ast.Name)
+    )
+    return found
+
+
+def _check_migrated_policy_symbols() -> list[str]:
+    return [
+        f"{finding}: {rel} defines migrated policy {sorted(returned)}; the policy is service data now"
+        for finding, files in _MIGRATED_POLICY_SYMBOLS.items()
+        for rel, symbols in files.items()
+        if (returned := symbols & _top_level_names(rel))
+    ]
+
+
 def _check_semantic_policy_anchors() -> list[str]:
     violations: list[str] = []
     for finding, files in _SEMANTIC_POLICY_ANCHORS.items():
         for rel, expected in files.items():
-            tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
-            found = {
-                node.name for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            }
-            found.update(
-                node.target.id for node in tree.body
-                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-            )
-            found.update(
-                target.id for node in tree.body if isinstance(node, ast.Assign)
-                for target in node.targets if isinstance(target, ast.Name)
-            )
-            if missing := expected - found:
+            if missing := expected - _top_level_names(rel):
                 violations.append(f"{finding}: {rel} missing reviewed anchors {sorted(missing)}")
     return violations
 
@@ -633,6 +651,10 @@ class TestEngineKnowledgeBoundary:
     def test_reviewed_semantic_policy_anchors_are_tracked(self) -> None:
         violations = _check_semantic_policy_anchors()
         assert not violations, _fail_message("semantic policy inventory", violations)
+
+    def test_migrated_policy_tables_do_not_return(self) -> None:
+        violations = _check_migrated_policy_symbols()
+        assert not violations, _fail_message("migrated policy tables", violations)
 
     def test_primitive_vocabulary_closed(self) -> None:
         """_PRIMITIVE_KINDS must equal the documented fixed set.

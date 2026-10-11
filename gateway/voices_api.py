@@ -55,7 +55,8 @@ class VoiceApiDeps:
     enforce_policy: Callable[[Any, str], Response | None]
     owner_of: Callable[[Any], str | None]
     probe_quality: Callable[[Path], Awaitable[dict[str, Any] | None]]
-    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (OmniVoice instruct, script, seed) -> WAV bytes
+    design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (engine instruction, script, seed) -> WAV bytes
+    design_settings: Callable[[], Mapping[str, Any] | None]     # the design engine's ``voice_design`` data
     compatible_engines: Callable[[], list[str]]
     quality_warn_below: Callable[[], float]
 
@@ -324,7 +325,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         except (TypeError, ValueError):
             raise VoiceError(400, "invalid_seed", "seed must be an integer.", param="seed") from None
         try:
-            instruct, ignored = design_instruct(prompt)
+            instruct, ignored = design_instruct(prompt, deps.design_settings())
         except DesignPromptError as exc:
             raise VoiceError(400, "invalid_prompt", str(exc), param="prompt") from exc
         wav = await deps.design_voice(instruct, script, seed)

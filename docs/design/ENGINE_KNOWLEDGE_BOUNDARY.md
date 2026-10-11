@@ -32,7 +32,7 @@ below are not evidence for the current configuration.
 
 | Item | Verdict at the new base | Evidence and disposition |
 |---|---|---|
-| P2-1 Voice-design vocabulary | Confirmed | `gateway/voice_design.py:design_instruct` owns categories, aliases, precedence, ignored terms and comma rendering. `gateway/voices_api.py:_create_prompt_voice` calls it before the injected backend, so unsupported descriptions fail before dispatch. `proxy.py:_design_voice` also chooses a compiled default engine and sends a fixed voice. Migration planned. |
+| P2-1 Voice-design vocabulary | Confirmed; migrated (see Runtime migrations) | `gateway/voice_design.py:design_instruct` owns categories, aliases, precedence, ignored terms and comma rendering. `gateway/voices_api.py:_create_prompt_voice` calls it before the injected backend, so unsupported descriptions fail before dispatch. `proxy.py:_design_voice` also chooses a compiled default engine and sends a fixed voice. Migration planned. |
 | P2-2 Reasoning dialect | Confirmed | `gateway/transforms.py:ReasoningEffortTransform` accepts configured budgets but defaults to its compiled table, writes `thinking_budget_tokens`, maps unlimited to `-1`, and suppresses thinking through a fixed nested key. Opt-in attachment does not make these values operator data. Migration planned. |
 | P2-3 Quarantine properties | Confirmed, with existing test coverage | All ten property sets in `gateway/engine_quarantine.py` are compiled backend-ID policy in addition to `LOCAL_SWAP_BACKENDS`. The old boundary guard freezes only that last set. `tests/test_engine_quarantine.py` tests named backends and unknown examples, but does not reject every possible added member, table or changed predicate. Freeze all tables and predicate bodies now; migrate consumers later. |
 | P2-4 Speech catalog/default | Partly confirmed | The catalog, aliases, language presets and default remain in `gateway/transforms.py`; `proxy.py:_engine_voice`, `_voice_metadata` and `list_voices` consume them. `voxtral-voices` itself is permitted declarative seed data. Speech dispatch uses the selected alias's map/default/transform, with a global transform fallback for non-alias resolution. The audit's Try `alloy` initializer is already absent at this base: `gateway/speech_voices.py` projects per-model choices and Try uses `selectedVoice`. Global backend catalog migration planned. |
@@ -143,11 +143,30 @@ Implementation order:
 4. Move P2-2 dialect policy and P2-3 properties independently. Review P2-5
    thresholds against actual service requirements; retain P2-8/9/10 contracts.
 
-**Current preservation status: UNVERIFIED** for P2-1/2/3/4/5/6 runtime
-migrations. This pass neither reads nor edits live `data/` or `.env.local` and
-makes no live gateway calls. Repository examples are not a substitute for the
-owner's current service configuration. P2-1, P2-4 and P2-6 therefore remain
-plan items; the shipped runtime change is limited to UI discovery behavior.
+**Preservation status (2026-10-11, `fix/engine-p2-runtime`):** P2-1 is
+migrated with differential proof; see "Runtime migrations" below. P2-2/3/4/5/6
+remain UNVERIFIED plan items. The differential fixtures were read from the
+owner's registry and `proxy_config.yml` read-only; no live gateway call was made.
+
+### Runtime migrations
+
+The proof harness is `tests/engine_p2_differential.py`. It drives the real
+routes of `proxy.app` with a sanitized copy of the owner's speech, voice and STT
+service data (`tests/fixtures/engine_p2/owner_config.json`) and records each
+outbound engine request byte for byte and each caller response.
+`tests/fixtures/engine_p2/golden.json` holds these records from the code
+before the migrations (`8a3147f0`). `tests/test_engine_p2_differential.py`
+runs the migrated code with the migrated data
+(`owner_config.migrated.json`, which a test holds equal to the shipped
+`proxy_config.yml` sections) and requires the same records, except for the
+intended changes it names.
+
+| Item | Status | Data home | Proof |
+|---|---|---|---|
+| P2-1 | Migrated | `model_aliases.speech.engines.<voices.design_engine>.voice_design` in `proxy_config.yml`: ordered `vocabulary` (category → attribute → words), `ignore`, `separator`, and the engine `request` template (fixed voice and response format). No `voice_design.vocabulary` means the exact description is passed through. `voices.design_engine` has no compiled default; an unset value answers 503 "not configured". | 279 voice-design cases byte-identical (every vocabulary word plain, upper case and in a sentence; overlaps; words inside words; ignored and noise words; punctuation; non-ASCII; explicit and default script; fixed, string, zero and default seed; errors; engine 400/500; disabled engine). Replacement engine without vocabulary receives the free text with only `input`/`instructions`/`seed`. |
+
+The `request` template is not a transform row: request transforms append keys,
+so they cannot keep the old key order, and byte-identical requests were the gate.
 
 ### Verification at the reviewed base (historical)
 

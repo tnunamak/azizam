@@ -1207,6 +1207,44 @@ model_aliases:
         voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
         description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Supertonic, first engine of tts-quality, and the only voice-cloning engine while Chatterbox is disabled
+        # Voice design (POST /v1/audio/voices, type prompt) when voices.design_engine names this engine.
+        # OmniVoice designs from a fixed vocabulary, not free text: at most one attribute per category.
+        # Categories and attributes are in precedence order (the first attribute whose word appears
+        # wins its category, so the more specific pitch comes first); `ignore` lists words that are
+        # not reported as unused. An engine with no vocabulary receives the description unchanged.
+        voice_design:
+          request: {input: "{input}", voice: alloy, instructions: "{instructions}", seed: "{seed}", response_format: wav}
+          separator: ", "
+          ignore: [a, an, the, and, with, voice, pitch, accent, sounding, sounds, like, who, is, of, in, very, tone, speaker, narrator, person]
+          vocabulary:
+            gender:
+              female: [female, woman, women, girl, lady, feminine]
+              male: [male, man, men, boy, guy, masculine]
+            age:
+              child: [child, kid, childlike]
+              teenager: [teenager, teen, teenage, adolescent]
+              young adult: [young adult, young, twenties, thirties, youthful]
+              middle-aged: [middle-aged, middle aged, middle age, forties, fifties, mature]
+              elderly: [elderly, old, older, senior, aged]
+            pitch:
+              very low pitch: [very low, very deep, bass, booming]
+              very high pitch: [very high, squeaky, shrill]
+              low pitch: [low, deep, baritone, husky]
+              high pitch: [high, bright, light, soprano]
+              moderate pitch: [moderate, medium, mid-range, midrange, mid pitch]
+            style:
+              whisper: [whisper, whispering, whispered, hushed]
+            accent:
+              american accent: [american]
+              british accent: [british, uk, u.k., london]
+              australian accent: [australian, aussie]
+              canadian accent: [canadian]
+              indian accent: [indian]
+              chinese accent: [chinese]
+              japanese accent: [japanese]
+              korean accent: [korean]
+              portuguese accent: [portuguese]
+              russian accent: [russian]
       chatterbox:
         service: tts-chatterbox
         model: chatterbox-turbo

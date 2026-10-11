@@ -83,6 +83,7 @@ from gateway import (
     video_inputs,
     video_media_job_http,
     video_media_jobs,
+    voice_design,
 )
 from gateway import loop_watchdog, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
@@ -4077,9 +4078,18 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
     return {"error": reason}
 
 
+def _voice_design_settings() -> Mapping[str, Any] | None:
+    """The ``voice_design`` data of the speech engine that ``voices.design_engine`` names."""
+    spec = _speech_engines().get(str(_voice_settings().get("design_engine") or ""))
+    settings = spec.get("voice_design") if isinstance(spec, Mapping) else None
+    return settings if isinstance(settings, Mapping) else None
+
+
 async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
-    """Render a designed voice once (``instruct`` is OmniVoice's attribute string); the result becomes that voice's reference clip."""
-    engine_id = str(_voice_settings().get("design_engine") or "omnivoice")
+    """Render a designed voice once on the configured design engine; the result becomes that voice's reference clip."""
+    engine_id = str(_voice_settings().get("design_engine") or "")
+    if not engine_id:
+        raise custom_voices.VoiceError(503, "backend_unavailable", "Voice design is not configured: set voices.design_engine to a speech engine.")
     endpoint = _speech_engine_endpoint(engine_id)
     if endpoint is None:
         raise custom_voices.VoiceError(503, "backend_unavailable", f"Voice design needs the {engine_id} engine, which is not deployed.")
@@ -4091,7 +4101,7 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
         async with httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10)) as client:
             resp = await client.post(
                 f"{base_url}/v1/audio/speech",
-                json={"input": script, "voice": "alloy", "instructions": instruct, "seed": seed, "response_format": "wav"},
+                json=voice_design.design_request(_voice_design_settings(), script=script, instructions=instruct, seed=seed),
             )
     except httpx.HTTPError as exc:
         raise custom_voices.VoiceError(502, "backend_error", f"Voice design failed: {exc}") from exc
@@ -14601,6 +14611,7 @@ voices_api.register_voice_routes(
         owner_of=lambda auth: _asset_owner_key(auth),
         probe_quality=lambda reference: _probe_voice_quality(reference),
         design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
+        design_settings=lambda: _voice_design_settings(),
         compatible_engines=lambda: _custom_voice_engines(),
         quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
     ),
