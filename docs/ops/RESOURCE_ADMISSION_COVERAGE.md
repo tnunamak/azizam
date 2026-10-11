@@ -74,8 +74,8 @@ media submission helper is at `proxy.py:22056` (`_media_job_admission_response`)
 | Regular audio and video workers | After acquiring a worker turn, before execution | `proxy.py:22247` (`_run_audio_media_job`), `proxy.py:22719` (`_run_video_media_job`) |
 | Identity jobs and synchronous identity/likeness routes | Submission, worker start, and the native route's policy/admission boundary | `proxy.py:15134` (`_identity_submit_job`), `proxy.py:15186` (`_run_identity_job`), `proxy.py:15266` (`_identity_admission`) |
 | Session Make | Submission and worker execution; synchronous executor checks again | `proxy.py:14497` (`_SessionMakeRuntime`) |
-| OpenAI chat, completions and embeddings, including aliases | Before dispatch preparation; selected local, current-loaded and paid paths check before handing off to transport | `proxy.py:29133` (`_handle_openai_litellm_request_once`), `proxy.py:28672` (`_forward_litellm_proxy_request`), `proxy.py:28371` (`_forward_current_loaded_openai_request`) |
-| Internal local chat execution | Before engine transport; outer caller admission remains authoritative for app attribution | `proxy.py:29323` (`_forward_internal_litellm_local_upstream`) |
+| OpenAI chat, completions and embeddings, including aliases | Before dispatch preparation; selected local, current-loaded and paid paths check before handing off to transport | `proxy.py:29136` (`_handle_openai_litellm_request_once`), `proxy.py:28673` (`_forward_litellm_proxy_request`), `proxy.py:28371` (`_forward_current_loaded_openai_request`) |
+| Internal local chat execution | Before engine transport; outer caller admission remains authoritative for app attribution | `proxy.py:29326` (`_forward_internal_litellm_local_upstream`) |
 | OpenAI Responses | Before protocol loopback; underlying chat dispatch checks again | `proxy.py:27249` (`create_response`) |
 | Anthropic Messages | Before protocol loopback; underlying chat dispatch checks again | `proxy.py:26396` (`anthropic_messages`) |
 | Ollama chat/generate and both embedding APIs | Before protocol loopback; underlying chat/embedding dispatch checks again | `proxy.py:26566` (`_ollama_forward_non_streaming`), `proxy.py:26610` (`_ollama_forward_streaming`), `proxy.py:26683` (`_ollama_forward_embeddings`) |
@@ -85,7 +85,7 @@ media submission helper is at `proxy.py:22056` (`_media_job_admission_response`)
 | Synchronous video creation, remix, editing, extension, typed workflow editing | At executor entry and after asynchronous preparation, before submission | `proxy.py:10904` (`proxy_comfy_video_create`), `proxy.py:12704` (`proxy_comfy_video_remix`), `proxy.py:12768` (`proxy_comfy_video_edit`), `proxy.py:11895` (`proxy_comfy_video_extend`), `proxy.py:23698` (`_execute_video_manifest_workflow`) |
 | Speech synthesis | Default and selected service checks, before readiness/transport; each fallback enters again | `proxy.py:4367` (`_proxy_tts_once`) |
 | Transcriptions/translations | Operator admission before selected service readiness, plus existing resource-claim lease before upload parsing/dispatch | `proxy.py:4819` (`_dispatch_selected_stt_route`), `proxy.py:4996` (`proxy_stt_request`) |
-| Realtime WebSocket and provider-native passthrough | Before backend transport | `proxy.py:18998` (`_handle_realtime`), `proxy.py:30000` (`provider_native_request`) |
+| Realtime WebSocket and provider-native passthrough | Before backend transport | `proxy.py:18998` (`_handle_realtime`), `proxy.py:30003` (`provider_native_request`) |
 | MCP, A1111 and other protocol adapters | Inherit the destination route's admission through their internal request | `proxy.py:14740` (`_mcp_internal_call`) |
 | Discovery, status, stored-output retrieval, unsupported APIs, native job records without executable input | No inference dispatch; no capacity reservation | Route inventory distinguishes these from execution. |
 

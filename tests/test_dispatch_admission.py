@@ -347,3 +347,16 @@ def test_speech_rechecks_policy_after_service_start(dispatch_env, monkeypatch):
     response = client.post('/v1/audio/speech', json={'model': 'tts-1', 'input': 'hi', 'voice': 'alloy'})
     assert response.status_code == 503
     assert not calls
+
+
+def test_enabled_transport_does_not_claim_unknown_target_is_available(dispatch_env, monkeypatch):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['unrelated']})
+    # The initial route check passed. Only the transport is configured; there is
+    # no target availability fact at the final handoff.
+    monkeypatch.setattr(proxy, '_model_dispatch_admission_response', lambda *a, **kw: None)
+    monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: SimpleNamespace(logical_service_id='unknown-target'))
+    response = client.post('/v1/chat/completions', json={'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}]})
+    assert response.status_code == 503
+    assert 'service_unknown' in response.json()['admission']['reason_codes']
+    assert not calls

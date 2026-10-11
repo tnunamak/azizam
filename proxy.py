@@ -28509,6 +28509,7 @@ async def _forward_current_loaded_openai_request(
                 service_available=None, resource_class='chat', receipt=receipt,
             )
             if admission is not None:
+                owner.report(status="rejected", reason="resource_admission_denied")
                 return admission
 
             cancellation_span = _OuterCancellationSpan(
@@ -28852,9 +28853,11 @@ async def _forward_litellm_proxy_request(
 
         admission = _dispatch_admission_response(
             "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=resolved_service_id,
-            service_available=runtime.enabled, resource_class="embeddings" if request_path == "/v1/embeddings" else "chat", receipt=receipt,
+            service_available=runtime.enabled if resolved_service_id == runtime.service_id else None,
+            resource_class="embeddings" if request_path == "/v1/embeddings" else "chat", receipt=receipt,
         )
         if admission is not None:
+            owner.report(status="rejected", reason="resource_admission_denied")
             return admission
 
         cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
