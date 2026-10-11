@@ -36,7 +36,8 @@ curl --fail-with-body -sS "$AZIZAM_URL/admin/api/apps" \
 APP_ID=app_id_from_list
 curl --fail-with-body -sS -X POST "$AZIZAM_URL/admin/api/apps/$APP_ID/keys" \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY" \
-  -H 'Content-Type: application/json' --data '{"label":"automation-client"}'
+  -H 'Content-Type: application/json' --data '{"label":"automation-client"}' \
+  > app-key-response.json
 
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/activity/requests?limit=10" \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY"
@@ -47,7 +48,8 @@ curl --fail-with-body -sS "$AZIZAM_URL/admin/api/status" \
 For denied `/status*` calls, request telemetry no longer touches credential usage
 or writes metrics; status pages now share the existing admin telemetry exclusion.
 
-Key creation returns the secret once in `credential.api_key`; store it privately.
+Key creation writes the one-time secret in `credential.api_key` to the private
+`app-key-response.json` file; keep that file out of shared logs and version control.
 Request activity returns safe receipt records with `next_cursor`. It differs from
 the administrative change audit at `/admin/api/audit`. Continue receipt pages
 with `before=<next_cursor>` until `next_cursor` is null. Registry writes need the
@@ -73,7 +75,8 @@ restish api connect azizam "$AZIZAM_URL" \
 restish azizam owner-get-admin-api-apps \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
 restish azizam owner-post-admin-api-apps-app-id-keys "$APP_ID" \
-  'label: automation-client' -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
+  'label: automation-client' -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json \
+  > app-key-response.json
 restish azizam owner-get-admin-api-activity-requests --limit 10 \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
 restish azizam owner-get-admin-api-status \
@@ -121,8 +124,8 @@ verbose output with credentials; it can include request headers.
 
 Captured by walking `proxy.app.routes` at base `33810bda`. Counts are per
 registered method/path, including trailing-slash aliases: **126 owner-bearer**
-(104 JSON/YAML owner API operations, 22 browser/HTML routes), **33 session-only**,
-**1 session-view**, **19 browser/public**; **179 total**.
+(104 JSON/YAML owner API operations, 22 browser/HTML routes), **32 session-only**,
+**2 session-view**, **19 browser/public**; **179 total**.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -281,7 +284,7 @@ every mutation. Selected successful workflows are exercised separately.
 | `GET /me` | browser/public | no owner authority | `proxy.user_portal`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `GET /me/` | browser/public | no owner authority | `proxy.user_portal`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /me/api/access-request` | session-only | denied | `proxy.user_portal_request_access`; Browser session; mutations require CSRF/action header | hidden |
-| `GET /me/api/activity` | session-only | denied | `proxy.user_portal_activity`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/activity` | session-view | no owner authority | `proxy.user_portal_activity`; Optional browser session; returns empty unauthenticated activity without cookie | hidden |
 | `POST /me/api/apps` | session-only | denied | `proxy.user_portal_create_app`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/apps/{app_id}/keys` | session-only | denied | `proxy.user_portal_mint_key`; Browser session; mutations require CSRF/action header | hidden |

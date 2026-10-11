@@ -176,3 +176,15 @@ def test_session_only_routes_do_not_accept_standalone_owner_bearer(row, principa
     assert response.status_code in {401, 403, 302, 303}, (row["method"], row["path"], response.status_code)
     if response.is_redirect:
         assert response.headers["location"] in {"/setup", "/ui/sign-in/"}
+
+
+@pytest.mark.parametrize("row", [row for row in INVENTORY if row["auth"] == "session-view"],
+                         ids=lambda row: row["method"] + " " + row["path"])
+def test_optional_session_views_do_not_treat_bearer_as_a_browser_session(row, principals):
+    principals.client.cookies.clear()
+    for key in (principals.admin_key, principals.app_key):
+        response = principals.client.get(row["path"], headers={"Authorization": f"Bearer {key}"})
+        assert response.status_code == 200
+        assert response.json()["authenticated"] is False
+        if row["path"] == "/me/api/activity":
+            assert response.json()["receipts"] == []

@@ -1122,8 +1122,8 @@
   {
     "method": "GET",
     "path": "/me/api/activity",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
+    "auth": "session-view",
+    "gate": "Optional browser session; returns empty unauthenticated activity without cookie",
     "handler": "proxy.user_portal_activity",
     "schema": false
   },
