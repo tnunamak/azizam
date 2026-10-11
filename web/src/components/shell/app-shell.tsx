@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
@@ -61,7 +61,6 @@ import { ToastGate } from "./toast-gate";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
 import { RelativeTime } from "@/components/product/relative-time";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Popover,
   PopoverContent,
@@ -117,7 +116,7 @@ const publicPages = ["/sign-in", "/setup", "/invite", "/showcase"];
 
 function signInReturnPath(pathname: string, search: string): string {
   if (typeof window !== "undefined") {
-    const current = `${window.location.pathname}${window.location.search}`;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (current.startsWith("/ui/")) return current;
   }
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
@@ -153,6 +152,7 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
     <Button
       variant="ghost"
       size="icon"
+      className="min-h-11 min-w-11"
       aria-label="Toggle theme"
       onClick={toggle}
     >
@@ -587,6 +587,7 @@ function AlertSlot() {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const pathname = usePathname();
   const { setTheme } = useTheme();
   const {
@@ -644,10 +645,32 @@ function Shell({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-  const publicPage = publicPages.some((route) => pathname.startsWith(route));
+  const publicPage = publicPages.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+  const showPublicShell =
+    publicPage || sessionPending || sessionError || !viewer?.authenticated;
   const currentPath = canonicalDestinationPath(pathname);
   const returnPath = signInReturnPath(pathname, "");
   const privateSignInHref = signInHref(returnPath);
+  useEffect(() => {
+    if (
+      !publicPage &&
+      !sessionPending &&
+      !sessionError &&
+      !viewer?.authenticated
+    ) {
+      // Next adds /ui; the destination itself stays encoded for server validation.
+      router.replace(`/sign-in/?return_to=${encodeURIComponent(returnPath)}`);
+    }
+  }, [
+    publicPage,
+    sessionPending,
+    sessionError,
+    viewer?.authenticated,
+    returnPath,
+    router,
+  ]);
   const ownerPage = destinations.some(
     (d) =>
       d.group === "Gateway" &&
@@ -657,16 +680,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   const content = publicPage ? (
     children
   ) : sessionPending ? (
-    <div
+    <p
       role="status"
-      aria-busy="true"
-      aria-label="Loading your account"
-      className="flex flex-col gap-4"
+      className="text-muted-foreground text-body mx-auto max-w-md py-12"
     >
-      <Skeleton className="h-8 w-48" />
-      <Skeleton className="h-4 w-72 max-w-full" />
-      <Skeleton className="mt-8 h-40 w-full" />
-    </div>
+      Checking your session…
+    </p>
   ) : sessionError ? (
     <>
       <PageHeader
@@ -686,23 +705,12 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
     </>
   ) : !viewer?.authenticated ? (
-    <>
-      <PageHeader
-        title={
-          destinations.find(
-            (d) => currentPath === canonicalDestinationPath(d.href),
-          )?.title ?? "Your gateway"
-        }
-      />
-      <ErrorState
-        heading="Sign in to continue"
-        message="Sign in to view this page."
-        action={{
-          label: "Sign in",
-          href: privateSignInHref,
-        }}
-      />
-    </>
+    <p
+      role="status"
+      className="text-muted-foreground text-body mx-auto max-w-md py-12"
+    >
+      Opening sign in…
+    </p>
   ) : viewer?.serviceAdmin &&
     destinations.some(
       (d) =>
@@ -759,7 +767,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         >
           Skip to content
         </a>
-        {publicPage ? (
+        {showPublicShell ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4 sm:px-8">
               <Link
@@ -921,7 +929,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         )}
         <Sheet
-          open={moreOpen || railOpen}
+          open={!showPublicShell && (moreOpen || railOpen)}
           onOpenChange={(open) => {
             if (!open) {
               setMoreOpen(false);
@@ -970,7 +978,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </SheetContent>
         </Sheet>
-        {commandMounted && (
+        {!showPublicShell && commandMounted && (
           <Suspense fallback={null}>
             <CommandPalette
               open={commandOpen}

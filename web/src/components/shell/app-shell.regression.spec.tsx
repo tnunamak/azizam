@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
 import userEvent from "@testing-library/user-event";
@@ -20,13 +20,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const push = vi.fn();
+const replace = vi.fn();
 let pathname = "/home";
 let search = "";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(search),
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push, replace }),
 }));
 
 const ownerSession = {
@@ -57,6 +58,7 @@ beforeEach(() => {
   search = "";
   window.history.replaceState(null, "", "/ui/home/");
   push.mockReset();
+  replace.mockReset();
   localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -284,7 +286,7 @@ describe("Service admin session", () => {
 });
 
 describe("Signed-out private pages", () => {
-  it("shows the shared sign-in recovery and returns to the current page", async () => {
+  it("redirects without showing navigation or private content and keeps the current page", async () => {
     pathname = "/models";
     search = "capability=chat";
     window.history.replaceState(null, "", "/ui/models/?capability=chat");
@@ -315,11 +317,47 @@ describe("Signed-out private pages", () => {
       </AppShell>,
     );
 
-    expect(await screen.findByText("Sign in to continue")).toBeVisible();
-    expect(screen.queryByText("Models consumer")).toBeNull();
-    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
-      "href",
-      "/ui/sign-in/?return_to=%2Fui%2Fmodels%2F%3Fcapability%3Dchat",
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        "/sign-in/?return_to=%2Fui%2Fmodels%2F%3Fcapability%3Dchat",
+      ),
     );
+    expect(screen.queryByText("Models consumer")).toBeNull();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Account menu/ })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the shell and private consumers unmounted until the session is known", async () => {
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
+    render(
+      <AppShell>
+        <h1>Private consumer</h1>
+      </AppShell>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Checking your session",
+    );
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByText("Private consumer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Account menu/ })).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed session check distinct from signed out and allows retry", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("Offline"));
+    clients.forEach((client) =>
+      client.setDefaultOptions({ queries: { retry: false } }),
+    );
+    render(
+      <AppShell>
+        <h1>Private consumer</h1>
+      </AppShell>,
+    );
+    expect(await screen.findByText("Couldn’t load your account")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByText("Private consumer")).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

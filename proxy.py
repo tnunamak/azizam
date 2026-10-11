@@ -16770,7 +16770,9 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
                             headers={"retry-after": "60"} if exc.status == 429 else {})
     except Exception as e:  # noqa: BLE001
-        return Response(
+        return _browser_signin_failure(
+            request, return_to=request.query_params.get("return_to"),
+        ) or Response(
             content=f"OIDC login failed to start: {str(e)[:200]}",
             status_code=500,
             media_type="text/plain; charset=utf-8",
@@ -17624,6 +17626,18 @@ async def admin_login_compat(request: Request):
     return RedirectResponse(_login_url(return_to=return_to), status_code=302)
 
 
+def _browser_signin_failure(request: Request, *, return_to: str | None = None):
+    """Give browser navigations a safe retry page; never forward provider detail."""
+    if "text/html" not in request.headers.get("accept", ""):
+        return None
+    target = _safe_admin_return_to(return_to, default="/ui/home/")
+    return RedirectResponse(
+        f"/ui/sign-in/?error=provider&return_to={quote(target, safe='')}",
+        status_code=303,
+        headers={"cache-control": "no-store", "referrer-policy": "no-referrer"},
+    )
+
+
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
     if not _effective_admin_oidc_config().enabled:
@@ -17632,7 +17646,7 @@ async def admin_oidc_callback(request: Request):
     code = request.query_params.get("code")
     state_value = request.query_params.get("state")
     if not state_value or not (code or error):
-        return Response(
+        return _browser_signin_failure(request) or Response(
             content="OIDC callback missing code or state",
             status_code=400,
             media_type="text/plain; charset=utf-8",
@@ -17748,7 +17762,9 @@ async def admin_oidc_callback(request: Request):
         )
         return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError):
-        response = Response(
+        response = _browser_signin_failure(
+            request, return_to=state.return_to if state else None,
+        ) or Response(
             content="OIDC authentication failed",
             status_code=400,
             media_type="text/plain; charset=utf-8",
