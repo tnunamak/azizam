@@ -314,15 +314,14 @@ function localityLabel(row: CatalogRow): string | undefined {
 function engineLabel(row: CatalogRow): string {
   return (
     row.engine_label ??
-    (row.locality === "remote" ? "Remote provider" : "Configured engine")
+    // A local row's provider field is a service id, not a name.
+    (row.locality === "remote" ? row.provider : undefined) ??
+    "Engine or provider not specified"
   );
 }
 
 function summaryEngineLabel(row: CatalogRow): string {
-  if (row.locality === "local") return engineLabel(row);
-  if (row.locality === "remote")
-    return row.engine_label ?? row.provider ?? "Remote provider";
-  return "Configured service";
+  return engineLabel(row);
 }
 
 function timingLabel(row: CatalogRow): string | undefined {
@@ -379,7 +378,7 @@ function availabilityState(row: CatalogRow): AvailabilityState {
 
 // Quiet summary states render no status value in catalog rows.
 function hasSummaryStatus(row: CatalogRow): boolean {
-  return !["ready", "unknown", "not_measured"].includes(availabilityState(row));
+  return availabilityState(row) !== "ready";
 }
 
 function evidenceLabel(row: CatalogRow): string | undefined {
@@ -540,7 +539,7 @@ function exampleBody(row: CatalogRow): Record<string, unknown> {
   return row.examples[0]?.body ?? { model: row.use.model };
 }
 
-function snippetsFor(row: CatalogRow, origin: string) {
+export function snippetsFor(row: CatalogRow, origin: string) {
   const path = row.use.path ?? row.use.python?.path ?? row.use.javascript?.path;
   if (!path || !row.examples[0]?.body) return [];
   const url = `${origin}${path}`;
@@ -551,24 +550,27 @@ function snippetsFor(row: CatalogRow, origin: string) {
   const isMultipart = isAudioUpload || isImageUpload;
   const fileName = isImageUpload ? "sample.png" : "sample.wav";
   const fileField = isImageUpload ? "image" : "file";
+  const multipartFields = Object.fromEntries(Object.entries(body)
+    .filter(([name]) => name !== fileField)
+    .map(([name, value]) => [name, typeof value === "string" ? value : JSON.stringify(value)]));
   const isBinary = path.includes("/audio/speech");
   return [
     {
       language: "curl",
       code: isMultipart
-        ? `curl ${shellSingleQuote(url)} \\\n  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n  -F model=${shellSingleQuote(row.use.model)} \\\n  -F ${fileField}=@${fileName}${isImageUpload ? ` \\\n  -F prompt=${shellSingleQuote(String(body.prompt ?? "Edit this image"))}` : ""}`
+        ? `curl ${shellSingleQuote(url)} \\\n  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n${Object.entries(multipartFields).map(([name, value]) => `  --form-string ${shellSingleQuote(`${name}=${value}`)}`).join(" \\\n")} \\\n  -F ${fileField}=@${fileName}`
         : `curl ${shellSingleQuote(url)} \\\n  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d ${shellSingleQuote(json)}${isBinary ? " \\\n  --output speech.mp3" : ""}`,
     },
     {
       language: "Python",
       code: isMultipart
-        ? `import os\nimport json\nimport requests\n\nwith open("${fileName}", "rb") as media:\n    response = requests.post(\n        ${JSON.stringify(url)},\n        headers={"Authorization": f"Bearer {os.environ['AZIZAM_API_KEY']}"},\n        data=json.loads(${JSON.stringify(JSON.stringify(body))}),\n        files={"${fileField}": media},\n        timeout=120,\n    )\nresponse.raise_for_status()\nprint(response.json())`
+        ? `import os\nimport json\nimport requests\n\nwith open("${fileName}", "rb") as media:\n    response = requests.post(\n        ${JSON.stringify(url)},\n        headers={"Authorization": f"Bearer {os.environ['AZIZAM_API_KEY']}"},\n        data=json.loads(${JSON.stringify(JSON.stringify(multipartFields))}),\n        files={"${fileField}": media},\n        timeout=120,\n    )\nresponse.raise_for_status()\nprint(response.json())`
         : `import os\nimport json\nimport requests\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={\n        "Authorization": f"Bearer {os.environ['AZIZAM_API_KEY']}",\n        "Content-Type": "application/json",\n    },\n    json=json.loads(${JSON.stringify(json)}),\n    timeout=120,\n)\nresponse.raise_for_status()\n${isBinary ? 'open("speech.mp3", "wb").write(response.content)' : "print(response.json())"}`,
     },
     {
       language: "JavaScript",
       code: isMultipart
-        ? `import { readFile } from "node:fs/promises";\n\nconst form = new FormData();\nconst fields = ${JSON.stringify(body)};\nfor (const [name, value] of Object.entries(fields)) form.set(name, String(value));\nform.set("${fileField}", new Blob([await readFile("${fileName}")]), "${fileName}");\n\nconst response = await fetch(${JSON.stringify(url)}, {\n  method: "POST",\n  headers: { Authorization: \`Bearer \${process.env.AZIZAM_API_KEY}\` },\n  body: form,\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());`
+        ? `import { readFile } from "node:fs/promises";\n\nconst form = new FormData();\nconst fields = ${JSON.stringify(multipartFields)};\nfor (const [name, value] of Object.entries(fields)) form.set(name, String(value));\nform.set("${fileField}", new Blob([await readFile("${fileName}")]), "${fileName}");\n\nconst response = await fetch(${JSON.stringify(url)}, {\n  method: "POST",\n  headers: { Authorization: \`Bearer \${process.env.AZIZAM_API_KEY}\` },\n  body: form,\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());`
         : `${isBinary ? 'import { writeFile } from "node:fs/promises";\n\n' : ""}const response = await fetch(${JSON.stringify(url)}, {\n  method: "POST",\n  headers: {\n    Authorization: \`Bearer \${process.env.AZIZAM_API_KEY}\`,\n    "Content-Type": "application/json",\n  },\n  body: JSON.stringify(${JSON.stringify(body, null, 2)}),\n});\nif (!response.ok) throw new Error(await response.text());\n${isBinary ? 'await writeFile("speech.mp3", Buffer.from(await response.arrayBuffer()));' : "console.log(await response.json());"}`,
     },
   ];
@@ -582,6 +584,12 @@ function Availability({
   showReason?: boolean;
 }) {
   const state = availabilityState(row);
+  if (state === "unknown" || state === "not_measured") {
+    return <span className="text-muted-foreground text-meta whitespace-normal">
+      <span>{state === "not_measured" || !row.availability.measured ? "Not checked yet" : "Couldn\'t check"}</span>
+      {!showReason && <> · <a href="/ui/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</a></>}
+    </span>;
+  }
   return (
     <StatusPill
       status={state}
@@ -590,7 +598,7 @@ function Availability({
           ? availabilityReason(state, row.availability.reason_code ?? state)
           : undefined
       }
-      summary={!showReason || state === "unknown" || state === "not_measured"}
+      summary={!showReason}
     />
   );
 }
@@ -852,7 +860,7 @@ function DetailSheet({
                   <p className="text-muted-foreground mt-2 text-meta">{row.id}</p>
                 )}
               </div>
-              <div>
+              {(row.io.input.length > 0 || row.io.output.length > 0) && <div>
                 <h3 className="font-medium">Inputs and outputs</h3>
                 {(row.io.input.length > 0 || row.io.output.length > 0) && (
                   <dl className="text-muted-foreground mt-2 space-y-1 text-meta">
@@ -870,7 +878,7 @@ function DetailSheet({
                     )}
                   </dl>
                 )}
-              </div>
+              </div>}
               <div>
                 <h3 className="font-medium">Example request</h3>
                 <div className="mt-3 [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
@@ -954,9 +962,12 @@ export default function ModelsClient() {
   useEffect(() => {
     if (detailId !== null && catalogData && !detail) {
       setDetailId(null);
-      setDetailNote("This model is no longer in the catalog.");
+      setDetailNote(detailId);
     }
   }, [catalogData, detail, detailId]);
+  useEffect(() => {
+    if (detailNote && allRows.some((row) => row.id === detailNote)) setDetailNote(null);
+  }, [allRows, detailNote]);
   function selectDetail(row: CatalogRow) {
     setDetailNote(null);
     setDetailId(row.id);
@@ -981,7 +992,7 @@ export default function ModelsClient() {
     (row) => row.alias || row.secondary_profile,
   );
   const availableCapabilities = productCapabilityOrder.filter((cap) =>
-    sectionRows.some((row) => primaryCapability(row) === cap),
+    allRows.some((row) => hasCapability(row, cap)),
   );
   const passesFilters = (row: CatalogRow) => {
     if (!itemMatches(row, query)) return false;
@@ -995,7 +1006,6 @@ export default function ModelsClient() {
       return false;
     return true;
   };
-  const modelRows = (catalogData?.models ?? []).filter(passesFilters);
   const groupedAliases = productCapabilityOrder
     .map((cap) => ({
       capability: cap,
@@ -1005,6 +1015,10 @@ export default function ModelsClient() {
     }))
     .filter((group) => group.rows.length > 0);
   const aliasRows = groupedAliases.flatMap((group) => group.rows);
+  const sectionIds = new Set(aliasRows.map((row) => row.id));
+  // All models lists the rows not already shown above, so nothing repeats.
+  const otherModels = (catalogData?.models ?? []).filter((row) => !sectionIds.has(row.id));
+  const modelRows = otherModels.filter(passesFilters);
   const aliasHasCost = aliasRows.some((row) => Boolean(costLabel(row)));
   const aliasHasStatus = aliasRows.some((row) => hasSummaryStatus(row));
   const modelHasCost = modelRows.some((row) => Boolean(costLabel(row)));
@@ -1080,7 +1094,7 @@ export default function ModelsClient() {
               <div
                 role="group"
                 aria-label="Price filters (choose any)"
-                className="ml-auto flex shrink-0 gap-1 border-l pl-3"
+                className="ml-auto flex min-w-0 max-w-full flex-wrap gap-1 border-l pl-3 max-sm:ml-0 max-sm:border-l-0 max-sm:pl-0"
               >
                 <button
                   type="button"
@@ -1175,7 +1189,7 @@ export default function ModelsClient() {
               </Table>
             </div>
           )}
-          <section className="space-y-3">
+          {(modelRows.length > 0 || (groupedAliases.length > 0 && otherModels.length > 0)) && <section className="space-y-3">
             <button
               type="button"
               className="hover:bg-muted/70 focus-visible:ring-ring flex w-full items-center justify-between rounded-panel border px-4 h-8 max-sm:min-h-11 text-left transition outline-none focus-visible:ring-2"
@@ -1190,7 +1204,11 @@ export default function ModelsClient() {
                 className={cn("size-4 transition", tableOpen && "rotate-180")}
               />
             </button>
-            {tableOpen && (
+            {tableOpen && (modelRows.length === 0 ? (
+              <EmptyState icon={Search} title="No models match these filters."
+                description="Clear the filters to see more models."
+                action={<Button variant="outline" onClick={() => { setQuery(""); setCapability("all"); setShowNoProviderCharge(true); setShowPaid(true); setShowUnknownCost(true); }}>Clear filters</Button>} />
+            ) : (
               <div className="overflow-x-auto rounded-panel border">
                 <Table aria-label="All models" className="max-sm:block">
                   <TableHeader className="max-sm:hidden">
@@ -1246,11 +1264,11 @@ export default function ModelsClient() {
                   </TableBody>
                 </Table>
               </div>
-            )}
-          </section>
+            ))}
+          </section>}
         </>
       )}
-      {detailNote && <p role="status">{detailNote}</p>}
+      {detailNote && <div role="status"><p>This model is no longer in the catalog.</p><Button variant="ghost" onClick={() => setDetailNote(null)}>Dismiss</Button></div>}
       <DetailSheet
         row={detail}
         onOpenChange={(open) => !open && setDetailId(null)}

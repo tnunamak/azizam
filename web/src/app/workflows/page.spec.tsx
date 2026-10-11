@@ -259,7 +259,7 @@ describe("WorkflowsPage empathy copy", () => {
 
     expect(await screen.findByText("Upscale image")).toBeVisible();
     // Rows compare required inputs and outputs; purpose and optional inputs stay in the sheet.
-    expect(screen.queryByText("Upscale and restore an image")).toBeNull();
+    expect(screen.getByText("Upscale and restore an image")).toBeVisible();
     expect(screen.getByText("Clean text")).toBeVisible();
     expect(screen.queryByText("Needs: a picture")).toBeNull();
     expect(screen.getByText("From a picture → a picture")).toBeVisible();
@@ -413,7 +413,7 @@ describe("WorkflowsPage empathy copy", () => {
     expect(details).toContainElement(within(dialog).getByText("Discovery list"));
     expect(details).toHaveTextContent("image: image/png");
     expect(details).toContainElement(within(dialog).getByText("workflow.image.upscale"));
-    const recent = within(dialog).getByRole("region", { name: "Recent jobs" });
+    const recent = within(dialog).getByRole("region", { name: "Recent creations" });
     expect(details).not.toContainElement(recent);
     expect(details.compareDocumentPosition(recent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(within(dialog).getByText("Technical details"));
@@ -478,7 +478,8 @@ describe("WorkflowsPage empathy copy", () => {
   test("a member whose every workflow is not set up sees the empty state", async () => {
     serve([faceLikeness]);
     renderWorkflows(member);
-    expect(await screen.findByText("No workflows are available to you. Ask the owner what you can use.")).toBeVisible();
+    expect(await screen.findByText("No workflows are available to you.")).toBeVisible();
+    expect(screen.getByText("Ask the owner what you can use.")).toBeVisible();
   });
 
   test("a delegated admin gets the member view, not the owner's details", async () => {
@@ -536,7 +537,8 @@ describe("WorkflowsPage empathy copy", () => {
   test("an empty catalog says who can add workflows without directing members to owner pages", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: [] })));
     renderWorkflows();
-    expect(await screen.findByText("No workflows are available to you. Ask the owner what you can use.")).toBeVisible();
+    expect(await screen.findByText("No workflows are available to you.")).toBeVisible();
+    expect(screen.getByText("Ask the owner what you can use.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Explore models" })).toHaveAttribute("href", "/models");
     expect(document.querySelector('a[href="/engines"], a[href="/status"], a[href="/people"]')).toBeNull();
   });
@@ -597,4 +599,83 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.getByText("Upscale image")).toBeVisible();
   });
 
+});
+describe("workflow state and payload regressions", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  test.each([null, {}, { ...workflows[0], inputs: [null] }, { ...workflows[0], aliases: null }, { ...workflows[0], availability: null }, { ...workflows[0], outputs: [{ name: 4 }] }])(
+    "rejects malformed catalog row %# into a retryable error", async (bad) => {
+      serve([bad]);
+      renderWorkflows();
+      expect(await screen.findByText("Workflows catalog could not be loaded. Try again.")).toBeVisible();
+      expect(screen.queryByRole("listitem")).toBeNull();
+      expect(screen.getByRole("button", { name: /retry|try again/i })).toBeEnabled();
+    },
+  );
+
+  test.each([{}, { assets: null }, { assets: [null] }, { assets: [{ asset_id: "x", kind: 4 }] }])(
+    "rejects malformed recent creations %# without crashing the sheet", async (payload) => {
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+        url.includes("/me/api/media") ? payload : { schema_version: 1, workflows: [workflows[0]] },
+      )));
+      renderWorkflows();
+      fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+      expect(await screen.findByText("Recent creations could not be loaded. Try again.")).toBeVisible();
+    },
+  );
+
+  test.each(["reference portrait", "a likeness score", "unhurried detailed purpose"])(
+    "searches displayed metadata %s", async (query) => {
+      serve([{ ...workflows[0], purpose: "An unhurried detailed purpose that explains the complete result without cutting off the ending",
+        inputs: [{ name: "opaque", type: "string", label: "reference portrait", required: true, accepted: true }],
+        outputs: [{ name: "opaque", label: "a likeness score" }] }]);
+      renderWorkflows();
+      await screen.findByText("Upscale image");
+      fireEvent.change(screen.getByRole("textbox", { name: "Search workflows" }), { target: { value: query } });
+      expect(screen.getByRole("listitem", { name: "Upscale image" })).toBeVisible();
+      expect(screen.getByText(/complete result without cutting off the ending/)).toBeVisible();
+    },
+  );
+
+  test("keeps ids, MIME and JSON defaults out of member input details", async () => {
+    serve([{ ...workflows[0], inputs: [{ name: "opaque_input", type: "object", label: "Settings", accepted: true, default: { secret_schema: true }, media_type: "image/png" }] }]);
+    renderWorkflows();
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    fireEvent.click(sheet.getByText("Input details"));
+    expect(sheet.getByText("Settings: PNG")).toBeVisible();
+    for (const text of ["workflow.image.upscale", "image/png", "opaque_input", "secret_schema"]) expect(screen.getByRole("dialog").textContent).not.toContain(text);
+    expect(await sheet.findByText("No creations yet. Open this workflow in Try.")).toBeVisible();
+  });
+
+  test("does not label a first load as refreshing", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    renderWorkflows();
+    expect(screen.getByRole("status", { name: "Loading workflows" })).toBeVisible();
+    expect(screen.queryByText("Refreshing")).toBeNull();
+  });
+});
+
+describe("workflow recovery and empty headings", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+  test("recovers from a malformed catalog after Retry", async () => {
+    let valid = false;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ schema_version: 1, workflows: valid ? workflows : [null] })));
+    renderWorkflows();
+    expect(await screen.findByText("Workflows catalog could not be loaded. Try again.")).toBeVisible();
+    valid = true;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Upscale image")).toBeVisible();
+  });
+  test("omits an empty Purpose heading and keeps unavailable creations guidance truthful", async () => {
+    serve([{ ...workflows[0], purpose: "", description: "", availability: { status: "busy", reason_code: "busy", available: false } }]);
+    renderWorkflows();
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.queryByRole("heading", { name: "Purpose" })).toBeNull();
+    const recent = sheet.getByRole("region", { name: "Recent creations" });
+    // The sheet states the busy reason once; the empty list does not repeat it.
+    expect(await within(recent).findByText("No creations yet.")).toBeVisible();
+    expect(within(recent).queryByText(/Open this workflow in Try|Busy with other requests/)).toBeNull();
+    expect(sheet.getAllByText("Busy with other requests. Try again soon.")).toHaveLength(1);
+  });
 });

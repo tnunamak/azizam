@@ -446,7 +446,7 @@ test.each(["owner", "member"] as const)("Workflows use readable recent models an
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Details for Picture workflow" }));
   const sheet = screen.getByRole("dialog");
-  const jobs = within(sheet).getByRole("region", { name: "Recent jobs" });
+  const jobs = within(sheet).getByRole("region", { name: "Recent creations" });
   expect(await within(jobs).findByText("Picture maker")).toBeVisible();
   const details = within(sheet).getAllByText(role === "owner" ? "Technical details" : "Input details")[0].closest("details")!;
   await user.click(details.querySelector("summary")!);

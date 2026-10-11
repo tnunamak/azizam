@@ -9,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ModelsClient from "./models-client";
+import ModelsClient, { snippetsFor } from "./models-client";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import {
   productApi,
@@ -234,6 +234,7 @@ describe("models catalog refresh", () => {
         name: "Copy model name removed-model",
       });
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
       fireEvent.click(
         within(restoredCopy.closest("tr")!).getByRole("button", {
           name: "Details",
@@ -325,7 +326,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("offers capability chips only for visible list sections", async () => {
+  it("offers capability chips for exact models as well as list sections", async () => {
     renderModels(
       catalog(
         [row()],
@@ -351,8 +352,12 @@ describe("models catalog contract distinctions", () => {
       screen.getByRole("button", { name: /^Chat$/ }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /^Audio$/ }),
-    ).toBeNull();
+      screen.getByRole("button", { name: /^Audio$/ }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /^Audio$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name generic-audio" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Copy model name chat" })).toBeNull();
   });
 
   it("copies unavailable names from recommendations, alternatives, profiles and exact models", async () => {
@@ -1120,7 +1125,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("shows direct secondary profiles in Chat and keeps them in All models", async () => {
+  it("shows direct secondary profiles once in Chat without repeating them in All models", async () => {
     renderModels(
       catalog(
         [],
@@ -1141,12 +1146,12 @@ describe("models catalog contract distinctions", () => {
       screen.getByRole("heading", { name: "Chat", level: 2 }),
     ).toBeVisible();
     expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "All models" }));
-    expect(
-      within(screen.getByRole("table", { name: "All models" })).getByText("Coder Q8"),
-    ).toBeVisible();
+    // Its only model is already shown above, so All models has nothing to add.
+    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Copy model name coder-q8" })).toHaveLength(1);
+    expect(screen.queryByText("No models match these filters.")).toBeNull();
     fireEvent.click(
-      within(screen.getByRole("table", { name: "All models" })).getByRole("button", {
+      within(screen.getByRole("table", { name: "Available model names" })).getByRole("button", {
         name: "Details",
       }),
     );
@@ -1378,7 +1383,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name chat",
     });
-    expect(screen.queryByRole("link", { name: "Check status" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Check status" })).toBeVisible();
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText("Configuration not reported")).toBeNull();
     expect(screen.queryByText("Observation time not reported")).toBeNull();
@@ -1386,7 +1391,7 @@ describe("models catalog contract distinctions", () => {
     fireEvent.click(
       within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
-    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute(
+    expect(within(screen.getByRole("dialog")).getByRole("link", { name: "Check status" })).toHaveAttribute(
       "href",
       "/ui/status/",
     );
@@ -1571,9 +1576,8 @@ describe("models query-string deep links", () => {
       await screen.findByRole("button", { name: "Copy model name chat" }),
     ).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue("");
-    expect(screen.getByRole("button", { name: "All models" })).toHaveAttribute(
-      "aria-expanded", "false",
-    );
+    // The catalog has no exact models beyond the names above.
+    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
   });
 
   it("decodes an exact model deep link and opens its filtered table", async () => {
@@ -1636,7 +1640,7 @@ describe("task-first catalog rows", () => {
   });
 
   it.each(["unknown", "not_measured"] as const)(
-    "hides empty %s summary status in aliases and exact models without claiming local cost",
+    "shows unmeasured %s summary status in aliases and exact models without claiming local cost",
     async (status) => {
       const remote = row({
         locality: "remote",
@@ -1648,7 +1652,9 @@ describe("task-first catalog rows", () => {
       for (const name of ["Available model names", "All models"]) {
         const table = within(screen.getByRole("table", { name }));
         expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
-        expect(table.queryByRole("columnheader", { name: "Status" })).toBeNull();
+        expect(table.getByRole("columnheader", { name: "Status" })).toBeVisible();
+        expect(table.getByText("Not checked yet")).toBeVisible();
+        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
       }
       expect(screen.queryByText("Local · no provider charge")).toBeNull();
     },
@@ -1744,4 +1750,77 @@ describe("member copy boundaries", () => {
     const copy = await screen.findByRole("button", { name: "Copy model name task-model" });
     expect(within(copy.closest("tr")!).getByText(label)).toBeVisible();
   });
+});
+
+describe("catalog state regressions", () => {
+  it("does not repeat secondary profiles in All models and omits empty IO headings", async () => {
+    const profile = row({ id: "profile", alias: false, object: "model_catalog.model", secondary_profile: true, io: { input: [], output: [] } });
+    renderModels(catalog([], [profile]));
+    const copy = await screen.findByRole("button", { name: "Copy model name profile" });
+    expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Copy model name profile" })).toHaveLength(1);
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    expect(within(screen.getByRole("dialog")).queryByText("Inputs and outputs")).toBeNull();
+  });
+
+  it("says when filters hide every model in All models and clears them", async () => {
+    renderModels(catalog([row()], [row({
+      id: "exact-model", alias: false, object: "model_catalog.model",
+      capabilities: [{ ...row().capabilities[0], capability: "image", label: "Images" }],
+    })]));
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Chat", pressed: false }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    expect(screen.getByText("No models match these filters.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("button", { name: "Copy model name exact-model" })).toBeVisible();
+  });
+
+  it("reports missing engine metadata honestly in one-tap details", async () => {
+    renderModels(catalog([row({ engine_label: null, provider: null })]));
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    expect(within(screen.getByRole("dialog")).getByText("Engine or provider not specified")).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByText("Chat through your configured model.")).toBeVisible();
+  });
+});
+
+describe("multipart example parity", () => {
+  it.each(["/v1/audio/transcriptions", "/v1/images/edits"])("keeps all declared body options in every %s snippet", (path) => {
+    const example = row({ use: { ...row().use, path }, examples: [{ kind: "example", body: { model: "custom", language: "fr", temperature: 0, stream: false, options: { quality: "high" }, prompt: "@literal input" } }] });
+    const snippets = snippetsFor(example, "https://example.test");
+    expect(snippets).toHaveLength(3);
+    for (const snippet of snippets) for (const name of ["model", "custom", "language", "fr", "temperature", "stream", "options", "quality", "prompt", "@literal input"]) expect(snippet.code).toContain(name);
+    expect(snippets[0].code).toContain("--form-string 'temperature=0'");
+    expect(snippets[0].code).toContain("--form-string 'stream=false'");
+    expect(snippets[0].code).toContain("--form-string 'prompt=@literal input'");
+    expect(snippets[0].code).toContain(path.endsWith("edits") ? "-F image=@sample.png" : "-F file=@sample.wav");
+  });
+});
+
+describe("model availability and removal recovery", () => {
+  it("distinguishes a failed observation from a model not checked yet", async () => {
+    renderModels(catalog([row({ availability: { ...row().availability, status: "unknown", measured: true } })]));
+    expect(await screen.findByText("Couldn't check")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
+    expect(screen.queryByText("Ready")).toBeNull();
+  });
+
+  it("lets the member dismiss a removed-model notice", async () => {
+    const client = renderModels(catalog([row()]));
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    vi.mocked(productApi.models).mockResolvedValue(catalog([]));
+    await act(async () => { await client.refetchQueries({ queryKey: ["models", "catalog"] }); });
+    expect(await screen.findByText("This model is no longer in the catalog.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+it("keeps a secondary profile in All models when its server capability has no section", async () => {
+  renderModels(catalog([], [row({ id: "future-model", alias: false, object: "model_catalog.model", secondary_profile: true, capability: "future-task", capability_title: "Future task", capabilities: [] })]));
+  fireEvent.click(await screen.findByRole("button", { name: "All models" }));
+  expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name future-model" })).toBeVisible();
 });

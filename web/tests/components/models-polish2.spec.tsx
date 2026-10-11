@@ -119,7 +119,7 @@ it("omits absent timing and does not expose service ids as engine names", async 
   await screen.findByRole("button", { name: "Copy model name chat" });
   expect(screen.queryByText("Not measured yet")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
-  expect(screen.getByText("Configured engine")).toBeVisible();
+  expect(screen.getByText("Engine or provider not specified")).toBeVisible();
   expect(
     within(screen.getByRole("dialog")).queryByText("Not measured yet"),
   ).toBeNull();

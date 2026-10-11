@@ -59,8 +59,8 @@ import {
 } from "@/lib/workflow-availability";
 
 import {
-  readJson,
-  type RecentAsset,
+  readRecentAssets,
+  isWorkflowCatalog,
   type Workflow as WorkflowRow,
   type WorkflowInput,
   type WorkflowOutput,
@@ -87,16 +87,10 @@ async function fetchWorkflows(): Promise<WorkflowsCatalog> {
     throw new Error("Workflows catalog could not be loaded. Try again.");
   }
   const payload = (await response.json()) as unknown;
-  if (!isCatalog(payload)) {
+  if (!isWorkflowCatalog(payload)) {
     throw new Error("Workflows catalog response is not in the expected shape.");
   }
   return payload;
-}
-
-function isCatalog(value: unknown): value is WorkflowsCatalog {
-  if (!value || typeof value !== "object") return false;
-  const maybe = value as Partial<WorkflowsCatalog>;
-  return maybe.schema_version === 1 && Array.isArray(maybe.workflows);
 }
 
 function capabilityLabel(value: string) {
@@ -142,10 +136,23 @@ function valueLabel(value: unknown) {
   return String(value);
 }
 
-function conciseWords(value: string, maxWords = 12) {
-  const words = value.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return value.trim();
-  return `${words.slice(0, maxWords).join(" ")}...`;
+
+function plainValue(value: unknown): string {
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+function plainRange(input: WorkflowInput): string {
+  return input.enum?.length ? input.enum.map(plainValue).filter(Boolean).join(", ") : rangeLabel(input);
+}
+function acceptedFiles(input: WorkflowInput): string {
+  const types = declaredMediaTypes(input);
+  if (!types.length) return "File formats not listed";
+  const formats: Record<string, string> = {
+    "image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WebP",
+    "audio/wav": "WAV", "audio/mpeg": "MP3", "video/mp4": "MP4",
+    "application/pdf": "PDF", "text/plain": "plain text",
+  };
+  return joinWords([...new Set(types.map((type) => formats[type] ?? mediaLabel(type, "a file")))], "or");
 }
 
 function purposeLabel(workflow: WorkflowRow) {
@@ -156,7 +163,7 @@ function purposeLabel(workflow: WorkflowRow) {
   const jargon =
     /\b(contract|protocol|gateway-composed|engine|binding|bound|backend|schema|adapter|passthrough|checkpoint)\b|[\w.-]+\.(safetensors|ckpt|gguf)\b/i;
   if (jargon.test(sentence)) return "";
-  return conciseWords(sentence);
+  return sentence;
 }
 
 function matches(row: WorkflowRow, query: string) {
@@ -165,16 +172,22 @@ function matches(row: WorkflowRow, query: string) {
     row.id,
     row.title,
     row.description,
+    purposeLabel(row),
+    inputSummary(row, true),
+    inputSummary(row, false),
+    outputSummary(row),
     ...row.aliases,
     row.engine_binding ?? "",
     row.native_route ?? "",
     ...row.inputs.flatMap((input) => [
       input.name,
+      input.label ?? "",
       input.description ?? "",
       rangeLabel(input),
     ]),
     ...(row.outputs ?? []).flatMap((output) => [
       output.name,
+      output.label ?? "",
       output.media_type ?? "",
       output.description ?? "",
     ]),
@@ -366,7 +379,7 @@ function WorkflowCard({
     <ListRow
       lines={2}
       aria-label={workflow.title}
-      className="hover:bg-muted/50 cursor-pointer"
+      className="hover:bg-muted/50 cursor-pointer h-auto! min-h-(--row-2) [&_p]:whitespace-normal [&_p]:overflow-visible [&_p]:text-clip"
       onClick={(event) => {
         if (!(event.target as HTMLElement).closest("a, button")) onDetail(workflow);
       }}
@@ -380,7 +393,7 @@ function WorkflowCard({
           {workflow.title}
         </button>
       }
-      meta={summary}
+      meta={<span className="block break-words">{purposeLabel(workflow) && <span className="mb-1 block">{purposeLabel(workflow)}</span>}<span className="block">{summary}</span></span>}
       metaTitle={summary}
       trailing={<WorkflowAction workflow={workflow} owner={owner} hideReadyStatus />}
     />
@@ -429,7 +442,7 @@ function DetailSheet({
             </SheetHeader>
             <div className="space-y-6 p-4">
               <section className="space-y-3">
-                <h3 className="font-medium">Purpose</h3>
+                {purposeLabel(workflow) && <h3 className="font-medium">Purpose</h3>}
                 {purposeLabel(workflow) && (
                   <p className="text-muted-foreground text-meta break-words">
                     {purposeLabel(workflow)}
@@ -458,7 +471,7 @@ function DetailSheet({
                     </p>
                   )}
                   <div className="grid gap-4 text-meta sm:grid-cols-2">
-                    <Fact
+                    {owner && <Fact
                       label="Workflow"
                       value={
                         <span className="inline-flex max-w-full items-center gap-2">
@@ -469,21 +482,21 @@ function DetailSheet({
                           />
                         </span>
                       }
-                    />
+                    />}
                     <Fact
                       label="Task"
                       value={capabilityLabel(workflow.capability)}
                     />
                     <Fact
-                      label="Input media types"
-                      value={workflow.inputs.map((input) =>
-                        `${owner ? input.name : inputLabels.get(input)}: ${[input.media_type, ...(input.accepted_media_types ?? [])].filter(Boolean).join(", ") || "not listed"}`,
+                      label={owner ? "Input media types" : "Accepted files"}
+                      value={workflow.inputs.filter((input) => owner || isMediaInput(input)).map((input) =>
+                        owner ? `${input.name}: ${declaredMediaTypes(input).join(", ") || "not listed"}` : `${inputLabels.get(input)}: ${acceptedFiles(input)}`,
                       ).join("; ") || "Not listed"}
                     />
                     <Fact
-                      label="Output names and types"
+                      label={owner ? "Output names and types" : "Outputs"}
                       value={(workflow.outputs ?? []).map((output) =>
-                        `${output.name}: ${output.media_type || "not listed"}`,
+                        owner ? `${output.name}: ${output.media_type || "not listed"}` : outputNoun(output),
                       ).join("; ") || "Not listed"}
                     />
                     {owner && (
@@ -507,7 +520,7 @@ function DetailSheet({
                         }
                       />
                     )}
-                    <Fact
+                    {owner && <Fact
                       label="Discovery"
                       value={
                         <a
@@ -517,7 +530,7 @@ function DetailSheet({
                           Machine-readable workflow
                         </a>
                       }
-                    />
+                    />}
                   </div>
                   <div>
                     <h3 className="font-medium">Model names</h3>
@@ -562,7 +575,7 @@ function DetailSheet({
                                 {owner ? input.name : inputLabels.get(input)}
                               </h4>
                               <p className="text-muted-foreground text-label">
-                                {input.type}
+                                {owner ? input.type : inputNoun(input)}
                                 {input.required ? " · Required" : " · Optional"}
                               </p>
                             </div>
@@ -578,22 +591,22 @@ function DetailSheet({
                             </p>
                           )}
                           <dl className="space-y-2 text-meta">
-                            {input.default != null && (
+                            {(owner ? input.default != null : plainValue(input.default) !== "") && (
                               <div>
                                 <dt className="text-muted-foreground text-label">
                                   Default
                                 </dt>
                                 <dd className="break-words">
-                                  {valueLabel(input.default)}
+                                  {owner ? valueLabel(input.default) : plainValue(input.default)}
                                 </dd>
                               </div>
                             )}
-                            {rangeLabel(input) && (
+                            {(owner ? rangeLabel(input) : plainRange(input)) && (
                               <div>
                                 <dt className="text-muted-foreground text-label">
                                   Range
                                 </dt>
-                                <dd className="break-words">{rangeLabel(input)}</dd>
+                                <dd className="break-words">{owner ? rangeLabel(input) : plainRange(input)}</dd>
                               </div>
                             )}
                           </dl>
@@ -629,12 +642,12 @@ function DetailSheet({
                                   </p>
                                 )}
                               </TableCell>
-                              <TableCell>{input.type}</TableCell>
+                              <TableCell>{owner ? input.type : inputNoun(input)}</TableCell>
                               <TableCell className="max-w-48 break-words !whitespace-normal">
-                                {valueLabel(input.default)}
+                                {owner ? valueLabel(input.default) : plainValue(input.default)}
                               </TableCell>
                               <TableCell className="max-w-48 break-words !whitespace-normal">
-                                {rangeLabel(input)}
+                                {owner ? rangeLabel(input) : plainRange(input)}
                               </TableCell>
                               <TableCell>
                                 <Badge
@@ -666,14 +679,14 @@ function DetailSheet({
                       />
                     </div>
                   </div>}
-                  <div className="flex flex-wrap gap-2">
+                  {owner && <div className="flex flex-wrap gap-2">
                     <Button asChild variant="outline">
                       <a href={"/me/api/workflows"}>
                         Discovery list
                         <ArrowUpRight aria-hidden="true" />
                       </a>
                     </Button>
-                  </div>
+                  </div>}
                 </div>
               </details>
               <RecentJobs key={workflow.id} workflow={workflow} owner={owner} />
@@ -699,14 +712,14 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflow-media", workflow.id],
     queryFn: () =>
-      readJson<{ assets: RecentAsset[] }>(
+      readRecentAssets(
         `/me/api/media?${new URLSearchParams({ workflow: workflow.id, limit: "5" })}`,
       ),
     retry: false,
   });
   return (
-    <section aria-label="Recent jobs">
-      <h3 className="font-medium">Recent jobs</h3>
+    <section aria-label="Recent creations">
+      <h3 className="font-medium">Recent creations</h3>
       <p className="text-muted-foreground mt-1 text-meta">
         Your latest outputs from this workflow, with their original request
         details.
@@ -714,21 +727,23 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
       {isPending ? (
         <Skeleton
           role="status"
-          aria-label="Loading recent jobs"
+          aria-label="Loading recent creations"
           className="mt-4 h-24"
         />
       ) : isError ? (
         <div className="mt-4">
           <ErrorState
-            message="Recent jobs could not be loaded. Try again."
+            message="Recent creations could not be loaded. Try again."
             onRetry={() => void refetch()}
             retrying={isFetching}
           />
         </div>
       ) : !data?.assets.length ? (
         <p className="text-muted-foreground mt-4 text-meta">
-          No recent jobs yet. Run this workflow in Try to create your first
-          result.
+          {/* The sheet already states why a workflow cannot run. */}
+          {workflowAvailabilityView(workflow.availability, { owner, engineBinding: workflow.engine_binding }).runnable
+            ? "No creations yet. Open this workflow in Try."
+            : "No creations yet."}
         </p>
       ) : (
         <ul className="mt-4 divide-y">
@@ -866,7 +881,7 @@ export default function WorkflowsPage() {
         count={data ? rows.length : undefined}
         subtitle="Choose by purpose and inputs."
         actions={
-          isFetching ? (
+          data && isFetching ? (
             <Badge variant="outline">Refreshing</Badge>
           ) : undefined
         }
@@ -881,11 +896,11 @@ export default function WorkflowsPage() {
       ) : rows.length === 0 ? (
         <EmptyState
           icon={GitBranch}
-          title="No workflows available"
+          title={owner ? "No workflows are available." : "No workflows are available to you."}
           description={
             owner
-              ? "No workflows are available."
-              : "No workflows are available to you. Ask the owner what you can use."
+              ? undefined
+              : "Ask the owner what you can use."
           }
           action={
             <Button variant="outline" asChild>
@@ -896,7 +911,7 @@ export default function WorkflowsPage() {
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="relative min-w-0 flex-1 sm:max-w-80">
+            <label className="relative min-w-0 flex-1 max-sm:basis-full sm:max-w-80">
               <Search
                 aria-hidden="true"
                 className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"

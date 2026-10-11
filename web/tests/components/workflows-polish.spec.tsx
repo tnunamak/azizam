@@ -119,7 +119,8 @@ it("keeps browsing rows compact and leaves manifest facts in the detail view", a
   expect(card.getByText("From text → a picture")).toBeVisible();
   expect(card.queryByRole("img", { name: "Text input" })).toBeNull();
   expect(card.queryByText("prompt")).toBeNull();
-  expect(card.queryByText("Create product renders.")).toBeNull();
+  // The purpose line helps choose; the long manifest note stays in Details.
+  expect(card.getByText("Create product renders.")).toBeVisible();
   expect(card.queryByText("Output")).toBeNull();
   expect(card.queryByText("image/png")).toBeNull();
   expect(card.queryByText("seed: 0 to 65535")).toBeNull();

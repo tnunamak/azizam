@@ -443,7 +443,7 @@ for (const theme of ["light", "dark"] as const) {
       page,
     }) => {
       await preparePage(page, theme, width, emptyCatalog);
-      await expect(page.getByText("No workflows available")).toBeVisible();
+      await expect(page.getByText(/^No workflows are available/)).toBeVisible();
       await checkState(page, `workflows-empty-${theme}-${width}.png`);
     });
 
@@ -675,13 +675,13 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
 
   expect(mediaRequests.at(-1)).toContain("workflow=image.product-render");
   expect(mediaRequests.at(-1)).toContain("limit=5");
-  await expect(sheet.getByText("Recent jobs")).toBeVisible();
+  await expect(sheet.getByRole("heading", { name: "Recent creations" })).toBeVisible();
   await expect(sheet.getByText("A teal desk lamp on walnut")).toBeVisible();
   await expect(sheet.getByText("12.4 s")).toBeVisible();
   await expect(sheet.locator("time").first()).toBeVisible();
   await expect(
     sheet
-      .getByRole("region", { name: "Recent jobs" })
+      .getByRole("region", { name: "Recent creations" })
       .getByText("Image", { exact: true })
       .first(),
   ).toBeVisible();
@@ -711,7 +711,7 @@ test("workflow sheet recent jobs handles empty records", async ({ page }) => {
   await openNotSetUp(page);
   await page.getByRole("button", { name: /^Details for / }).nth(1).click();
   await expect(page.getByRole("dialog")).toContainText(
-    /No recent (jobs|records)/,
+    /No creations yet/,
   );
   await checkState(page, "workflows-sheet-empty-dark-390.png");
 });
@@ -723,7 +723,7 @@ test("workflow sheet recent jobs handles media errors", async ({ page }) => {
   await page.goto("/ui/workflows/");
   await page.getByRole("button", { name: /^Details for / }).first().click();
   await expect(page.getByRole("dialog")).toContainText(
-    /Recent jobs could not be loaded|Workflow data could not be loaded/,
+    /Recent creations could not be loaded|Workflow data could not be loaded/,
   );
   await checkState(page, "workflows-sheet-error-dark-390.png");
 });
