@@ -6925,7 +6925,6 @@ class _MakePublishGate:
         self.published = False
         self.loop: asyncio.AbstractEventLoop | None = None
         self.stop_waiting: asyncio.Event | None = None
-        self.call: asyncio.Future | None = None
 
     def cancel(self) -> bool:
         """Cancel unless output is already published. Safe from any thread."""
@@ -14441,7 +14440,8 @@ class _SessionMakeRuntime:
             _image_media_job_scheduled.discard(job_id)
             self._gates.pop(job_id, None)
             if not done_task.cancelled() and done_task.exception() is not None:
-                print(f"[proxy] make job task crashed for {job_id}: {done_task.exception()}", flush=True)
+                me_make._fail(job_id, "The job stopped unexpectedly; please try again", media_jobs.DB_PATH)
+                self.drop_payload(job_id)
 
         task.add_done_callback(_done)
 
@@ -14511,8 +14511,6 @@ class _SessionMakeRuntime:
                 _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
         finish_image_route_receipt(receipt, response)
-        if gate.canceled:
-            raise me_make.MakeCanceled()
         if not 200 <= int(response.status_code) < 300:
             raise me_make.MakeBackendError(_media_job_failure_message(response),
                                            http_status=int(response.status_code))
@@ -21376,7 +21374,7 @@ def _recover_media_jobs() -> None:
                                      path=media_jobs.DB_PATH)
 
 
-def _settle_native_job(run):
+def _settle_native_job(run: Callable[[str], Awaitable[None]]) -> Callable[[str], Awaitable[None]]:
     async def settled(job_id: str) -> None:
         try:
             await run(job_id)
@@ -21662,7 +21660,7 @@ def _resume_pending_image_media_jobs() -> int:
         if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
-        if (metadata.get("cancel_requested_at")):
+        if metadata.get("cancel_requested_at"):
             _mark_image_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
             continue
         if _schedule_image_media_job(job_id):
@@ -22090,7 +22088,7 @@ def _resume_pending_audio_media_jobs() -> int:
         if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
-        if (metadata.get("cancel_requested_at")):
+        if metadata.get("cancel_requested_at"):
             _mark_audio_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
             continue
         if _schedule_audio_media_job(job_id):
@@ -22652,7 +22650,7 @@ def _resume_pending_video_media_jobs() -> int:
         if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
-        if (metadata.get("cancel_requested_at")):
+        if metadata.get("cancel_requested_at"):
             _mark_video_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
             continue
         if _schedule_video_media_job(job_id):
