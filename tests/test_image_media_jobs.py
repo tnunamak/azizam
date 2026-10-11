@@ -356,6 +356,34 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.status_code, 202)
         self.assertEqual(json.loads(second.body.decode("utf-8"))["job_id"], job_id)
 
+    async def test_seeded_resubmission_after_replay_window_runs_again(self) -> None:
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+            "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 7}},
+        }
+
+        async def submit() -> str:
+            with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+                proxy, "_schedule_image_media_job", lambda job_id: True,
+            ):
+                response = await proxy.gateway_image_generations_media_job(
+                    _StubJsonRequest(body, headers={"host": "gateway.test"})  # type: ignore[arg-type]
+                )
+            self.assertEqual(response.status_code, 202)
+            return json.loads(response.body.decode("utf-8"))["job_id"]
+
+        first = await submit()
+        with media_jobs._conn(self.db) as conn:
+            conn.execute(
+                "UPDATE media_jobs SET status = ?, updated_at = updated_at - ? WHERE job_id = ?",
+                (media_jobs.STATUS_FAILED, media_jobs.REPLAY_WINDOW_S + 1, first),
+            )
+            conn.commit()
+        second = await submit()
+        self.assertNotEqual(second, first)
+        self.assertIsNotNone(media_jobs.get(first, audience="internal", path=self.db))
+
     async def test_generic_media_jobs_submit_delegates_image_generate_request(self) -> None:
         body = {
             "model": "flux2-klein-4b",

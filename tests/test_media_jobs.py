@@ -163,6 +163,37 @@ class TestStoreLifecycle(_StoreCase):
         loaded = media_jobs.get(first.job_id, path=self.db)
         self.assertEqual(loaded["workflow"], "ltx.video.basic")
 
+    def _age(self, job_id: str, seconds: int) -> None:
+        with media_jobs._conn(self.db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at = updated_at - ? WHERE job_id = ?",
+                         (seconds, job_id))
+            conn.commit()
+
+    def test_old_finished_request_id_starts_new_work_and_keeps_history(self) -> None:
+        # Kept jobs must not turn a 14-day replay window into a permanent one.
+        for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+            request_id = f"req_old_{status}"
+            first = media_jobs.create(_make_job(request_id=request_id, status=status), path=self.db)
+            media_jobs.append_event(first.job_id, "x", {"progress": 1}, path=self.db)
+            self._age(first.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            self.assertIsNone(media_jobs.get_by_request_id(request_id, path=self.db))
+            second = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            self.assertNotEqual(first.job_id, second.job_id)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], second.job_id)
+            kept = media_jobs.get(first.job_id, audience="internal", path=self.db)
+            self.assertEqual(kept["status"], status)
+            self.assertEqual(kept["request_id"], "")
+            self.assertEqual(len(media_jobs.events(first.job_id, path=self.db)), 1)
+
+    def test_recent_or_active_request_id_still_replays(self) -> None:
+        recent = media_jobs.create(_make_job(request_id="req_recent", status=STATUS_FAILED), path=self.db)
+        self._age(recent.job_id, media_jobs.REPLAY_WINDOW_S - 60)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_recent"), path=self.db).job_id, recent.job_id)
+        active = media_jobs.create(_make_job(request_id="req_active", status=STATUS_RUNNING), path=self.db)
+        self._age(active.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+        self.assertEqual(media_jobs.get_by_request_id("req_active", path=self.db)["job_id"], active.job_id)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_active"), path=self.db).job_id, active.job_id)
+
     def test_create_without_request_id_makes_separate_jobs(self) -> None:
         a = media_jobs.create(_make_job(request_id=""), path=self.db)
         b = media_jobs.create(_make_job(request_id=""), path=self.db)

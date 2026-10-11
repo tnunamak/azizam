@@ -50,6 +50,11 @@ from gateway.redaction import (
 _default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
 DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB") else _default_db
 
+# A request ID replays its job while the job is active or changed in the last
+# 14 days: the lifetime job records had before they were kept. A later repeat
+# starts new work, and the old job keeps its history without the request ID.
+REPLAY_WINDOW_S = 14 * 24 * 3600
+
 SCHEMA_VERSION = 2
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
@@ -77,6 +82,10 @@ TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED}
 def is_terminal(status: str) -> bool:
     """Whether a job state is terminal; unknown states must keep waiting."""
     return status in TERMINAL_STATUSES
+
+
+def _replays(status: str, updated_at: int) -> bool:
+    return not is_terminal(status) or updated_at >= _now() - REPLAY_WINDOW_S
 
 
 def holds_resources(status: JobStatus) -> bool:
@@ -517,6 +526,9 @@ def create(
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
 
+    A finished job older than ``REPLAY_WINDOW_S`` gives up its request ID to
+    the new job instead of replaying.
+
     This is the safe idempotent create primitive for handlers: clients may
     retry POST /v1/videos with the same Idempotency-Key/request_id and we
     must return the same job_id every time.
@@ -539,9 +551,15 @@ def create(
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
             existing = conn.execute(
-                "SELECT job_json FROM media_jobs WHERE request_id = ?",
+                "SELECT job_json, status, updated_at, job_id FROM media_jobs WHERE request_id = ?",
                 (record.request_id,),
             ).fetchone()
+            if existing and not _replays(existing[1], existing[2]):
+                conn.execute(
+                    "UPDATE media_jobs SET request_id = NULL, job_json = json_set(job_json, '$.request_id', '') "
+                    "WHERE job_id = ?", (existing[3],),
+                )
+                existing = None
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
@@ -729,16 +747,17 @@ def get_by_request_id(
     audience: str = "internal",
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
+    """Return the job this request ID still replays; see ``REPLAY_WINDOW_S``."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if not request_id:
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT job_json FROM media_jobs WHERE request_id = ?",
+            "SELECT job_json, status, updated_at FROM media_jobs WHERE request_id = ?",
             (request_id,),
         ).fetchone()
-    if not row:
+    if not row or not _replays(row[1], row[2]):
         return None
     data = _safe_loads(row[0])
     if not isinstance(data, Mapping):
@@ -1163,6 +1182,7 @@ def _safe_loads(text: str) -> Any:
 
 __all__ = [
     "DB_PATH",
+    "REPLAY_WINDOW_S",
     "SCHEMA_VERSION",
     "STATUS_QUEUED",
     "STATUS_RUNNING",
