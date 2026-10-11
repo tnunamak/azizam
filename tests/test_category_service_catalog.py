@@ -91,7 +91,7 @@ def test_catalog_uses_public_routes_and_omits_disabled_models(monkeypatch):
             "models": [{"id": "enabled-model", "display_name": "Reviewed chat"},
                        {"id": "disabled-model", "enabled": False}],
         }},
-        "cloud-route": {"id": "cloud-route", "enabled": True, "capabilities": ["decisions"], "config": {
+        "cloud-route": {"id": "cloud-route", "kind": "provider", "enabled": True, "capabilities": ["decisions"], "config": {
             "remote_provider": True, "provider_id": "example-provider", "api_key_env": "CATALOG_TEST_KEY",
             "protocol": "openai-compatible", "base_url": "https://example.invalid/v1",
             "models": [{"id": "cloud-model"}],
