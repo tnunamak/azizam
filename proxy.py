@@ -18292,6 +18292,7 @@ async def admin_config_export(request: Request):
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
     "/admin",
+    "/status",
     "/me/",
     "/v1/status",
     "/v1/audio/health",
