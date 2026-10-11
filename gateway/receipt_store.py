@@ -30,7 +30,7 @@ the requested audience.
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, check_quarantine_pending
+from gateway.sqlite_startup import check_database, connect
 
 import json
 import os
@@ -161,8 +161,7 @@ def init_db(path: Path = DB_PATH) -> None:
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    check_quarantine_pending(path)
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = connect(path, timeout=5.0)
     try:
         _apply_pragmas(conn)
         yield conn

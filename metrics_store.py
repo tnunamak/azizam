@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, check_quarantine_pending, is_corruption
+from gateway.sqlite_startup import check_database, connect, is_corruption
 import shutil
 import sqlite3
 import time
@@ -160,8 +160,7 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
 
 def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
     """Long-lived writer connection. Caller owns it; close on shutdown."""
-    check_quarantine_pending(path if path is not None else DB_PATH)
-    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=5.0, isolation_level=None)
+    conn = connect(path if path is not None else DB_PATH, timeout=5.0, isolation_level=None)
     _apply_pragmas(conn)
     return conn
 
@@ -169,8 +168,7 @@ def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
 @contextmanager
 def reader(path: Optional[Path] = None):
     """Short-lived read connection. WAL makes this cheap."""
-    check_quarantine_pending(path if path is not None else DB_PATH)
-    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=2.0)
+    conn = connect(path if path is not None else DB_PATH, timeout=2.0)
     try:
         _apply_pragmas(conn)
         yield conn

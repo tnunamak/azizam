@@ -1253,7 +1253,7 @@ def _usage_summary(
             params.extend(sorted(owner_keys))
         clauses.append("(" + " OR ".join(ownership_clauses) + ")" if ownership_clauses else "0")
     # Aggregate every retained row in the period, rather than a recent-feed cap.
-    with sqlite3.connect(str(receipts_path)) as conn:
+    with sqlite3.connect(receipts_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
         rows = conn.execute(
             "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
             + " ORDER BY created_at DESC, request_id DESC", params,

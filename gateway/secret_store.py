@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import os
 import secrets
-import sqlite3
 import stat
 import tempfile
 import time
@@ -18,6 +17,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from gateway import sqlite_startup
 
 DEFAULT_KEY_FILE = "provider-secrets.key"
 
@@ -59,7 +60,7 @@ class SecretStatus:
 
 def ensure_provider_secret_schema(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path)) as conn:
+    with closing(sqlite_startup.connect(path)) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS provider_secrets (
@@ -91,7 +92,7 @@ def put_provider_secret(secret_id: str, value: str, *, db_path: Path, key_path: 
     ciphertext = AESGCM(key).encrypt(nonce, value.encode("utf-8"), aad)
     timestamp = int(time.time() if now is None else now)
     suffix = value[-4:]
-    with closing(sqlite3.connect(db_path)) as conn:
+    with closing(sqlite_startup.connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO provider_secrets(id, nonce_b64, ciphertext_b64, suffix, approved_origin, created_at, updated_at)
@@ -122,7 +123,7 @@ def get_provider_secret(secret_id: str, *, db_path: Path, key_path: Path | None 
     expected_origin = _normalize_origin(expected_origin) if expected_origin else None
     ensure_provider_secret_schema(db_path)
     key = load_secret_key(db_path.parent / DEFAULT_KEY_FILE if key_path is None else key_path)
-    with closing(sqlite3.connect(db_path)) as conn:
+    with closing(sqlite_startup.connect(db_path)) as conn:
         row = conn.execute(
             "SELECT nonce_b64, ciphertext_b64, approved_origin FROM provider_secrets WHERE id = ?",
             (secret_id,),
@@ -140,7 +141,7 @@ def get_provider_secret(secret_id: str, *, db_path: Path, key_path: Path | None 
 def delete_provider_secret(secret_id: str, *, db_path: Path) -> SecretStatus:
     secret_id = _normalize_secret_id(secret_id)
     ensure_provider_secret_schema(db_path)
-    with closing(sqlite3.connect(db_path)) as conn:
+    with closing(sqlite_startup.connect(db_path)) as conn:
         conn.execute("DELETE FROM provider_secrets WHERE id = ?", (secret_id,))
         conn.commit()
     return SecretStatus(secret_id, "missing", None, None)
@@ -149,7 +150,7 @@ def delete_provider_secret(secret_id: str, *, db_path: Path) -> SecretStatus:
 def provider_secret_status(secret_id: str, *, db_path: Path) -> SecretStatus:
     secret_id = _normalize_secret_id(secret_id)
     ensure_provider_secret_schema(db_path)
-    with closing(sqlite3.connect(db_path)) as conn:
+    with closing(sqlite_startup.connect(db_path)) as conn:
         row = conn.execute(
             "SELECT suffix, updated_at FROM provider_secrets WHERE id = ?",
             (secret_id,),
@@ -162,7 +163,7 @@ def provider_secret_status(secret_id: str, *, db_path: Path) -> SecretStatus:
 def provider_secret_revision(secret_id: str, *, db_path: Path) -> str:
     secret_id = _normalize_secret_id(secret_id)
     ensure_provider_secret_schema(db_path)
-    with closing(sqlite3.connect(db_path)) as conn:
+    with closing(sqlite_startup.connect(db_path)) as conn:
         row = conn.execute(
             "SELECT nonce_b64, ciphertext_b64 FROM provider_secrets WHERE id = ?",
             (secret_id,),

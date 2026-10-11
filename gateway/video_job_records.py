@@ -22,7 +22,7 @@ from typing import Any, Mapping
 
 from gateway import media_jobs
 from gateway.ownership import stored_owner_key
-from gateway.sqlite_startup import check_quarantine_pending
+from gateway.sqlite_startup import connect
 
 MIGRATION_NAME = "video_job_records_v1"
 
@@ -60,9 +60,8 @@ def migrate(conn: sqlite3.Connection) -> bool:
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path) if path else Path(media_jobs.DB_PATH)
-    check_quarantine_pending(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=5.0)
+    conn = connect(target, timeout=5.0)
     media_jobs._apply_pragmas(conn)
     conn.execute("PRAGMA secure_delete=ON")
     migrate(conn)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 
@@ -42,6 +43,12 @@ def check_quarantine_pending(path: Path) -> None:
     pending = path.with_name(f"{path.name}.quarantine-pending")
     if pending.exists():
         raise RuntimeError(f"Unfinished database quarantine: {pending}; restore or finish it before startup")
+
+
+def connect(path: Path | str, **kwargs: Any) -> sqlite3.Connection:
+    """Open a store; a writable connection would recreate a database being quarantined."""
+    check_quarantine_pending(Path(path))
+    return sqlite3.connect(str(path), **kwargs)
 
 
 def check_database(path: Path, *, full_check: bool = True) -> None:

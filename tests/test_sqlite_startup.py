@@ -171,3 +171,19 @@ def test_shared_job_database_connectors_respect_quarantine(tmp_path):
         with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
             operation()
         assert not path.exists()
+
+
+@pytest.mark.parametrize('operation', [
+    lambda path: __import__('gateway.accounts', fromlist=['x']).initialize(path),
+    lambda path: __import__('gateway.secret_store', fromlist=['x']).provider_secret_status('openai', db_path=path),
+    lambda path: __import__('gateway.prompt_memory', fromlist=['x']).recorded_erasure_cutoff('p1', admin_path=path),
+    lambda path: __import__('gateway.prompt_memory', fromlist=['x']).erasure_pending('p1', admin_path=path),
+    lambda path: __import__('gateway.prompt_memory', fromlist=['x']).retention_guard(path).__enter__(),
+], ids=['accounts', 'provider-secrets', 'erasure-cutoff', 'erasure-pending', 'retention-guard'])
+def test_admin_database_side_doors_respect_quarantine(operation, tmp_path):
+    # proxy.py runs accounts.initialize at import, before the lifespan guard.
+    path = tmp_path / 'admin.db'
+    path.with_name('admin.db.quarantine-pending').write_text('unfinished')
+    with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
+        operation(path)
+    assert not path.exists()

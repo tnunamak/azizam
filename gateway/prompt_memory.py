@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from gateway import admin_store, media_jobs, media_metadata
-from gateway.sqlite_startup import check_quarantine_pending
+from gateway.sqlite_startup import connect
 
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
@@ -159,7 +159,7 @@ def retention_guard(admin_path: Path | None, person_id: str | None = None) -> It
     if admin_path is None:
         yield {**HOUSEHOLD_DEFAULTS, **MEMBER_DEFAULTS}
         return
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -302,9 +302,8 @@ def _effective_retention(member_retention: str, cap_retention: str) -> str:
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path or media_jobs.DB_PATH)
-    check_quarantine_pending(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=5)
+    conn = connect(target, timeout=5)
     conn.row_factory = sqlite3.Row
     media_jobs._apply_pragmas(conn)
     conn.execute("PRAGMA secure_delete=ON")
@@ -454,7 +453,7 @@ def mark_person_erasure(
         raise ValueError("person_id is required")
     target = Path(admin_path or admin_store.DB_PATH)
     current = int(time.time()) if now is None else int(now)
-    conn = sqlite3.connect(str(target), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(target, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -496,7 +495,7 @@ def recorded_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -
     """Read durable erasure intent, including settings whose cleanup has not started."""
     if not person_id:
         raise ValueError("person_id is required")
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         conn.execute("BEGIN")
@@ -515,7 +514,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
     """
     if not person_id:
         raise ValueError("person_id is required")
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
@@ -543,7 +542,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
 
 def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
     """The household fence survives turning memory back on."""
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         table_exists = conn.execute(
@@ -562,7 +561,7 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
 
 
 def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             return False
@@ -575,7 +574,7 @@ def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
 
 def complete_erasure(person_id: str, cutoff: int, *, admin_path: Path) -> None:
     """An old worker must not acknowledge a newer deletion."""
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=?",
