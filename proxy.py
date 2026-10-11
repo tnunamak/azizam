@@ -4447,6 +4447,12 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         if engine is not None:
             tts_service_id = model_resolution.alias.service or "tts"
             if tts_service_id != "tts":
+                admission = _dispatch_admission_response(
+                    "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
+                    resource_class="audio", receipt=receipt,
+                )
+                if admission is not None:
+                    return admission
                 service_response = _service_availability_response(tts_service_id, service_label=tts_service_id)
                 if service_response is not None:
                     return service_response
@@ -14840,7 +14846,7 @@ async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str,
 async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -> Response:
     provider = decision_provider_execution.openai_decisions_provider(ADMIN_STORE.get_service_registry())
     admission = _dispatch_admission_response(
-        "decision.decide", auth_context=auth, resource_class="decision",
+        "decision.systemone", auth_context=auth, resource_class="decision",
         service_id=provider.id if provider else None,
         service_available=provider.configured if provider else None,
     )
@@ -21940,7 +21946,10 @@ def _dispatch_admission_response(
     """
     cfg = _effective_media_job_admission_cfg()
     override = _operator_service_availability_overrides().get(service_id, {})
-    if not cfg and not override:
+    configured = any(cfg.get(key) for key in (
+        "disabled_intents", "disabled_resource_classes", "reserved_tokens", "max_app_concurrency",
+    )) or _optional_int_config(cfg, "max_queue_depth") is not None
+    if not configured and not override:
         return None
     state_name = str(override.get("state") or "").strip().lower()
     if state_name in {"disabled", "maintenance", "draining"}:
@@ -26108,7 +26117,12 @@ def _apply_embedding_dimensions(response_json: dict[str, Any], dimensions: int) 
 
 def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Response | None:
     """Keep a downstream dispatch refusal intact across protocol loopback hops."""
-    payload = upstream.extensions.get("resource_admission") or _response_json_payload(upstream)
+    try:
+        payload = upstream.extensions.get("resource_admission") or upstream.json()
+    except (AttributeError, ValueError, httpx.ResponseNotRead):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
     error = payload.get("error")
     if not isinstance(error, Mapping) or error.get("code") != "resource_admission_denied":
         return None
@@ -26371,7 +26385,7 @@ async def anthropic_messages(request: Request):
             )
 
     admission = _model_dispatch_admission_response(
-        auth_context, canonical.get("model"), intent='chat.generate',
+        auth_context, canonical.get("model"), intent='chat.messages',
         resource_class='chat', protocol='anthropic',
     )
     if admission is not None:
@@ -26387,10 +26401,8 @@ async def anthropic_messages(request: Request):
         )
         if upstream.status_code >= 400:
             message = await _drain_streaming_upstream_error(
-                    client,
-                    upstream,
-                    fallback="Upstream chat-completions error.",
-                )
+                client, upstream, fallback="Upstream chat-completions error.",
+            )
             refusal = _upstream_admission_response(upstream, 'anthropic')
             if refusal is not None:
                 return refusal
@@ -26525,7 +26537,7 @@ async def _ollama_forward_non_streaming(
         return policy_error
 
     admission = _model_dispatch_admission_response(
-        auth_context, canonical.get("model"), intent='chat.generate',
+        auth_context, canonical.get("model"), intent=intent,
         resource_class='chat', protocol='ollama',
     )
     if admission is not None:
@@ -26570,7 +26582,7 @@ async def _ollama_forward_streaming(
         return policy_error
 
     admission = _model_dispatch_admission_response(
-        auth_context, canonical.get("model"), intent='chat.generate',
+        auth_context, canonical.get("model"), intent=intent,
         resource_class='chat', protocol='ollama',
     )
     if admission is not None:
@@ -26585,10 +26597,8 @@ async def _ollama_forward_streaming(
     )
     if upstream.status_code >= 400:
         message = await _drain_streaming_upstream_error(
-                client,
-                upstream,
-                fallback="upstream chat-completions error",
-            )
+            client, upstream, fallback="upstream chat-completions error",
+        )
         refusal = _upstream_admission_response(upstream, 'ollama')
         if refusal is not None:
             return refusal
@@ -27271,6 +27281,12 @@ async def create_response(request: Request):
                 param="input",
             )
 
+        admission = _model_dispatch_admission_response(
+            auth_context, cc_body.get("model"), intent="chat.responses",
+        )
+        if admission is not None:
+            return admission
+
         response_id = responses_translator.new_response_id()
         omission_headers = (
             {"x-azizam-omitted-tools": ", ".join(tool_mapping.omitted_tools)}
@@ -27324,6 +27340,10 @@ async def create_response(request: Request):
                         upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
                     except Exception:
                         upstream_json = {"error": {"message": body_bytes.decode("utf-8", errors="replace")[:1000]}}
+                    upstream.extensions["resource_admission"] = upstream_json
+                    refusal = _upstream_admission_response(upstream, "openai")
+                    if refusal is not None:
+                        return refusal
                     return _responses_upstream_error(
                         (upstream_json.get("error") or {}).get("message") or "",
                         upstream.status_code,
@@ -27404,6 +27424,9 @@ async def create_response(request: Request):
                 except Exception:
                     upstream_json = {"error": {"message": upstream.text[:1000]}}
                 owner.report(status="failed", reason="failed")
+                refusal = _upstream_admission_response(upstream, "openai")
+                if refusal is not None:
+                    return refusal
                 return _responses_upstream_error(
                     (upstream_json.get("error") or {}).get("message") or "",
                     upstream.status_code,
@@ -29126,7 +29149,7 @@ async def _handle_openai_litellm_request_once(
 
     admission = _model_dispatch_admission_response(
         auth_context, parsed_body.get("model"),
-        intent="text.embeddings" if request_path == "/v1/embeddings" else "chat.generate",
+        intent=_AZIZAM_POLICY.get(request_path, ("openai.chat", "chat.generate"))[1],
         resource_class="embeddings" if request_path == "/v1/embeddings" else "chat",
     )
     if admission is not None:

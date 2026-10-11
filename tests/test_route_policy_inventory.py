@@ -1587,3 +1587,14 @@ def test_resource_admission_route_inventory(gateway, monkeypatch):
                 if not wrapped:
                     failures.append(f'{method} {template}: unexplained success {response.status_code}')
     assert not failures, '\n'.join(failures)
+
+
+@pytest.mark.parametrize('gateway', ['discovery'], indirect=True)
+def test_resource_inventory_detects_a_new_route_without_admission(gateway, monkeypatch):
+    from fastapi.routing import APIRoute
+    async def unguarded():
+        return {'generated': 'unguarded output'}
+    route = APIRoute('/v1/inventory-unguarded-generation', unguarded, methods=['POST'])
+    monkeypatch.setattr(proxy.app.router, 'routes', [route, *proxy.app.router.routes])
+    with pytest.raises(AssertionError, match='inventory-unguarded-generation: unexplained success'):
+        test_resource_admission_route_inventory(gateway, monkeypatch)

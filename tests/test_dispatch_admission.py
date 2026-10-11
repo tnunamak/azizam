@@ -263,3 +263,44 @@ def test_app_concurrency_owner_input_validation():
     for invalid in ([], {'mine': None}, {'mine': -1}, {'': 1}):
         with pytest.raises(_RouteError):
             _validate_media_job_admission_overrides({'max_app_concurrency': invalid})
+
+
+@pytest.mark.parametrize('protocol', ['anthropic', 'ollama'])
+@pytest.mark.parametrize('stream', [False, True])
+def test_non_admission_upstream_error_keeps_legacy_envelope(dispatch_env, monkeypatch, protocol, stream):
+    client, _ = dispatch_env
+    class ErrorStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"error":{"message":"ordinary backend error"}}'
+    async def forward(*args, **kwargs):
+        response = httpx.Response(502, stream=ErrorStream())
+        if stream:
+            return SimpleNamespace(aclose=AsyncMock()), response
+        await response.aread()
+        return response
+    monkeypatch.setattr(proxy, '_forward_chat_completions', forward)
+    path = '/v1/messages' if protocol == 'anthropic' else '/api/chat'
+    response = client.post(path, json={'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 10, 'stream': stream})
+    assert response.status_code == 502
+    payload = response.json()
+    if protocol == 'anthropic':
+        assert payload['error']['message'] == 'ordinary backend error'
+        assert payload['type'] == 'error'
+    else:
+        assert payload == {'error': 'ordinary backend error'}
+    assert 'admission' not in payload
+
+
+@pytest.mark.parametrize('path,body,intent', [
+    ('/v1/messages', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1}, 'chat.messages'),
+    ('/api/chat', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'stream': False}, 'chat.completions'),
+    ('/api/generate', {'model': 'test', 'prompt': 'hi', 'stream': False}, 'chat.generate'),
+    ('/v1/responses', {'model': 'test', 'input': 'hi'}, 'chat.responses'),
+])
+def test_facade_uses_its_declared_intent(dispatch_env, monkeypatch, path, body, intent):
+    client, calls = dispatch_env
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': [intent]})
+    response = client.post(path, json=body)
+    assert response.status_code == 503
+    assert 'intent_disabled' in response.json()['admission']['reason_codes']
+    assert not calls

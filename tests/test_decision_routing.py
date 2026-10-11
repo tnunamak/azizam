@@ -568,3 +568,25 @@ def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
             asyncio.run(rt.dispatch(auth, auth.identity.profile, {**BODY, "model": "decide-quality"}, "r"))
     assert error.value.status == 403
     ensure.assert_awaited_once_with("large")
+
+
+def test_admission_rechecks_selected_fallback_before_backend_dispatch():
+    from fastapi.responses import JSONResponse
+    rt = runtime()
+    admitted, sent = [], []
+    def admit(auth, service):
+        admitted.append(service)
+        if service == 'small':
+            return JSONResponse({'error': {'code': 'resource_admission_denied', 'decision': {'reasons': []}}}, status_code=503)
+        return None
+    rt.admit = admit
+    real = httpx.AsyncClient
+    def handler(request):
+        sent.append(request.url.port)
+        return httpx.Response(529, json={'error': {'message': 'Busy'}})
+    with patch('gateway.decision_routing.httpx.AsyncClient', lambda **kw: real(transport=httpx.MockTransport(handler))):
+        result = asyncio.run(rt.dispatch(None, None, {**BODY, 'model': 'decide-quality'}, 'r'))
+    assert admitted == ['large', 'small']
+    assert sent == [18092]
+    assert result.status_code == 503
+    assert result.body['error']['code'] == 'resource_admission_denied'
