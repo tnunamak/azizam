@@ -1,6 +1,7 @@
 """Offline migration comparisons use the real legacy and category evaluators."""
 
 import json
+import runpy
 import sqlite3
 import subprocess
 import sys
@@ -63,7 +64,10 @@ def test_unrestricted_plan_does_not_need_tags():
     ("retry", "REQUIRE_MISMATCH"),
     ("cache", "REQUIRE_MISMATCH"),
     ("release", "REQUIRE_MISMATCH"),
+    ("retrieval", "REQUIRE_MISMATCH"),
+    ("download", "REQUIRE_MISMATCH"),
     ("share", "REQUIRE_MISMATCH"),
+    ("action", "REQUIRE_MISMATCH"),
 ])
 def test_report_adversarial_fixtures(restricted, fixture, reason):
     base = case(capability_tags=frozenset({"allowed"}))
@@ -156,6 +160,29 @@ def test_registry_provider_and_alias_contexts():
     assert all(compare(permitted, convert_plan(permitted, matrix), c).v3.outcome == "allow" for c in matrix)
 
 
+def test_registry_conversion_has_one_active_revision_per_service_stem():
+    registry = {"services": {"s": {"capabilities": ["chat", "image"], "config": {
+        "models": [{"id": "m", "model_group": "alias", "model_metadata": {"tags": ["allowed"]}}]}}},
+        "protocol_frontends": {
+            "chat": {"protocol": "openai.chat", "intents": ["chat"]},
+            "image": {"protocol": "openai.images", "intents": ["image"]}}}
+    matrix = registry_matrix(registry)
+    assert len(matrix) == 8  # Two capabilities x two targets x two protocols.
+    profile = AppProfile(id="p", allow=CapabilitySelector(tags=frozenset({"allowed"})))
+    converted = convert_plan(profile, matrix)
+    assertion = category.Assertion("legacy-tags", "allowed", "owner", True,
+                                   "report", "report", "report-owner", "report-v1")
+    services = {c.service_id: category.Service(c.service_id,
+                (category.Subject(c.root_id, "release", (assertion,)),)) for c in matrix}
+    assert len(services) == 4  # Capabilities share the same pinned context.
+    version = category.PolicyVersion("report-v1", converted.categories,
+        {"person": (converted.plan,)}, {"app": (converted.plan,)}, services)
+    category.validate_snapshot(version)
+    for request in matrix:
+        assert category.decision_for(version, {"person": "person", "app": "app",
+            "service": request.service_id, "capability": request.request.intent}).outcome == "allow"
+
+
 def test_normalized_workflow_bindings_enforce_backend_lists():
     registry = {"workflows": {"w": {"id": "w", "manifest": {
         "intent": "image", "bindings": {"s": {}, "other": {}}},
@@ -236,6 +263,30 @@ def test_cli_private_output_and_deterministic_counts(tmp_path):
     assert "plan_id" in first and "1->2" in first and "1->3" in first
     assert "proxy.py:" in first and "static" in first.lower()
     assert path.read_bytes() == before
+
+
+def test_cli_connection_rejects_writes(tmp_path, monkeypatch, capsys):
+    path, _ = database(tmp_path)
+    connect = sqlite3.connect
+    connections = []
+
+    def checked_connect(*args, **kwargs):
+        conn = connect(*args, **kwargs)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("DELETE FROM profiles")
+        connections.append(conn)
+        return conn
+
+    script = Path(__file__).resolve().parents[1] / "scripts/categories-migration-report"
+    monkeypatch.setattr(sqlite3, "connect", checked_connect)
+    monkeypatch.setattr(sys, "argv", [str(script), str(path), "--examples", "0"])
+    with pytest.raises(SystemExit) as result:
+        runpy.run_path(str(script), run_name="__main__")
+    assert result.value.code == 0
+    assert len(connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+    assert "plans=1" in capsys.readouterr().out
 
 
 def test_static_scan_preserves_missing_none_empty_and_dynamic(tmp_path):
