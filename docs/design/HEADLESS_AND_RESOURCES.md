@@ -67,7 +67,14 @@ The gap is not only exposure. Today:
    changed input under the same key rejected; ownership required, never
    optional, wherever private records are listed, applied before
    pagination.
-5. **Tests:** inference, member and app credentials cannot reach owner
+5. **One admission gate on every dispatch path.** A trace at `33810bda`
+   (`docs/ops/RESOURCE_ADMISSION_COVERAGE.md`) found admission consulted
+   only by native media-job and async identity submissions, session Make
+   (submission and worker start) and STT. Chat, the Anthropic and Ollama
+   routes, embeddings, decisions and direct media requests never consult
+   it, and regular media workers do not re-check at start. Route them
+   through the same evaluator before dispatch, and re-check at worker start.
+6. **Tests:** inference, member and app credentials cannot reach owner
    mutations through REST or MCP (mint key, raise budget, enable paid
    fallback, unload engine), with no side effects; no cross-principal
    leakage through lists, events, cursors or status.
