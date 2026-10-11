@@ -685,12 +685,43 @@ function samePrice(a: string, b: string) {
   return Number(a) === Number(b);
 }
 
-function sameModelSettings(a: ProviderModel, b: ProviderModel) {
-  return (
-    a.enabled === b.enabled &&
-    samePrice(a.priceInput, b.priceInput) &&
-    samePrice(a.priceOutput, b.priceOutput)
-  );
+type ModelField = "enabled" | "priceInput" | "priceOutput";
+const modelFields: ModelField[] = ["enabled", "priceInput", "priceOutput"];
+/** The owner's edit of one field, with the saved value it started from. */
+type FieldEdits = {
+  [F in ModelField]?: { value: ProviderModel[F]; base: ProviderModel[F] };
+};
+
+function sameModelField(
+  field: ModelField,
+  a: ProviderModel[ModelField],
+  b: ProviderModel[ModelField],
+) {
+  return field === "enabled"
+    ? a === b
+    : samePrice(a as string, b as string);
+}
+
+/**
+ * Three-way merge of one model row: the saved row, plus each field the owner
+ * edited. A field the owner left alone follows the saved row. An edit the
+ * saved row already holds is done. An edit whose saved value changed since
+ * the owner started is a conflict: the edit stays shown, and saving waits.
+ */
+function resolveModel(
+  server: ProviderModel,
+  edits: FieldEdits | undefined,
+): { row: ProviderModel; conflicts: ModelField[] } {
+  const row = { ...server };
+  const conflicts: ModelField[] = [];
+  for (const field of modelFields) {
+    const edit = edits?.[field];
+    if (!edit || sameModelField(field, edit.value, server[field])) continue;
+    (row as Record<ModelField, unknown>)[field] = edit.value;
+    if (!sameModelField(field, edit.base, server[field])) conflicts.push(field);
+  }
+  row.priceKnown = pricesValid(row);
+  return { row, conflicts };
 }
 
 /**
@@ -808,28 +839,27 @@ function DetailCard({
 }) {
   const state = providerState(provider);
   const enabledModels = provider.models.filter((model) => model.enabled);
-  const [modelDraft, setModelDraft] = useState<ProviderModel[]>(
-    provider.models,
-  );
-  const modelBaseline = useRef(provider.models);
+  const [modelEdits, setModelEdits] = useState<Record<string, FieldEdits>>({});
+  // Drop an edit once the saved row holds it (the owner's save landed).
   useEffect(() => {
-    const previous = modelBaseline.current;
-    modelBaseline.current = provider.models;
-    setModelDraft((rows) =>
-      provider.models.map((model) => {
-        const draft = rows.find((row) => row.id === model.id);
-        const baseline = previous.find((row) => row.id === model.id);
-        // A draft is pending only while it differs from both the old and the
-        // new server row; a saved draft ("9.0" saved as 9) becomes clean.
-        const pending =
-          draft &&
-          baseline &&
-          !sameModelSettings(draft, baseline) &&
-          !sameModelSettings(draft, model);
-        return pending ? draft : model;
-      }),
-    );
+    setModelEdits((all) => {
+      const next: Record<string, FieldEdits> = {};
+      for (const model of provider.models) {
+        const kept: FieldEdits = {};
+        for (const field of modelFields) {
+          const edit = all[model.id]?.[field];
+          if (edit && !sameModelField(field, edit.value, model[field]))
+            Object.assign(kept, { [field]: edit });
+        }
+        if (Object.keys(kept).length) next[model.id] = kept;
+      }
+      return JSON.stringify(next) === JSON.stringify(all) ? all : next;
+    });
   }, [provider.models]);
+  const modelRows = provider.models.map((model) => ({
+    model,
+    ...resolveModel(model, modelEdits[model.id]),
+  }));
   const caps = useServerDraft({
     daily: provider.capDaily == null ? "" : String(provider.capDaily),
     monthly: provider.capMonthly == null ? "" : String(provider.capMonthly),
@@ -844,9 +874,37 @@ function DetailCard({
   function updateModel(id: string, patch: Partial<ProviderModel>) {
     onEdit();
     setModelPriceError(null);
-    setModelDraft((rows) =>
-      rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
-    );
+    const server = provider.models.find((model) => model.id === id);
+    if (!server) return;
+    setModelEdits((all) => {
+      const edits: FieldEdits = { ...all[id] };
+      for (const field of modelFields) {
+        if (!(field in patch)) continue;
+        // The first edit of a field remembers the saved value it started from.
+        Object.assign(edits, {
+          [field]: { value: patch[field], base: edits[field]?.base ?? server[field] },
+        });
+      }
+      return { ...all, [id]: edits };
+    });
+  }
+  function resolveModelConflict(id: string, keepMine: boolean) {
+    setModelEdits((all) => {
+      const next = { ...all };
+      const server = provider.models.find((model) => model.id === id);
+      if (!keepMine || !server) {
+        delete next[id];
+        return next;
+      }
+      // Keep mine: the edits now start from the values the gateway holds.
+      const edits: FieldEdits = {};
+      for (const field of modelFields) {
+        const edit = all[id]?.[field];
+        if (edit) Object.assign(edits, { [field]: { ...edit, base: server[field] } });
+      }
+      next[id] = edits;
+      return next;
+    });
   }
   function setCapsDraft(update: (draft: typeof capsDraft) => typeof capsDraft) {
     onEdit();
@@ -1245,7 +1303,7 @@ function DetailCard({
           {editing === "models" && (
             <div className="mt-4 space-y-3 rounded-panel border p-3">
               <h3 className="text-meta font-medium">Edit models and prices</h3>
-              {!modelDraft.length && (
+              {!modelRows.length && (
                 <p className="text-muted-foreground text-meta">
                   No models configured for this provider.
                 </p>
@@ -1255,7 +1313,7 @@ function DetailCard({
                   {modelPriceError}
                 </p>
               )}
-              {modelDraft.map((model) => (
+              {modelRows.map(({ row: model, conflicts }) => (
                 <div
                   key={model.id}
                   className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
@@ -1312,10 +1370,16 @@ function DetailCard({
                         ),
                       );
                     }}
-                    disabled={busy}
+                    disabled={busy || conflicts.length > 0}
                   >
                     Save models
                   </Button>
+                  {conflicts.length > 0 && (
+                    <DraftConflict
+                      onUseSaved={() => resolveModelConflict(model.id, false)}
+                      onKeepMine={() => resolveModelConflict(model.id, true)}
+                    />
+                  )}
                 </div>
               ))}
             </div>

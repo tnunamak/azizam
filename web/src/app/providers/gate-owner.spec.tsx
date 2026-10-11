@@ -479,3 +479,100 @@ it("PF-109 says charges need checking, without accounting jargon", () => {
   expect(screen.getAllByText("1 charge needs checking").length).toBeGreaterThan(0);
   expect(document.body).not.toHaveTextContent(/reconcil|reservation/i);
 });
+
+// A dirty model row merges field by field with the saved row.
+
+function openModelEditor() {
+  fireEvent.click(screen.getByText("Manage"));
+  fireEvent.click(screen.getByRole("button", { name: "Edit models" }));
+}
+const modelsOf = (model: Record<string, unknown>) => ({
+  ...savedProvider,
+  models: [{ id: "saved-model", price_input: "1", price_output: "2", ...model }],
+});
+function refreshModels(
+  client: ReturnType<typeof renderProviders>,
+  model: Record<string, unknown>,
+) {
+  act(() => client.setQueryData(["providers"], { providers: [modelsOf(model)] }));
+}
+async function savedModelsBody() {
+  await waitFor(() => expect(adminFetchMock).toHaveBeenCalled());
+  return (
+    adminFetchMock.mock.calls.at(-1)![1] as { body: { models: unknown[] } }
+  ).body.models;
+}
+
+it("PF-111 keeps a server-side disable when only a price was edited locally", async () => {
+  adminFetchMock.mockResolvedValue({});
+  const client = renderProviders([modelsOf({ enabled: true })]);
+  openModelEditor();
+  fireEvent.change(screen.getByLabelText("saved-model managed input price"), {
+    target: { value: "3" },
+  });
+  refreshModels(client, { enabled: false });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Enable saved-model")).not.toBeChecked(),
+  );
+  expect(screen.getByLabelText("saved-model managed input price")).toHaveValue("3");
+  expect(screen.queryByText(/changed on the gateway/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save models" }));
+  expect(await savedModelsBody()).toEqual([
+    expect.objectContaining({
+      id: "saved-model",
+      enabled: false,
+      price: {
+        input_usd_per_million_tokens: 3,
+        output_usd_per_million_tokens: 2,
+      },
+    }),
+  ]);
+});
+
+it("PF-111 keeps a server-side change to the other price when one price was edited", async () => {
+  adminFetchMock.mockResolvedValue({});
+  const client = renderProviders([modelsOf({})]);
+  openModelEditor();
+  fireEvent.change(screen.getByLabelText("saved-model managed input price"), {
+    target: { value: "3" },
+  });
+  refreshModels(client, { price_output: "7" });
+  await waitFor(() =>
+    expect(screen.getByLabelText("saved-model managed output price")).toHaveValue("7"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save models" }));
+  expect(await savedModelsBody()).toEqual([
+    expect.objectContaining({
+      price: {
+        input_usd_per_million_tokens: 3,
+        output_usd_per_million_tokens: 7,
+      },
+    }),
+  ]);
+});
+
+it("PF-111 stops a save when the same field changed on the gateway, until the owner chooses", async () => {
+  adminFetchMock.mockResolvedValue({});
+  const client = renderProviders([modelsOf({})]);
+  openModelEditor();
+  const input = () => screen.getByLabelText("saved-model managed input price");
+  fireEvent.change(input(), { target: { value: "9" } });
+  refreshModels(client, { price_input: "8" });
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "These values changed on the gateway while you were editing.",
+  );
+  expect(input()).toHaveValue("9");
+  expect(screen.getByRole("button", { name: "Save models" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Use saved values" }));
+  expect(input()).toHaveValue("8");
+  expect(screen.getByRole("button", { name: "Save models" })).toBeEnabled();
+  fireEvent.change(input(), { target: { value: "5" } });
+  refreshModels(client, { price_input: "6" });
+  fireEvent.click(await screen.findByRole("button", { name: "Keep my changes" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save models" }));
+  expect(await savedModelsBody()).toEqual([
+    expect.objectContaining({
+      price: expect.objectContaining({ input_usd_per_million_tokens: 5 }),
+    }),
+  ]);
+});
