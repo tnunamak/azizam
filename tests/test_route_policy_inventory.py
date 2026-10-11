@@ -1134,7 +1134,8 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
 @pytest.mark.parametrize("path", sorted(_CATEGORY_LISTINGS))
-def test_category_discovery_hides_decoy_grants(gateway, path):
+def test_category_discovery_hides_decoy_grants(gateway, path, monkeypatch):
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
     _activate_decoy_snapshot(gateway, {
         "models.list", "chat.completions", "text.embeddings", "image.generate", "image.edit",
         "video.generate", "audio.generate", "speech.synthesis", "speech.transcription",
