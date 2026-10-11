@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, type ReactNode, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -12,17 +12,14 @@ import {
   Mic,
 } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
-import { cn } from "@/lib/cn";
-import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { memberTerms, taskNames } from "@/lib/terms";
-import { technicalModelDetails } from "@/lib/model-name";
+import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, type UsageSource } from "./source-options";
 import { normalizeCapability, type UsageCapability } from "./usage-capability";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CopyButton } from "@/components/ui/copy-button";
 import {
   Card,
   CardContent,
@@ -39,20 +36,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Stat, StatStrip } from "@/components/product/stat-strip";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
+import { Callout, StatusLine } from "@/components/product/status-ui";
 import {
   CapabilityIcon,
-  CodeBlock,
   EmptyState,
   Money,
   PageHeader,
@@ -63,8 +52,8 @@ const UsageChart = lazy(() => import("./usage-chart"));
 
 interface UsageDay {
   date: string;
-  total: number;
-  byCapability: Record<UsageCapability, number>;
+  total: number | null;
+  byCapability: Record<UsageCapability, number | null>;
   /** Sum of the recorded capability counts when it exceeds `total`, else null. */
   countsExceedTotal: number | null;
 }
@@ -72,7 +61,7 @@ interface UsageDay {
 interface UsageModel {
   model: string;
   capability: UsageCapability;
-  requests: number;
+  requests: number | null;
   costUsd: number | null;
   /** Requests known to have cost money; null when the gateway did not say. */
   paidRequests: number | null;
@@ -178,7 +167,7 @@ export default function UsagePage() {
   const effectivePerson =
     person === "default" ? (owner ? "all" : "self") : person;
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
-  const { data, isPending, isFetching, isError, refetch } = useQuery({
+  const { data, error, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: ["usage", "summary", effectivePerson, source, owner],
     queryFn: () =>
       fetchUsageSummary(owner ? effectivePerson : "default", source),
@@ -275,33 +264,20 @@ export default function UsagePage() {
           ) : undefined
         }
       >
-        {isPending || isFetching || isError || !data ? (
-          <StatusLine
-            compact
-            tone={isFetching || isPending ? "busy" : data ? "warn" : "unknown"}
-            text={
-              isPending
-                ? "Busy · Loading usage"
-                : isFetching
-                  ? data ? "Busy · Refreshing usage" : "Busy · Loading usage"
-                  : data
-                    ? "Degraded · Usage refresh failed"
-                    : "Unknown · Usage unavailable"
-            }
-          />
+        {isPending || (isFetching && !isError) ? (
+          <StatusLine compact tone="busy" text={data ? "Refreshing usage…" : "Loading usage…"} />
         ) : null}
       </PageHeader>
       {isError && data ? (
         <Callout
           severity="attention"
-          title="Usage could not be refreshed"
+          title="Usage couldn’t refresh. These are the last loaded totals."
           headerAction={
             <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
               {isFetching ? "Retrying…" : "Retry usage"}
             </Button>
           }
         >
-          <p>Showing the last loaded usage. New requests and spend may be missing.</p>
         </Callout>
       ) : null}
       {isPending ? (
@@ -317,7 +293,7 @@ export default function UsagePage() {
             </Button>
           }
         >
-          <p>Try again to load this month’s usage.</p>
+          <p>{error instanceof Error && error.message === "Usage totals weren’t included in the response. Try again." ? error.message : "Try again to load this month’s usage."}</p>
         </Callout>
       ) : !hasUsage ? (
         <EmptyState
@@ -391,6 +367,7 @@ function PersonFilter({
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  const unnamed = people.filter((person) => person.label.startsWith(UNNAMED_PERSON));
   return (
     <div className="space-y-2">
       <label
@@ -419,6 +396,13 @@ function PersonFilter({
           ))}
         </SelectContent>
       </Select>
+      {/* Only people without a recorded name need their account ID to be told apart. */}
+      {unnamed.length > 0 && <details className="text-meta">
+        <summary className="cursor-pointer">Person details</summary>
+        <dl className="mt-2 space-y-2">
+          {unnamed.map((person) => <div key={person.id}><dt>{person.label}</dt><dd className="break-all">{person.id}</dd></div>)}
+        </dl>
+      </details>}
     </div>
   );
 }
@@ -437,21 +421,6 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
   const noPaidRequests =
     summary.paidRequests === 0 && summary.unknownPaidRequests === 0 &&
     summary.remoteSpendUsd === 0;
-  const hasCoverage =
-    summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null;
-  const partial =
-    (summary.unknownPaidRequests ?? 0) > 0 ||
-    (summary.spendMeasuredRequests !== null &&
-      summary.spendTotalRequests !== null &&
-      summary.spendMeasuredRequests < summary.spendTotalRequests);
-  const spendLabel =
-    !noPaidRequests && summary.remoteSpendUsd !== null
-      ? partial
-        ? "Remote spend · partial"
-        : hasCoverage
-          ? "Remote spend"
-          : "Remote spend · coverage unknown"
-      : "Remote spend";
   return (
     <StatStrip label="This month">
       <Stat
@@ -460,7 +429,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         note="This month"
       />
       <Stat
-        label={spendLabel}
+        label="Spend"
         value={
           noPaidRequests ? (
             "No paid requests"
@@ -480,11 +449,6 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
       <Stat
         label="Failed"
         value={failedFigure(summary)}
-        note={
-          summary.failedRequests ? (
-            <StateBadge state="degraded" word="Failed" />
-          ) : null
-        }
       />
     </StatStrip>
   );
@@ -509,9 +473,9 @@ function CoverageNote({ summary }: { summary: UsageSummary }) {
 }
 
 function DailyChart({ days, models, requests }: { days: UsageDay[]; models: UsageModel[]; requests: number }) {
-  const rows = days.map((day) => ({
+  const rows = days.filter((day) => day.total !== null).map((day) => ({
     label: shortDate(day.date),
-    total: day.total,
+    total: day.total as number,
   }));
   const tasks = capabilities.map((capability) => {
     const modelsForTask = models.filter((model) => model.capability === capability);
@@ -521,12 +485,13 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
     );
     return {
       capability,
-      requests: modelsForTask.reduce((sum, model) => sum + model.requests, 0),
-      costUsd: measured.reduce((sum, model) => sum + (model.costUsd ?? 0), 0),
-      unavailable: measured.length === 0 && incomplete,
+      requests: modelsForTask.every((model) => model.requests !== null)
+        ? modelsForTask.reduce((sum, model) => sum + (model.requests ?? 0), 0) : null,
+      costUsd: measured.length ? measured.reduce((sum, model) => sum + (model.costUsd ?? 0), 0) : null,
+      unavailable: measured.length === 0,
       incomplete,
     };
-  }).filter((task) => task.requests > 0).sort((a, b) => b.requests - a.requests);
+  }).filter((task) => task.requests === null || task.requests > 0).sort((a, b) => (b.requests ?? -1) - (a.requests ?? -1));
   const active = capabilities.filter((capability) =>
     days.some((day) => (day.byCapability[capability] ?? 0) > 0),
   );
@@ -543,19 +508,21 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
       </CardHeader>
       <CardContent>
         {rows.length < 1 ? (
-          <EmptyState icon={Activity} title="Daily request history will appear here." />
+          <EmptyState icon={Activity} title="Daily totals weren’t recorded for these requests." />
         ) : (
           <>
             <div className="h-72 w-full">
-              <Suspense fallback={null}>
+              <Suspense fallback={<div role="status" className="relative h-72 w-full"><Skeleton className="h-72 w-full" /><span className="absolute inset-0 flex items-center justify-center">Loading request chart</span></div>}>
                 <UsageChart rows={rows} />
               </Suspense>
             </div>
-            {/* The wrapper clips the table: a table ignores sr-only's 1px size and
-                would otherwise widen the page. */}
-            <div className="sr-only">
-              <table>
-                <caption>Requests by day and {memberTerms.task}</caption>
+          </>
+        )}
+        {days.length > 0 && (
+            <details className="mt-4 min-w-0 overflow-x-auto">
+              <summary className="flex min-h-8 w-fit cursor-pointer items-center text-meta max-sm:min-h-11">View daily totals</summary>
+              <table className="mt-2 w-full text-meta whitespace-nowrap [&_td]:px-2 [&_td]:py-1 [&_td]:text-right [&_td]:tabular-nums [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_thead_th]:text-muted-foreground [&_thead_th:not(:first-child)]:text-right">
+                <caption className="sr-only">Requests by day and {memberTerms.task}</caption>
                 <thead>
                   <tr>
                     <th scope="col">Date</th>
@@ -572,10 +539,10 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <tr key={day.date}>
                       <th scope="row">{day.date}</th>
                       {active.map((capability) => (
-                        <td key={capability}>{day.byCapability[capability] ?? 0}</td>
+                        <td key={capability}>{day.byCapability[capability] ?? "Unknown"}</td>
                       ))}
                       <td>
-                        {day.total}
+                        {day.total ?? "Unknown"}
                         {day.countsExceedTotal !== null &&
                           ` (${memberTerms.task} counts add to ${day.countsExceedTotal})`}
                       </td>
@@ -583,8 +550,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                   ))}
                 </tbody>
               </table>
-            </div>
-          </>
+            </details>
         )}
         <div className="mt-4 space-y-3">
           <h2 className="text-heading font-semibold">By task</h2>
@@ -605,8 +571,8 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                     <TableRow key={task.capability} className="max-sm:h-(--row-phone-2)">
                       <TableCell rowName className="max-sm:px-2 max-sm:whitespace-normal">{capabilityLabels[task.capability]}</TableCell>
                       <TableCell numeric className="max-sm:px-2">{formatNumber(task.requests)}</TableCell>
-                      <TableCell numeric className="max-sm:px-2">{requests > 0 ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
-                      <TableCell numeric className="max-sm:px-2">
+                      <TableCell numeric className="max-sm:px-2">{requests > 0 && task.requests !== null ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
+                      <TableCell numeric className="max-sm:px-2 max-sm:whitespace-normal">
                         {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary />}
                         {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">partial</span> : null}
                       </TableCell>
@@ -634,10 +600,9 @@ function ModelTable({
   onToggle: () => void;
 }) {
   const sortedRows = [...rows].sort((a, b) =>
-    b.requests - a.requests || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
+    (b.requests ?? -1) - (a.requests ?? -1) || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
   );
   const visibleRows = showAll ? sortedRows : sortedRows.slice(0, 5);
-  const kinds = new Set(visibleRows.map(modelCostKind));
   return (
     <Card>
       <CardHeader>
@@ -666,14 +631,15 @@ function ModelTable({
                   const name = row.model ? nameModel(row.model) : "";
                   return (
                     <TableRow key={`${row.model}-${row.capability}`}>
-                      {/* max-w-0 lets a long name truncate instead of widening the page. */}
                       <TableCell className="w-full max-w-0 text-body font-medium">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span aria-hidden="true" className="bg-chart-1 size-2 shrink-0 rounded-full" />
+                        {/* The cell keeps the table's nowrap; this block wraps the
+                            task and model onto their own lines instead. */}
+                        <div className="min-w-0 whitespace-normal break-words">
+                          <span aria-hidden="true" className="bg-chart-1 mr-2 inline-block size-2 rounded-full align-middle" />
                           <span>{capabilityLabels[row.capability]}</span>
                           {name && name !== capabilityLabels[row.capability] && (
-                            <span className="text-muted-foreground min-w-0 truncate text-meta" title={name}>
-                              · {name}
+                            <span className="text-muted-foreground block min-w-0 break-words text-meta" title={name}>
+                              {name}
                             </span>
                           )}
                         </div>
@@ -681,7 +647,8 @@ function ModelTable({
                       <TableCell numeric>
                         {formatNumber(row.requests)}
                       </TableCell>
-                      <TableCell numeric>
+                      {/* On a phone "Cost not recorded" wraps instead of clipping. */}
+                      <TableCell numeric className="max-sm:whitespace-normal">
                         <ModelCost row={row} />
                       </TableCell>
                     </TableRow>
@@ -689,11 +656,6 @@ function ModelTable({
                 })}
               </TableBody>
             </Table>
-            {kinds.has("local") && (
-              <p className="text-muted-foreground text-meta">
-                Local: no provider charge.
-              </p>
-            )}
             {rows.length > 5 ? (
               <Button variant="ghost" onClick={onToggle}>
                 {showAll ? "Show top 5" : `View all ${rows.length} models`}
@@ -701,32 +663,30 @@ function ModelTable({
             ) : null}
           </div>
         ) : (
-          <EmptyState icon={Layers} title="Model totals will appear here after your first request." />
+          <EmptyState icon={Layers} title="Model totals weren’t recorded." />
         )}
       </CardContent>
     </Card>
   );
 }
 
-type ModelCostKind = "amount" | "partial" | "local" | "unavailable";
+type ModelCostKind = "amount" | "partial" | "unavailable";
 
 /**
  * What the Spend cell of a model row says. A recorded charge shows the amount.
- * No charge shows "Local" only when the gateway counted no paid requests;
- * anything else without an amount says Cost not recorded, never a blank or a guess.
+ * A paid-request counter is not routing evidence. Without an amount,
+ * say Cost not recorded, never Local or a guessed zero.
  */
 function modelCostKind(row: UsageModel): ModelCostKind {
   const unknownPaid = (row.unknownPaidRequests ?? 0) > 0;
   if (row.costUsd != null && row.costUsd > 0) return unknownPaid ? "partial" : "amount";
   if (unknownPaid) return "unavailable";
-  if (row.paidRequests === 0) return "local";
   if (row.costUsd != null) return "amount";
   return "unavailable";
 }
 
 function ModelCost({ row }: { row: UsageModel }) {
   const kind = modelCostKind(row);
-  if (kind === "local") return <span className="text-muted-foreground">Local</span>;
   if (kind === "unavailable")
     return <span className="text-muted-foreground">Cost not recorded</span>;
   return (
@@ -777,12 +737,12 @@ function ReceiptsList({
               >
                 <CapabilityLabel capability={receipt.capability} compact />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-meta font-medium">
+                  <p className="break-words text-meta font-medium">
                     {receipt.summary}
                   </p>
                   {receipt.model && (
                     <p
-                      className="text-muted-foreground mt-1 truncate text-meta"
+                      className="text-muted-foreground mt-1 break-words text-meta"
                       title={nameModel(receipt.model)}
                     >
                       {nameModel(receipt.model)}
@@ -816,13 +776,7 @@ function ReceiptsList({
         ) : (
           <EmptyState
             icon={FileText}
-            title="No receipts yet"
-            description="Receipts appear here after a gateway app makes a request."
-            action={
-              <Button asChild variant="outline">
-                <a href="/ui/apps/">Connect an app</a>
-              </Button>
-            }
+            title="No receipts are available for this view."
           />
         )}
       </CardContent>
@@ -830,134 +784,24 @@ function ReceiptsList({
   );
 }
 
-function ReceiptSheet({
-  receipt,
-  onOpenChange,
-}: {
+function ReceiptSheet({ receipt, onOpenChange }: {
   receipt: UsageReceipt | null;
   onOpenChange: (open: boolean) => void;
 }) {
-  const nameModel = useModelName();
-  const owner = ["owner", "superadmin"].includes(useViewer().role);
-  const named = (id: string | null | undefined) => (id ? nameModel(id) : id);
-  return (
-    <Sheet open={receipt !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto px-4 pb-4">
-        {receipt && (
-          <>
-            <SheetHeader>
-              <SheetTitle>Request receipt</SheetTitle>
-              <SheetDescription>{receipt.summary}</SheetDescription>
-            </SheetHeader>
-            <div className="mt-8 space-y-6">
-              <div className="rounded-panel border p-4">
-                <div className="mb-3 flex items-center gap-3">
-                  <CapabilityLabel capability={receipt.capability} />
-                  <StatusBadge status={receipt.status} />
-                </div>
-                {receiptOutcomeSummary(receipt) && (
-                  <p className="text-muted-foreground mt-2 text-meta">
-                    {receiptOutcomeSummary(receipt)}
-                  </p>
-                )}
-                {receiptOutcomeCause(receipt) ? (
-                  <p className="text-muted-foreground mt-2 text-meta">
-                    {receiptOutcomeCause(receipt)}
-                  </p>
-                ) : null}
-                {receiptNextAction(receipt) ? (
-                  <p className="text-muted-foreground mt-2 text-meta">
-                    {receiptNextAction(receipt)}
-                  </p>
-                ) : null}
-              </div>
-              <dl className="grid gap-4 text-meta sm:grid-cols-2">
-                <Detail
-                  label="Requested model"
-                  value={named(receipt.requestedModel)}
-                />
-                <Detail
-                  label="Served model"
-                  value={named(receipt.servedModel)}
-                />
-                <Detail
-                  label="Declared fallback"
-                  value={named(receipt.fallbackModel)}
-                />
-                <Detail
-                  label="Duration"
-                  value={formatDuration(receipt.durationMs)}
-                />
-                <Detail
-                  label="Cost"
-                  value={<ReceiptCost receipt={receipt} />}
-                />
-                <Detail
-                  label="When"
-                  value={
-                    receipt.createdAt ? (
-                      <RelativeTime ts={receipt.createdAt} />
-                    ) : (
-                      null
-                    )
-                  }
-                />
-                <Detail
-                  label="Request ID"
-                  value={
-                    receipt.requestId ? (
-                      <span className="inline-flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 break-all">
-                          {receipt.requestId}
-                        </span>
-                        <CopyButton
-                          value={receipt.requestId}
-                          aria-label="Copy request ID"
-                        />
-                      </span>
-                    ) : "No request ID recorded"
-                  }
-                  wide
-                />
-                {receipt.sourceLabel ? (
-                  <Detail label="Source" value={receipt.sourceLabel} wide />
-                ) : null}
-              </dl>
-              <details>
-                <summary className="cursor-pointer text-meta font-medium">
-                  Technical details
-                </summary>
-                <div className="mt-4">
-                  <CodeBlock
-                    language="json"
-                    code={JSON.stringify(technicalModelDetails(receipt.raw, owner), null, 2)}
-                  />
-                </div>
-              </details>
-            </div>
-          </>
-        )}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function Detail({
-  label,
-  value,
-  wide = false,
-}: {
-  label: string;
-  value: ReactNode;
-  wide?: boolean;
-}) {
-  if (value == null || value === "") return null;
-  return (
-    <div className={cn(wide && "sm:col-span-2")}>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="mt-1 break-words">{value}</dd>
-    </div>
-  );
+  const raw = object(receipt?.raw);
+  return <RequestReceiptSheet
+    record={receipt ? {
+      receipt: { ...raw, request_id: receipt.requestId ?? "", status: receipt.status ?? undefined,
+        requested_model: receipt.requestedModel ?? undefined, resolved_model: receipt.servedModel ?? undefined,
+        latency_ms: receipt.durationMs },
+      person_label: nullableString(raw.person_label) ?? "",
+      app_label: nullableString(raw.app_label) ?? receipt.sourceLabel ?? "",
+      created_at: receipt.createdAt,
+    } : null}
+    title="Request receipt" description={receipt?.summary}
+    cost={receipt ? <ReceiptCost receipt={receipt} /> : null}
+    onOpenChange={onOpenChange}
+  />;
 }
 
 function CapabilityLabel({
@@ -1033,58 +877,6 @@ function receiptOutcome(status: string | null) {
   );
 }
 
-function receiptOutcomeSummary(receipt: UsageReceipt) {
-  const label = receiptOutcome(receipt.status);
-  if (label === "Completed") return "";
-  if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Failed") return "We couldn't tell where this stopped.";
-  if (label === "Timed out")
-    return "The request timed out before a result was recorded.";
-  if (label === "Accepted")
-    return "The gateway accepted this request for processing.";
-  if (label === "In progress")
-    return "The request was still running when this receipt was recorded.";
-  if (label === "Cancelled")
-    return "The request was cancelled before completion.";
-  if (label === "Disconnected")
-    return "The connection ended before completion was recorded.";
-  return "The receipt does not include a final outcome.";
-}
-
-function receiptOutcomeCause(receipt: UsageReceipt) {
-  const label = receiptOutcome(receipt.status);
-  if (
-    !["Failed", "Rejected", "Timed out"].includes(
-      label,
-    )
-  )
-    return null;
-  const raw = object(receipt.raw);
-  const metadata = object(raw.metadata);
-  if (label === "Failed") {
-    const stage = nullableString(raw.stage ?? metadata.stage);
-    const code = nullableString(raw.error_code ?? metadata.error_code);
-    return [stage ? `Stage: ${stage}` : null, code ? `Error code: ${code}` : null]
-      .filter(Boolean).join(" · ") || null;
-  }
-  const status = nullableNumber(metadata.status_code ?? raw.status_code);
-  if (status != null && status >= 400) return errorCopy({ status }).message;
-  return null;
-}
-
-function receiptNextAction(receipt: UsageReceipt) {
-  const label = receiptOutcome(receipt.status);
-  if (
-    ["Failed", "Rejected", "Timed out"].includes(
-      label,
-    )
-  )
-    return "Open Technical details for the recorded status and warnings.";
-  if (label === "Outcome not recorded")
-    return "Check for a newer receipt before treating this request as complete.";
-  return null;
-}
-
 function UsageSkeleton() {
   return (
     <div
@@ -1119,6 +911,11 @@ async function fetchUsageSummary(
 
 function normalizeSummary(raw: unknown): UsageSummary {
   const data = object(raw);
+  const requests = nullableNumber(data.requests ?? data.request_count);
+  const mediaCount = nullableNumber(data.media_count ?? data.mediaCount);
+  if (requests === null || mediaCount === null) {
+    throw new Error("Usage totals weren’t included in the response. Try again.");
+  }
   const rawReceipts = array(data.receipts);
   const keys = receiptSelectionKeys(rawReceipts.map(object));
   const receipts = rawReceipts.map((raw, index) => normalizeReceipt(raw, keys[index]));
@@ -1143,9 +940,9 @@ function normalizeSummary(raw: unknown): UsageSummary {
     ? nullableNumber(remoteSpendRaw)
     : null;
   return {
-    requests: number(data.requests ?? data.request_count, receipts.length),
+    requests,
     failedRequests: nullableNumber(data.failed_requests),
-    mediaCount: number(data.media_count ?? data.mediaCount, 0),
+    mediaCount,
     remoteSpendUsd,
     spendMeasured: remoteSpendAvailable || remoteSpendUsd !== null,
     byDay,
@@ -1182,6 +979,8 @@ function normalizeSummary(raw: unknown): UsageSummary {
   };
 }
 
+const UNNAMED_PERSON = "Person name not recorded";
+
 function normalizePeople(raw: unknown): UsagePerson[] {
   const usedLabels = new Set<string>();
   const emailSuffixes = new Map(
@@ -1198,17 +997,7 @@ function normalizePeople(raw: unknown): UsagePerson[] {
         .map((value) => string(value, "").trim())
         .find((value) => value && !/^[^\s@]+@[^\s@]+$/.test(value));
       if (name) return { id, label: name };
-      // Derive a short identifier without exposing email addresses or other ID text.
-      let hash = 2166136261;
-      for (const character of id) {
-        hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
-      }
-      const base = `Person · ${(hash >>> 0).toString(16).padStart(8, "0")}`;
-      let label = base;
-      let suffix = 2;
-      while (usedLabels.has(label)) label = `${base}-${suffix++}`;
-      usedLabels.add(label);
-      return { id, label };
+      return { id, label: UNNAMED_PERSON };
     })
     .filter((person) => person.id);
   const counts = new Map<string, number>();
@@ -1289,24 +1078,27 @@ function normalizeDay(raw: unknown): UsageDay {
   const byCapability = normalizeCapabilityCounts(
     data.capabilities ?? data.by_capability ?? data,
   );
-  const recordedSum = sumCounts(byCapability);
-  const named = recordedSum - byCapability.other;
-  const total = requestCount(data.total ?? data.requests) ?? recordedSum;
+  const rawCounts = object(data.capabilities ?? data.by_capability ?? data);
+  // One unreadable count makes the day's sum unknown; no counts at all sum to 0.
+  const recordedSum = Object.entries(rawCounts).some(([key, value]) => !dayFields.has(key) && requestCount(value) === null) ? null : (sumCounts(byCapability) ?? 0);
+  const named = recordedSum === null ? null : recordedSum - (byCapability.other ?? 0);
+  const total = "total" in data ? requestCount(data.total)
+    : "requests" in data ? requestCount(data.requests) : recordedSum;
   // Never cap, reduce or rescale a recorded count. Unexplained remainder joins
   // Other; when recorded counts add to more than the total, flag the day.
-  byCapability.other = Math.max(byCapability.other, total - named);
+  if (total !== null && named !== null) byCapability.other = Math.max(byCapability.other ?? 0, total - named);
   return {
     date: string(data.date ?? data.day, ""),
     total,
     byCapability,
-    countsExceedTotal: recordedSum > total ? recordedSum : null,
+    countsExceedTotal: recordedSum !== null && total !== null && recordedSum > total ? recordedSum : null,
   };
 }
 
 /** A usable request count, or null for missing, negative or absurd values. */
 function requestCount(value: unknown): number | null {
-  const count = number(value, Number.NaN);
-  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+  const count = nullableNumber(value);
+  return count !== null && Number.isSafeInteger(count) ? count : null;
 }
 
 /** Preserve exact IDs for catalog lookups and keys; format only when rendering. */
@@ -1319,7 +1111,7 @@ function normalizeModel(raw: unknown): UsageModel {
   return {
     model: nullableString(data.model ?? data.name) ?? "",
     capability: normalizeCapability(data.capability ?? data.intent),
-    requests: number(data.requests ?? data.count, 0),
+    requests: nullableNumber(data.requests ?? data.count),
     costUsd: nullableNumber(
       data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd,
     ),
@@ -1333,17 +1125,18 @@ const dayFields = new Set(["date", "day", "total", "requests"]);
 
 function normalizeCapabilityCounts(
   raw: unknown,
-): Record<UsageCapability, number> {
+): Record<UsageCapability, number | null> {
   const counts = Object.fromEntries(
-    capabilities.map((capability) => [capability, 0]),
-  ) as Record<UsageCapability, number>;
+    capabilities.map((capability) => [capability, null]),
+  ) as Record<UsageCapability, number | null>;
   // Every recorded count lands somewhere: exact names, then aliases, then Other.
   for (const [key, value] of Object.entries(object(raw))) {
     if (dayFields.has(key)) continue;
     const capability = (capabilities as string[]).includes(key)
       ? (key as UsageCapability)
       : normalizeCapability(key);
-    counts[capability] += requestCount(value) ?? 0;
+    const count = requestCount(value);
+    counts[capability] = count === null ? null : (counts[capability] ?? 0) + count;
   }
   return counts;
 }
@@ -1366,16 +1159,11 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function number(value: unknown, fallback: number): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function nullableNumber(value: unknown): number | null {
   if (typeof value !== "number" && typeof value !== "string") return null;
   if (typeof value === "string" && !value.trim()) return null;
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function positiveNullableNumber(value: unknown): number | null {
@@ -1389,11 +1177,13 @@ function nullableDate(value: unknown): number | string | null {
   return null;
 }
 
-function sumCounts(counts: Record<UsageCapability, number>) {
-  return Object.values(counts).reduce((sum, value) => sum + value, 0);
+function sumCounts(counts: Record<UsageCapability, number | null>) {
+  const recorded = Object.values(counts).filter((value): value is number => value !== null);
+  return recorded.length ? recorded.reduce((sum, value) => sum + value, 0) : null;
 }
 
-function formatNumber(value: number) {
+function formatNumber(value: number | null) {
+  if (value === null) return "Unknown";
   return new Intl.NumberFormat("en-US").format(value);
 }
 
@@ -1404,22 +1194,14 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
-  const unknownPaid = summary.unknownPaidRequests;
-  // A positive counter proves paid requests exist even if the other is missing.
-  if ((summary.paidRequests ?? 0) > 0 || (unknownPaid ?? 0) > 0) {
-    const coverage =
-      summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
-        ? `Cost measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests.`
-        : "Measurement coverage is unavailable.";
-    const unknown =
-      unknownPaid !== null && unknownPaid > 0
-        ? ` ${formatNumber(unknownPaid)} paid ${unknownPaid === 1 ? "request has" : "requests have"} unknown cost.`
-        : "";
-    return `${coverage}${unknown}`;
-  }
-  if (summary.paidRequests === null || unknownPaid === null)
-    return "Paid request count is unknown.";
-  return "";
+  // No paid requests means no costs to record; say nothing beside "No paid requests".
+  if (summary.paidRequests === 0 && summary.unknownPaidRequests === 0) return "";
+  const coverage = summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
+    ? `Costs recorded for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests.`
+    : "We don't know how many request costs were recorded.";
+  const unknown = summary.unknownPaidRequests;
+  return coverage + (unknown !== null && unknown > 0
+    ? ` ${formatNumber(unknown)} paid ${unknown === 1 ? "request has" : "requests have"} unknown cost.` : "");
 }
 
 // A missing cost is unknown unless the receipt says the request stayed local.

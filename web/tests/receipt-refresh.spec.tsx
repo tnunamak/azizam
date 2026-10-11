@@ -58,7 +58,7 @@ for (const page of ["Activity", "Usage"] as const) {
                   next_cursor: null,
                   people: [],
                 }
-              : { requests: receipts.length, receipts },
+              : { requests: receipts.length, media_count: 0, receipts },
           ),
         ),
       );
@@ -142,7 +142,7 @@ for (const page of ["Activity", "Usage"] as const) {
                 next_cursor: null,
                 people: [],
               }
-            : { requests: 1, receipts: [receipt()] },
+            : { requests: 1, media_count: 0, receipts: [receipt()] },
         );
       }),
     );
@@ -238,13 +238,18 @@ test.each([
 ])("Usage preserves paid-count truth: $name", async ({ counters, spend, unknown, none }) => {
   const client = renderUsageSummary({
     requests: 1,
+    media_count: 0,
     receipts: [],
     remote_spend: spend,
     ...counters,
   });
   const summary = await screen.findByLabelText("This month");
   expect(within(summary).queryByText("No paid requests") !== null).toBe(none);
-  expect(within(summary).queryByText("Paid request count is unknown.") !== null).toBe(unknown);
+  // Without per-request coverage numbers, any case other than two recorded zero
+  // counters says the coverage is unknown; "unknown" counters are one such case.
+  const zeroCounters = Object.keys(counters).length === 2 && Object.values(counters).every((value) => value === 0);
+  if (unknown) expect(zeroCounters).toBe(false);
+  expect(within(summary).queryByText(/We don't know how many request costs were recorded\./) !== null).toBe(!zeroCounters);
   if (spend === null) expect(within(summary).getByText("Cost not recorded")).toBeTruthy();
   if (spend === 2) expect(within(summary).getByText(/\$2/)).toBeTruthy();
   client.clear();
@@ -260,23 +265,23 @@ test.each([
 ])("Usage displays only recorded request IDs: $name", async ({ identity, expected }) => {
   const client = renderUsageSummary({
     requests: 1,
+    media_count: 0,
     receipts: [{ capability: "chat", status: "succeeded", ...identity }],
   });
   fireEvent.click(await screen.findByRole("button", { name: "View recent requests" }));
   fireEvent.click(await screen.findByRole("button", { name: /Receipt details for/ }));
   const dialog = await screen.findByRole("dialog");
-  const requestId = within(dialog).getByText("Request ID").nextElementSibling;
-  if (expected === null)
-    expect(requestId?.textContent).toBe("No request ID recorded");
-  else
-    expect(within(requestId as HTMLElement).getByText(expected, { exact: true })).toBeTruthy();
+  // The request ID is a technical detail (PF-045): only a recorded one is shown there.
+  const technical = within(dialog).getByText("Technical details").closest("details") as HTMLElement;
+  const requestId = within(technical).queryByText(/^Request ID:/);
   const copy = within(dialog).queryByRole("button", { name: "Copy request ID" });
   if (expected === null) {
+    expect(requestId).toBeNull();
     expect(copy).toBeNull();
     expect(within(dialog).queryByText("receipt", { exact: true })).toBeNull();
   } else {
-    expect(copy).not.toBeNull();
-    expect(within(dialog).queryByText("No request ID recorded")).toBeNull();
+    expect(requestId?.textContent).toBe(`Request ID: ${expected}`);
+    expect(technical.contains(copy)).toBe(true);
   }
   client.clear();
 });
@@ -284,6 +289,7 @@ test.each([
 test("Usage sorts top models by requests and model name before slicing", async () => {
   const client = renderUsageSummary({
     requests: 100,
+    media_count: 0,
     by_model: [
       { model: "low", requests: 1 },
       { model: "zeta", requests: 10 },
@@ -315,6 +321,7 @@ test.each([
 ])("Usage reconciles daily capability stacks: $name", async ({ total, counts, expected }) => {
   const client = renderUsageSummary({
     requests: 10,
+    media_count: 0,
     by_day: [{ date: "2026-10-07", total, capabilities: counts }],
   });
   const table = await screen.findByRole("table", { name: "Requests by day and task" });
@@ -330,6 +337,7 @@ test.each([
 test("Usage keeps recorded counts on an overfull day and says the counts disagree", async () => {
   const client = renderUsageSummary({
     requests: 10,
+    media_count: 0,
     by_day: [{ date: "2026-10-07", total: 5, capabilities: { chat: 4, image: 3 } }],
   });
   const table = await screen.findByRole("table", { name: "Requests by day and task" });
@@ -360,13 +368,15 @@ test.each([
     cells: ["1", "2", "3"],
   },
   {
-    name: "negative and absurd counts are ignored",
+    // An unreadable count is not zero: the day's total becomes unknown.
+    name: "negative and absurd counts leave the total unknown",
     day: { capabilities: { chat: -2, image: 1e308, video: 3 } },
-    cells: ["3", "3"],
+    cells: ["3", "Unknown"],
   },
 ])("Usage never reduces or invents daily counts: $name", async ({ day, cells }) => {
   const client = renderUsageSummary({
     requests: 10,
+    media_count: 0,
     by_day: [{ date: "2026-10-07", ...day }],
   });
   const table = await screen.findByRole("table", { name: "Requests by day and task" });
@@ -403,7 +413,7 @@ for (const page of ["Activity", "Usage"] as const) {
                 next_cursor: null,
                 people: [],
               }
-            : { requests: 1, receipts: [receipt] },
+            : { requests: 1, media_count: 0, receipts: [receipt] },
         )),
       );
       const client = new QueryClient({
@@ -433,18 +443,19 @@ for (const page of ["Activity", "Usage"] as const) {
       expect(within(row).queryByText(/Engine or provider failed/)).toBeNull();
       fireEvent.click(row);
       const dialog = await screen.findByRole("dialog");
-      const summary = within(dialog).getByText("We couldn't tell where this stopped.", { exact: true });
+      const summary = within(dialog).getByText("We couldn't tell where this stopped. Try again.", { exact: true });
       const paragraphs = Array.from(
         summary.parentElement!.querySelectorAll("p"),
         (node) => node.textContent,
       );
-      expect(paragraphs).toEqual([
-        // Usage shows the outcome as the status badge above, not a paragraph.
-        ...(page === "Activity" ? ["Failed"] : []),
-        "We couldn't tell where this stopped.",
-        ...(detail === null ? [] : [detail]),
-        "Open Technical details for the recorded status and warnings.",
-      ]);
+      // Both pages share one receipt sheet; stage and error code are technical
+      // details (PF-045), never part of the outcome.
+      expect(paragraphs).toEqual(["Failed", "We couldn't tell where this stopped. Try again."]);
+      if (detail !== null) {
+        const technical = within(dialog).getByText("Technical details").closest("details") as HTMLElement;
+        for (const part of detail.split(" · "))
+          expect(technical.textContent).toContain(part.replace(/^(Stage|Error code): /, ""));
+      }
       expect(within(dialog).queryByText("The selected model or provider failed before returning a result.")).toBeNull();
       expect(within(dialog).queryByText("The gateway could not complete this request.")).toBeNull();
       client.clear();

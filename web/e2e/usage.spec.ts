@@ -184,7 +184,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(
         page.getByText("Unknown · Usage unavailable", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expectNoHorizontalOverflow(page);
       await expectNoSeriousAxeViolations(page);
       await page.screenshot({
@@ -207,7 +207,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.locator('[aria-label="Loading your account"]'),
       ).toHaveCount(0);
-      await expect(page.getByText("Remote spend")).toBeVisible();
+      await expect(page.getByText("Spend", { exact: true }).first()).toBeVisible();
       await page.getByRole("button", { name: "View recent requests" }).click();
       await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
       await expectNoHorizontalOverflow(page);
@@ -253,7 +253,8 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
   );
   await page.goto("/ui/usage/");
   const remoteSpendCard = page
-    .getByText("Remote spend", { exact: true })
+    .getByLabel("This month")
+    .getByText("Spend", { exact: true })
     .locator("..");
   await expect(remoteSpendCard).toContainText("Cost not recorded");
   await expect(remoteSpendCard).not.toContainText("$0");
@@ -315,7 +316,7 @@ test("Usage person filter does not promote an email address to a person name", a
   await page.goto("/ui/usage/");
 
   await page.getByRole("combobox", { name: "Person" }).click();
-  const people = page.getByRole("option", { name: /^Person · / });
+  const people = page.getByRole("option", { name: /^Person name not recorded/ });
   await expect(people).toHaveCount(2);
   const labels = await people.allTextContents();
   expect(new Set(labels).size).toBe(2);
@@ -415,12 +416,14 @@ test("usage model table shows names, never a path, and a consistent Cost", async
   const rows = table.getByRole("row");
   for (let index = 1; index < (await rows.count()); index += 1) {
     const cost = (await rows.nth(index).getByRole("cell").last().innerText()).trim();
-    expect(cost, `row ${index}`).toMatch(/^(Local|Unavailable|\$[\d.]+)/);
+    expect(cost, `row ${index}`).toMatch(/^(Cost not recorded|\$[\d.]+)/);
   }
-  await expect(table).not.toContainText("$0.00");
-  await expect(page.getByText("Local: no provider charge.")).toBeVisible();
+  await expect(table).toContainText("$0.00");
+  await expect(page.getByText("Local: no provider charge.")).toHaveCount(0);
 
-  // The legend uses the names Home and Try use.
+  // The legend uses the names Home and Try use; the daily table is now a
+  // visible disclosure rather than screen-reader-only text (PF-047).
+  await page.getByText("View daily totals", { exact: true }).click();
   await expect(page.getByText("Make a picture").first()).toBeVisible();
   await expect(page.getByText("Choose an option").first()).toBeVisible();
   await expect(page.getByText("Decisions", { exact: true })).toHaveCount(0);
@@ -501,4 +504,22 @@ test("usage Source list does not push the page wider on a phone", async ({ page 
   await expectNoHorizontalOverflow(page);
   await page.keyboard.press("Escape");
   await expectNoHorizontalOverflow(page);
+});
+
+test("usage distinguishes partial totals, missing breakdowns and genuine zero", async ({ page }) => {
+  let partial = true;
+  await page.route("**/me/api/usage/summary?**", (route) => route.fulfill({ json: partial
+    ? { requests: null, media_count: 0 }
+    : { requests: 2, media_count: 0, by_day: [], by_model: [], receipts: [] }
+  }));
+  await page.goto("/ui/usage/");
+  await expect(page.getByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
+  await expect(page.getByText("No requests in this period")).toHaveCount(0);
+  partial = false;
+  await page.getByRole("button", { name: "Retry usage" }).click();
+  await expect(page.getByText("Daily totals weren’t recorded for these requests.")).toBeVisible();
+  await expect(page.getByText("Model totals weren’t recorded.")).toBeVisible();
+  await page.getByRole("button", { name: "View recent requests" }).click();
+  await expect(page.getByText("No receipts are available for this view.")).toBeVisible();
+  await expect(page.getByText("$0.00")).toHaveCount(0);
 });

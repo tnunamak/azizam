@@ -314,12 +314,13 @@ it("shows newest receipts first with person and app despite a source label, and 
   expect(buttons[1]).toHaveTextContent("0 ms");
   await user.click(buttons[0]);
   const receipt = await screen.findByRole("dialog");
-  expect(within(receipt).getByText("newer")).toBeVisible();
+  // The request ID is a technical detail (PF-045); it still identifies the receipt.
+  expect(within(receipt).getByText("Request ID: newer")).toBeInTheDocument();
   expect(within(receipt).getByText("Studio")).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await user.click(buttons[1]);
-  expect(within(await screen.findByRole("dialog")).getByText("older")).toBeVisible();
+  expect(within(await screen.findByRole("dialog")).getByText("Request ID: older")).toBeInTheDocument();
 });
 
 it("labels unrecorded time and duration without inventing a zero duration", async () => {
@@ -383,7 +384,7 @@ it.each(["success", "succeeded", "ok"])("COPY-11 activity completion once (%s)",
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getAllByText("Completed")).toHaveLength(1);
   expect(sheet.queryByText("The gateway completed this request.")).toBeNull();
-  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Sam");
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Request receipt");
 });
 
 it.each([undefined, "provider", "opaque_stage"])("COPY-08 activity failure uncertainty (%s)", async (stage) => {
@@ -391,22 +392,31 @@ it.each([undefined, "provider", "opaque_stage"])("COPY-08 activity failure uncer
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
   const sheet = within(screen.getByRole("dialog"));
-  expect(sheet.getByText("We couldn't tell where this stopped.")).toBeVisible();
-  expect(sheet.getByText(stage ? `Stage: ${stage} · Error code: opaque_code` : "Error code: opaque_code")).toBeVisible();
+  expect(sheet.getByText("We couldn't tell where this stopped. Try again.")).toBeVisible();
+  // Stage and error code stay in Technical details (PF-045).
+  expect(sheet.queryByText(/Error code: opaque_code/)).toBeNull();
+  expect(sheet.getByText("Technical details").closest("details")).toHaveTextContent("opaque_code");
   expect(sheet.queryByText("The request failed.")).toBeNull();
 });
 
 it.each([
   ["in_progress", "The request was still running when this receipt was recorded."],
-  ["timed_out", "The request timed out before a result was recorded."],
-  ["incomplete", "The receipt does not include a final outcome."],
+  ["timed_out", "The request timed out before we recorded a result. Try again."],
+  ["incomplete", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
 ])("COPY-11 activity outcome context (%s)", async (status, summary) => {
   serveCopyReceipt({ intent: "chat", status });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
   const sheet = within(screen.getByRole("dialog"));
-  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Sam");
+  expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Request receipt");
   expect(sheet.getByText(summary)).toBeVisible();
+});
+
+it.each(["timed_out", "disconnected"])("points a media %s receipt to Library before a retry", async (status) => {
+  serveCopyReceipt({ intent: "image.generate", status });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Image request by Sam" }));
+  expect(within(screen.getByRole("dialog")).getByText(/Check Library for a result before trying again\./)).toBeVisible();
 });
 
 function mountCopyProviders(provider: Record<string, unknown> = {}, reconciliations: unknown[] = []) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { Table, TableBody, TableRow, TableCell } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
 import { Callout, StateBadge, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
+import { requestCapability } from "@/lib/capability-state";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { useModelName } from "@/lib/use-model-name";
@@ -108,22 +109,28 @@ function outcomeTone(status?: string) {
     return "text-destructive";
   return "text-muted-foreground";
 }
-function outcomeNeedsAttention(status?: string) {
-  return [
-    "failed",
-    "error",
-    "backend_failed",
-    "rejected",
-    "timed_out",
-  ].includes(status ?? "");
+/** A refused or timed-out request keeps its recorded HTTP reason, in plain words. */
+function outcomeCause(receipt: Receipt) {
+  if (!["Rejected", "Timed out"].includes(outcome(receipt.status))) return null;
+  const metadata =
+    typeof receipt.metadata === "object" && receipt.metadata !== null
+      ? (receipt.metadata as Record<string, unknown>)
+      : {};
+  const status = Number(metadata.status_code ?? receipt.status_code);
+  return Number.isFinite(status) && status >= 400 ? errorCopy({ status }).message : null;
 }
 function outcomeSummary(receipt: Receipt) {
   const label = outcome(receipt.status);
   if (label === "Completed") return "";
   if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Failed") return "We couldn't tell where this stopped.";
+  if (label === "Failed") return "We couldn't tell where this stopped. Try again.";
+  // Only media lands in Library; a chat or embedding result cannot be found there.
+  const media = ["image", "video", "speech", "sfx", "music", "audio"].includes(
+    requestCapability(receipt.intent ?? (receipt as { capability?: string }).capability, receipt.path) ?? "",
+  );
+  const next = media ? "Check Library for a result before trying again." : "Try again.";
   if (label === "Timed out")
-    return "The request timed out before a result was recorded.";
+    return `The request timed out before we recorded a result. ${next}`;
   if (label === "In progress")
     return "The request was still running when this receipt was recorded.";
   if (label === "Accepted")
@@ -131,52 +138,8 @@ function outcomeSummary(receipt: Receipt) {
   if (label === "Cancelled")
     return "The request was cancelled before completion.";
   if (label === "Disconnected")
-    return "The connection ended before completion was recorded.";
-  return "The receipt does not include a final outcome.";
-}
-function outcomeCause(receipt: Receipt) {
-  const statusLabel = outcome(receipt.status);
-  if (
-    !["Failed", "Rejected", "Timed out"].includes(
-      statusLabel,
-    )
-  )
-    return null;
-  const metadata = object(receipt.metadata);
-  if (statusLabel === "Failed") {
-    const stage = receiptString(receipt.stage ?? metadata.stage);
-    const code = receiptString(receipt.error_code ?? metadata.error_code);
-    return [stage ? `Stage: ${stage}` : null, code ? `Error code: ${code}` : null]
-      .filter(Boolean).join(" · ") || null;
-  }
-  const status = number(metadata.status_code ?? receipt.status_code);
-  if (status && status >= 400) return errorCopy({ status }).message;
-  const warning = receipt.warnings?.find((item) => item.trim());
-  return warning ?? null;
-}
-function nextAction(receipt: Receipt) {
-  const status = receipt.status ?? "";
-  if (outcomeNeedsAttention(status))
-    return "Open Technical details for the recorded status and warnings.";
-  if (["stale_incomplete", "incomplete", ""].includes(status))
-    return "Check for a newer receipt before treating this request as complete.";
-  return null;
-}
-function object(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
-}
-function number(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-function receiptString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-function declaredFallback(receipt: Receipt) {
-  const metadata = object(receipt.metadata);
-  return receiptString(receipt.fallback_model ?? metadata.fallback_model);
+    return `The connection ended before we recorded a result. ${next}`;
+  return "We couldn't tell where this stopped. Check for a newer receipt, then try again.";
 }
 function duration(ms?: number | null) {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
@@ -185,7 +148,6 @@ function duration(ms?: number | null) {
 
 export function Requests() {
   const nameModel = useModelName();
-  const owner = ["owner", "superadmin"].includes(useViewer().role);
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
   const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
@@ -457,19 +419,38 @@ export function Requests() {
           </div>
         </>
       )}
+      <RequestReceiptSheet record={record} onOpenChange={(open) => {
+        if (!open) setSelectedReceiptKey(null);
+      }} />
+    </div>
+  );
+}
+
+/** Shared receipt presentation for Activity and Usage. Raw routing stays in details. */
+export function RequestReceiptSheet({ record, onOpenChange, title, description, cost }: {
+  record: (Omit<RequestRecord, "created_at"> & { created_at: number | string | null }) | null;
+  onOpenChange: (open: boolean) => void;
+  title?: string;
+  description?: string;
+  cost?: ReactNode;
+}) {
+  const nameModel = useModelName();
+  const owner = ["owner", "superadmin"].includes(useViewer().role);
+  const requested = record?.receipt.requested_model;
+  const served = record?.receipt.resolved_model;
+  const different = Boolean(requested && served && requested !== served);
+  return (
       <Sheet
         open={record !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelectedReceiptKey(null);
-        }}
+        onOpenChange={onOpenChange}
       >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           {record && (
             <>
               <SheetHeader className="pr-14">
-                <SheetTitle>{requestSummary(record.receipt)}</SheetTitle>
+                <SheetTitle>{title ?? requestSummary(record.receipt)}</SheetTitle>
                 <SheetDescription>
-                  {record.person_label}
+                  {description ?? "Request receipt"}
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
@@ -489,79 +470,40 @@ export function Requests() {
                       {outcomeCause(record.receipt)}
                     </p>
                   ) : null}
-                  {nextAction(record.receipt) ? (
-                    <p className="text-muted-foreground mt-2">
-                      {nextAction(record.receipt)}
-                    </p>
-                  ) : null}
                 </div>
+                {different && <p className="text-meta">A different model was used.</p>}
                 <dl className="space-y-4 text-meta">
                   {[
-                    ["Request ID", record.receipt.request_id],
                     ["Person", record.person_label],
                     ["App", record.app_label],
-                    ["Source", record.source?.label ?? record.app_label],
-                    [
-                      "Requested model",
-                      record.receipt.requested_model
-                        ? nameModel(record.receipt.requested_model)
-                        : "",
-                    ],
-                    [
-                      "Served model",
-                      record.receipt.resolved_model
-                        ? nameModel(record.receipt.resolved_model)
-                        : "",
-                    ],
-                    ...(declaredFallback(record.receipt)
-                      ? ([
-                          [
-                            "Declared fallback",
-                            nameModel(declaredFallback(record.receipt) as string),
-                          ],
-                        ] as const)
-                      : []),
+                    ...(different ? [
+                      ["Requested model", nameModel(requested!)],
+                      ["Served model", nameModel(served!)],
+                    ] : [["Model", served || requested ? nameModel((served || requested)!) : "Model not recorded"]]),
                     ["Time taken", duration(record.receipt.latency_ms)],
                   ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-muted-foreground">{label}</dt>
                       <dd className="mt-1 flex min-w-0 items-center gap-2 break-words">
                         <span className="min-w-0 break-all">{value}</span>
-                        {label === "Request ID" ? (
-                          <CopyButton
-                            value={String(value)}
-                            aria-label="Copy request ID"
-                          />
-                        ) : null}
                       </dd>
                     </div>
                   ))}
+                  {cost != null && <div><dt className="text-muted-foreground">Spend</dt><dd className="mt-1">{cost}</dd></div>}
                   <div>
                     <dt className="text-muted-foreground">When</dt>
                     <dd className="mt-1">
-                      <RelativeTime ts={record.created_at} />
+                      {record.created_at ? <RelativeTime ts={record.created_at} /> : "Time not recorded"}
                     </dd>
                   </div>
                 </dl>
-                {outcomeNeedsAttention(record.receipt.status) &&
-                  !!record.receipt.warnings?.length && (
-                    <div className="space-y-2 text-meta">
-                      <p className="font-medium">What to know</p>
-                      {record.receipt.warnings.map((warning, i) => (
-                        <p
-                          key={i}
-                          className="text-muted-foreground break-words"
-                        >
-                          {warning}
-                        </p>
-                      ))}
-                    </div>
-                  )}
                 <details>
                   <summary className="cursor-pointer text-meta font-medium">
                     Technical details
                   </summary>
-                  <div className="mt-4">
+                  <div className="mt-4 space-y-4">
+                    {record.receipt.parent_request_id && <p>Part of another request</p>}
+                    {record.receipt.request_id && <p className="flex items-center gap-2 break-all">Request ID: {record.receipt.request_id}<CopyButton value={record.receipt.request_id} aria-label="Copy request ID" /></p>}
                     <pre
                       tabIndex={0}
                       aria-label="Technical request details"
@@ -576,6 +518,5 @@ export function Requests() {
           )}
         </SheetContent>
       </Sheet>
-    </div>
   );
 }

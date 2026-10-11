@@ -406,3 +406,31 @@ for (const theme of ["light", "dark"] as const) {
     }
   }
 }
+
+for (const status of ["disconnected", "timed_out", "incomplete"]) {
+  test(`receipt keeps routing details private and offers a next action: ${status}`, async ({ page }) => {
+    await page.route("**/admin/api/activity/requests?*", (route) => route.fulfill({ json: {
+      records: [{ person_label: "Mira", app_label: "Notes", created_at: 1790870400000,
+        receipt: { request_id: "private-request-id", intent: "chat", status,
+          requested_model: "demo-chat", resolved_model: "demo-chat", parent_request_id: "parent",
+          stage: "private-stage", error_code: "private-code", warnings: ["private-warning"] } }],
+      people: [], next_cursor: null,
+    } }));
+    await page.goto("/ui/activity/");
+    await page.getByRole("tab", { name: "Requests", exact: true }).click();
+    await page.getByRole("button", { name: /Request details:/ }).click();
+    const sheet = page.getByRole("dialog");
+    await expect(sheet.getByText("Model", { exact: true })).toBeVisible();
+    await expect(sheet.getByText("Requested model", { exact: true })).toHaveCount(0);
+    await expect(sheet.getByText("Served model", { exact: true })).toHaveCount(0);
+    await expect(sheet.getByText("Mira", { exact: true })).toHaveCount(1);
+    await expect(sheet.getByText("Notes", { exact: true })).toHaveCount(1);
+    await expect(sheet.getByText(status === "incomplete" ? /Check for a newer receipt, then try again/ : /before we recorded a result\. Try again\./)).toBeVisible();
+    const technical = sheet.locator("details");
+    await expect(technical).not.toHaveAttribute("open");
+    await expect(technical.locator("pre")).not.toBeVisible();
+    await technical.locator("summary").click();
+    await expect(technical).toContainText("private-code");
+    await expect(technical.getByText("Part of another request", { exact: true })).toBeVisible();
+  });
+}

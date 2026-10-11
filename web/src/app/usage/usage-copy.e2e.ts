@@ -154,7 +154,7 @@ for (const theme of ["light", "dark"] as const) {
         () => new Promise(() => {}),
       );
       await page.goto("/ui/usage/");
-      await expect(page.getByLabel("Loading usage")).toBeVisible();
+      await expect(page.getByRole("status")).toBeVisible();
       await page.screenshot({
         path: `${reviewRoot}/loading-${theme}-${width}.png`,
         fullPage: true,
@@ -200,7 +200,7 @@ for (const [status, expected, summary, extra] of [
   [
     "backend_failed",
     "Failed",
-    "The request failed.",
+    "We couldn't tell where this stopped. Try again.",
     { metadata: { status_code: 502 } },
   ],
   [
@@ -218,7 +218,7 @@ for (const [status, expected, summary, extra] of [
   [
     "stale_incomplete",
     "Outcome not recorded",
-    "The receipt does not include a final outcome.",
+    "We couldn't tell where this stopped. Check for a newer receipt, then try again.",
     {},
   ],
 ] as const) {
@@ -250,7 +250,7 @@ for (const [status, expected, summary, extra] of [
     await page.getByRole("button", { name: /Receipt details for/ }).click();
     const dialog = page.getByRole("dialog", { name: "Request receipt" });
     await expect(dialog).toContainText(expected);
-    await expect(dialog).toContainText(summary);
+    if (status !== "success") await expect(dialog).toContainText(summary);
     if (status === "success") {
       await expect(dialog).not.toContainText(
         "The request could not be completed.",
@@ -261,11 +261,7 @@ for (const [status, expected, summary, extra] of [
         "Your account does not have permission for this action.",
       );
     }
-    if (status === "backend_failed") {
-      await expect(dialog).toContainText(
-        "The gateway could not complete this request.",
-      );
-    }
+    await dialog.getByText("Technical details", { exact: true }).click();
     await expect(dialog).toContainText(`req_${status}`);
     await expect(dialog).toContainText("fast");
     await expect(dialog).toContainText("safe-chat");
@@ -322,17 +318,17 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
   });
 
   await page.goto("/ui/usage/");
-  await expect(page.getByText("Remote spend", { exact: true })).toBeVisible();
-  await expect(page.getByText("No paid requests")).toBeVisible();
-  await expect(page.getByText("Transcription", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Spend", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cost not recorded").first()).toBeVisible();
+  await expect(page.getByText("Transcribe a recording", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("/v1/audio/transcriptions")).toHaveCount(0);
   await expect(page.getByText("Unknown model")).toHaveCount(0);
   await expect(page.getByRole("table").last()).not.toContainText("$0.00");
 
   await page.getByRole("combobox", { name: "Source" }).click();
   await page.getByRole("option", { name: "Open WebUI" }).click();
-  await expect(page.getByText("Remote spend", { exact: true })).toBeVisible();
-  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("Spend", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cost not recorded", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("No paid requests")).toHaveCount(0);
   await expect(
     page.getByText(/2 paid requests have unknown cost/),
