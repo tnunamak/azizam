@@ -6,8 +6,12 @@
 **Status update — 2026-10-10:** The owner-supplied audit at `fdc3c9d`
 supersedes the D-1/D-2/D-3 implementation status and old code anchors below.
 The engine-named classes are now generic transforms. D-2's engine framing is
-removed. D-3 is complete. D-1 still applies automatically to resolved local
-chat, with one resolved-target-gated application. It is not fully opt-in.
+removed. D-3 is complete. D-1 is resolved: `reasoning-effort` runs only when attached in service
+`config.transforms`. Admin schema v5 attaches it once to enabled local chat/
+completion endpoints, excluding remote providers and the execution substrate.
+Disabled services remain unchanged. Fresh bundled chat seeds declare the id as
+data; later operator removal survives startup. The built-in runs after model/
+alias defaults and retains configured budgets and validation errors.
 The binding principle is unchanged.
 
 ---
@@ -136,8 +140,8 @@ are not current implementation evidence. The current status is in the update abo
 **Historical status (2026-06-16; superseded):** `_Qwen3ThinkingTransform().apply(body)` was called
 unconditionally on every `/v1/chat/completions` request at **two sites** (proxy.py:3217 and
 proxy.py:18896). The "data-attached, never auto-fired" model described in this design is the
-historical migration proposal. The current generic transform applies once,
-automatically, to resolved local chat behind a resolved-target gate.
+historical migration proposal. That intermediate implementation has now been replaced by the opt-in D-1
+migration described in the current status above.
 
 **What it actually does** (the honest decomposition):
 
@@ -367,6 +371,9 @@ reads/writes a list of declarative primitive rows. No per-engine code.
 
 ## 4. OPEN CALLS FOR THE OWNER
 
+**Historical proposals (2026-06-16):** D-1, D-2 and D-3 are now resolved as
+described in the current status above.
+
 Each is a genuine judgment call (behavior change, schema surface, or product stance), presented
 as recommendation + tradeoff. None is taken unilaterally.
 
@@ -468,8 +475,8 @@ SGLang|LMStudio)*Transform` beyond the frozen allowlist.
 
 **Status — 2026-10-10:** The former engine-named classes have been renamed
 to generic transforms per the owner-supplied audit. Their pending class-name
-exceptions are superseded. D-1 still applies automatically to resolved local
-chat, once behind a resolved-target gate; it is not fully opt-in.
+exceptions are superseded. D-1 is resolved by the opt-in service attachment and one-time admin schema v5
+migration described at the top of this document.
 
 Growing the allowlist is a reviewable diff — the choke point that surfaces the decision.
 
@@ -531,15 +538,15 @@ allowlist, which is a flag for the reviewer. See docs/design/ENGINE_KNOWLEDGE_BO
 
 **Historical anchors; status superseded 2026-10-10:** The D-1/D-2/D-3 names,
 two auto-fire sites and pending cuts below describe the earlier revision.
-The owner-supplied audit reports generic transforms, D-2 and D-3 complete,
-and one automatic D-1 application gated on a resolved local chat target.
+The intermediate owner audit found one remaining automatic D-1 application.
+The current migration removes it; D-1, D-2 and D-3 are complete.
 
 - Fixed primitive set + `register_builtin` + pipelines: `gateway/transforms.py:460-519`.
 - Tier-1 packs (orphaned, attached to nothing): `gateway/transforms.py:968-1034`.
 - `voxtral-voices` definition: `gateway/transforms.py:887`; only attachment: `proxy.py:3721`
   (speech path) with `VOICE_MAP` duplicate at `proxy.py:2665`.
 - `qwen3-thinking` built-in class: `gateway/transforms.py:567-622`.
-- `qwen3-thinking` auto-fire sites (current status — pending §D-1 migration):
+- `qwen3-thinking` auto-fire sites (historical, removed):
   `proxy.py:3217` (early path) and `proxy.py:18896` (dispatch site).
 - `apply_thinking_suppression` (shared helper): `gateway/transforms.py:533` — called only by
   `Qwen3ThinkingTransform`, NOT by background-removal (which uses the string constant directly).

@@ -243,7 +243,7 @@ from gateway.transforms import (
     TransformContext as _TransformContext,
     run_request_pipeline as _run_request_pipeline,
     run_response_pipeline as _run_response_pipeline,
-    ReasoningEffortTransform as _ReasoningEffortTransform,
+    TransformRequestError as _TransformRequestError,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
     ValueMapTransform as _ValueMapTransform,
@@ -27510,34 +27510,34 @@ def _prepare_resolved_openai_request(
     execution_service_id: str = "",
     runtime_config: Mapping[str, Any] | None = None,
 ) -> tuple[Response | None, Mapping[str, Any], bytes | None]:
-    """Apply the one request-policy pipeline, then generic reasoning handling."""
+    """Apply only the transforms attached to the resolved service and model."""
     prepared = copy.deepcopy(dict(body))
     if target is None:
         return None, prepared, None
-    specs = _per_backend_transform_specs(execution_service_id, runtime_config=runtime_config)
+    source = runtime_config if runtime_config is not None else config
+    specs = _per_backend_transform_specs(
+        execution_service_id, runtime_config=source,
+    )
     specs.extend(target.base_transform_specs)
     specs.extend(target.alias_overlay_specs)
-    if specs:
+    try:
         prepared = _run_request_pipeline(
             specs,
             prepared,
-            _TransformContext(),
+            _TransformContext({"request_path": request_path, "reasoning": source.get("reasoning") or {}}),
             _TRANSFORM_REGISTRY,
         )
-    if request_path == "/v1/chat/completions":
-        source = runtime_config if runtime_config is not None else config
-        reasoning_error = _ReasoningEffortTransform(source.get("reasoning") or {}).apply(prepared)
-        if reasoning_error:
-            return Response(
-                content=json.dumps({"error": {
-                    "message": reasoning_error,
-                    "type": "invalid_request_error",
-                    "param": "reasoning_effort",
-                    "code": "invalid_value",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            ), prepared, None
+    except _TransformRequestError as error:
+        return Response(
+            content=json.dumps({"error": {
+                "message": str(error),
+                "type": "invalid_request_error",
+                "param": error.param,
+                "code": error.code,
+            }}),
+            status_code=400,
+            media_type="application/json",
+        ), prepared, None
     return None, prepared, None
 
 
