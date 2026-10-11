@@ -326,7 +326,10 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
             auth = deps.authenticate(request, request.url.path)
             if isinstance(auth, Response):
                 return auth
-            session = sessions.setdefault(str(deps.owner_of(auth) or "anonymous"), Session())
+            owner = deps.owner_of(auth)
+            # Callers that cannot be attributed get their own state per request:
+            # a shared "anonymous" state let one see and interrupt another's work.
+            session = sessions.setdefault(str(owner), Session()) if owner else Session()
             try:
                 return await handler(request, auth, session)
             except A1111Error as exc:

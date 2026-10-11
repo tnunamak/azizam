@@ -433,16 +433,9 @@ class _AnonymousCallerIsolationError(AssertionError):
     """Only verified anonymous cross-caller isolation violations may xfail."""
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=_AnonymousCallerIsolationError,
-    reason="Callers whose owner_of returns None share the anonymous session: B sees A's job count "
-           "and B's interrupt cancels A's in-flight fake generation",
-)
 def test_none_owner_callers_cannot_see_or_interrupt_each_others_generation():
     result = _interrupt_between_callers(None, None)
-    # All route/fixture/response assertions run first and are NOT expected failures.
-    # A complete fix XPASSes strictly, requiring this marker to be removed.
+    # Fixed: unattributed callers get per-request state, never a shared one.
     if result.before_b["job_count"] != 0 or result.cancelled:
         raise _AnonymousCallerIsolationError(
             f"anonymous cross-caller leak: B job_count={result.before_b['job_count']}; "
