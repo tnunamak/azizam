@@ -116,7 +116,7 @@ function endpointFields(baseUrl: string): Record<string, unknown> {
   // http://host:port, so an https engine would route but never look healthy.
   if (parsed.protocol !== "http:") {
     throw new Error(
-      "Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.",
+      "Endpoint must use http://. HTTPS endpoints are not supported by this editor yet.",
     );
   }
   const defaultPort = 80;
@@ -154,9 +154,17 @@ function servicesFromRegistry(
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong. Please try again.";
+  if (error instanceof ApiError) {
+    if (error.status === 412)
+      return "Engine settings changed elsewhere. Refresh and try again.";
+    // The exact reason stays under Technical details.
+    if (error.status === 400 || error.status === 409)
+      return "The gateway did not accept these engine settings. Check the fields and save again.";
+  } else if (error instanceof Error && !(error instanceof TypeError)) {
+    // This editor's own check, such as an https:// address: say it as is.
+    return error.message;
+  }
+  return "Engine settings could not be saved. We could not identify the cause. Try saving again.";
 }
 
 function editableUpdateBody(
@@ -246,6 +254,7 @@ function EditEngineDialog({
   const connectionChanged =
     baseUrl !== composeBaseUrl(service.config) || advanced !== savedAdvanced;
   const [error, setError] = useState<string | null>(null);
+  const [technicalError, setTechnicalError] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const edit = useMutation({
     mutationFn: () => {
@@ -256,12 +265,18 @@ function EditEngineDialog({
       return api.services.edit(service.id, { ...body, enabled });
     },
     onSuccess: (registry) => onSaved(registry, { close: true }),
-    onError: (err) => setError(errorMessage(err)),
+    onError: (err) => {
+      setError(errorMessage(err));
+      setTechnicalError(
+        err instanceof ApiError || err instanceof TypeError ? err.message : null,
+      );
+    },
   });
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setTechnicalError(null);
     edit.mutate();
   }
 
@@ -328,6 +343,12 @@ function EditEngineDialog({
                 title="Engine could not be saved"
                 meta={error}
               />
+            )}
+            {technicalError && (
+              <details>
+                <summary>Technical details</summary>
+                <p className="break-words">{technicalError}</p>
+              </details>
             )}
             <Field label="Name" required>
               <Input
@@ -557,7 +578,9 @@ function EnginesContents() {
     },
     onError: (err) =>
       toast.error("Engine could not be removed", {
-        description: errorMessage(err),
+        description: err instanceof ApiError && err.status === 412
+          ? "Engine settings changed elsewhere. Refresh and try again."
+          : "We could not identify the cause. Try removing the engine again.",
       }),
   });
 
@@ -565,10 +588,9 @@ function EnginesContents() {
     const backend = backends.get(service.id);
     const health = healthByService.get(service.id);
     const serviceState = state(service, backend, health, observationAvailable);
-    const serves = (
-      health?.capability_labels ?? humanCapabilities(service.capabilities)
-    ).join(", ");
     const title = displayName(service);
+    // The group heading names the first capability; list only the others.
+    const alsoServes = humanCapabilities(service.capabilities).slice(1).join(", ");
     const stateKey =
       !service.enabled || serviceState.label === "Disabled"
         ? "off"
@@ -626,10 +648,10 @@ function EnginesContents() {
                 )}
               </span>
             </div>
-            {(serves || checkedAt !== null) && (
+            {(alsoServes || checkedAt !== null) && (
               <p className="text-meta text-muted-foreground mt-0.5 truncate">
-                {serves}
-                {serves && checkedAt !== null ? " · " : null}
+                {alsoServes ? `Also ${alsoServes}` : null}
+                {alsoServes && checkedAt !== null ? " · " : null}
                 {checkedAt !== null ? (
                   <>
                     Last checked <RelativeTime ts={checkedAt} fallback="" />
@@ -691,7 +713,7 @@ function EnginesContents() {
           as="div"
           severity="critical"
           title="Engine list could not be loaded"
-          meta={`Each engine's state is unknown. ${errorMessage(registryError)}`}
+          meta="Each engine's state is unknown. Try loading the engine list again."
           actions={
             <Button
               variant="outline"
@@ -703,6 +725,12 @@ function EnginesContents() {
             </Button>
           }
         />
+        {registryError instanceof Error && (
+          <details>
+            <summary>Technical details</summary>
+            <p className="break-words">{registryError.message}</p>
+          </details>
+        )}
       </div>
     );
   }
@@ -746,7 +774,7 @@ function EnginesContents() {
               as="div"
               severity="attention"
               title="Live status unavailable"
-              meta={errorMessage(statusError)}
+              meta="Engine states are unknown. Try loading live status again."
               actions={
                 <Button
                   variant="outline"
@@ -758,6 +786,12 @@ function EnginesContents() {
                 </Button>
               }
             />
+            {statusError instanceof Error && (
+              <details>
+                <summary>Technical details</summary>
+                <p className="break-words">{statusError.message}</p>
+              </details>
+            )}
           </div>
         )}
 
@@ -768,7 +802,7 @@ function EnginesContents() {
                 as="div"
                 severity="attention"
                 title="Selected engine not found"
-                meta={`No service record has id ${selectedServiceId}.`}
+                meta="This engine is no longer available. Choose another engine."
               />
             </div>
           )}
@@ -920,7 +954,7 @@ function EnginesContents() {
         title="Remove engine?"
         description={
           removeTarget
-            ? `${removeTarget.name} will be removed from the service registry.`
+            ? `Remove ${removeTarget.name} from this gateway?`
             : ""
         }
         confirmLabel="Remove engine"

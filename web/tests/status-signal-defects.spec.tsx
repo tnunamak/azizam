@@ -180,7 +180,7 @@ it.each(["https://secure.example/v1/", "https://secure.example:8443/v1/"])(
     const edit = await openEndpointEditor("http://old.example/v1");
     fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
     fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-    expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.")).toBeVisible();
+    expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this editor yet.")).toBeVisible();
     expect(edit).not.toHaveBeenCalled();
   },
 );
@@ -200,7 +200,7 @@ it.each(["ftp://other.example/v1", "ws://other.example/v1"])("rejects a changed 
   const edit = await openEndpointEditor("https://old.example/v1");
   fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
   fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
-  expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.")).toBeVisible();
+  expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this editor yet.")).toBeVisible();
   expect(edit).not.toHaveBeenCalled();
 });
 

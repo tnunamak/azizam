@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
 
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -37,6 +36,7 @@ type ServiceFormState = {
 };
 
 type TestProbe = {
+  endpoint: string;
   ok: boolean;
   status: number | null;
   error: string;
@@ -46,11 +46,14 @@ type TestProbe = {
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 412) {
-      return "The service registry changed elsewhere (412 Precondition Failed). Refresh and retry.";
+      return "Engine settings changed elsewhere. Refresh and try again.";
     }
-    return error.message;
+    // The exact reason stays under Technical details.
+    if (error.status === 400 || error.status === 409) {
+      return "The gateway did not accept these engine settings. Check the fields and save again.";
+    }
   }
-  return "Something went wrong. Please try again.";
+  return "Engine settings could not be saved. We could not identify the cause. Try saving again.";
 }
 
 function emptyFormState(): ServiceFormState {
@@ -118,6 +121,10 @@ export function AddServiceDialogContent({
   >({});
   const [probe, setProbe] = useState<TestProbe | null>(null);
   const [testing, setTesting] = useState(false);
+  const probeVersion = useRef(0);
+  const [technicalError, setTechnicalError] = useState<string | null>(null);
+
+  useEffect(() => () => { probeVersion.current += 1; }, []);
   const errorSummaryRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -127,17 +134,27 @@ export function AddServiceDialogContent({
   const save = useMutation({
     mutationFn: () => api.services.add(formToApiBody(form)),
     onSuccess: onSaved,
-    onError: (err) => setFormError(errorMessage(err)),
+    onError: (err) => {
+      setFormError(errorMessage(err));
+      setTechnicalError(err instanceof Error ? err.message : null);
+    },
   });
 
   function set(key: keyof ServiceFormState) {
-    return (event: React.ChangeEvent<HTMLInputElement>) =>
+    return (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (key === "base_url") {
+        probeVersion.current += 1;
+        setProbe(null);
+        setTesting(false);
+      }
       setForm((current) => ({ ...current, [key]: event.target.value }));
+    };
   }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
+    setTechnicalError(null);
     const next: Partial<Record<"name" | "base_url" | "preset", string>> = {};
     if (!form.name.trim()) next.name = "Enter an engine name.";
     if (!form.base_url.trim())
@@ -154,16 +171,22 @@ export function AddServiceDialogContent({
   }
 
   async function handleTest() {
+    const endpoint = form.base_url.trim();
+    const version = ++probeVersion.current;
     setTesting(true);
     setProbe(null);
     try {
-      setProbe(
-        await api.services.testConnection({ base_url: form.base_url.trim() }),
-      );
+      const result = await api.services.testConnection({ base_url: endpoint });
+      if (version === probeVersion.current) setProbe({ ...result, endpoint });
     } catch (err) {
-      toast.error("Test failed", { description: errorMessage(err) });
+      if (version === probeVersion.current) {
+        setProbe({
+          endpoint, ok: false, status: null, url: endpoint,
+          error: err instanceof Error ? err.message : "",
+        });
+      }
     } finally {
-      setTesting(false);
+      if (version === probeVersion.current) setTesting(false);
     }
   }
 
@@ -207,7 +230,7 @@ export function AddServiceDialogContent({
         <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
-            Engine presets could not be loaded. No preset has been selected.
+            Engine presets are supplied by the gateway.
           </DialogDescription>
         </DialogHeader>
         <div
@@ -218,7 +241,7 @@ export function AddServiceDialogContent({
             as="div"
             severity="critical"
             title="Could not load engine presets"
-            meta={errorMessage(error)}
+            meta="Try loading the engine presets again."
             actions={
               <Button
                 variant="outline"
@@ -230,6 +253,12 @@ export function AddServiceDialogContent({
               </Button>
             }
           />
+          {error instanceof Error && (
+            <details>
+              <summary>Technical details</summary>
+              <p className="break-words">{error.message}</p>
+            </details>
+          )}
         </div>
       </DialogContent>
     );
@@ -246,7 +275,7 @@ export function AddServiceDialogContent({
         <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
           <DialogDescription>
-            The gateway has not supplied an engine preset to select.
+            Engine presets are supplied by the gateway.
           </DialogDescription>
         </DialogHeader>
         <div
@@ -278,9 +307,8 @@ export function AddServiceDialogContent({
           className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
         >
           <DialogDescription>
-            Register an upstream engine. Select one API-supplied preset before
-            entering its connection details. Changes apply live — no restart
-            needed.
+            Choose an engine preset, then enter its connection details.
+            Changes take effect without restarting the gateway.
           </DialogDescription>
           <div className="flex flex-col gap-4">
             {formError && (
@@ -293,10 +321,16 @@ export function AddServiceDialogContent({
                 {formError}
               </p>
             )}
+            {technicalError && (
+              <details>
+                <summary>Technical details</summary>
+                <p className="break-words">{technicalError}</p>
+              </details>
+            )}
             <Field
               label="Preset"
               required
-              help="Choose an API-supplied preset to pre-fill its declared defaults."
+              help="Choose the preset that matches your engine."
               error={fieldErrors.preset}
             >
               <Select
@@ -342,8 +376,8 @@ export function AddServiceDialogContent({
               />
             </Field>
             <Field
-              label="API key env var"
-              help="Name of an environment variable on the gateway host — never the key itself."
+              label="Key environment variable"
+              help="Enter the gateway's environment variable name, not the key."
             >
               <Input
                 value={form.api_key_env}
@@ -357,19 +391,25 @@ export function AddServiceDialogContent({
               size="sm"
               variant="outline"
               aria-busy={testing || undefined}
-              disabled={testing || !form.base_url}
+              disabled={testing || !form.base_url.trim()}
               onClick={() => void handleTest()}
             >
               {testing && <Spinner className="size-4" />}
-              Test connection
+              {testing ? "Checking this address…" : "Test connection"}
             </Button>
-            {probe && (
-              <div className="flex items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-sm">
-                <span>
+            {probe && probe.endpoint === form.base_url.trim() && (
+              <div role="status" className="rounded-[var(--radius)] border px-3 py-2 text-sm">
+                <p>
                   {probe.ok
-                    ? `Connected (HTTP ${probe.status ?? "ok"}) — ${probe.url}`
-                    : probe.error || "Connection failed"}
-                </span>
+                    ? "Connected to this address."
+                    : "The connection check failed. Check the address and try again."}
+                </p>
+                <details>
+                  <summary>Technical details</summary>
+                  <p className="break-words">{probe.url}</p>
+                  {probe.status !== null && <p>HTTP {probe.status}</p>}
+                  {probe.error && <p className="break-words">{probe.error}</p>}
+                </details>
               </div>
             )}
           </div>

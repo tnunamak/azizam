@@ -125,7 +125,7 @@ it("keeps field labels and errors associated and Cancel from submitting", async 
   await user.click(trigger);
   const name = await screen.findByRole("textbox", { name: /^Name/ });
   expect(screen.getByRole("textbox", { name: /^Base URL/ })).toBeVisible();
-  expect(screen.getByRole("textbox", { name: "API key env var" })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Key environment variable" })).toBeVisible();
   const submit = screen.getByRole("button", { name: "Add engine" }) as HTMLButtonElement;
   fireEvent.submit(submit.form!);
   expect(name).toHaveAttribute("aria-invalid", "true");

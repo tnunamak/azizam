@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   api,
+  ApiError,
   adminRegistryMutation,
   type Service,
   type ServiceRegistry,
@@ -21,6 +22,7 @@ type CheckResult = {
   ok: boolean;
   title: string;
   detail: string;
+  technical?: string;
   retry?: "test" | "detect";
 };
 
@@ -82,6 +84,7 @@ export function EngineChecks({
   const [rows, setRows] = useState<DetectedModelRow[] | null>(null);
   const [accessConfirmed, setAccessConfirmed] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyTechnical, setApplyTechnical] = useState<string | null>(null);
   const target = {
     base_url: service.config.base_url,
     host: service.config.host,
@@ -100,15 +103,17 @@ export function EngineChecks({
         retry: "test",
         title: `${service.name}: ${probe.ok ? "connection passed" : "connection failed"}`,
         detail: probe.ok
-          ? `Connected to ${probe.url} (${probe.status ?? "ok"}). This checks reachability; send a request to verify a model.`
-          : `${probe.url || endpoint}${probe.status ? ` (HTTP ${probe.status})` : ""}: ${probe.error || "Connection failed."} Check that the engine is running and this address is reachable from the gateway.`,
+          ? "This checks reachability; send a request to verify a model."
+          : "Check that the engine is running and this address is reachable from the gateway.",
+        technical: `${probe.url || endpoint}${probe.status !== null ? ` (HTTP ${probe.status})` : ""}${probe.error ? `: ${probe.error}` : ""}`,
       }),
     onError: (error) =>
       setResult({
         ok: false,
         title: `${service.name}: connection failed`,
         retry: "test",
-        detail: `${endpoint}: ${message(error)} Check the endpoint and try again.`,
+        detail: "The connection check could not finish. Check the endpoint and try again.",
+        technical: `${endpoint}: ${message(error)}`,
       }),
   });
   const detect = useMutation({
@@ -117,6 +122,7 @@ export function EngineChecks({
       setResult(null);
       setRows(null);
       setApplyError(null);
+      setApplyTechnical(null);
       setAccessConfirmed(false);
     },
     onSuccess: (detected) => {
@@ -134,7 +140,10 @@ export function EngineChecks({
           ok: detected.ok,
           retry: "detect",
           title: `${service.name}: ${detected.ok ? "no models detected" : "detection failed"}`,
-          detail: `${endpoint}: ${detected.error || "The engine returned no model names. Load a model, then detect again, or configure served models in Advanced fields."}`,
+          detail: detected.ok
+            ? "The engine returned no model names. Load a model, then detect again."
+            : "Model detection failed. Check the endpoint and try again.",
+          technical: detected.error ? `${endpoint}: ${detected.error}` : undefined,
         });
       }
     },
@@ -143,7 +152,8 @@ export function EngineChecks({
         ok: false,
         title: `${service.name}: detection failed`,
         retry: "detect",
-        detail: `${endpoint}: ${message(error)} Check the endpoint or configure served models in Advanced fields.`,
+        detail: "Model detection could not finish. Check the endpoint and try again.",
+        technical: `${endpoint}: ${message(error)}`,
       }),
   });
   const apply = useMutation({
@@ -159,10 +169,15 @@ export function EngineChecks({
         ok: true,
         title: `${service.name}: models applied`,
         detail:
-          "Public model names are saved. Existing access plans still control who can use them. Send a request with an allowed public name to verify routing.",
+          "Model names saved. Existing access plans control who can use them.",
       });
     },
-    onError: (error) => setApplyError(message(error)),
+    onError: (error) => {
+      setApplyError(error instanceof ApiError && error.status === 412
+        ? "Engine settings changed elsewhere. Refresh and try again."
+        : "Model names could not be saved. Review the names and try again.");
+      setApplyTechnical(message(error));
+    },
   });
   const busy = test.isPending || detect.isPending || apply.isPending;
 
@@ -235,6 +250,12 @@ export function EngineChecks({
               ) : undefined
             }
           />
+          {result.technical && (
+            <details>
+              <summary>Technical details</summary>
+              <p className="text-meta break-words">{result.technical}</p>
+            </details>
+          )}
         </div>
       )}
       {rows && (
@@ -243,23 +264,21 @@ export function EngineChecks({
           className="border-border min-w-0 border-t pt-4"
         >
           <h3 className="text-body font-semibold">Preview detected models</h3>
-          <p className="text-meta text-muted-foreground mt-1 break-all">
-            Detected models: {rows.map((row) => row.upstream).join(", ")}
-          </p>
           <p className="text-meta text-muted-foreground mt-1">
-            Choose the names clients will send. Existing mappings and request
-            policies are kept.
+            Choose the model names to use in requests. Existing settings are kept.
           </p>
           <div className="mt-4 grid gap-4">
             {rows.map((row, index) => (
               <div
                 key={row.upstream}
+                role="group"
+                aria-label={`Model ${index + 1}`}
                 className="grid min-w-0 gap-2 sm:grid-cols-2 sm:items-center"
               >
                 <label className="text-meta flex min-h-8 min-w-0 items-center gap-3 max-sm:min-h-11">
                   <Checkbox
                     className="max-sm:min-h-11 max-sm:min-w-11"
-                    aria-label={row.upstream}
+                    aria-label={`Include model ${index + 1}`}
                     checked={row.selected}
                     disabled={apply.isPending}
                     onCheckedChange={(checked) => {
@@ -273,9 +292,9 @@ export function EngineChecks({
                       );
                     }}
                   />
-                  <span className="min-w-0 break-all">{row.upstream}</span>
+                  Include model
                 </label>
-                <Field label={`Public name for ${row.upstream}`}>
+                <Field label="Model name">
                   <Input
                     value={row.publicName}
                     disabled={!row.selected || apply.isPending}
@@ -291,14 +310,17 @@ export function EngineChecks({
                     }}
                   />
                 </Field>
+                <details className="sm:col-span-2">
+                  <summary>Technical details</summary>
+                  <p className="text-meta break-all">Engine model name: {row.upstream}</p>
+                </details>
               </div>
             ))}
           </div>
           <div className="mt-4">
             <p className="text-meta text-muted-foreground">
-              Access plans with unrestricted or wildcard model access may
-              include these names immediately. Restricted plans need an existing
-              matching grant. No access plan is edited here.
+              Access plans that allow all models may use these models immediately.
+              Other access plans must already allow their names.
             </p>
             <label className="text-meta mt-2 flex min-h-8 items-center gap-3 max-sm:min-h-11">
               <Checkbox
@@ -323,6 +345,12 @@ export function EngineChecks({
             <p role="alert" className="text-meta text-danger mt-3 break-words">
               {applyError}
             </p>
+          )}
+          {applyError && applyTechnical && (
+            <details>
+              <summary>Technical details</summary>
+              <p className="text-meta break-words">{applyTechnical}</p>
+            </details>
           )}
           {service.editable === false ? (
             <p className="text-meta text-muted-foreground mt-3">

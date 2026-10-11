@@ -37,9 +37,9 @@ const service = {
     base_path: "/v1",
     models: [
       {
-        id: "legacy-chat",
-        model_group: "legacy-chat",
-        upstream_model: "legacy-upstream",
+        id: "existing-chat",
+        model_group: "existing-chat",
+        upstream_model: "existing-upstream",
         routing_hint: "keep-me",
       },
     ],
@@ -106,7 +106,7 @@ describe("EngineChecks", () => {
     expect(await screen.findByText("Preview detected models")).toBeVisible();
     expect(screen.getByDisplayValue("demo-chat")).toBeVisible();
     expect(
-      screen.getByText(/No access plan is edited here/i),
+      screen.getByText(/Other access plans must already allow their names/i),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Apply models" })).toBeDisabled();
     expect(adminRegistryMutationMock).not.toHaveBeenCalled();
@@ -148,7 +148,7 @@ describe("EngineChecks", () => {
     renderChecks();
     await user.click(screen.getByRole("button", { name: "Detect" }));
     await user.clear(await screen.findByDisplayValue("demo-chat"));
-    await user.type(screen.getByLabelText("Public name for demo-chat"), "chat");
+    await user.type(screen.getByLabelText("Model name"), "chat");
     await user.click(
       screen.getByRole("checkbox", {
         name: "Use existing access rules for these models",
@@ -172,9 +172,9 @@ describe("EngineChecks", () => {
           model_policy_schema_version: 1,
           models: [
             {
-              id: "legacy-chat",
-              model_group: "legacy-chat",
-              upstream_model: "legacy-upstream",
+              id: "existing-chat",
+              model_group: "existing-chat",
+              upstream_model: "existing-upstream",
               routing_hint: "keep-me",
             },
             {
@@ -193,7 +193,7 @@ describe("EngineChecks", () => {
         },
       },
     );
-    expect(await screen.findByText(/Public model names are saved/i)).toBeVisible();
+    expect(await screen.findByText("Model names saved. Existing access plans control who can use them.")).toBeVisible();
   });
 
   it("names failed connection target, status, and recovery actions", async () => {
@@ -209,6 +209,8 @@ describe("EngineChecks", () => {
     await user.click(screen.getByRole("button", { name: "Test" }));
 
     expect(await screen.findByText("Demo engine: connection failed")).toBeVisible();
+    // The address and status are one tap away, under Technical details.
+    await user.click(screen.getByText("Technical details"));
     expect(
       screen.getByText(/http:\/\/127\.0\.0\.1:18123\/v1\/models \(HTTP 503\)/),
     ).toBeVisible();
@@ -230,6 +232,7 @@ describe("EngineChecks", () => {
 
     await user.click(screen.getByRole("button", { name: "Detect" }));
     expect(await screen.findByText("Demo engine: detection failed")).toBeVisible();
+    await user.click(screen.getByText("Technical details"));
     expect(screen.getByText(/models endpoint timed out/i)).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Retry detection" }));
@@ -285,6 +288,8 @@ describe("EngineChecks managed recovery", () => {
     renderChecks({ editable: false });
     await user.click(screen.getByRole("button", { name: "Test" }));
     expect(await screen.findByText("Demo engine: connection failed")).toBeVisible();
+    // The address and status are one tap away, under Technical details.
+    await user.click(screen.getByText("Technical details"));
     expect(
       screen.queryByRole("button", { name: "Edit endpoint" }),
     ).not.toBeInTheDocument();

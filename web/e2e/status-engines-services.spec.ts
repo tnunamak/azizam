@@ -20,7 +20,7 @@ const registry = {
         protocol: "openai-compatible",
         health_endpoint: "/health",
         custom_flag: "keep-me",
-        models: { "legacy-chat": { upstream_model: "legacy-upstream" } },
+        models: { "existing-chat": { upstream_model: "existing-upstream" } },
       },
     },
     image: {
@@ -355,7 +355,7 @@ for (const theme of ["light", "dark"] as const) {
         const chatCard = engineCard(page, "Local chat engine");
         await expect(chatCard).toBeVisible();
         await expect(
-          chatCard.getByText("legacy-chat", { exact: true }),
+          chatCard.getByText("existing-chat", { exact: true }),
         ).toHaveCount(0);
         await expect(page.getByText("Local image engine")).toHaveCount(0);
         await page.getByRole("switch", { name: "Show not in use" }).click();
@@ -371,14 +371,16 @@ for (const theme of ["light", "dark"] as const) {
           .getByText("Connection and models", { exact: true })
           .click();
         await expect(
-          editSheet.getByText("legacy-chat", { exact: true }),
+          editSheet.getByText("existing-chat", { exact: true }),
         ).toBeVisible();
         await editSheet.getByRole("button", { name: "Test" }).click();
-        await expect(editSheet.getByText("Connected to")).toBeVisible();
+        await expect(editSheet.getByText(/connection passed/)).toBeVisible();
         await editSheet.getByRole("button", { name: "Detect" }).click();
         await expect(
-          editSheet.getByText("Detected models: demo-chat"),
-        ).toBeVisible();
+          editSheet
+            .getByRole("group", { name: "Model 1" })
+            .getByRole("textbox", { name: "Model name" }),
+        ).toHaveValue("demo-chat");
         await page.keyboard.press("Escape");
 
         await checkPageBasics(page, `status-${route}-seeded-${theme}-${width}`);
@@ -414,8 +416,13 @@ for (const theme of ["light", "dark"] as const) {
           page.getByText("Engine list could not be loaded"),
         ).toBeVisible();
         await expect(
-          page.getByText("Each engine's state is unknown. Registry offline"),
+          page.getByText(
+            "Each engine's state is unknown. Try loading the engine list again.",
+          ),
         ).toBeVisible();
+        // The gateway's own words stay one tap away.
+        await page.getByText("Technical details").click();
+        await expect(page.getByText("Registry offline")).toBeVisible();
         await checkPageBasics(page, `status-${route}-error-${theme}-${width}`);
       });
     }
@@ -470,6 +477,10 @@ test("engines clear live projection when status refresh fails", async ({
   await mockEngineApis(page, { statusError: true });
   await page.goto("/ui/engines/");
   await expect(page.getByText("Live status unavailable")).toBeVisible();
+  await expect(
+    page.getByText("Engine states are unknown. Try loading live status again."),
+  ).toBeVisible();
+  await page.getByText("Technical details").click();
   await expect(page.getByText("Status refresh failed")).toBeVisible();
   await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
     0,

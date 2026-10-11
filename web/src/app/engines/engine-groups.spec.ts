@@ -121,3 +121,17 @@ describe("engine capability groups", () => {
     expect(groups[1].entries[0].service.id).toBe("protocol-only");
   });
 });
+
+it("groups speech and tts together as Voice without rewriting engine names", () => {
+  const rows = [
+    service("speech", { name: "Owner Speech engine", capabilities: ["speech"] }),
+    service("tts", { name: "Owner TTS engine", capabilities: ["tts"] }),
+  ];
+  const { groups } = groupEngines(rows, new Map(), false, null);
+  expect(groups).toHaveLength(1);
+  expect(groups[0].capability).toBe("Voice");
+  expect(groups[0].entries.map(({ service }) => service.name)).toEqual([
+    "Owner Speech engine", "Owner TTS engine",
+  ]);
+  expect(humanCapabilities(["speech", "tts"])).toEqual(["Voice"]);
+});

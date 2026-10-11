@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -8,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type Service, type ServiceRegistry } from "@/lib/api";
+import { api, ApiError, type Service, type ServiceRegistry } from "@/lib/api";
 import Page from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -300,4 +302,164 @@ describe("engine dialog focus restoration", () => {
       );
     },
   );
+});
+
+describe("add-engine address checks", () => {
+  async function openAdd() {
+    vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+    vi.spyOn(api, "status").mockResolvedValue({});
+    vi.spyOn(api.services, "presets").mockResolvedValue({
+      presets: [{ id: "test-preset", label: "Test engine" }],
+    } as Awaited<ReturnType<typeof api.services.presets>>);
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: "Add engine" }));
+    const address = await screen.findByRole("textbox", { name: /^Base URL/ });
+    return { user, address };
+  }
+
+  it.each(["success", "failure"])(
+    "ignores an old probe %s after editing and preserves the newer result",
+    async (outcome) => {
+      type Probe = Awaited<ReturnType<typeof api.services.testConnection>>;
+      let resolveOld!: (probe: Probe) => void;
+      let rejectOld!: (error: Error) => void;
+      let resolveNew!: (probe: Probe) => void;
+      const old = new Promise<Probe>((resolve, reject) => {
+        resolveOld = resolve; rejectOld = reject;
+      });
+      const current = new Promise<Probe>((resolve) => { resolveNew = resolve; });
+      const test = vi.spyOn(api.services, "testConnection")
+        .mockReturnValueOnce(old).mockReturnValueOnce(current);
+      const { user, address } = await openAdd();
+      fireEvent.change(address, { target: { value: "http://first.test" } });
+      await user.click(screen.getByRole("button", { name: "Test connection" }));
+      expect(screen.getByRole("button", { name: "Checking this address…" })).toBeDisabled();
+      fireEvent.change(address, { target: { value: "http://second.test" } });
+      await user.click(screen.getByRole("button", { name: "Test connection" }));
+      await act(async () => {
+        if (outcome === "success") {
+          resolveOld({ ok: true, status: 200, error: "", url: "http://first.test" });
+        } else rejectOld(new Error("Old probe exception"));
+      });
+      expect(screen.getByRole("button", { name: "Checking this address…" })).toBeDisabled();
+      expect(screen.queryByText("Connected to this address.")).toBeNull();
+      expect(screen.queryByText("Old probe exception")).toBeNull();
+      await act(async () => {
+        resolveNew({ ok: true, status: 200, error: "", url: "http://second.test" });
+      });
+      expect(screen.getByText("Connected to this address.")).toBeVisible();
+      expect(test).toHaveBeenNthCalledWith(2, { base_url: "http://second.test" });
+      const details = screen.getByText("HTTP 200").closest("details")!;
+      expect(details).not.toHaveAttribute("open");
+      fireEvent.change(address, { target: { value: "http://third.test" } });
+      expect(screen.queryByText("Connected to this address.")).toBeNull();
+    },
+  );
+
+  it("clears probe state on close and ignores responses after reopening", async () => {
+    type Probe = Awaited<ReturnType<typeof api.services.testConnection>>;
+    let resolve!: (probe: Probe) => void;
+    vi.spyOn(api.services, "testConnection").mockReturnValue(
+      new Promise<Probe>((done) => { resolve = done; }),
+    );
+    const { user, address } = await openAdd();
+    expect(screen.getByText("Choose the preset that matches your engine.")).toBeVisible();
+    expect(screen.getByLabelText("Key environment variable")).toBeVisible();
+    fireEvent.change(address, { target: { value: "http://first.test" } });
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Add engine" }));
+    await act(async () => {
+      resolve({ ok: true, status: 200, error: "", url: "http://first.test" });
+    });
+    expect(screen.queryByText("Connected to this address.")).toBeNull();
+    expect(screen.getByRole("textbox", { name: /^Base URL/ })).toHaveValue("");
+  });
+
+  it("keeps raw connection failures in closed technical details", async () => {
+    vi.spyOn(api.services, "testConnection").mockRejectedValue(
+      new Error("InternalError HTTP 500"),
+    );
+    const { user, address } = await openAdd();
+    fireEvent.change(address, { target: { value: "http://first.test" } });
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText(
+      "The connection check failed. Check the address and try again.",
+    )).toBeVisible();
+    expect(screen.getByText("InternalError HTTP 500").closest("details")).not.toHaveAttribute("open");
+  });
+});
+
+it("uses Voice groups and leaves owner-authored capability names unchanged", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue({
+    schema_version: 1,
+    services: { voice: { ...service("voice"), name: "My Speech engine", capabilities: ["speech"] } },
+  });
+  vi.spyOn(api, "status").mockResolvedValue({});
+  mount();
+  const heading = await screen.findByRole("heading", { name: "My Speech engine" });
+  expect(screen.getByRole("heading", { name: "Voice" })).toBeVisible();
+  expect(within(heading.closest("tr")!).queryByText("Voice")).toBeNull();
+  expect(within(heading.closest("tr")!).queryByText("Speech")).toBeNull();
+});
+
+it("keeps raw save failures under technical details", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  vi.spyOn(api, "status").mockResolvedValue({});
+  vi.spyOn(api.services, "edit").mockRejectedValue(new ApiError("internal", "SchemaError HTTP 500", 500));
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /^primary\b/ }));
+  await user.click(screen.getByRole("button", { name: "Save engine" }));
+  expect(await screen.findByText(
+    "Engine settings could not be saved. We could not identify the cause. Try saving again.",
+  )).toBeVisible();
+  expect(screen.getByText("SchemaError HTTP 500").closest("details")).not.toHaveAttribute("open");
+});
+
+it("names a refused save and keeps the gateway's reason under technical details", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  vi.spyOn(api, "status").mockResolvedValue({});
+  vi.spyOn(api.services, "edit").mockRejectedValue(new ApiError("invalid_service", "a name is required", 400));
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /^primary\b/ }));
+  await user.click(screen.getByRole("button", { name: "Save engine" }));
+  expect(await screen.findByText(
+    "The gateway did not accept these engine settings. Check the fields and save again.",
+  )).toBeVisible();
+  expect(screen.getByText("a name is required").closest("details")).not.toHaveAttribute("open");
+});
+
+it("shows each detected model once with its engine name in technical details", async () => {
+  const { EngineChecks } = await vi.importActual<typeof import("./engine-checks")>("./engine-checks");
+  vi.spyOn(api.services, "detectModels").mockResolvedValue({
+    ok: true, models: ["first-model", "second-model"], error: "",
+  } as Awaited<ReturnType<typeof api.services.detectModels>>);
+  const user = userEvent.setup();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <EngineChecks service={service("primary")} endpoint="http://localhost:18090"
+        onSaved={vi.fn()} onEdit={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Detect" }));
+  const first = await screen.findByRole("group", { name: "Model 1" });
+  const second = screen.getByRole("group", { name: "Model 2" });
+  expect(screen.getAllByRole("textbox", { name: "Model name" })).toHaveLength(2);
+  expect(within(first).getByRole("textbox", { name: "Model name" })).toHaveValue("first-model");
+  expect(within(second).getByRole("textbox", { name: "Model name" })).toHaveValue("second-model");
+  expect(screen.queryByText(/^Detected models:/)).toBeNull();
+  expect(screen.getByText("Engine model name: first-model")).not.toBeVisible();
+  expect(screen.getByText("Engine model name: second-model")).not.toBeVisible();
+  await user.click(within(first).getByText("Technical details"));
+  expect(screen.getByText("Engine model name: first-model")).toBeVisible();
+  await user.clear(within(first).getByRole("textbox", { name: "Model name" }));
+  await user.type(within(first).getByRole("textbox", { name: "Model name" }), "Friendly model");
+  expect(within(second).getByRole("textbox", { name: "Model name" })).toHaveValue("second-model");
+  expect(screen.getByText(/Access plans that allow all models may use these models immediately/)).toBeVisible();
 });

@@ -148,7 +148,7 @@ test("a stale apply ETag is rejected by the fixture registry and retry preserves
   const sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("button", { name: "Detect", exact: true }).click();
   await sheet
-    .getByLabel("Public name for demo-chat")
+    .getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name")
     .fill("conflict-retry-chat");
   await sheet.getByLabel("Use existing access rules for these models").check();
   const session = await (await page.request.get("/admin/api/session")).json();
@@ -184,7 +184,7 @@ test("a stale apply ETag is rejected by the fixture registry and retry preserves
   await sheet.getByRole("button", { name: "Apply models" }).click();
   expect((await response).status()).toBe(412);
   await expect(sheet.getByRole("alert")).toBeVisible();
-  await expect(sheet.getByLabel("Public name for demo-chat")).toHaveValue(
+  await expect(sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name")).toHaveValue(
     "conflict-retry-chat",
   );
   await sheet.getByRole("button", { name: "Apply models" }).click();

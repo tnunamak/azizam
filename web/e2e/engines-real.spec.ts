@@ -70,14 +70,14 @@ test("real registry journey preserves disabled state and unknown config through 
   );
   expect(seeded.ok()).toBe(true);
 
-  const withLegacyModels = await registry();
-  expect(withLegacyModels.etag).toBeTruthy();
-  if (!withLegacyModels.etag) {
+  const withExistingModels = await registry();
+  expect(withExistingModels.etag).toBeTruthy();
+  if (!withExistingModels.etag) {
     throw new Error("Registry response did not include an ETag after seeding");
   }
-  withLegacyModels.services[record.id].config.models = {
-    "legacy-chat": {
-      upstream_model: "legacy-upstream",
+  withExistingModels.services[record.id].config.models = {
+    "existing-chat": {
+      upstream_model: "existing-upstream",
       routing_hint: "keep-me",
     },
     slot: {
@@ -86,19 +86,19 @@ test("real registry journey preserves disabled state and unknown config through 
       routing_hint: "keep-slot",
     },
   };
-  const { etag: legacyEtag, ...legacyRegistry } = withLegacyModels;
-  const legacySeeded = await page.request.put(
+  const { etag: existingEtag, ...existingRegistry } = withExistingModels;
+  const existingSeeded = await page.request.put(
     "/admin/api/operator/service-registry",
     {
       headers: {
         "x-azizam-csrf": session.actor.csrf_token,
         "x-azizam-admin-action": "1",
-        "if-match": legacyEtag,
+        "if-match": existingEtag,
       },
-      data: legacyRegistry,
+      data: existingRegistry,
     },
   );
-  expect(legacySeeded.ok()).toBe(true);
+  expect(existingSeeded.ok()).toBe(true);
   await page.reload();
   let card = page.locator(`tr[data-engine-id="${record.id}"]`);
   await page.getByRole("switch", { name: "Show not in use" }).click();
@@ -109,7 +109,7 @@ test("real registry journey preserves disabled state and unknown config through 
     .click();
   let sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("button", { name: "Test", exact: true }).click();
-  await expect(sheet.getByText(/Connected to/).first()).toBeVisible();
+  await expect(sheet.getByText(/connection passed/).first()).toBeVisible();
   await page.keyboard.press("Escape");
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
@@ -117,8 +117,11 @@ test("real registry journey preserves disabled state and unknown config through 
     .click();
   sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("button", { name: "Detect", exact: true }).click();
-  await expect(sheet.getByText(/Detected models:/).first()).toBeVisible();
-  await sheet.getByLabel("Public name for demo-chat").fill("journey-chat");
+  await expect(sheet.getByText("Preview detected models")).toBeVisible();
+  const detected = sheet.getByRole("group", { name: "Model 1" });
+  await detected.getByText("Technical details").click();
+  await expect(detected.getByText("Engine model name: demo-chat")).toBeVisible();
+  await detected.getByRole("textbox", { name: "Model name" }).fill("journey-chat");
   await sheet.getByLabel("Use existing access rules for these models").check();
   const applied = page.waitForResponse(
     (response) =>
@@ -177,9 +180,9 @@ test("real registry journey preserves disabled state and unknown config through 
   expect(after.config.lifecycle).toEqual(lifecycle);
   expect(after.config.models).toEqual([
     expect.objectContaining({
-      id: "legacy-chat",
-      model_group: "legacy-chat",
-      upstream_model: "legacy-upstream",
+      id: "existing-chat",
+      model_group: "existing-chat",
+      upstream_model: "existing-upstream",
       routing_hint: "keep-me",
     }),
     expect.objectContaining({

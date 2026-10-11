@@ -20,7 +20,7 @@ const registry = {
         protocol: "openai-compatible",
         health_endpoint: "/health",
         custom_flag: "keep-me",
-        models: { "legacy-chat": { upstream_model: "legacy-upstream" } },
+        models: { "existing-chat": { upstream_model: "existing-upstream" } },
       },
     },
     image: {
@@ -357,7 +357,7 @@ for (const theme of ["light", "dark"] as const) {
           initialChat.getByRole("heading", { name: "Local chat engine" }),
         ).toBeVisible();
         await expect(
-          initialChat.getByText("legacy-chat", { exact: true }),
+          initialChat.getByText("existing-chat", { exact: true }),
         ).toHaveCount(0);
         await expect(page.getByText("Local image engine")).toHaveCount(0);
         await page.getByRole("switch", { name: "Show not in use" }).click();
@@ -374,7 +374,7 @@ for (const theme of ["light", "dark"] as const) {
           .getByText("Connection and models", { exact: true })
           .click();
         await expect(
-          editSheet.getByText("legacy-chat", { exact: true }),
+          editSheet.getByText("existing-chat", { exact: true }),
         ).toBeVisible();
         await editSheet.getByRole("button", { name: "Test" }).click();
         await expect(editSheet.getByText("Connected to")).toBeVisible();

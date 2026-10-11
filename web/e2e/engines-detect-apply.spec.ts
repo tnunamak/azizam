@@ -295,10 +295,12 @@ for (const theme of ["light", "dark"]) {
       await expect(
         sheet.getByRole("heading", { name: "Preview detected models" }),
       ).toBeVisible();
-      await sheet.getByLabel("Public name for strict-chat").fill(publicName);
+      await sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: strict-chat" }).getByLabel("Model name").fill(publicName);
       await expect(
         sheet.getByRole("button", { name: "Apply models" }),
       ).toBeDisabled();
+      await expect(sheet.getByText(/^Detected models:/)).toHaveCount(0);
+      await expect(sheet.getByText("Engine model name: strict-chat")).not.toBeVisible();
       await checkVisuals(page, `engines-preview-${suffix}`);
       if (width === 390) {
         const consent = sheet.getByLabel(
@@ -463,9 +465,11 @@ for (const theme of ["light", "dark"]) {
         .locator("[data-slot='sheet-description']")
         .textContent())!;
       await expect(alert).toContainText(`${friendlyName}: connection failed`);
-      await expect(sheet.getByRole("alert")).toContainText(
-        "http://127.0.0.1:18498/health (HTTP 503)",
-      );
+      await expect(sheet.getByRole("alert")).not.toContainText("HTTP");
+      const technical = sheet.locator("details").filter({ hasText: "HTTP 503" });
+      await expect(technical).not.toHaveAttribute("open");
+      await technical.getByText("Technical details", { exact: true }).click();
+      await expect(technical).toContainText("http://127.0.0.1:18498/health (HTTP 503)");
       await expect(sheet.getByRole("alert")).toContainText(
         "reachable from the gateway",
       );
@@ -504,11 +508,11 @@ test("a registry conflict preserves the detected-model preview for retry", async
     .click();
   const sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("button", { name: "Detect", exact: true }).click();
-  await sheet.getByLabel("Public name for demo-chat").fill("draft-chat");
+  await sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name").fill("draft-chat");
   await sheet.getByLabel("Use existing access rules for these models").check();
   await sheet.getByRole("button", { name: "Apply models" }).click();
-  await expect(sheet.getByRole("alert")).toContainText("The registry changed");
-  await expect(sheet.getByLabel("Public name for demo-chat")).toHaveValue(
+  await expect(sheet.getByRole("alert")).toContainText("Engine settings changed elsewhere");
+  await expect(sheet.getByRole("group", { name: /^Model \d+$/ }).filter({ hasText: "Engine model name: demo-chat" }).getByLabel("Model name")).toHaveValue(
     "draft-chat",
   );
   await expect(
