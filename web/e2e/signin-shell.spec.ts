@@ -145,7 +145,7 @@ for (const route of [
   });
 }
 
-test("named provider is first, keyboard focus is visible, and long names wrap at 200%", async ({
+test("named provider is first, keyboard focus is visible, and provider text wraps at 200%", async ({
   page,
 }) => {
   await page.route("**/auth/api/options*", (route) =>
@@ -166,6 +166,7 @@ test("named provider is first, keyboard focus is visible, and long names wrap at
   await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
+  await page.getByRole("heading", { level: 1 }).click();
   for (const theme of ["light", "dark"] as const) {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -186,6 +187,11 @@ test("named provider is first, keyboard focus is visible, and long names wrap at
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await expect(provider).toHaveCSS("white-space", "normal");
+  await page.screenshot({
+    path: path.join(screenshotDir, "provider-dark-390-text-200.png"),
+    fullPage: true,
+  });
   const result = await new AxeBuilder({ page }).analyze();
   expect(
     result.violations.filter((v) =>
@@ -222,8 +228,10 @@ for (const [state, code, status, message, expected] of [
       .getByLabel("Password", { exact: true })
       .fill("Browser test password");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText(expected);
-    await expect(page.getByRole("alert")).toBeFocused();
+    await expect(page.getByRole("main").getByRole("alert")).toContainText(
+      expected,
+    );
+    await expect(page.getByRole("main").getByRole("alert")).toBeFocused();
   });
 }
 
@@ -237,11 +245,15 @@ test("expired reset and provider failure each explain the next step", async ({
     }),
   );
   await page.goto("/ui/sign-in/#reset=expired-fixture");
-  await page.getByLabel("New password").fill("A long new browser password");
+  await page
+    .getByLabel("New password", { exact: true })
+    .fill("A long new browser password");
   await page.getByRole("button", { name: "Save password" }).click();
-  await expect(page.getByRole("alert")).toContainText("Ask for a new link.");
+  await expect(page.getByRole("main").getByRole("alert")).toContainText(
+    "Ask for a new link.",
+  );
   await page.goto("/ui/sign-in/?error=provider");
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(page.getByRole("main").getByRole("alert")).toContainText(
     "Single sign-on didn’t finish.",
   );
 });

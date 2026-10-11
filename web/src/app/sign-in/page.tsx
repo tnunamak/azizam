@@ -93,7 +93,7 @@ export default function SignInPage() {
       aria-labelledby="sign-in-title"
       className="mx-auto w-full max-w-md py-6 sm:py-12"
     >
-      <div className="bg-card rounded-card border p-6 sm:p-8">
+      <div className="bg-card rounded-panel border p-6 sm:p-8">
         <h1
           id="sign-in-title"
           className="text-title font-semibold tracking-tight"
@@ -140,7 +140,7 @@ export default function SignInPage() {
                 invited, ask your host to finish setup.
               </p>
               <Button
-                className="h-auto min-h-11 w-full py-2 whitespace-normal"
+                className="h-auto min-h-11 w-full py-2 whitespace-normal!"
                 asChild
               >
                 <a href="/ui/setup/">Set up your gateway</a>
@@ -156,7 +156,7 @@ export default function SignInPage() {
               )}
               {hasProvider && (
                 <Button
-                  className="h-auto min-h-11 w-full py-2 whitespace-normal"
+                  className="h-auto min-h-11 w-full py-2 whitespace-normal!"
                   asChild
                 >
                   <a href={data.oidc_url}>{providerLabel}</a>
@@ -223,7 +223,7 @@ export default function SignInPage() {
                   <Button
                     type="submit"
                     variant={hasProvider ? "outline" : "default"}
-                    className="h-auto min-h-11 w-full py-2 whitespace-normal"
+                    className="h-auto min-h-11 w-full py-2 whitespace-normal!"
                     disabled={login.isPending}
                   >
                     {login.isPending

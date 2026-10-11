@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
@@ -419,7 +420,7 @@ def test_oidc_login_explicit_default_https_port_matches_host_without_port(
 
 
 def test_browser_provider_decline_returns_to_signin_without_a_session(oidc_gateway):
-    with _client() as client:
+    with closing(_client()) as client:
         response = client.get("/login?return_to=/ui/usage/?receipt=one", follow_redirects=False)
         state_value = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
         record = proxy.ADMIN_OIDC_STATES[state_value]
@@ -440,7 +441,7 @@ def test_browser_provider_decline_returns_to_signin_without_a_session(oidc_gatew
 
 
 def test_browser_invalid_state_cannot_supply_a_return_target(oidc_gateway):
-    with _client() as client:
+    with closing(_client()) as client:
         failure = client.get(
             "/admin/oidc/callback?state=unknown&error=denied&return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False,
         )
@@ -453,7 +454,7 @@ def test_browser_provider_start_failure_keeps_safe_return_target(oidc_gateway, m
     async def unavailable():
         raise ValueError("private provider detail")
     monkeypatch.setattr(proxy, "_admin_oidc_config_with_discovery", unavailable)
-    with _client() as client:
+    with closing(_client()) as client:
         failure = client.get("/login?return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False)
         assert failure.status_code == 303
         assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/ui/home/"]
