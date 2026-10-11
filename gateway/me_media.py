@@ -1333,7 +1333,8 @@ def _usage_summary(
             receipt_list.append(visible)
     if scope_label == "everyone":
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
-    coverage_start = max(start, int(time.time()) - receipt_store.RETAIN_S)
+    retention_days = receipt_store.retention_days(admin_db_path)
+    coverage_start = max(start, int(time.time()) - retention_days * 86400) if retention_days is not None else start
     return {
         "schema_version": 1, "period": "month", "scope": scope_label,
         "source": source_filter, "sources": sources,
@@ -1344,7 +1345,7 @@ def _usage_summary(
         "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
-        "retention_days": receipt_store.RETAIN_S // 86400,
+        "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": "Requests cover retained receipts; media totals also include retained assets.",
         "truncated": False, "receipts_limit": USAGE_RECEIPT_LIMIT,

@@ -978,7 +978,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["requests"], 0)
         self.assertFalse(usage["remote_spend_available"])
         self.assertEqual(usage["remote_spend"], 0)
-        self.assertEqual(usage["retention_days"], 14)
+        self.assertIsNone(usage["retention_days"])
         self.assertIn("coverage_start", usage)
         self.assertEqual(usage["people"], [])
 

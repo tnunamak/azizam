@@ -13012,9 +13012,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Responses store failed to start: {e}", flush=True)
 
+    receipts_maintenance_stop = asyncio.Event()
+    receipts_maintenance_task = None
     try:
         receipt_store.init_db()
-        pruned = receipt_store.prune()
+        pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
+        receipts_maintenance_task = asyncio.create_task(
+            _receipts_maintenance_loop(receipts_maintenance_stop)
+        )
         print(
             f"[proxy] Receipt store initialized (db={receipt_store.DB_PATH}, pruned={pruned})",
             flush=True,
@@ -13177,6 +13182,13 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         except Exception:
+            pass
+    if receipts_maintenance_task is not None:
+        receipts_maintenance_stop.set()
+        receipts_maintenance_task.cancel()
+        try:
+            await receipts_maintenance_task
+        except asyncio.CancelledError:
             pass
     # No engine processes to stop — the gateway never owned tabby's existence.
 
@@ -25214,6 +25226,18 @@ async def status_favicon():
 # computer_use) are rejected with 400 — the proxy backs onto a local llama
 # server with no first-party hosted-tool surface.
 # =============================================================================
+
+async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
+    """Enforce the saved owner choice without blocking requests."""
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=3600)
+        except asyncio.TimeoutError:
+            try:
+                await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
+            except Exception as exc:
+                print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
+
 
 async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
     """Hourly prune of expired Responses rows. Bounded disk."""

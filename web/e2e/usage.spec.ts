@@ -9,7 +9,7 @@ const seededSummary = {
   paid_requests: 3,
   spend_measured_requests: 3,
   spend_total_requests: 4,
-  retention_days: 14,
+  retention_days: null,
   coverage_start: "2026-10-01T00:00:00Z",
   coverage_note: "Provider spend is available for matched receipts.",
   by_day: [
@@ -71,7 +71,7 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
   await page.getByText("Receipt coverage", { exact: true }).click();
-  await expect(page.getByText("Receipts are kept for 14 days.")).toBeVisible();
+  await expect(page.getByText("Receipts are kept until you delete them.")).toBeVisible();
   await expect(page.getByText("Coverage starts Oct 1, 2026.")).toBeVisible();
   await expect(
     page.getByText("Provider spend is available for matched receipts."),
@@ -146,7 +146,7 @@ for (const theme of ["light", "dark"] as const) {
             media_count: 0,
             remote_spend: 0,
             remote_spend_available: false,
-            retention_days: 14,
+            retention_days: null,
             by_day: [],
             by_model: [],
             receipts: [],

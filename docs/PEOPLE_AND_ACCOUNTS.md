@@ -168,9 +168,10 @@ restart procedure at deployment. This lane does not restart any service.
 Sign-in and invitation responses use the saved instance name from Settings,
 with the same bootstrap defaults as discovery; name changes apply immediately.
 
-Monthly request usage is `null` until a complete monthly measurement source
-exists. The diagnostic receipt store retains 14 days, so the UI says
-“Not measured yet”. Access-plan cards do not fabricate a requests/day limit
+Receipts are kept forever by default. The owner can choose 1 year, 90 days or
+30 days in Settings → Receipts, with a deletion count before Save. Usage reports
+the chosen retention. See [receipt retention](ops/RECEIPT_RETENTION.md) for storage
+maintenance. Access-plan cards do not fabricate a requests/day limit
 or claim that cloud fallback permission is a paid-provider spending policy.
 Optional passkeys are deferred because no WebAuthn library is in the locked
 dependencies. Links are shared by the owner; email delivery is not added.

@@ -491,10 +491,10 @@ class TestReceiptStore(unittest.TestCase):
         now = int(time.time())
         old = _make_receipt()
         fresh = _make_receipt()
-        receipt_store.record(old, created_at=now - (receipt_store.RETAIN_S + 3600), path=self.db)
+        receipt_store.record(old, created_at=now - (30 * 86400 + 3600), path=self.db)
         receipt_store.record(fresh, created_at=now, path=self.db)
 
-        deleted = receipt_store.prune(path=self.db)
+        deleted = receipt_store.prune(retain_s=30 * 86400, path=self.db)
         self.assertEqual(deleted, 1)
         self.assertEqual(receipt_store.count(self.db), 1)
         self.assertIsNone(receipt_store.get(old.request_id, path=self.db))
