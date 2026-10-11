@@ -4372,6 +4372,12 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             status_code=503,
             error_type="service_unavailable",
         )
+    admission = _dispatch_admission_response(
+        "speech.synthesis", auth_context=auth_context, service_id="tts",
+        service_available=TTS_ENABLED, resource_class="audio", receipt=receipt,
+    )
+    if admission is not None:
+        return admission
     service_response = _service_availability_response("tts", service_label="TTS")
     if service_response is not None:
         return service_response
@@ -4471,6 +4477,13 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         headers["content-type"] = "application/json"
     except (json.JSONDecodeError, AttributeError):
         pass
+
+    admission = _dispatch_admission_response(
+        'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
+        service_available=TTS_ENABLED, resource_class='audio', receipt=receipt,
+    )
+    if admission is not None:
+        return admission
 
     not_ready = await _ensure_speech_service_ready(tts_service_id, label="TTS engine")
     if not_ready is not None:
@@ -8045,6 +8058,13 @@ async def proxy_comfy_request(
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
+    admission = _dispatch_admission_response(
+        'image.generate', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='image',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
@@ -8469,6 +8489,13 @@ async def proxy_comfy_edit_request(
     receipt: RouteReceipt | None = None,
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
+    admission = _dispatch_admission_response(
+        'image.edit', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='image',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
@@ -9095,6 +9122,13 @@ async def proxy_comfy_variations_request(
     `proxy_config.yml`), reusing its entire upload/inject/adaptive-batching
     pipeline rather than duplicating it.
     """
+    admission = _dispatch_admission_response(
+        'image.variation', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='image',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
@@ -10841,6 +10875,13 @@ async def proxy_comfy_video_create(
     `body_override` and `remixed_from_video_id` let the remix routes reuse this
     pipeline with an already-parsed body.
     """
+    admission = _dispatch_admission_response(
+        'video.generate', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='video',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -11821,6 +11862,13 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
     (overlap window, default 1), `model`, `seed`, `size`, `negative_prompt`, and
     `extensions.com.azizam.workflow.{state_ledger,context_strength}`.
     """
+    admission = _dispatch_admission_response(
+        'video.extend', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='video',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
     service_response = _service_availability_response("comfyui", service_label="ComfyUI")
@@ -12628,6 +12676,13 @@ async def proxy_comfy_video_remix(
     resource reports `video-remix`. Gateway extras (`seed`, `seconds`, `size`,
     `negative_prompt`) are accepted as top-level fields.
     """
+    admission = _dispatch_admission_response(
+        'video.remix', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='video',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -12679,6 +12734,13 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     completed gateway video (`{"id": ...}` as JSON, or `video[id]` in a form).
     An uploaded clip gives `remixed_from_video_id: null`.
     """
+    admission = _dispatch_admission_response(
+        'video.edit', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='video',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
     service_response = _service_availability_response("comfyui", service_label="ComfyUI")
@@ -14529,7 +14591,11 @@ class _SessionMakeRuntime:
             token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or time.time()))
             gate_token = _MAKE_PUBLISH_GATE.set(gate)
             try:
-                response = await _cancellable_make_call(gate, call(request, auth_context, receipt=receipt))
+                worker_token = _ADMISSION_WORKER.set(True)
+                try:
+                    response = await _cancellable_make_call(gate, call(request, auth_context, receipt=receipt))
+                finally:
+                    _ADMISSION_WORKER.reset(worker_token)
             finally:
                 _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
@@ -14730,6 +14796,14 @@ def _decision_provider_context() -> dict[str, Any]:
 
 
 async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str, Any], request_id: str) -> decisions_api.DecisionDispatchResult:
+    admission = _model_dispatch_admission_response(
+        auth, body.get("model"), intent="decision.systemone", resource_class="decision",
+    )
+    if admission is not None:
+        return decisions_api.DecisionDispatchResult(
+            body=json.loads(admission.body), status_code=admission.status_code,
+            headers=dict(admission.headers),
+        )
     try:
         if decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), body.get("model")) is not None:
             return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
@@ -14739,6 +14813,14 @@ async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str,
 
 
 async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -> Response:
+    provider = decision_provider_execution.openai_decisions_provider(ADMIN_STORE.get_service_registry())
+    admission = _dispatch_admission_response(
+        "decision.decide", auth_context=auth, resource_class="decision",
+        service_id=provider.id if provider else None,
+        service_available=provider.configured if provider else None,
+    )
+    if admission is not None:
+        return admission
     return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
 
 
@@ -15042,6 +15124,12 @@ async def _run_identity_job(
     job_id: str, shim: Any, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
 ) -> None:
     async with _identity_job_semaphore:
+        admission = _media_job_admission_response(
+            "image.edit", count_queue=False, auth_context=auth_context,
+        )
+        if admission is not None:
+            _identity_job_failed(job_id, _admission_refusal_message(admission))
+            return
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_RUNNING, progress=1,
@@ -15051,7 +15139,11 @@ async def _run_identity_job(
             return
         req.on_progress = _identity_job_progress(job_id)
         try:
-            result = await app.state.identity_execute(auth_context, req)
+            worker_token = _ADMISSION_WORKER.set(True)
+            try:
+                result = await app.state.identity_execute(auth_context, req)
+            finally:
+                _ADMISSION_WORKER.reset(worker_token)
             item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
             asset.update(identity_api.scene_extras(result))
@@ -16460,6 +16552,7 @@ def _effective_media_job_admission_cfg() -> dict[str, Any]:
         "disabled_resource_classes",
         "reserved_tokens",
         "max_queue_depth",
+        "max_app_concurrency",
         "retry_after_seconds",
         "queue_retry_after_seconds",
         "scan_limit",
@@ -18851,6 +18944,13 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     if await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service") is not None:
         return await _deny_realtime(websocket, _tts_error("The Realtime service could not be started.", 503, "backend_unavailable"))
+
+    admission = _dispatch_admission_response(
+        "audio.realtime", auth_context=auth_context, resource_class="audio",
+        service_id=_REALTIME_SERVICE_ID, service_available=True,
+    )
+    if admission is not None:
+        return await _deny_realtime(websocket, admission)
 
     url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
     try:
@@ -21449,6 +21549,13 @@ async def _run_image_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        admission = _media_job_admission_response(
+            "image.generate", count_queue=False, auth_context=auth_context,
+        )
+        if admission is not None:
+            _mark_image_media_job_failed(job_id, _admission_refusal_message(admission))
+            return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -21495,7 +21602,11 @@ async def _run_image_media_job(job_id: str) -> None:
                 # Deletion fences must survive copied bodies and worker retries.
                 token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or job["created_at"]))
                 try:
-                    response = await proxy_comfy_request(request_shim, auth_context, receipt=receipt)
+                    worker_token = _ADMISSION_WORKER.set(True)
+                    try:
+                        response = await proxy_comfy_request(request_shim, auth_context, receipt=receipt)
+                    finally:
+                        _ADMISSION_WORKER.reset(worker_token)
                 finally:
                     _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
                 finish_image_route_receipt(receipt, response)
@@ -21708,6 +21819,8 @@ def _media_job_prompt_body(payload: Mapping[str, Any], body: Mapping[str, Any]) 
     return result
 
 
+_ADMISSION_WORKER: contextvars.ContextVar[bool] = contextvars.ContextVar("admission_worker", default=False)
+
 _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
 # Every intent the gateway runs as a media job, and its admission resource
 # class. Jobs with these intents count toward the media queue depth.
@@ -21777,6 +21890,89 @@ def _media_job_queue_depth(
     return depth
 
 
+def _dispatch_admission_response(
+    intent: str, *, auth_context: AuthContext | None = None,
+    service_id: str | None = None, service_available: bool | None = None,
+    resource_class: str, protocol: str = "openai", receipt: RouteReceipt | None = None,
+) -> Response | None:
+    """Apply configured admission before execution, without guessing runtime load.
+
+    Availability is a declaration of route configuration, never a health/GPU
+    measurement. Direct requests have no observed queue or app occupancy. A
+    configured limit on either therefore fails closed through the evaluator.
+    With no admission settings, the existing dispatch owns availability errors.
+    """
+    cfg = _effective_media_job_admission_cfg()
+    override = _operator_service_availability_overrides().get(service_id, {})
+    if not cfg and not override:
+        return None
+    state_name = str(override.get("state") or "").strip().lower()
+    if state_name in {"disabled", "maintenance", "draining"}:
+        service_available = False
+    elif state_name in {"available", "degraded"}:
+        service_available = True
+    if service_available is None and service_id:
+        service = (config.get("backends") or {}).get(service_id)
+        if isinstance(service, Mapping):
+            service_available = service.get("enabled", True) is not False
+    identity = auth_context.identity if auth_context is not None else None
+    queue_limit = None if _ADMISSION_WORKER.get() else _optional_int_config(cfg, "max_queue_depth")
+    queue_key = _MEDIA_JOB_QUEUE_KEY if resource_class in {"image", "video", "audio"} and service_id == "comfyui" else intent
+    queue_depths = ({queue_key: _media_job_queue_depth(queue_limit, admission_cfg=cfg)}
+                    if queue_limit is not None and queue_key == _MEDIA_JOB_QUEUE_KEY else {})
+    decision = resource_admission_http.advise_route_admission(
+        intent=intent, resource_class=resource_class,
+        service_available=service_available, service_degraded=state_name == "degraded",
+        service_retry_after=_optional_int_config(override, "retry_after_seconds"),
+        service_reasons=_string_tuple_config(override, "reason"),
+        app_id=identity.app_id if identity else (receipt.app_id if receipt else None),
+        queue_key=queue_key, queue_depths=queue_depths,
+        disabled_intents=_string_tuple_config(cfg, "disabled_intents"),
+        disabled_resource_classes=_string_tuple_config(cfg, "disabled_resource_classes"),
+        reserved_tokens=_string_tuple_config(cfg, "reserved_tokens"),
+        max_queue_depth=queue_limit,
+        max_app_concurrency=cfg.get("max_app_concurrency"),
+        constraint_retry_after=_optional_int_config(cfg, "retry_after_seconds"),
+        load_retry_after=_optional_int_config(cfg, "queue_retry_after_seconds") or 30,
+    )
+    evidence = decision.details.as_dict(decision.outcome.value)
+    evidence["wait_deadline"] = time.time() + 60
+    if receipt is not None:
+        receipt.resource_decision = evidence
+    if decision.allowed:
+        return None
+    advised = resource_admission_http.admission_http_response(
+        decision, wait_deadline=evidence["wait_deadline"], protocol=protocol,
+    )
+    return Response(content=json.dumps(advised.body), status_code=advised.status_code,
+                    media_type="application/json", headers=dict(advised.headers))
+
+
+def _model_dispatch_admission_response(
+    auth_context: AuthContext, model: Any, *, intent: str = "chat.generate",
+    resource_class: str = "chat", protocol: str = "openai",
+) -> Response | None:
+    if not _effective_media_job_admission_cfg() and not _operator_service_availability_overrides():
+        return None
+    # Resolution is declarative. Do not probe or start a backend to admit work.
+    service_id = None
+    available = None
+    provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), model)
+    if provider is not None:
+        service_id, available = provider.id, provider.configured
+    else:
+        try:
+            target = _resolve_request_target(model)
+        except AliasPolicyResolutionError:
+            target = None
+        if target is not None:
+            service_id = target.logical_service_id
+    return _dispatch_admission_response(
+        intent, auth_context=auth_context, service_id=service_id,
+        service_available=available, resource_class=resource_class, protocol=protocol,
+    )
+
+
 def _media_job_admission_response(
     intent: str, *, count_queue: bool = True, receipt: RouteReceipt | None = None,
     auth_context: AuthContext | None = None, path: str = "/gateway/v1/media/jobs",
@@ -21814,6 +22010,9 @@ def _media_job_admission_response(
         or (30 if (not COMFY_ENABLED or service_blocked) else None),
         service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
+        app_id=(auth_context.identity.app_id if auth_context and auth_context.identity
+                else receipt.app_id if receipt else None),
+        max_app_concurrency=admission_cfg.get("max_app_concurrency"),
         queue_key=_MEDIA_JOB_QUEUE_KEY,
         requires_gpu=True,
         disabled_intents=_string_tuple_config(admission_cfg, "disabled_intents"),
@@ -21978,6 +22177,13 @@ async def _run_audio_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        admission = _media_job_admission_response(
+            str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
+        )
+        if admission is not None:
+            _mark_audio_media_job_failed(job_id, _admission_refusal_message(admission))
+            return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -21996,7 +22202,11 @@ async def _run_audio_media_job(job_id: str) -> None:
                 },
                 path=media_jobs.DB_PATH,
             )
-            response = await proxy_audio_generate(request_shim, auth_context, store_full=True)
+            worker_token = _ADMISSION_WORKER.set(True)
+            try:
+                response = await proxy_audio_generate(request_shim, auth_context, store_full=True)
+            finally:
+                _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -22439,6 +22649,13 @@ async def _run_video_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
+        admission = _media_job_admission_response(
+            INTENT_VIDEO_GENERATE, count_queue=False, auth_context=auth_context,
+        )
+        if admission is not None:
+            _mark_video_media_job_failed(job_id, _admission_refusal_message(admission))
+            return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -22457,7 +22674,11 @@ async def _run_video_media_job(job_id: str) -> None:
                 ),
                 path=media_jobs.DB_PATH,
             )
-            submit_response = await proxy_comfy_video_create(request_shim, auth_context)
+            worker_token = _ADMISSION_WORKER.set(True)
+            try:
+                submit_response = await proxy_comfy_video_create(request_shim, auth_context)
+            finally:
+                _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -23915,6 +24136,13 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     ``store_full`` is for the media-job executor, which stores the bytes: they
     keep full metadata and the delivery mode is applied when the asset is served.
     """
+    admission = _dispatch_admission_response(
+        'audio.generate', auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class='audio',
+    )
+    if admission is not None:
+        return admission
+
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
@@ -26081,6 +26309,13 @@ async def anthropic_messages(request: Request):
                 error_type="permission_error",
             )
 
+    admission = _model_dispatch_admission_response(
+        auth_context, canonical.get("model"), intent='chat.generate',
+        resource_class='chat', protocol='anthropic',
+    )
+    if admission is not None:
+        return admission
+
     state.update_activity()
     if canonical.get("stream"):
         client, upstream = await _forward_chat_completions(
@@ -26221,6 +26456,13 @@ async def _ollama_forward_non_streaming(
     if policy_error is not None:
         return policy_error
 
+    admission = _model_dispatch_admission_response(
+        auth_context, canonical.get("model"), intent='chat.generate',
+        resource_class='chat', protocol='ollama',
+    )
+    if admission is not None:
+        return admission
+
     state.update_activity()
     upstream = await _forward_chat_completions(
         request,
@@ -26255,6 +26497,13 @@ async def _ollama_forward_streaming(
         )
     if policy_error is not None:
         return policy_error
+
+    admission = _model_dispatch_admission_response(
+        auth_context, canonical.get("model"), intent='chat.generate',
+        resource_class='chat', protocol='ollama',
+    )
+    if admission is not None:
+        return admission
 
     state.update_activity()
     client, upstream = await _forward_chat_completions(
@@ -26317,6 +26566,13 @@ async def _ollama_forward_embeddings(
         )
     if policy_error is not None:
         return policy_error
+
+    admission = _model_dispatch_admission_response(
+        auth_context, canonical.get("model"), intent='text.embeddings',
+        resource_class='embeddings', protocol='ollama',
+    )
+    if admission is not None:
+        return admission
 
     state.update_activity()
     upstream = await _forward_embeddings(request, auth_context, canonical)
@@ -28101,6 +28357,13 @@ async def _forward_current_loaded_openai_request(
                 extra={"body_bytes": request_body_byte_count(execution_body)},
             )
 
+            admission = _dispatch_admission_response(
+                'chat.generate', auth_context=auth_context, service_id=target.backend,
+                service_available=None, resource_class='chat', receipt=receipt,
+            )
+            if admission is not None:
+                return admission
+
             cancellation_span = _OuterCancellationSpan(
                 request_id or new_request_id(), receive=request.receive
             )
@@ -28282,6 +28545,13 @@ async def _forward_litellm_proxy_request(
 
     remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), model_name)
     if remote_provider is not None:
+        admission = _dispatch_admission_response(
+            "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=remote_provider.id,
+            service_available=remote_provider.configured, resource_class="embeddings" if request_path == "/v1/embeddings" else "chat",
+        )
+        if admission is not None:
+            return admission
+
         identity = auth_context.identity
         return await provider_execution.execute_paid_litellm(
             request, request_path=request_path, body=body_json,
@@ -28432,6 +28702,13 @@ async def _forward_litellm_proxy_request(
             if activation_error is not None:
                 owner.report(status="failed", reason="failed")
                 return activation_error
+
+        admission = _dispatch_admission_response(
+            "text.embeddings" if request_path == "/v1/embeddings" else "chat.generate", auth_context=auth_context, service_id=resolved_service_id,
+            service_available=runtime.enabled, resource_class="embeddings" if request_path == "/v1/embeddings" else "chat", receipt=receipt,
+        )
+        if admission is not None:
+            return admission
 
         cancellation_span = _OuterCancellationSpan(receipt.request_id, receive=request.receive)
 
@@ -28769,6 +29046,14 @@ async def _handle_openai_litellm_request_once(
         if policy_decision is not None and policy_decision.denied:
             return _policy_denied_response(policy_decision)
 
+    admission = _model_dispatch_admission_response(
+        auth_context, parsed_body.get("model"),
+        intent="text.embeddings" if request_path == "/v1/embeddings" else "chat.generate",
+        resource_class="embeddings" if request_path == "/v1/embeddings" else "chat",
+    )
+    if admission is not None:
+        return admission
+
     if (
         not route_auth.delegated_to_litellm
         and
@@ -28899,6 +29184,13 @@ async def _forward_internal_litellm_local_upstream(
     lease: Optional[ServingLease],
 ) -> Response | StreamingResponse:
     """Forward one ready, leased request to the engine. A stream takes the lease."""
+    admission = _dispatch_admission_response(
+        'chat.generate', auth_context=None, service_id=backend,
+        service_available=None, resource_class='chat',
+    )
+    if admission is not None:
+        return admission
+
     body["model"] = activation.backend_model or target_model
     execution_request = LlmExecutionRequest(
         method="POST",
@@ -29611,6 +29903,13 @@ async def provider_native_request(
         receipt.finish("denied")
         _record_native_passthrough_receipt(receipt)
         return _policy_denied_response(decision)
+
+    admission = _dispatch_admission_response(
+        'provider.native', auth_context=auth_context, service_id=str(target["service"]),
+        service_available=True, resource_class='native', receipt=receipt,
+    )
+    if admission is not None:
+        return admission
 
     body = await request.body()
     receipt.stream = False

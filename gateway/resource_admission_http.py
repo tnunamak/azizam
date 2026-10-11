@@ -106,6 +106,7 @@ def admission_http_response(
     denied_status: int = 503,
     audience: str = "client",
     wait_deadline: float | None = None,
+    protocol: str | None = None,
 ) -> RouteAdmissionHTTP:
     """Translate an admission decision into a response-ready HTTP shape."""
 
@@ -120,18 +121,24 @@ def admission_http_response(
         headers["Retry-After"] = str(decision.retry_after)
 
     if decision.outcome is AdmissionOutcome.DENIED:
-        return RouteAdmissionHTTP(
-            status_code=denied_status,
-            headers=headers,
-            body={
+        body = {
                 "error": {
                     "code": "resource_admission_denied",
                     "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
                     "decision": projected,
                 },
                 "admission": admission,
-            },
-        )
+            }
+        if protocol == "anthropic":
+            body["type"] = "error"
+            body["error"]["type"] = "overloaded_error"
+        elif protocol == "ollama":
+            body["decision"] = body["error"]["decision"]
+            body["code"] = body["error"]["code"]
+            body["error"] = body["error"]["message"]
+        elif protocol == "openai":
+            body["error"].update(type="service_unavailable", param=None)
+        return RouteAdmissionHTTP(status_code=denied_status, headers=headers, body=body)
 
     status_code = degraded_status if decision.degraded else allowed_status
     return RouteAdmissionHTTP(

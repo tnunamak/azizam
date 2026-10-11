@@ -112,7 +112,7 @@ def dispatch_env(monkeypatch, tmp_path):
 
 
 def snapshot(response):
-    return {'status': response.status_code, 'headers': list(response.headers.multi_items()), 'body_b64': base64.b64encode(response.content).decode()}
+    return {'status': response.status_code, 'headers': [list(item) for item in response.headers.multi_items()], 'body_b64': base64.b64encode(response.content).decode()}
 
 
 @pytest.mark.parametrize('name,path,body', CASES, ids=[c[0] for c in CASES])
@@ -123,10 +123,7 @@ def test_default_response_differential(dispatch_env, name, path, body):
     assert calls, 'the comparison must reach a backend executor'
     fixture = Path(__file__).with_name('fixtures') / 'dispatch_admission_baseline.json'
     actual = snapshot(response)
-    if not fixture.exists():
-        print('ADMISSION_BASELINE ' + json.dumps({'name': name, 'response': actual}))
-    else:
-        assert actual == json.loads(fixture.read_text())['responses'][name]
+    assert actual == json.loads(fixture.read_text())['responses'][name]
 
 
 @pytest.mark.parametrize('name,path,body', CASES, ids=[c[0] for c in CASES])
@@ -148,3 +145,62 @@ def test_configured_resource_class_blocks_dispatch(dispatch_env, monkeypatch, na
             assert payload['error']['type'] == 'overloaded_error'
     assert 'resource_class_disabled' in payload['admission']['reason_codes']
     assert decision['reasons']
+
+
+@pytest.mark.parametrize('protocol', ['openai', 'anthropic', 'ollama'])
+@pytest.mark.parametrize('cfg,override,code', [
+    ({'disabled_intents': ['chat.generate']}, {}, 'intent_disabled'),
+    ({'max_queue_depth': 1}, {}, 'queue_load_unknown'),
+    ({'max_app_concurrency': {'mine': 1}}, {}, 'app_load_unknown'),
+    ({}, {'state': 'maintenance', 'retry_after_seconds': 7, 'reason': 'private maintenance'}, 'service_unavailable'),
+])
+def test_limit_facts_and_protocol_projection(monkeypatch, cfg, override, code, protocol):
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: cfg)
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {'selected': override})
+    receipt = proxy.RouteReceipt(protocol='test', intent='chat.generate', app_id='mine')
+    response = proxy._dispatch_admission_response(
+        'chat.generate', resource_class='chat', service_id='selected',
+        service_available=True, protocol=protocol, receipt=receipt,
+    )
+    assert response.status_code == 503
+    payload = json.loads(response.body)
+    assert code in payload['admission']['reason_codes']
+    assert b'private maintenance' not in response.body
+    assert b'"mine"' not in response.body
+    if protocol == 'ollama':
+        assert isinstance(payload['error'], str)
+        assert payload['decision']['reasons']
+    else:
+        assert payload['error']['decision']['reasons']
+        assert payload['error']['type'] == ('overloaded_error' if protocol == 'anthropic' else 'service_unavailable')
+    facts = receipt.resource_decision['facts']
+    for fact in facts:
+        if fact['name'] in {'queue_active', 'app_active'}:
+            assert fact['value'] is None
+            assert fact['quality'] == 'unavailable'
+    if override:
+        assert response.headers['retry-after'] == '7'
+
+
+@pytest.mark.parametrize('kind,intent', [('image', 'image.generate'), ('audio', 'music.generate'), ('video', 'video.generate'), ('identity', 'image.edit')])
+def test_worker_rechecks_before_executor(monkeypatch, kind, intent):
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': [intent]})
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
+    monkeypatch.setattr(proxy, 'COMFY_ENABLED', True)
+    monkeypatch.setattr(media_jobs, 'get', lambda *a, **kw: {'status': 'queued', 'intent': intent})
+    failures = []
+    executor = AsyncMock(side_effect=AssertionError('worker reached backend'))
+    if kind == 'identity':
+        monkeypatch.setattr(proxy, '_identity_job_failed', lambda *a: failures.append(a))
+        monkeypatch.setattr(proxy.app.state, 'identity_execute', executor)
+        asyncio.run(proxy._run_identity_job('job', None, proxy.NO_AUTH_CONTEXT, None, 'url'))
+    else:
+        monkeypatch.setattr(proxy, f'_load_{kind}_media_job_payload', lambda _: {})
+        monkeypatch.setattr(proxy, f'_request_shim_from_{kind}_job_payload', lambda _: object())
+        monkeypatch.setattr(proxy, '_auth_context_from_image_job_payload', lambda _: proxy.NO_AUTH_CONTEXT)
+        monkeypatch.setattr(proxy, f'_mark_{kind}_media_job_failed', lambda *a, **kw: failures.append(a))
+        target = {'image': 'proxy_comfy_request', 'audio': 'proxy_audio_generate', 'video': 'proxy_comfy_video_create'}[kind]
+        monkeypatch.setattr(proxy, target, executor)
+        asyncio.run(getattr(proxy, f'_run_{kind}_media_job')('job'))
+    assert failures
+    executor.assert_not_called()
