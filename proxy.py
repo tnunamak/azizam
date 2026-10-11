@@ -14638,11 +14638,7 @@ def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_a
         return []
     registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
-    decision_providers = decision_provider_execution.systemone_providers(registry)
-    openai_decisions = decision_provider_execution.openai_decisions_provider(registry)
-    if openai_decisions is not None:
-        decision_providers.append(openai_decisions)
-    for provider in decision_providers:
+    for provider in decision_provider_execution.systemone_providers(registry):
         try:
             providers.require_remote_allowed(profile, provider)
         except providers.ProviderError:
@@ -15418,7 +15414,11 @@ def _category_service_catalog() -> list[dict[str, Any]]:
 
     for capability in DECISION_RUNTIME.capabilities():
         add(capability.model, capability.title, "model", capability.intent)
-    for provider in decision_provider_execution.systemone_providers(registry):
+    decision_providers = decision_provider_execution.systemone_providers(registry)
+    openai_decisions = decision_provider_execution.openai_decisions_provider(registry)
+    if openai_decisions is not None:
+        decision_providers.append(openai_decisions)
+    for provider in decision_providers:
         for model in decision_provider_execution.catalog_models(provider):
             capability = decision_provider_execution.capability_for(provider, model)
             add(model, capability.title, "model", capability.intent)
