@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import time
 import json
-import sqlite3
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from gateway import sqlite_startup
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
 
@@ -317,7 +317,7 @@ def evidence_from_receipt_store(
 
     now_s = int(time.time() if now_s is None else now_s)
     rows: list[dict[str, Any]] = []
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+    with sqlite_startup.connect_readonly(path) as conn:
         for receipt_json, created_at in conn.execute(
             "SELECT receipt_json, created_at FROM receipts "
             "WHERE parent_request_id IS NULL "

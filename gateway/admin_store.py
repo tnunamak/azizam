@@ -32,7 +32,7 @@ of scope here — this module is the durable substrate those routes call into.
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, check_quarantine_pending
+from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
 import json
 import os
@@ -519,21 +519,20 @@ def init_db(path: Path = DB_PATH) -> None:
 
     Idempotent: running it twice on the same file is a no-op.
     """
-    check_database(path)
-
-    secure_state_path(path)
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+    with store_startup(path):
+        secure_state_path(path)
+        conn = sqlite3.connect(str(path), timeout=5.0)
+        try:
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
     secure_state_path(path)
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
         _apply_pragmas(conn)

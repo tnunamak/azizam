@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, connect
+from gateway.sqlite_startup import connect, store_startup
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -75,16 +75,13 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 
 def init_db(path: Path = DB_PATH) -> None:
     """Check existing data safely, then initialize the schema."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    check_database(path)
-
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+    with store_startup(path):
+        conn = sqlite3.connect(str(path), timeout=5.0)
+        try:
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager

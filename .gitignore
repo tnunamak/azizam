@@ -38,6 +38,9 @@ data/admin.db
 data/admin.db-wal
 data/admin.db-shm
 data/admin.db.broken-*
+
+# Store admission locks (gateway/sqlite_startup.py). Never delete while running.
+data/*.db.lock
 data/admin.db.bak.*
 data/admin_session_key
 data/admin_session_key.tmp

@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import json
 import math
-import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, receipt_store
+from gateway import admin_store, receipt_store, sqlite_startup
 from gateway.admin_api import AdminAuth, _require_admin
 
 
@@ -71,7 +70,7 @@ def create_activity_router(
             params.extend([timestamp, timestamp, id])
         if not receipts_path.exists():
             return {"records": [], "next_cursor": None, "people": people, "sources": sources}
-        with sqlite3.connect(receipts_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+        with sqlite_startup.connect_readonly(receipts_path) as conn:
             rows = conn.execute(
                 "SELECT request_id, created_at FROM receipts WHERE " + " AND ".join(clauses)
                 + " ORDER BY created_at DESC, request_id DESC LIMIT ?", [*params, limit + 1]).fetchall()

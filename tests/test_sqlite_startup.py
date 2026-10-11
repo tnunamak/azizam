@@ -187,3 +187,96 @@ def test_admin_database_side_doors_respect_quarantine(operation, tmp_path):
     with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
         operation(path)
     assert not path.exists()
+
+
+@pytest.mark.parametrize('store', STORES)
+def test_open_store_connection_prevents_quarantine(store, tmp_path):
+    from gateway import sqlite_startup
+    path = tmp_path / 'history.db'
+    path.write_bytes(b'not a sqlite database')
+    user = sqlite_startup.connect(path)
+    try:
+        with pytest.raises(RuntimeError, match='in use'):
+            store.init_db(path)
+    finally:
+        user.close()
+    assert path.read_bytes() == b'not a sqlite database'
+    assert not list(tmp_path.glob('*.broken-*'))
+    store.init_db(path)
+    preserved, = tmp_path.glob('history.db.broken-*/history.db')
+    assert preserved.read_bytes() == b'not a sqlite database'
+
+
+def test_maintenance_process_connection_prevents_quarantine(tmp_path):
+    import subprocess
+    import sys
+    path = tmp_path / 'history.db'
+    path.write_bytes(b'not a sqlite database')
+    script = ('import sys; from gateway import sqlite_startup; '
+              'conn = sqlite_startup.connect(sys.argv[1]); print("ready", flush=True); sys.stdin.read()')
+    repo = Path(__file__).resolve().parents[1]
+    user = subprocess.Popen([sys.executable, '-c', script, str(path)], cwd=repo,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert user.stdout.readline() == 'ready\n'
+        with pytest.raises(RuntimeError, match='in use'):
+            media_jobs.init_db(path)
+        assert path.read_bytes() == b'not a sqlite database'
+    finally:
+        user.communicate('')
+    media_jobs.init_db(path)
+    assert len(list(tmp_path.glob('history.db.broken-*/history.db'))) == 1
+
+
+def test_connection_waits_for_quarantine_and_initialization(tmp_path):
+    import threading
+    from gateway import sqlite_startup
+    path = tmp_path / 'history.db'
+    path.write_bytes(b'not a sqlite database')
+    Path(f'{path}-wal').write_bytes(b'valuable journal')
+    opened = []
+    def admit():
+        conn = sqlite_startup.connect(path)
+        opened.append(conn.execute('SELECT version FROM media_jobs_schema_version').fetchone())
+        conn.close()
+    late = threading.Thread(target=admit)
+    rename = Path.rename
+    def rename_and_admit(source, destination):
+        if source == path:
+            late.start()
+            late.join(timeout=0.3)
+            assert late.is_alive() and not opened  # blocked for the whole move and schema setup
+        return rename(source, destination)
+    with patch.object(Path, 'rename', rename_and_admit):
+        media_jobs.init_db(path)
+    late.join(timeout=10)
+    assert opened == [(media_jobs.SCHEMA_VERSION,)]
+    destination, = tmp_path.glob('history.db.broken-*')
+    assert (destination / 'history.db').read_bytes() == b'not a sqlite database'
+    assert (destination / 'history.db-wal').read_bytes() == b'valuable journal'
+
+
+def test_replaced_database_is_not_quarantined(tmp_path):
+    import os
+    path = tmp_path / 'history.db'
+    path.write_bytes(b'checked file')
+    replacement = tmp_path / 'replacement'
+    connect = sqlite3.connect
+    def replace_then_connect(*args, **kwargs):
+        replacement.write_bytes(b'different file')
+        os.replace(replacement, path)
+        return connect(*args, **kwargs)
+    with patch.object(sqlite3, 'connect', replace_then_connect):
+        with pytest.raises(RuntimeError, match='changed during its startup check'):
+            media_jobs.init_db(path)
+    assert path.read_bytes() == b'different file'
+    assert not list(tmp_path.glob('*.broken-*'))
+
+
+def test_readonly_reader_respects_quarantine(tmp_path):
+    from gateway import sqlite_startup
+    path = tmp_path / 'receipts.db'
+    receipt_store.init_db(path)
+    path.with_name('receipts.db.quarantine-pending').write_text('unfinished')
+    with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
+        sqlite_startup.connect_readonly(path)

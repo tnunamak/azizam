@@ -60,12 +60,31 @@ directory on the same filesystem. If any rename fails, startup raises and the
 between the original location and that directory. Stop users of the store,
 inspect both locations, and restore or finish the move before removing the
 marker. No automatic attempt deletes the files to make room for a fresh store.
-While the marker exists, connections to that store refuse to open it
-(`sqlite_startup.connect`). This covers the media-jobs, receipt, admin,
-Responses and metrics stores and the account setup that runs at import.
-The provider spend ledger and category store are outside this scheme: they
-have no corruption quarantine and no destructive recovery.
-A writable connection would otherwise create an empty database at that path.
+
+Each of the media-jobs, receipt, admin, Responses and metrics stores has a
+`<database>.lock` file next to it. Do not delete it while the gateway runs.
+The guarantee is limited to connections opened through `sqlite_startup`:
+
+- Every such connection, writable or read-only, holds a shared `flock` on the
+  lock file while it is open, and refuses to open while the marker exists.
+  This includes the store modules, prompt memory, video records, accounts
+  setup at import, secrets and the Library, Usage, activity, home and
+  availability readers.
+- Store startup (`init_db`) takes the exclusive lock and holds it from the
+  integrity check through quarantine and schema setup. A connection that asks
+  to open during that span waits for it to finish.
+- If another such connection is open, in this process or a maintenance
+  script, startup cannot take the exclusive lock. It checks under a shared
+  lock instead: a healthy store initializes; a corrupt store stays in place
+  and startup raises "Corrupt database is in use".
+- Startup records the file's device and inode before the check and refuses to
+  move a file that changed before the rename.
+
+Not covered: processes that open the files directly (the `sqlite3` shell,
+backup tools, copies of old code), and filesystems where `flock` is not
+honored between hosts, such as some network mounts. Stop those before
+recovery. The provider spend ledger and category store are outside this
+scheme: they have no corruption quarantine and no destructive recovery.
 
 Verification uses temporary stores and an isolated checkout. No live databases
 were inspected or changed. This inventory covers gateway-owned retention;

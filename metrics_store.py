@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, connect, is_corruption
+from gateway.sqlite_startup import connect, connect_readonly, is_corruption, store_startup
 import shutil
 import sqlite3
 import time
@@ -115,18 +115,16 @@ def init_db(path: Path = DB_PATH) -> None:
     runs in a background thread. When that scan finds damage it leaves a marker file; the next
     ``init_db`` sees the marker, rechecks it, and preserves confirmed damage before replacing it.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
     marker = _integrity_marker(path)
     # Recheck a previous failure before acting on it; the marker can be stale.
-    check_database(path, full_check=marker.exists())
-    marker.unlink(missing_ok=True)
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+    with store_startup(path, full_check=marker.exists()):
+        marker.unlink(missing_ok=True)
+        conn = sqlite3.connect(str(path), timeout=5.0)
+        try:
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
@@ -137,7 +135,7 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
     swapped here: the sampler holds a writer connection to it.
     """
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        conn = connect_readonly(path, timeout=5.0)
         try:
             row = conn.execute("PRAGMA integrity_check").fetchone()
         finally:

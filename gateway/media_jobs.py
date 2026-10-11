@@ -28,7 +28,7 @@ see the workstream note for suggested integration points.
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database, connect
+from gateway.sqlite_startup import connect, store_startup
 
 import json
 import hashlib
@@ -403,16 +403,13 @@ def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None)
 
 def init_db(path: Path = DB_PATH) -> None:
     """Check existing data safely, then initialize the schema."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    check_database(path)
-
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+    with store_startup(path):
+        conn = sqlite3.connect(str(path), timeout=5.0)
+        try:
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager
