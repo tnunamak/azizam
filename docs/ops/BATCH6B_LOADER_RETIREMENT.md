@@ -1,6 +1,8 @@
 # Old executor and loader retirement
 
-Audited from `5f7ddc4b` on `legacy/batch6b-old-executor`.
+Round 1 audited from `5f7ddc4b` on `legacy/batch6b-old-executor`.
+Round 2 repeated the audit after rebasing onto `35a57055`, which includes
+the requested `044904cb` base and the subsequent route-inventory tests.
 
 The requested base already includes `0efb7051`, which closed the unmatched
 route and deleted the old executor and loader. This follow-up removes only
@@ -8,19 +10,20 @@ two fields left behind by that deletion. It does not migrate a public route.
 
 ## Caller evidence
 
-The audit parsed all 578 tracked Python files with `ast`, recording definitions,
-name and attribute references, assignment contexts, string references and each
-enclosing function. It also searched tracked gateway, tests, scripts and docs
-for the retired names, and read the remaining dynamic lookup sites.
+The resumed audit parsed all 579 tracked Python files with `ast`, recording
+definitions, imports, name and attribute references, assignment contexts and
+string references. It also searched tracked gateway, tests, scripts and docs
+for the retired names, and read the remaining dynamic lookup sites. The only
+Python references to retired symbols are strings in absence and guard tests.
 
 | Symbol | Evidence at the audited base | Disposition |
 | --- | --- | --- |
-| `proxy_request` | No definition, call, alias or string lookup in tracked Python. Deleted in `0efb7051`. | Already retired. |
-| `load_model` | No definition, call, alias or string lookup in tracked Python. Deleted in `0efb7051`. | Already retired. |
+| `proxy_request` | No definition, call, alias or runtime string lookup in tracked Python. Deleted in `0efb7051`. | Already retired. |
+| `load_model` | No definition, call, alias or runtime string lookup in tracked Python. Deleted in `0efb7051`. | Already retired. |
 | `TABBY_LOAD_TIMEOUT` | No runtime reference. Two mentions remain in the historical lifecycle design. | Already retired; preserve design history. |
 | `MAX_LOAD_FAILURES`, `LOAD_FAILURE_BACKOFF` | No runtime reference. | Already retired. |
 | `backend_for_host`, `MODEL_REQUIRED_PATHS` | No runtime reference. Historical audit mentions are not callers. | Already retired. |
-| `load_event`, `load_failure_count`, `last_load_failure_time`, `last_load_error`, `reset_load_failures`, `record_load_failure`, `can_attempt_load` | No tracked Python reference. | Already retired. |
+| `load_event`, `load_failure_count`, `last_load_failure_time`, `last_load_error`, `reset_load_failures`, `record_load_failure`, `can_attempt_load` | No runtime reference; only absence-test strings. | Already retired. |
 | `ProxyState.model_loading` | Only assignment is `False` in `__init__`. Only reads are guards in `unload_model` and `maintenance_loop`; no setter remains. | Remove field and inert guards. |
 | `ProxyState.unload_event` | Initialized to `None`; allocated, signalled and cleared only by `unload_model`. No waiter, external reader or dynamic lookup remains. | Remove field and unused event effects. |
 
@@ -30,6 +33,10 @@ lazy `import proxy` reads `config`, not loader functions or state fields. No
 `getattr`/`setattr`/`vars`/`__dict__` access to these state fields exists. Test
 monkeypatches and route decorators are covered by the name/attribute/string
 scan; a new runtime absence test also checks the imported module and state.
+Computed test lookups use `_derive_backend_constants`, fixed discovery and
+forwarder name lists, media-job names or video dictionaries; none resolve to
+retired symbols. The metadata test's `vars(proxy)` copies the namespace only
+to run catalog filtering from its fixture.
 
 The registered `/{path:path}` endpoint is `unmatched_route(request, path)`.
 It authenticates, strips a recognized path token from the error message, and
@@ -72,6 +79,13 @@ POST URL, method, credential header, empty body, timeout, return value,
 duplicate rejection, failure and cancellation cleanup, and maintenance
 conditions. Before removal, its state-absence tests fail for exactly
 `model_loading` and `unload_event`; all eleven behavior cases pass.
+
+The static guard in `test_engine_knowledge_boundary.py` rejects the five
+retired executor, loader and retry names in `proxy.py` or any `gateway/*.py`
+module, including nested packages. It matches whole names so aliases and
+dynamic lookup strings cannot bypass it, while live `unload_model` and
+`_forward_litellm_proxy_request` remain allowed. A synthetic self-test verifies
+all five matches and those live-name exclusions.
 
 No live engine, operator state or external client is used. Hermetic tests
 prove fixture behavior and route selection; they do not qualify a real engine
