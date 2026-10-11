@@ -308,3 +308,142 @@ def test_interrupt_cancels_the_running_request_and_answers_like_a1111():
     assert cancelled == [True]
     assert resp.status_code == 200 and resp.json()["images"] == []
     assert json.loads(resp.json()["info"]) == {"interrupted": True}
+
+
+# ------------------------------------------------------- owner isolation
+
+def _interrupt_between_callers(owner_a, owner_b, *, deny_b=False):
+    """Exercise real routes over fake auth/core only; no proxy or live workload."""
+    import asyncio
+
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+        calls, cancelled = [], []
+        owners = {"Bearer caller-a": owner_a, "Bearer caller-b": owner_b}
+        # Policy is deliberately faked at the core boundary, as in env above.
+        # This tests the router's task cleanup, not production plan enforcement.
+        plans = {"Bearer caller-a": {"image.generate"},
+                 "Bearer caller-b": set() if deny_b else {"image.generate"}}
+
+        def authenticate(request, _path):
+            key = request.headers.get("authorization")
+            if key not in owners:
+                return JSONResponse({"error": {"message": "Invalid API key."}}, status_code=401)
+            return SimpleNamespace(owner=owners[key])
+
+        async def slow_call(request, method, path, **kwargs):
+            key = request.headers["authorization"]
+            calls.append(key)
+            if "image.generate" not in plans[key]:
+                return httpx.Response(403, json={"error": {
+                    "message": "profile may not generate images", "code": "policy_denied"}})
+            assert key == "Bearer caller-a"
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.append(key)
+                raise
+            return httpx.Response(200, json={"data": [{"b64_json": PNG_B64}]})
+
+        deps = A1111Deps(authenticate=authenticate, call=slow_call, catalog=lambda: [KREA],
+                         aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
+        app = FastAPI()
+        a1111_api.register_a1111_routes(app, deps)
+        headers_a = {"authorization": "Bearer caller-a"}
+        headers_b = {"authorization": "Bearer caller-b"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as http:
+            async def progress(headers):
+                response = await http.get("/sdapi/v1/progress", headers=headers)
+                assert response.status_code == 200
+                return response.json()["state"]
+
+            pending = asyncio.create_task(http.post(
+                "/sdapi/v1/txt2img", json={"prompt": "x"}, headers=headers_a))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                assert not pending.done()
+                assert (await progress(headers_a))["job_count"] == 1
+                if deny_b:
+                    denied = await http.post(
+                        "/sdapi/v1/txt2img", json={"prompt": "x"}, headers=headers_b)
+                    assert denied.status_code == 403
+                    assert denied.json() == {"detail": "profile may not generate images"}
+                    assert calls == ["Bearer caller-a", "Bearer caller-b"]
+                    assert not pending.done() and cancelled == []
+
+                before_b = await progress(headers_b)
+                interrupt = await http.post("/sdapi/v1/interrupt", headers=headers_b)
+                assert interrupt.status_code == 200
+                # Let cancellation reach the blocked fake before releasing it.
+                await asyncio.sleep(0)
+                was_cancelled = cancelled == ["Bearer caller-a"]
+                after_interrupt_a = await progress(headers_a)
+                if not was_cancelled:
+                    assert not pending.done()
+                    assert after_interrupt_a["job_count"] == 1
+                release.set()
+                response = await asyncio.wait_for(asyncio.shield(pending), timeout=5)
+                assert response.status_code == 200
+                body = response.json()
+                if was_cancelled:
+                    assert body["images"] == []
+                    assert json.loads(body["info"]) == {"interrupted": True}
+                else:
+                    assert cancelled == []
+                    assert body["images"] == [PNG_B64]
+                    assert not json.loads(body["info"]).get("interrupted", False)
+                after_a, after_b = await progress(headers_a), await progress(headers_b)
+                assert after_a["job_count"] == after_b["job_count"] == 0
+                assert calls == (["Bearer caller-a", "Bearer caller-b"] if deny_b
+                                 else ["Bearer caller-a"])
+                return SimpleNamespace(before_b=before_b, after_a=after_a, after_b=after_b,
+                                       cancelled=was_cancelled)
+            finally:
+                release.set()
+                if not pending.done():
+                    pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+
+    return asyncio.run(scenario())
+
+
+def test_different_owners_cannot_interrupt_or_see_each_others_jobs():
+    result = _interrupt_between_callers("user:a", "user:b")
+    assert result.before_b["job_count"] == 0
+    assert not result.cancelled
+    assert not result.after_a["interrupted"] and not result.after_b["interrupted"]
+
+
+def test_grant_nothing_caller_has_no_tasks_and_interrupt_affects_nobody_else():
+    result = _interrupt_between_callers("user:a", "user:denied", deny_b=True)
+    assert result.before_b["job_count"] == 0
+    assert not result.cancelled
+    assert not result.after_a["interrupted"] and not result.after_b["interrupted"]
+
+
+def test_shared_app_owner_currently_exposes_jobs_and_allows_cross_caller_interrupt():
+    result = _interrupt_between_callers("app:shared", "app:shared")
+    assert result.before_b["job_count"] == 1
+    assert result.cancelled
+    assert result.after_a["interrupted"] and result.after_b["interrupted"]
+
+
+class _AnonymousCallerIsolationError(AssertionError):
+    """Only verified anonymous cross-caller isolation violations may xfail."""
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=_AnonymousCallerIsolationError,
+    reason="Callers whose owner_of returns None share the anonymous session: B sees A's job count "
+           "and B's interrupt cancels A's in-flight fake generation",
+)
+def test_none_owner_callers_cannot_see_or_interrupt_each_others_generation():
+    result = _interrupt_between_callers(None, None)
+    # All route/fixture/response assertions run first and are NOT expected failures.
+    # A complete fix XPASSes strictly, requiring this marker to be removed.
+    if result.before_b["job_count"] != 0 or result.cancelled:
+        raise _AnonymousCallerIsolationError(
+            f"anonymous cross-caller leak: B job_count={result.before_b['job_count']}; "
+            f"A actually cancelled by B={result.cancelled}")

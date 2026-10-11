@@ -302,6 +302,7 @@ def _record_receipts(gateway, before, row):
     row["dispatched"] = "yes" if dispatched else "no"
     if dispatched:
         row["outcome"] = "VIOLATION"
+        row["rule"] = "dispatched receipt overrides response classification"
         row["detail"] += f" dispatched receipt(s): {dispatched!r}"
 
 
@@ -309,7 +310,10 @@ def _scoped_empty(response):
     """Allow only empty member collections, never an arbitrary successful body."""
     if response.status_code != 200:
         return False
-    value = response.json()
+    try:
+        value = response.json()
+    except ValueError:
+        return False
     if isinstance(value, list):
         return value == []
     if not isinstance(value, dict):
@@ -325,11 +329,51 @@ def _scoped_empty(response):
         for key, item in value.items()
     )
 
+def _body_summary(response):
+    """Show shape and collection sizes without dumping successful payloads."""
+    try:
+        value = response.json()
+    except ValueError:
+        return f"non-JSON bytes[{len(response.content)}]"
+
+    def shape(item, depth=0):
+        if isinstance(item, list):
+            return f"list[{len(item)}]"
+        if isinstance(item, dict):
+            summary = f"dict[{len(item)}] keys " + ",".join(sorted(item))
+            if depth < 4:
+                nested = [
+                    f"{key}={shape(child, depth + 1)}"
+                    for key, child in sorted(item.items())
+                    if isinstance(child, (list, dict))
+                ]
+                if nested:
+                    summary += " (" + "; ".join(nested) + ")"
+            return summary
+        if isinstance(item, str):
+            return f"str[{len(item)}]"
+        return "null" if item is None else type(item).__name__
+
+    return shape(value)
+
+
+def _validation_message(response):
+    try:
+        return json.dumps(response.json(), ensure_ascii=True, sort_keys=True)
+    except ValueError:
+        return response.text
+
+
 def _table(rows):
     columns = (
-        "method", "path", "status", "backend called", "receipts", "dispatched", "outcome", "detail",
+        "method", "path", "status", "body", "backend called", "receipts",
+        "dispatched", "outcome", "rule", "detail",
     )
-    values = [[str(row.get(key, "")) for key in columns] for row in rows]
+    values = [
+        [str(row.get(key, "")).replace("\r", "\\r").replace("\n", "\\n")
+         for key in columns]
+        for row in rows
+    ]
     widths = [
         max([len(key)] + [len(row[index]) for row in values])
         for index, key in enumerate(columns)
@@ -341,8 +385,10 @@ def _table(rows):
 
 
 def _report(rows, title):
-    table = _table(rows)
-    print(f"\n{title}\n{table}")
+    gaps = [row for row in rows if row["outcome"] == "coverage gap"]
+    classified = [row for row in rows if row["outcome"] != "coverage gap"]
+    print(f"\n{title} (passes and violations)\n{_table(classified)}")
+    print(f"\n{title}: coverage gaps (not policy proof)\n{_table(gaps)}")
     violations = [row for row in rows if row["outcome"] == "VIOLATION"]
     assert not violations, f"{title}: {len(violations)} violation(s)\n{_table(violations)}"
 
@@ -366,29 +412,38 @@ def test_http_route_policy_inventory(gateway):
                     **_request_kwargs(route, path, method),
                 )
                 row["status"] = response.status_code
+                if response.status_code == 200:
+                    row["body"] = _body_summary(response)
+                    row["rule"] = "200 is a violation unless member GET is _scoped_empty"
                 if response.status_code in DENIED:
                     row["outcome"] = "denied"
+                    row["rule"] = "HTTP status in DENIED"
                 elif response.status_code in INVALID_BODY:
-                    row["outcome"] = "invalid-placeholder (not policy proof)"
+                    row["outcome"] = "coverage gap"
+                    row["rule"] = "400/422 validation response is not policy proof"
+                    row["detail"] = _validation_message(response)
                 elif (
                     method == "GET" and _member_model_path(template, route)
+                    and response.status_code == 200
                     and _scoped_empty(response)
                 ):
                     row["outcome"] = "scoped-empty"
+                    row["rule"] = "member GET 200 satisfies _scoped_empty"
                 else:
-                    row["detail"] = "unexpected response status"
+                    row.setdefault("rule", "unexpected HTTP status")
+                    row["detail"] = "response is not an allowed denial or scoped-empty collection"
                 _record_receipts(gateway, before, row)
             except Exception as exc:
                 row["outcome"] = "VIOLATION"
+                row["rule"] = "unexpected exception"
                 row["detail"] = f"{type(exc).__name__}: {exc}"
             if gateway.calls:
                 row["backend called"] = "yes"
                 row["outcome"] = "VIOLATION"
+                row["rule"] = "backend call overrides response classification"
                 row["detail"] += f" backend calls={gateway.calls!r}"
             rows.append(row)
     assert rows, "No model-facing HTTP routes discovered; inventory would be vacuous"
-    invalid = [row for row in rows if row["status"] in INVALID_BODY]
-    print(f"\nInvalid-placeholder coverage (separate from policy denials):\n{_table(invalid)}")
     _report(rows, "Model-facing HTTP route inventory")
 
 
@@ -412,27 +467,45 @@ def test_websocket_route_policy_inventory(gateway):
                     if message["type"] == "websocket.close":
                         row["status"] = f"closed:{message.get('code', 1000)}"
                         row["outcome"] = "closed"
+                        row["rule"] = "websocket.close without member data"
                     else:
+                        row["rule"] = "websocket delivered member data"
                         row["detail"] = "member received websocket data"
-            except WebSocketDisconnect as exc:
-                row["status"] = f"refused:{exc.code}"
-                row["outcome"] = "refused"
             except Exception as exc:
-                # Newer Starlette versions expose HTTP handshake denials as
-                # WebSocketDenialResponse; avoid requiring that newer class.
+                row["outcome"] = "VIOLATION"
+                # WebSocketDenialResponse can inherit WebSocketDisconnect but
+                # carries status_code rather than code. Check HTTP status first.
                 status = getattr(exc, "status_code", None)
-                if status in DENIED:
+                if status is not None:
                     row["status"] = status
+                    row["detail"] = f"{type(exc).__name__}: {exc}"
+                    if status == 200:
+                        row["body"] = _body_summary(exc)
+                    if status in DENIED:
+                        row["outcome"] = "refused"
+                        row["rule"] = "HTTP handshake refusal status in DENIED"
+                    elif status in INVALID_BODY:
+                        row["outcome"] = "coverage gap"
+                        row["rule"] = "400/422 handshake validation is not policy proof"
+                        row["detail"] += " " + _validation_message(exc)
+                    else:
+                        row["rule"] = "unexpected HTTP handshake status"
+                elif isinstance(exc, WebSocketDisconnect) and hasattr(exc, "code"):
+                    row["status"] = f"refused:{exc.code}"
                     row["outcome"] = "refused"
+                    row["rule"] = "WebSocketDisconnect refusal code"
                 else:
-                    raise
+                    row["rule"] = "unexpected websocket exception"
+                    row["detail"] = f"{type(exc).__name__}: {exc}"
             _record_receipts(gateway, before, row)
         except Exception as exc:
             row["outcome"] = "VIOLATION"
+            row["rule"] = "unexpected exception"
             row["detail"] = f"{type(exc).__name__}: {exc}"
         if gateway.calls:
             row["backend called"] = "yes"
             row["outcome"] = "VIOLATION"
+            row["rule"] = "backend call overrides response classification"
             row["detail"] += f" backend calls={gateway.calls!r}"
         rows.append(row)
     _report(rows, "Registered websocket route inventory")
