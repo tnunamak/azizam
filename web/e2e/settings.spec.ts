@@ -117,7 +117,16 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
   );
   await page.route("**/admin/api/profiles", (route) =>
     route.fulfill({
-      json: { profiles: [{ id: "local", name: "Local only" }] },
+      json: {
+        profiles: [
+          {
+            id: "local",
+            name: "Local only",
+            description: "Fixture local access",
+            profile: {},
+          },
+        ],
+      },
     }),
   );
 }
@@ -173,6 +182,14 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             page.getByRole("button", { name: "Try again" }),
           ).toHaveCount(9);
+          for (const name of ["Defaults", "App creation"]) {
+            const retry = page
+              .getByRole("region", { name, exact: true })
+              .getByRole("button", { name: "Try again" });
+            expect((await retry.boundingBox())?.height).toBeGreaterThanOrEqual(
+              44,
+            );
+          }
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),
@@ -1189,22 +1206,33 @@ for (const theme of ["light", "dark"] as const) {
           document.documentElement.style.fontSize = size;
         }, textSize);
         await expect(plan).toBeVisible();
-        const overflow = await page
-          .locator("body *")
-          .evaluateAll((elements) =>
-            elements
-              .filter(
-                (el) =>
-                  el.getBoundingClientRect().width > 0 &&
-                  el.getBoundingClientRect().right > innerWidth + 1,
-              )
-              .map((el) => ({
-                tag: el.tagName,
-                slot: el.getAttribute("data-slot"),
-                text: el.textContent?.slice(0, 70),
-                right: el.getBoundingClientRect().right,
-              })),
-          );
+        if (textSize === "200%") {
+          await plan.click();
+          await page
+            .getByRole("option", {
+              name: "None — built-in local access",
+              exact: true,
+            })
+            .click();
+          await expect(plan).toContainText("None — built-in local access");
+          await expect(
+            page.locator('[data-slot="select-content"]'),
+          ).toHaveCount(0);
+        }
+        const overflow = await page.locator("body *").evaluateAll((elements) =>
+          elements
+            .filter(
+              (el) =>
+                el.getBoundingClientRect().width > 0 &&
+                el.getBoundingClientRect().right > innerWidth + 1,
+            )
+            .map((el) => ({
+              tag: el.tagName,
+              slot: el.getAttribute("data-slot"),
+              text: el.textContent?.slice(0, 70),
+              right: el.getBoundingClientRect().right,
+            })),
+        );
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,
@@ -1216,6 +1244,10 @@ for (const theme of ["light", "dark"] as const) {
             .locator("button, a, summary")
             .all()) {
             const bounds = await control.boundingBox();
+            const sectionBounds = await section.boundingBox();
+            expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+              sectionBounds!.x + sectionBounds!.width,
+            );
             expect(
               bounds?.height,
               (await control.textContent()) ?? "control",

@@ -126,12 +126,14 @@ function SettingsError({
       Only the owner can change this.
     </p>
   ) : (
-    <ErrorState
-      heading="Couldn’t load this"
-      error={error}
-      message={message}
-      onRetry={onRetry}
-    />
+    <div className="[&_button]:min-h-11 [&_summary]:min-h-11">
+      <ErrorState
+        heading="Couldn’t load this"
+        error={error}
+        message={message}
+        onRetry={onRetry}
+      />
+    </div>
   );
 }
 
@@ -245,7 +247,7 @@ function Save({ pending, label }: { pending: boolean; label: string }) {
   return (
     <Button
       type="submit"
-      className="h-auto min-h-11 py-2 whitespace-normal"
+      className="h-auto! min-h-11 max-w-full py-2 whitespace-normal!"
       disabled={pending}
     >
       {pending && <Loader2 className="animate-spin" />}
@@ -267,8 +269,8 @@ function Toggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <div>
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="min-w-0 flex-1 basis-40">
         <label htmlFor={id} className="text-label">
           {label}
         </label>
@@ -927,7 +929,7 @@ function DefaultsForm({
             <SelectTrigger
               id="default-plan"
               aria-describedby="default-plan-help default-plan-consequence"
-              className="min-h-11 w-full whitespace-normal *:data-[slot=select-value]:line-clamp-none sm:h-auto"
+              className="h-auto! min-h-11 w-full *:data-[slot=select-value]:line-clamp-none *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:whitespace-normal"
             >
               <SelectValue />
             </SelectTrigger>
