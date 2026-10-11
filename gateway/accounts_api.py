@@ -200,7 +200,10 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):
         same_origin(request)
-        accounts.throttle(client_ip(request), "reset", path=path_provider())
+        # Second bucket is per reset link, not one shared bucket: a shared key
+        # let anyone's failed attempts block every person's reset.
+        link = hmac.new(b"reset-link", body.token.encode(), "sha256").hexdigest()
+        accounts.throttle(client_ip(request), f"reset:{link}", path=path_provider())
         accounts.reset_password(body.token, body.password, path=path_provider())
         response = JSONResponse({"next": "/ui/sign-in/"})
         cookie = cookie_provider()

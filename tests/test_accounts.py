@@ -835,3 +835,24 @@ def test_invite_api_audits_owner_service_principal(account_client, account_db):
     assert response.status_code == 200
     event = rows(path, "SELECT * FROM audit_events WHERE action='account.invite.create'")[0]
     assert (event["actor_kind"], event["actor_id"], event["actor_label"]) == ("service_account", "svc_owner", "Owner service")
+
+
+def test_failed_reset_attempts_on_other_links_do_not_block_a_valid_reset(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    client, _ = account_client
+    user, _, _ = invited_member(account_db)
+    for attempt in range(11):
+        bogus = {"token": f"not-a-real-reset-link-{attempt}", "password": PASSWORD}
+        assert client.post("/auth/api/password-reset", json=bogus).status_code != 429
+    _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
+    new_password = "a password after someone else's typos"
+    assert client.post("/auth/api/password-reset", json={"token": token, "password": new_password}).status_code == 200
+    assert accounts.login(user["email"], new_password, "ip", path=path)["id"] == user["id"]
+
+
+def test_one_reset_link_is_still_throttled_on_repeated_attempts(account_db, account_client, fast_password_work):
+    client, _ = account_client
+    payload = {"token": "a-guessed-reset-link", "password": PASSWORD}
+    for _ in range(10):
+        assert client.post("/auth/api/password-reset", json=payload).status_code != 429
+    assert client.post("/auth/api/password-reset", json=payload).status_code == 429
