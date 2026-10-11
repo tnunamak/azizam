@@ -701,7 +701,7 @@ def _decoy_oracle(method, template, row, gateway):
     if row.get("dispatched") == "yes":
         return  # A dispatched receipt stays a violation.
     if ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
-            and set(gateway.calls) <= {"health", "model-state", "HTTP backend"}):
+            and set(gateway.calls) <= {"health", "model-state", "HTTP backend", "network connection"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
     elif method == "GET" and status == 200 and not gateway.calls:
