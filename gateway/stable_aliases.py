@@ -32,6 +32,8 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from gateway.public_failure import describe
+
 OPERATIONS = (
     "chat",
     "embeddings",
@@ -58,10 +60,20 @@ EngineAvailable = Callable[[str, Mapping[str, Any]], bool]
 class AliasUnavailableError(Exception):
     """A known alias or engine name resolves to nothing that is deployed."""
 
-    def __init__(self, message: str, *, code: str = "model_not_deployed", fallback_declared: bool = False):
+    def __init__(self, message: str, *, code: str = "model_not_deployed", fallback_declared: bool = False,
+                 details: Mapping[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.fallback_declared = fallback_declared
+        # Alias names, engine ids and candidates: for builders, not the sentence.
+        self.details = dict(details or {})
+
+    @classmethod
+    def public(cls, code: str, model: str, *, fallback_declared: bool = False,
+               **details: Any) -> "AliasUnavailableError":
+        layer, message = describe(code, model=model)
+        return cls(message, code=code, fallback_declared=fallback_declared,
+                   details={"layer": layer, **details})
 
 
 @dataclass(frozen=True)
@@ -250,10 +262,9 @@ def resolve_alias(
             if isinstance(spec, list):
                 picked = _pick_engine(spec, engines, engine_available)
                 if picked is None:
-                    raise AliasUnavailableError(
-                        f"Model alias '{cur}' has no deployed engine "
-                        f"(candidates: {', '.join(str(c) for c in spec)}).",
-                        fallback_declared=len(spec) > 1,
+                    raise AliasUnavailableError.public(
+                        "model_not_deployed", requested, fallback_declared=len(spec) > 1,
+                        alias=cur, candidates=[str(c) for c in spec],
                     )
                 engine_id, engine_spec, skipped = picked
                 chain.append(engine_id)
@@ -287,9 +298,7 @@ def resolve_alias(
         if cur in engines:
             spec = engines[cur]
             if not engine_available(cur, spec):
-                raise AliasUnavailableError(
-                    f"Engine '{cur}' is known but not deployed on this gateway.",
-                )
+                raise AliasUnavailableError.public("model_not_deployed", requested, engine=cur)
             chain.append(cur)
             return _engine_resolution(
                 requested=requested,
@@ -300,10 +309,8 @@ def resolve_alias(
                 spec=spec,
             )
         break
-    raise AliasUnavailableError(
-        f"Model alias '{requested}' in {section_name} does not resolve "
-        "(unknown target or alias loop).",
-        code="alias_misconfigured",
+    raise AliasUnavailableError.public(
+        "alias_misconfigured", requested, section=section_name, reason="unknown target or alias loop",
     )
 
 

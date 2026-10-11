@@ -104,8 +104,15 @@ class ResolverTests(unittest.TestCase):
         self.assertFalse(sa.resolve_alias(cfg, "speech", "a").fallback_declared)
 
     def test_no_deployed_candidate_raises(self):
-        with self.assertRaises(sa.AliasUnavailableError):
+        with self.assertRaises(sa.AliasUnavailableError) as ctx:
             sa.resolve_alias(TOY, "speech", "tts", engine_available=_only())
+        # The caller's model name and one action; engine ids go to details.
+        self.assertEqual(str(ctx.exception), "No engine or provider is running model 'tts' right now. "
+                                             "Choose another model, or ask the owner to turn one on.")
+        self.assertEqual(ctx.exception.details["layer"], "engine")
+        self.assertTrue(ctx.exception.details["candidates"])
+        for engine in ctx.exception.details["candidates"]:
+            self.assertNotIn(f"'{engine}'", str(ctx.exception))
 
     def test_loop_is_reported_not_followed_forever(self):
         looped = {"chat": {"stable": {"a": "b", "b": "a"}}}
@@ -113,6 +120,8 @@ class ResolverTests(unittest.TestCase):
         with self.assertRaises(sa.AliasUnavailableError) as ctx:
             sa.resolve_alias(looped, "chat", "a")
         self.assertEqual(ctx.exception.code, "alias_misconfigured")
+        self.assertNotIn("loop", str(ctx.exception))
+        self.assertEqual(ctx.exception.details["reason"], "unknown target or alias loop")
 
     def test_validate_catches_structural_mistakes(self):
         bad = {
@@ -461,6 +470,9 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 503)
         error = resp.json()["error"]
         self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))
+        self.assertEqual(error["type"], "service_unavailable")
+        self.assertIn("ask the owner", error["message"])
+        self.assertEqual(error["details"]["engine"], "supertonic")
 
     def test_legacy_audio_and_video_tables_still_resolve(self):
         self.assertEqual(proxy._resolve_audio_workflow("sfx")[0], "sa3-small-sfx")

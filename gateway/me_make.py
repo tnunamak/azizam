@@ -14,6 +14,7 @@ engine.
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +25,10 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
+from gateway.public_failure import PublicFailure, describe
 from gateway.receipts import RouteReceipt, new_request_id
+
+log = logging.getLogger(__name__)
 
 APP_NAME = "Azizam"
 JOB_MODE = "session_make"
@@ -112,14 +116,6 @@ class MakeRuntime(Protocol):
     async def execute(self, payload: Mapping[str, Any]) -> list[Mapping[str, Any]]: ...
 
 
-class _MakeError(Exception):
-    def __init__(self, code: str, message: str, status_code: int, *, retry_after: int | None = None) -> None:
-        self.code = code
-        self.message = message
-        self.status_code = status_code
-        self.retry_after = retry_after
-
-
 class _AdmissionRefused(Exception):
     def __init__(self, response: Response) -> None:
         self.response = response
@@ -145,11 +141,11 @@ def add_make_routes(
             if action_error is not None:
                 return action_error
         if session is None:
-            raise _MakeError("not_authenticated", "Sign in to make things", 401)
+            raise PublicFailure("not_authenticated", 401)
         admin_path = _resolve(admin_db_path)
         user = admin_store.get_user(session.subject, path=admin_path)
         if user is None:
-            raise _MakeError("session_user_not_found", "Signed-in user was not found", 401)
+            raise PublicFailure("session_user_not_found", 401)
         return user, admin_path
 
     @router.post("/make/jobs", include_in_schema=False)
@@ -160,11 +156,11 @@ def add_make_routes(
                 return resolved
             user, admin_path = resolved
             if runtime is None:
-                raise _MakeError("make_unavailable", "Making is not available on this gateway", 503)
+                raise PublicFailure("make_unavailable", 503)
             try:
                 body = await request.json()
             except Exception:
-                raise _MakeError("invalid_json", "Send a JSON object", 400) from None
+                raise PublicFailure("invalid_json", 400, expected="JSON object") from None
             status_code, job = _submit(
                 request, body, user=user, runtime=runtime,
                 find_owned_asset=find_owned_asset,
@@ -176,7 +172,7 @@ def add_make_routes(
             return _json({"job": job}, status_code)
         except _AdmissionRefused as refused:
             return refused.response
-        except _MakeError as exc:
+        except PublicFailure as exc:
             return _error(exc)
 
     @router.get("/make/jobs", include_in_schema=False)
@@ -188,14 +184,14 @@ def add_make_routes(
             user, admin_path = resolved
             status = request.query_params.get("status") or None
             if status is not None and status not in media_jobs.ALL_STATUSES:
-                raise _MakeError("invalid_status", "Unknown job status", 400)
+                raise PublicFailure("invalid_status", 400, param="status", accepted=sorted(media_jobs.ALL_STATUSES))
             limit = _bounded_limit(request.query_params.get("limit"))
             app = admin_store.get_session_app_for_user(str(user["id"]), path=admin_path)
             jobs = [] if app is None else media_jobs.recent(
                 limit, app_ids=[str(app["id"])], status=status, path=_resolve(media_jobs_path),
             )
             return _json({"jobs": [_client_view(job) for job in jobs]})
-        except _MakeError as exc:
+        except PublicFailure as exc:
             return _error(exc)
 
     @router.get("/make/jobs/{job_id}", include_in_schema=False)
@@ -208,7 +204,7 @@ def add_make_routes(
             jobs_path = _resolve(media_jobs_path)
             return _json({"job": _client_view(_own_make_job(job_id, str(user["id"]),
                                                             admin_path=admin_path, jobs_path=jobs_path))})
-        except _MakeError as exc:
+        except PublicFailure as exc:
             return _error(exc)
 
     @router.post("/make/jobs/{job_id}/cancel", include_in_schema=False)
@@ -220,7 +216,7 @@ def add_make_routes(
             user, admin_path = resolved
             jobs_path = _resolve(media_jobs_path)
             job = _own_make_job(job_id, str(user["id"]), admin_path=admin_path, jobs_path=jobs_path)
-            finished = _MakeError("job_finished", "This job has already finished", 409)
+            finished = PublicFailure("job_finished", 409, job_id=job_id)
             if media_jobs.is_terminal(job.get("status", "")):
                 raise finished
             try:  # A job that has not started stops here.
@@ -231,7 +227,7 @@ def add_make_routes(
                     runtime.request_cancel(job_id)
             except ValueError:
                 if runtime is not None and not runtime.request_cancel(job_id):
-                    raise _MakeError("job_finishing", "This job has already made its picture", 409) from None
+                    raise PublicFailure("job_finishing", 409, job_id=job_id) from None
                 try:  # A running job stops in the background and then settles as canceled.
                     media_jobs.update_status(
                         job_id, media_jobs.STATUS_RUNNING,
@@ -251,7 +247,7 @@ def add_make_routes(
             if current.get("status") != CANCEL_REQUESTED:
                 raise finished
             return _json({"job": current}, 202)
-        except _MakeError as exc:
+        except PublicFailure as exc:
             return _error(exc)
 
 
@@ -280,16 +276,16 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
         if runtime.owns_job(job_id):
             continue
         if (job.get("metadata") or {}).get("cancel_requested_at"):
-            _fail(job_id, "The gateway restarted before cancellation could be confirmed", jobs_path)
+            _fail(job_id, _text("restart_while_canceling"), jobs_path)
             runtime.drop_payload(job_id)
             continue
         if not enabled or runtime.load_payload(job_id) is None:
             # A forgotten prompt lived only in memory; it cannot be resumed.
-            _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
+            _fail(job_id, _text("restart_before_finish"), jobs_path)
             runtime.drop_payload(job_id)
             continue
         if job.get("status") == media_jobs.STATUS_RUNNING:
-            _fail(job_id, "The gateway restarted before completion could be confirmed; this job was not run again", jobs_path)
+            _fail(job_id, _text("restart_while_running"), jobs_path)
             runtime.drop_payload(job_id)
             continue
         runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
@@ -330,17 +326,15 @@ def _submit(
     forget = backend_body.get("extensions", {}).get(prompt_memory.NAMESPACE) is not None
     app = admin_store.ensure_session_app_for_user(user_id, name=APP_NAME, path=admin_path)
     if app.get("disabled_at"):
-        raise _MakeError("make_disabled", "Making is turned off for this account", 403)
+        raise PublicFailure("make_disabled", 403)
     app_id = str(app["id"])
     key = (idempotency_key or "").strip()
     request_id = _idempotent_request_id(app_id, key, forget=forget) if key else new_request_id()
     source_asset_id = _owned_source(request, body, user_id=user_id, find_owned_asset=find_owned_asset,
                                     admin_path=admin_path, jobs_path=jobs_path)
     if (intent == "image.edit") != (source_asset_id is not None):
-        raise _MakeError(
-            "invalid_source",
-            "image.edit needs one source picture; image.generate takes none", 400,
-        )
+        raise PublicFailure("invalid_source", 400, intent=intent,
+                            copy="edit_needs_source" if intent == "image.edit" else "generate_takes_no_source")
     if source_asset_id is not None:
         backend_body["source_asset_id"] = source_asset_id
 
@@ -359,16 +353,11 @@ def _submit(
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
                                     input_data=backend_body, path=jobs_path)
     except media_jobs.IdempotencyConflict as exc:
-        raise _MakeError(exc.code, str(exc), 409) from None
+        raise PublicFailure(exc.code, 409) from None
     except media_jobs.OutstandingLimitReached as exc:
         if exc.limit.scope == "person":
-            raise _MakeError(
-                "too_many_jobs",
-                f"You already have {exc.limit.maximum} things being made. "
-                "Wait for one to finish, then try again.", 429,
-            ) from None
-        raise _MakeError("make_busy", "Azizam is busy making other things. Try again in a minute.",
-                         503, retry_after=60) from None
+            raise PublicFailure("too_many_jobs", 429, maximum=exc.limit.maximum) from None
+        raise PublicFailure("make_busy", 503, retry_after=60) from None
     if created.job_id != job.job_id:  # A concurrent retry won the same key.
         return _replay_status(created.to_dict()), _client_job(created.job_id, jobs_path)
     receipt = RouteReceipt(
@@ -388,8 +377,10 @@ def _submit(
     try:
         runtime.keep_payload(job.job_id, payload)
     except Exception as exc:  # noqa: BLE001
-        _fail(job.job_id, f"Could not queue this job ({type(exc).__name__})", jobs_path)
-        raise _MakeError("make_queue_failed", "Could not queue this job", 500) from None
+        log.warning("make job %s could not be queued: %s", job.job_id, type(exc).__name__)
+        failure = PublicFailure("make_queue_failed", 500, job_id=job.job_id)
+        _fail(job.job_id, failure.message, jobs_path)
+        raise failure from None
     _event(job.job_id, "queued", media_jobs.STATUS_QUEUED, jobs_path)
     runtime.schedule(job.job_id, run_job(job.job_id, runtime=runtime, jobs_path=jobs_path))
     return 202, _client_job(job.job_id, jobs_path)
@@ -404,29 +395,28 @@ def _outstanding_limits(app_id: str, limits: MakeLimits) -> list[media_jobs.Outs
 
 def _parse(body: Any, limits: MakeLimits) -> tuple[str, str, dict[str, Any]]:
     if not isinstance(body, Mapping):
-        raise _MakeError("invalid_json", "Send a JSON object", 400)
+        raise PublicFailure("invalid_json", 400, expected="JSON object")
     unknown = sorted(set(body) - _BACKEND_FIELDS - {"intent", *_SOURCE_FIELDS})
     if unknown:
-        raise _MakeError("unsupported_field", f"Unsupported field: {unknown[0]}", 400)
+        raise PublicFailure("unsupported_field", 400, field=unknown[0])
     intent = body.get("intent")
     if intent not in SUPPORTED_INTENTS:
-        raise _MakeError("unsupported_intent", "intent must be image.generate or image.edit", 400)
+        raise PublicFailure("unsupported_intent", 400, param="intent", accepted=sorted(SUPPORTED_INTENTS))
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise _MakeError("model_required", "Choose a model", 400)
+        raise PublicFailure("model_required", 400, param="model")
     prompt = body.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
-        raise _MakeError("prompt_required", "Describe what to make", 400)
+        raise PublicFailure("prompt_required", 400, param="prompt")
     if len(prompt) > limits.max_prompt_chars:
-        raise _MakeError("prompt_too_long",
-                         f"Describe it in at most {limits.max_prompt_chars:,} characters", 400)
+        raise PublicFailure("prompt_too_long", 400, param="prompt", max_chars=limits.max_prompt_chars)
     count = body.get("n", 1)
     if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= limits.max_images:
-        raise _MakeError("invalid_n", f"n must be a whole number from 1 to {limits.max_images}", 400)
+        raise PublicFailure("invalid_n", 400, param="n", max_images=limits.max_images)
     try:
         prompt_memory.requested_mode(body)
     except prompt_memory.PromptModeError as exc:
-        raise _MakeError("invalid_prompt_mode", str(exc), 400) from None
+        raise PublicFailure("invalid_prompt_mode", 400, reason=str(exc)) from None
     backend_body = {key: body[key] for key in _BACKEND_FIELDS if key in body}
     backend_body["model"] = model.strip()
     return str(intent), model.strip(), backend_body
@@ -450,8 +440,8 @@ def _owned_source(
     if asset_id is None and job_id is None:
         return None
     if asset_id is not None and job_id is not None:
-        raise _MakeError("invalid_source", "Send source_asset_id or source_job_id, not both", 400)
-    not_found = _MakeError("source_not_found", "Source picture not found in your Library", 404)
+        raise PublicFailure("invalid_source", 400, copy="one_source", fields=list(_SOURCE_FIELDS))
+    not_found = PublicFailure("source_not_found", 404)
     if job_id is not None:
         if not isinstance(job_id, str):
             raise not_found
@@ -462,7 +452,9 @@ def _owned_source(
         asset_id = next((asset.get("asset_id") for asset in job.get("assets") or []
                          if str(asset.get("asset_id") or "").startswith("img_")), None)
         if asset_id is None:
-            raise _MakeError("source_not_ready", "That job has no finished picture yet", 409)
+            status = str(job.get("status") or "")
+            raise PublicFailure("source_not_ready", 409, job_status=status,
+                                copy="source_missing" if media_jobs.is_terminal(status) else "source_pending")
     if not isinstance(asset_id, str) or not asset_id.startswith("img_"):
         raise not_found
     item = find_owned_asset(request, user_id, asset_id)
@@ -482,7 +474,7 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
         if (current.get("metadata") or {}).get("cancel_requested_at"):
             _settle_canceled(job_id, jobs_path)
         else:
-            _fail(job_id, "This job's input is no longer available", jobs_path)
+            _fail(job_id, _text("input_lost"), jobs_path)
         return
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=5,
@@ -504,8 +496,10 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
         _fail(job_id, message, jobs_path, http_status=exc.http_status)
         return
     except Exception as exc:  # noqa: BLE001
-        # Arbitrary exception text may hold the prompt or a backend secret.
-        _fail(job_id, f"Making failed ({type(exc).__name__})", jobs_path)
+        # Arbitrary exception text may hold the prompt or a backend secret,
+        # so only the class reaches the log and the person gets fixed copy.
+        log.warning("make job %s failed: %s", job_id, type(exc).__name__)
+        _fail(job_id, _text("make_failed"), jobs_path)
         return
     assets = [
         {"asset_id": str(asset["asset_id"]), "media_type": str(asset.get("media_type") or "")}
@@ -513,7 +507,7 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
         if isinstance(asset, Mapping) and isinstance(asset.get("asset_id"), str)
     ]
     if not assets:
-        _fail(job_id, "The backend finished without a picture", jobs_path)
+        _fail(job_id, _text("no_picture"), jobs_path)
         return
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, add_assets=assets,
@@ -559,7 +553,7 @@ def _own_make_job(job_id: str, user_id: str, *, admin_path: Path, jobs_path: Pat
     app = admin_store.get_session_app_for_user(user_id, path=admin_path)
     job = media_jobs.get(job_id, path=jobs_path) if app is not None else None
     if job is None or job.get("app_id") != app["id"]:
-        raise _MakeError("job_not_found", "Job not found for this account", 404)
+        raise PublicFailure("job_not_found", 404, job_id=job_id)
     return job
 
 
@@ -593,7 +587,7 @@ def _bounded_limit(raw: str | None) -> int:
     try:
         value = int(raw) if raw else _LIST_DEFAULT_LIMIT
     except ValueError:
-        raise _MakeError("invalid_limit", "limit must be a whole number", 400) from None
+        raise PublicFailure("invalid_limit", 400, param="limit") from None
     return max(1, min(value, _LIST_MAX_LIMIT))
 
 
@@ -607,6 +601,11 @@ def _json(content: Mapping[str, Any], status_code: int = 200,
                         headers={"cache-control": "no-store", **(headers or {})})
 
 
-def _error(exc: _MakeError) -> JSONResponse:
+def _error(exc: PublicFailure) -> JSONResponse:
     headers = {"retry-after": str(exc.retry_after)} if exc.retry_after else None
-    return _json({"error": {"code": exc.code, "message": exc.message}}, exc.status_code, headers)
+    return _json(exc.body(), exc.status_code, headers)
+
+
+def _text(key: str) -> str:
+    """The stored failure text of a job: what stopped it and what to do."""
+    return describe(key)[1]

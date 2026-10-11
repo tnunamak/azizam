@@ -2016,5 +2016,153 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
 
 
+
+class MemberFailureCopyTests(unittest.TestCase):
+    """Every member API failure names its layer and one next action.
+
+    Codes and statuses stay stable for API clients; ids, parameter names and
+    exception classes move to ``details`` (principles P3 and P15).
+    """
+
+    _session = MeMediaRouterTests._session
+    _mutation_validator = MeMediaRouterTests._mutation_validator
+    _asset_path = MeMediaRouterTests._asset_path
+    _meta_path = MeMediaRouterTests._meta_path
+    _asset_metadata = MeMediaRouterTests._asset_metadata
+    _catalog = MeMediaRouterTests._catalog
+    _delete_unshared = MeMediaRouterTests._delete_unshared
+    _write_asset = MeMediaRouterTests._write_asset
+    _receipt = MeMediaRouterTests._receipt
+    _job = MeMediaRouterTests._job
+    _make_headers = MeMakeApiAcceptanceTests._make_headers
+    _picture = MeMakeApiAcceptanceTests._picture
+    _submit_make = MeMakeApiAcceptanceTests._submit_make
+    _finished = MeMakeApiAcceptanceTests._finished
+    make_url = MeMakeApiAcceptanceTests.make_url
+    setUp = MeMakeApiAcceptanceTests.setUp
+    tearDown = MeMakeApiAcceptanceTests.tearDown
+
+    def _error(self, response, status: int, code: str, layer: str) -> dict:
+        self.assertEqual(response.status_code, status, response.text)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], code)
+        self.assertEqual(error["details"]["layer"], layer)
+        return error
+
+    def test_library_errors_give_the_layer_and_one_action(self) -> None:
+        missing = self._error(self.client.get("/me/api/media/img_" + "c" * 64), 404, "asset_not_found", "library")
+        self.assertEqual(missing["message"], "This item isn't in your Library. "
+                                             "Return to the Library and choose another item.")
+        self._error(self.client.get("/me/api/media", params={"cursor": "%%%"}), 400, "invalid_cursor", "request")
+        self._write_asset("img_" + "e" * 64, ["sha256:alice"])  # Dates are checked against items.
+        bad_date = self._error(self.client.get("/me/api/media", params={"start": "May 1"}), 400,
+                               "invalid_date", "request")
+        self.assertNotIn("YYYY", bad_date["message"])
+        period = self._error(self.client.get("/me/api/usage/summary", params={"period": "week"}), 400,
+                             "unsupported_period", "request")
+        self.assertNotIn("period=", period["message"])
+        source = self._error(self.client.get("/me/api/media", params={"source": "x"}), 400, "invalid_source", "request")
+        self.assertNotIn("app:<id>", source["message"])
+        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 403, "owner_required", "account")
+        self.assertIn("Choose your own work", owner["message"])
+
+    def test_missing_file_is_not_called_expired(self) -> None:
+        asset_id = "aud_" + "d" * 64
+        self._receipt(self.app_a["id"], "req_gone")
+        self._job("req_gone", asset_id, media_type="audio/mpeg")
+        error = self._error(self.client.get(f"/me/api/media/{asset_id}/download"), 404, "asset_unavailable", "library")
+        self.assertNotIn("expired", error["message"])
+        self.assertIn("make it again", error["message"])
+
+    def test_signed_out_and_unknown_person_say_sign_in_again(self) -> None:
+        ghost = {"id": "usr_gone", "email": "gone@example.com"}
+        self.current_user = ghost
+        for response in (self.client.get("/me/api/media"),
+                         self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("g"))):
+            error = self._error(response, 401, "session_user_not_found", "account")
+            self.assertEqual(error["message"], "Your sign-in no longer matches an account. Sign in again.")
+
+    def test_make_request_errors_keep_parameter_names_in_details(self) -> None:
+        unknown = self._error(self.client.post(self.make_url, json=self._picture(steps=4), headers=self._make_headers("f")),
+                              400, "unsupported_field", "request")
+        self.assertNotIn("steps", unknown["message"])
+        self.assertEqual(unknown["details"]["field"], "steps")
+        intent = self._error(self.client.post(self.make_url, json=self._picture(intent="video.generate"),
+                                              headers=self._make_headers("i")), 400, "unsupported_intent", "request")
+        self.assertNotIn("intent", intent["message"])
+        self.assertNotIn("image.generate", intent["message"])
+        both = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit", source_asset_id="img_x",
+                                                                           source_job_id="mj_x"),
+                                            headers=self._make_headers("b")), 400, "invalid_source", "request")
+        self.assertNotIn("source_asset_id", both["message"])
+        edit = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit"),
+                                            headers=self._make_headers("e")), 400, "invalid_source", "request")
+        self.assertEqual(edit["message"], "Editing needs a source picture. Choose a picture to edit.")
+        self.runtime.limits = me_make.MakeLimits(max_images=4, max_prompt_chars=1000)
+        count = self._error(self.client.post(self.make_url, json=self._picture(n=9), headers=self._make_headers("n")),
+                            400, "invalid_n", "request")
+        self.assertEqual(count["message"], "That number of pictures isn't allowed. Choose from 1 to 4.")
+        long = self._error(self.client.post(self.make_url, json=self._picture(prompt="x" * 1001),
+                                            headers=self._make_headers("l")), 400, "prompt_too_long", "request")
+        self.assertIn("1,000 characters", long["message"])
+
+    def test_idempotency_conflict_names_the_action_not_the_policy(self) -> None:
+        self._submit_make("same-key")
+        error = self._error(self.client.post(self.make_url, json=self._picture(prompt="another"),
+                                             headers=self._make_headers("same-key")),
+                            409, "idempotency_conflict", "request")
+        self.assertNotIn("owner, operation", error["message"])
+        self.assertIn("Refresh the page", error["message"])
+
+    def test_source_job_that_is_running_or_failed_is_told_apart(self) -> None:
+        self.runtime.release.clear()
+        _, running = self._submit_make("still-running")
+        self.assertTrue(self.runtime.started.wait(5))
+        pending = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit",
+                                                                              source_job_id=running["job_id"]),
+                                               headers=self._make_headers("edit-running")),
+                              409, "source_not_ready", "library")
+        self.assertEqual(pending["message"], "That picture isn't ready. Wait for it to finish.")
+        self.runtime.fail_with = RuntimeError("boom")
+        self.runtime.release.set()
+        self._finished(running["job_id"])
+        failed = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit",
+                                                                             source_job_id=running["job_id"]),
+                                              headers=self._make_headers("edit-failed")),
+                             409, "source_not_ready", "library")
+        self.assertEqual(failed["message"], "That task didn't produce a picture. Choose another source picture.")
+        self.assertNotIn("yet", failed["message"])
+
+    def test_stored_job_failures_never_carry_an_exception_class(self) -> None:
+        self.runtime.fail_with = KeyError("secret-prompt")
+        _, job = self._submit_make("crash")
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["status"], media_jobs.STATUS_FAILED)
+        self.assertNotIn("KeyError", stored["error"])
+        self.assertEqual(stored["error"],
+                         "The picture couldn't be made, and we couldn't tell where it stopped. Try again.")
+
+    def test_backend_without_picture_names_the_model(self) -> None:
+        async def nothing(payload):
+            return []
+
+        self.runtime.execute = nothing
+        _, job = self._submit_make("empty")
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["error"], "The model finished without a picture. Try again.")
+
+    def test_queue_failure_is_stored_without_an_exception_class(self) -> None:
+        def broken(job_id, payload):
+            raise OSError("disk full")
+
+        self.runtime.keep_payload = broken
+        error = self._error(self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("q")),
+                            500, "make_queue_failed", "gateway")
+        self.assertEqual(error["message"], "The gateway couldn't save this task to the queue. Try again.")
+        stored = media_jobs.recent(5, path=self.jobs_db)[0]
+        self.assertNotIn("OSError", stored["error"])
+        self.assertEqual(stored["error"], error["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
