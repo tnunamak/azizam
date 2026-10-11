@@ -156,6 +156,26 @@ def test_registry_provider_and_alias_contexts():
     assert all(compare(permitted, convert_plan(permitted, matrix), c).v3.outcome == "allow" for c in matrix)
 
 
+def test_normalized_workflow_bindings_enforce_backend_lists():
+    registry = {"workflows": {"w": {"id": "w", "manifest": {
+        "intent": "image", "bindings": {"s": {}, "other": {}}},
+        "summary": {"intent": "image", "tags": ["allowed"],
+                    "supported_backends": ["other", "s"],
+                    "bindings": [{"backend": "other"}, {"backend": "s"}]}}}}
+    matrix = registry_matrix(registry)
+    assert {c.request.backend for c in matrix} == {"s", "other"}
+    profile = AppProfile(id="p", backends=frozenset())
+    converted = convert_plan(profile, matrix)
+    assert converted.plan.grants == ()
+    assert all(not compare(profile, converted, c).exact.allowed for c in matrix)
+    permitted = replace(profile, backends=frozenset({"s"}))
+    converted = convert_plan(permitted, matrix)
+    for request in matrix:
+        result = compare(permitted, converted, request)
+        assert result.exact.allowed == (request.request.backend == "s")
+        assert (result.v3.outcome == "allow") == result.exact.allowed
+
+
 def test_scope_family_and_none_vs_empty_grants():
     request = case(capability_tags=frozenset({"allowed"}))
     request = replace(request, request=replace(request.request, intent="chat.complete"))
@@ -170,7 +190,7 @@ def database(tmp_path):
     registry = {
         "services": {"s": {"id": "s", "capabilities": ["chat", "image"],
             "config": {"models": [{"id": "m", "model_metadata": {"tags": ["allowed"]}}]}}},
-        "workflows": {"w": {"manifest": {"id": "w", "intent": "image"}, "backend": "s"}},
+        "workflows": {"w": {"manifest": {"id": "w", "intent": "image", "bindings": {"s": {}}}}},
         "capabilities": {}, "protocol_frontends": {},
     }
     with sqlite3.connect(path) as conn:

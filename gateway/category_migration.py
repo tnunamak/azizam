@@ -248,8 +248,15 @@ def registry_matrix(registry: Mapping) -> list[Case]:
         intent = summary.get("intent") or manifest.get("intent")
         if intent:
             capabilities.add(intent)
-        targets.append((summary.get("backend") or workflow.get("backend"), None,
-                        workflow_id, summary, None))
+        backends = set(summary.get("supported_backends", [])) | set(manifest.get("bindings", {}))
+        if not backends:
+            raise ValueError("workflow has no backend bindings")
+        metadata = {field: summary.get(field, manifest.get(field)) for field in
+                    ("tags", "exposure", "trust_tier", "resource_tier")}
+        for backend in sorted(backends):
+            service = registry.get("services", {}).get(backend, {})
+            provider = service.get("config", {}).get("provider_id")
+            targets.append((backend, None, workflow_id, metadata, provider))
     # Capability records may carry targets not enumerated in service config.
     for record in records:
         targets.append((record.get("backend"), record.get("model"), record.get("workflow"),

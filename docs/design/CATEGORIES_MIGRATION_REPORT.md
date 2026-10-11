@@ -25,6 +25,9 @@ legacy reason strings.
 The registry matrix crosses every declared capability with every known
 model, model-group alias and workflow, and every declared frontend protocol.
 A service without enumerated models contributes a service-only target.
+Each workflow contributes one target per stored backend binding. These
+targets carry backend and provider restrictions into both legacy decisions
+and converted grants. A workflow without bindings stops the report.
 The matrix includes configured disabled records because this is an access
 comparison, not an availability probe. It does not import filesystem
 catalogs, infer missing model metadata or probe running engines.
