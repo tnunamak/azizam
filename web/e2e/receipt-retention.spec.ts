@@ -4,10 +4,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-// Seed only the test server's disposable database, never an operator file.
+// Seed only the test server's disposable database, never an operator file:
+// it must be the one run directory under .ui-e2e-state serving this port.
 function fixtureDatabase(port: number) {
-  if (port !== 18680)
-    throw new Error("Receipt journey requires UI_E2E_PORT=18680");
   const root = path.resolve(__dirname, "../../.ui-e2e-state");
   const active = readdirSync(root)
     .filter((name) => name.startsWith("run-"))
