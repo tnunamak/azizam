@@ -123,6 +123,21 @@ export interface Session {
   actor: SessionActor;
 }
 
+/** An app as listed by the owner admin API. */
+export interface App {
+  id: string;
+  kind: "service" | "personal";
+  name: string;
+  owner_user_id: string | null;
+  owner_service_account_id: string | null;
+  default_profile_id: string | null;
+  created_at: number;
+  disabled_at: number | null;
+  effective_profile_id: string;
+  effective_profile_name: string;
+  effective_profile_source: "app_default" | "fallback";
+}
+
 export interface User {
   id: string;
   issuer: string;
@@ -778,6 +793,10 @@ export async function adminRegistryMutation<T>(
 export const api = {
   session: () => fetchSession(),
 
+  apps: {
+    list: () =>
+      adminFetch<{ apps: App[] }>("/admin/api/apps").then((r) => r.apps),
+  },
   users: {
     list: () =>
       adminFetch<{ users: User[] }>("/admin/api/users").then((r) => r.users),
