@@ -42,6 +42,7 @@ from starlette.formparsers import (
 from starlette.requests import ClientDisconnect
 
 from gateway.resource_claims import (
+    AdmissionDecision,
     AdmissionRequest,
     CapacitySnapshot,
     QueueClass,
@@ -114,6 +115,10 @@ class SttDeadlineExceeded(SttExecutionError):
 
 class SttResourceLimitExceeded(SttExecutionError):
     """Storage, upload, decode, segment, or concurrency budget was exceeded."""
+
+    def __init__(self, message: str, *, decision: AdmissionDecision | None = None) -> None:
+        super().__init__(message)
+        self.decision = decision
 
 
 class SttChunkResponseError(SttExecutionError):
@@ -523,7 +528,8 @@ def _remove_workspace_after_parse_failure(workspace: Path) -> None:
 
 
 class SttResourceLease:
-    def __init__(self, gate: "SttResourceGate", reserved_bytes: int) -> None:
+    def __init__(self, gate: "SttResourceGate", reserved_bytes: int, decision: AdmissionDecision) -> None:
+        self.decision = decision
         self._gate = gate
         self._reserved_bytes = reserved_bytes
         self._released = False
@@ -572,6 +578,8 @@ class SttResourceGate:
         decision = evaluate_admission(
             AdmissionRequest(request_id=request_id, claim=config.request_claim()),
             CapacitySnapshot(
+                observed_at=time.time(),
+                fact_qualities={"total_disk_mb": "measured", "queue_active": "measured"},
                 total_disk_mb=max(0, free_bytes // (1024 * 1024)),
                 used_disk_mb=math.ceil(self._reserved_bytes / (1024 * 1024)),
                 active_by_queue={QueueClass.INTERACTIVE: self._active},
@@ -579,14 +587,14 @@ class SttResourceGate:
             ),
         )
         if not decision.accepted:
-            raise SttResourceLimitExceeded("STT concurrency limit is currently exhausted")
+            raise SttResourceLimitExceeded("STT concurrency limit is currently exhausted", decision=decision)
         if free_bytes - self._reserved_bytes < reservation + config.min_free_bytes:
             raise SttResourceLimitExceeded(
                 "Configured STT spool storage has insufficient reserved capacity"
             )
         self._active += 1
         self._reserved_bytes += reservation
-        return SttResourceLease(self, reservation)
+        return SttResourceLease(self, reservation, decision)
 
 
 GLOBAL_STT_RESOURCE_GATE = SttResourceGate()

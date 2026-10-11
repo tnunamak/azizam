@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from gateway.model_ids import display_model_id
+from gateway.resource_decisions import project_decision
 from gateway.backends.request_shape import (
     TERMINAL_REASONS,
     sanitize_request_shape_fields_for_admin,
@@ -257,6 +258,7 @@ class RouteReceipt:
     usage: dict[str, Any] | None = None
     effective_output_limit: int | None = None
     refusal: dict[str, Any] | None = None
+    resource_decision: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -410,6 +412,8 @@ class RouteReceipt:
             "updated_at_ms": self.updated_at_ms,
             "metadata": dict(self.metadata),
         }
+        if self.resource_decision is not None:
+            data["resource_decision"] = self.resource_decision
         if isinstance(self.refusal, Mapping):
             # Present only on refused requests; absent means none recorded.
             data["refusal"] = dict(self.refusal)
@@ -426,8 +430,12 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
         out.pop("owner_key_hash", None)
         metadata = out.pop("metadata", None)
         out.update(sanitize_admin_metadata(metadata))
+        if isinstance(data.get("resource_decision"), Mapping):
+            out["resource_decision"] = project_decision(data["resource_decision"], "admin")
         return out
     client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+    if isinstance(data.get("resource_decision"), Mapping):
+        client_data["resource_decision"] = project_decision(data["resource_decision"])
     for model_field in ("requested_model", "resolved_model"):
         if isinstance(client_data.get(model_field), str):
             client_data[model_field] = display_model_id(client_data[model_field])

@@ -7,6 +7,8 @@ from enum import Enum
 from hashlib import sha256
 from typing import Mapping
 
+from gateway.resource_decisions import CapacityFact, DecisionDetails, DecisionReason, Quality
+
 
 class QueueClass(str, Enum):
     """Scheduling class for resource admission."""
@@ -59,33 +61,41 @@ class ResourceClaim:
 class CapacitySnapshot:
     """Explicit caller-supplied capacity and current load."""
 
-    total_vram_mb: int = 0
-    used_vram_mb: int = 0
+    total_vram_mb: int | None = None
+    used_vram_mb: int | None = None
     total_cpu_cores: float | None = None
-    used_cpu_cores: float = 0
+    used_cpu_cores: float | None = None
     total_ram_mb: int | None = None
-    used_ram_mb: int = 0
+    used_ram_mb: int | None = None
     total_disk_mb: int | None = None
-    used_disk_mb: int = 0
-    active_exclusive_locks: frozenset[str] = frozenset()
+    used_disk_mb: int | None = None
+    active_exclusive_locks: frozenset[str] | None = None
     active_by_queue: Mapping[QueueClass, int] = field(default_factory=dict)
     queue_limits: Mapping[QueueClass, int] = field(default_factory=dict)
     active_by_profile: Mapping[str, int] = field(default_factory=dict)
     profile_limits: Mapping[str, int] = field(default_factory=dict)
 
+    observed_at: float | None = None
+    quality: Quality = "declared"
+    # Optional per-field provenance, e.g. measured disk and declared reservations.
+    fact_qualities: Mapping[str, Quality] = field(default_factory=dict)
+
     def __post_init__(self) -> None:
         for name in ("total_vram_mb", "used_vram_mb", "used_ram_mb", "used_disk_mb"):
-            _require_non_negative_int(name, getattr(self, name))
+            value = getattr(self, name)
+            if value is not None:
+                _require_non_negative_int(name, value)
         for name in ("total_ram_mb", "total_disk_mb"):
             value = getattr(self, name)
             if value is not None:
                 _require_non_negative_int(name, value)
         if self.total_cpu_cores is not None and self.total_cpu_cores < 0:
             raise ValueError("total_cpu_cores must be non-negative")
-        if self.used_cpu_cores < 0:
+        if self.used_cpu_cores is not None and self.used_cpu_cores < 0:
             raise ValueError("used_cpu_cores must be non-negative")
 
-        object.__setattr__(self, "active_exclusive_locks", frozenset(self.active_exclusive_locks))
+        if self.active_exclusive_locks is not None:
+            object.__setattr__(self, "active_exclusive_locks", frozenset(self.active_exclusive_locks))
         object.__setattr__(
             self,
             "active_by_queue",
@@ -117,6 +127,8 @@ class AdmissionDecision:
     reasons: tuple[str, ...] = ()
     caveats: tuple[str, ...] = ()
 
+    details: DecisionDetails = field(default_factory=DecisionDetails)
+
     @property
     def accepted(self) -> bool:
         return self.status is AdmissionStatus.ACCEPTED
@@ -129,54 +141,89 @@ def evaluate_admission(
     """Evaluate admission without observing live system state."""
 
     claim = request.claim
+    reasons: list[DecisionReason] = []
+    facts: list[CapacityFact] = []
     rejections: list[str] = []
     delays: list[str] = []
 
-    _check_queue_limit(claim, capacity, rejections)
-    _check_profile_limit(claim, capacity, rejections)
-    _check_locks(claim, capacity, delays)
-    _check_capacity("vram_mb", claim.vram_mb, capacity.total_vram_mb, capacity.used_vram_mb, delays)
+    def fact(name: str, resource: str, value: object, *, declared: bool = False) -> object:
+        quality = "declared" if declared else capacity.fact_qualities.get(name, capacity.quality)
+        item = CapacityFact(name, resource, value, capacity.observed_at, quality)
+        facts.append(item)
+        return item.value
 
-    if claim.gpu_required and capacity.total_vram_mb <= 0:
-        delays.append("gpu required but no gpu capacity is advertised")
+    def reason(code: str, effect: str, resource: str, rule: str, *, unknown: bool = False) -> None:
+        (rejections if effect == "rejection" else delays).append(rule)
+        reasons.append(DecisionReason(code, effect, resource, rule, capacity.observed_at,
+                                      "unavailable" if unknown else "declared"))
 
-    _check_optional_capacity(
-        "cpu_cores",
-        claim.cpu_cores,
-        capacity.total_cpu_cores,
-        capacity.used_cpu_cores,
-        delays,
-    )
-    _check_optional_capacity("ram_mb", claim.ram_mb, capacity.total_ram_mb, capacity.used_ram_mb, delays)
-    _check_optional_capacity(
-        "disk_mb",
-        claim.disk_mb,
-        capacity.total_disk_mb,
-        capacity.used_disk_mb,
-        delays,
-    )
+    for resource, key, limits, active in (
+        ("queue", claim.queue_class, capacity.queue_limits, capacity.active_by_queue),
+        ("profile", claim.profile_id, capacity.profile_limits, capacity.active_by_profile),
+    ):
+        if key is None or key not in limits:
+            continue
+        limit = fact(f"{resource}_limit", resource, limits[key], declared=True)
+        count = fact(f"{resource}_active", resource, active.get(key))
+        if count is None:
+            reason(f"{resource}_load_unknown", "rejection", resource,
+                   f"{resource} concurrency load is not advertised", unknown=True)
+        elif count >= limit:
+            rule = (f"queue concurrency limit reached for {claim.queue_class.value}"
+                    if resource == "queue" else "profile concurrency limit reached")
+            reason("queue_full" if resource == "queue" else "profile_concurrency_full",
+                   "rejection", resource, rule)
 
-    caveats = claim.caveats
+    if claim.exclusive_locks:
+        fact("requested_locks", "lock", claim.exclusive_locks, declared=True)
+        active = fact("active_locks", "lock", sorted(capacity.active_exclusive_locks)
+                      if capacity.active_exclusive_locks is not None else None)
+        if active is None:
+            reason("locks_unknown", "delay", "lock", "exclusive lock availability is not advertised", unknown=True)
+        else:
+            blocked = sorted(set(active).intersection(claim.exclusive_locks))
+            fact("conflicting_locks", "lock", blocked)
+            if blocked:
+                reason("lock_conflict", "delay", "lock", f"{len(blocked)} exclusive lock conflict")
+
+    for name, resource in (("vram_mb", "vram"), ("cpu_cores", "cpu"),
+                           ("ram_mb", "ram"), ("disk_mb", "disk")):
+        claimed = getattr(claim, name)
+        if not claimed and not (name == "vram_mb" and claim.gpu_required):
+            continue
+        fact(f"requested_{name}", resource, claimed, declared=True)
+        total = fact(f"total_{name}", resource, getattr(capacity, f"total_{name}"))
+        used = fact(f"used_{name}", resource, getattr(capacity, f"used_{name}"))
+        available = None if total is None or used is None else total - used
+        # This is arithmetic over supplied facts, not a new measurement.
+        qualities = {f.quality for f in facts[-2:]}
+        quality = ("unavailable" if available is None else "estimated" if "estimated" in qualities
+                   else "declared" if "declared" in qualities else "measured")
+        facts.append(CapacityFact(f"available_{name}", resource, available, capacity.observed_at, quality))
+        if claimed:
+            if available is None:
+                reason("capacity_unknown", "delay", resource, f"{name} capacity is not advertised", unknown=True)
+            elif claimed > available:
+                reason("capacity_insufficient", "delay", resource,
+                       f"not enough {name}: requested {claimed}, available {available}")
+        if name == "vram_mb" and claim.gpu_required:
+            if total is None:
+                reason("capacity_unknown", "delay", "gpu", "gpu capacity is not advertised", unknown=True)
+            elif total <= 0:
+                reason("gpu_unavailable", "delay", "gpu", "gpu required but no gpu capacity is advertised")
+
+    reasons.extend(DecisionReason("estimate_reason", "info", "resource", rule) for rule in claim.reasons)
+    if not reasons:
+        reasons.append(DecisionReason("resources_available", "info", "resource", "capacity available"))
+    details = DecisionDetails(tuple(reasons), tuple(facts))
     if rejections:
-        return AdmissionDecision(
-            AdmissionStatus.REJECTED,
-            request.request_id,
-            tuple(rejections),
-            caveats,
-        )
+        return AdmissionDecision(AdmissionStatus.REJECTED, request.request_id,
+                                 tuple(rejections), claim.caveats, details)
     if delays:
-        return AdmissionDecision(
-            AdmissionStatus.DELAYED,
-            request.request_id,
-            tuple(delays),
-            caveats,
-        )
-    return AdmissionDecision(
-        AdmissionStatus.ACCEPTED,
-        request.request_id,
-        claim.reasons or ("capacity available",),
-        caveats,
-    )
+        return AdmissionDecision(AdmissionStatus.DELAYED, request.request_id,
+                                 tuple(delays), claim.caveats, details)
+    return AdmissionDecision(AdmissionStatus.ACCEPTED, request.request_id,
+                             claim.reasons or ("capacity available",), claim.caveats, details)
 
 
 def summarize_claim(claim: ResourceClaim) -> dict[str, object]:
@@ -207,73 +254,6 @@ def summarize_decision(decision: AdmissionDecision) -> dict[str, object]:
         "reasons": decision.reasons,
         "caveats": decision.caveats,
     }
-
-
-def _check_queue_limit(
-    claim: ResourceClaim,
-    capacity: CapacitySnapshot,
-    rejections: list[str],
-) -> None:
-    limit = capacity.queue_limits.get(claim.queue_class)
-    if limit is None:
-        return
-    active = capacity.active_by_queue.get(claim.queue_class, 0)
-    if active >= limit:
-        rejections.append(f"queue concurrency limit reached for {claim.queue_class.value}")
-
-
-def _check_profile_limit(
-    claim: ResourceClaim,
-    capacity: CapacitySnapshot,
-    rejections: list[str],
-) -> None:
-    if claim.profile_id is None:
-        return
-    limit = capacity.profile_limits.get(claim.profile_id)
-    if limit is None:
-        return
-    active = capacity.active_by_profile.get(claim.profile_id, 0)
-    if active >= limit:
-        rejections.append("profile concurrency limit reached")
-
-
-def _check_locks(
-    claim: ResourceClaim,
-    capacity: CapacitySnapshot,
-    delays: list[str],
-) -> None:
-    blocked = capacity.active_exclusive_locks.intersection(claim.exclusive_locks)
-    if blocked:
-        delays.append(f"{len(blocked)} exclusive lock conflict")
-
-
-def _check_capacity(
-    name: str,
-    claimed: int | float,
-    total: int | float,
-    used: int | float,
-    delays: list[str],
-) -> None:
-    if claimed <= 0:
-        return
-    available = total - used
-    if claimed > available:
-        delays.append(f"not enough {name}: requested {claimed}, available {available}")
-
-
-def _check_optional_capacity(
-    name: str,
-    claimed: int | float | None,
-    total: int | float | None,
-    used: int | float,
-    delays: list[str],
-) -> None:
-    if claimed is None or claimed <= 0:
-        return
-    if total is None:
-        delays.append(f"{name} capacity is not advertised")
-        return
-    _check_capacity(name, claimed, total, used, delays)
 
 
 def _redact_ref(value: str) -> str:

@@ -232,7 +232,11 @@ def error_from(resp: Any) -> CallError:
     err = payload.get("error") if isinstance(payload, Mapping) else None
     if isinstance(err, Mapping):
         message = str(err.get("message") or err.get("code") or "request failed")
-        return CallError(message, http_status=resp.status_code, code=err.get("code"), type=err.get("type"))
+        details = {"http_status": resp.status_code, "code": err.get("code"), "type": err.get("type")}
+        if isinstance(err.get("decision"), Mapping):
+            # The core route already projected this for the caller's credential.
+            details["decision"] = dict(err["decision"])
+        return CallError(message, **details)
     detail = payload.get("detail") if isinstance(payload, Mapping) else None
     return CallError(str(detail or f"gateway returned HTTP {resp.status_code}"), http_status=resp.status_code)
 

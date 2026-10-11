@@ -1355,3 +1355,32 @@ def _write_silenced_wav(path: Path) -> None:
             silent = any(start <= second < end for start, end in intervals)
             sample = 0 if silent else int(8000 * ((index % 31) - 15) / 15)
             handle.writeframesraw(struct.pack("<h", sample))
+
+
+class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_refusal_preserves_openai_shape_and_records_owner_evidence(self) -> None:
+        from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, ResourceClaim, evaluate_admission
+        from gateway.receipts import RouteReceipt
+        decision = evaluate_admission(AdmissionRequest("req", ResourceClaim(disk_mb=20)),
+                                     CapacitySnapshot(total_disk_mb=10, used_disk_mb=0, observed_at=123))
+        receipt = RouteReceipt(protocol="openai.audio", intent="audio.transcribe")
+        request = Request({"type": "http", "method": "POST", "path": "/v1/audio/transcriptions",
+                           "headers": [(b"content-type", b"multipart/form-data; boundary=test")]})
+        with tempfile.TemporaryDirectory() as temp:
+            with (patch.object(proxy, "_service_availability_response", return_value=None),
+                  patch.object(proxy.receipt_store, "begin"),
+                  patch.object(proxy.receipt_store, "finalize") as finalize,
+                  patch.object(stt_chunking.GLOBAL_STT_RESOURCE_GATE, "acquire",
+                               side_effect=stt_chunking.SttResourceLimitExceeded("private quantities 20 10", decision=decision))):
+                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT,
+                                                        execution_snapshot=_config(Path(temp)), route_receipt=receipt)
+        self.assertEqual(response.status_code, 413)
+        error = json.loads(response.body)["error"]
+        self.assertEqual(error["code"], "stt_resource_limit")
+        self.assertEqual(error["type"], "invalid_request_error")
+        self.assertIsNone(error["param"])
+        self.assertNotIn("private", json.dumps(error))
+        self.assertNotIn("facts", error["decision"])
+        self.assertEqual(error["decision"]["next_actions"][0]["action"], "wait")
+        self.assertEqual(finalize.call_count, 1)
+        self.assertEqual(receipt.resource_decision["facts"][0]["value"], 20)

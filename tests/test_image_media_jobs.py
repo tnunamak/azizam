@@ -409,7 +409,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             payload["error"]["message"],
-            "ComfyUI media backend disabled",
+            "This service is not available right now.",
         )
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
@@ -443,7 +443,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body.decode("utf-8"))
         self.assertEqual(
             payload["error"]["message"],
-            "queue full: comfyui-media",
+            "Shared capacity is busy.",
         )
         self.assertEqual(len(media_jobs.recent(path=self.db)), 1)
 
@@ -521,7 +521,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers["retry-after"], "45")
         payload = json.loads(response.body.decode("utf-8"))
-        self.assertEqual(payload["error"]["message"], "reserved for LLM work")
+        self.assertEqual(payload["error"]["message"], "This service is not available right now.")
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
     async def test_queue_admission_observes_at_least_the_configured_depth(self) -> None:
@@ -560,7 +560,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body.decode("utf-8"))
         self.assertEqual(
             payload["error"]["message"],
-            "queue full: comfyui-media",
+            "Shared capacity is busy.",
         )
         self.assertEqual(len(media_jobs.recent(path=self.db)), 3)
 
