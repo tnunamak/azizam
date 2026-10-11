@@ -139,7 +139,8 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(
         page.getByRole("combobox", { name: "Model", exact: true }),
-      ).toContainText("Unverified model");
+        // Try offers only catalog choices; it no longer invents one.
+      ).toContainText("No options available");
       await expect(
         page.getByRole("button", { name: "Run", exact: true }),
       ).toBeDisabled();

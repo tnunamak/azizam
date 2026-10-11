@@ -626,7 +626,9 @@ function EnginesContents() {
         <TableCell className="w-full max-w-0 py-1!">
           <button
             type="button"
-            className="flex min-h-8 w-full min-w-0 flex-col justify-center text-left max-sm:min-h-11"
+            // The whole two-line row stays one 44 px target, even when a row
+            // has no metadata line.
+            className="flex min-h-11 w-full min-w-0 flex-col justify-center text-left"
             onClick={() => openEditor(service)}
           >
             <div className="flex min-w-0 items-center gap-2">

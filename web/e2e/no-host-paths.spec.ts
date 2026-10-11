@@ -27,6 +27,7 @@ test("Usage shows no host path in the table, receipts or details", async ({ page
     route.fulfill({
       json: {
         requests: 2,
+        media_count: 0,
         by_model: [{ model: GGUF, capability: "chat", requests: 2 }],
         by_day: [{ date: "2026-10-01", chat: 2 }],
         receipts: [
