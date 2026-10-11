@@ -37,7 +37,6 @@ import {
   OverflowMenuSeparator,
 } from "@/components/ui/overflow-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/toast";
 import { Spinner } from "@/components/ui/spinner";
 import { PageHeader } from "@/components/product/page-header";
 import { StateBadge, StateWord } from "@/components/product/status-ui";
