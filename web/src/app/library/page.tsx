@@ -1197,13 +1197,17 @@ function Preview({
 type PersonLookup = (asset: MediaAsset) => string | null;
 
 function usePeople(enabled: boolean, sources: MediaSource[]) {
-  const query = useQuery({
+  const {
+    data: users,
+    isError,
+    isFetching,
+    refetch,
+  } = useQuery({
     queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled,
     retry: false,
   });
-  const users = query.data;
   const people = useMemo(
     () =>
       (users ?? [])
@@ -1226,7 +1230,7 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
     )?.owner_user_id;
     return people.find((person) => person.id === owner)?.name ?? null;
   };
-  return { people, lookup, query };
+  return { people, lookup, query: { isError, isFetching, refetch } };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1647,7 +1651,12 @@ function CreationViewer({
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
-  const promptMemoryQuery = useQuery({
+  const {
+    data: promptMemory,
+    isError: promptMemoryError,
+    isFetching: promptMemoryFetching,
+    refetch: refetchPromptMemory,
+  } = useQuery({
     queryKey: promptMemoryKey,
     queryFn: accountApi.promptMemory,
     enabled: maker && !prompt,
@@ -1656,7 +1665,6 @@ function CreationViewer({
   useEffect(() => {
     if (viewer.id) markCreationOpened(viewer.id, asset.asset_id);
   }, [viewer.id, asset.asset_id]);
-  const promptMemory = promptMemoryQuery.data;
   const notSavedReason = promptNotSavedReason(
     tryKeepState(promptMemory?.prompt_memory),
     Boolean(viewer.admin),
@@ -1924,7 +1932,7 @@ function CreationViewer({
                 ) : null}
               </div>
               {receiptFailed ? <p role="status">The gateway couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
-              {maker && !prompt ? <QueryFeedback label="prompt settings" query={promptMemoryQuery} /> : null}
+              {maker && !prompt ? <QueryFeedback label="prompt settings" query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
               <KeyValueList
                 className="figures"
                 items={presentFacts([
@@ -2088,11 +2096,15 @@ export default function LibraryPage() {
   const searchParams = useSearchParams();
   const linkedJobId = searchParams?.get("job");
   const queryClient = useQueryClient();
-  const modelCatalogQuery = useQuery({
+  const {
+    data: modelCatalog,
+    isError: modelCatalogError,
+    isFetching: modelCatalogFetching,
+    refetch: refetchModelCatalog,
+  } = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
-  const modelCatalog = modelCatalogQuery.data;
   const preparing = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const removedAssetIds = useRef(new Set<string>());
@@ -2122,7 +2134,12 @@ export default function LibraryPage() {
     model === "all" &&
     source === "all" &&
     !debouncedSearch.trim();
-  const homeQuery = useQuery({
+  const {
+    data: home,
+    isError: homeError,
+    isFetching: homeFetching,
+    refetch: refetchHome,
+  } = useQuery({
     queryKey: ["account", "home"],
     queryFn: productApi.home,
     retry: false,
@@ -2134,7 +2151,6 @@ export default function LibraryPage() {
         ? 15_000
         : false,
   });
-  const home = homeQuery.data;
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters, canChooseOwner);
@@ -2261,11 +2277,15 @@ export default function LibraryPage() {
       ),
     retry: false,
   });
+  // A removed deep link forgets which link was closed; adjusted during
+  // render, not in an effect, so no stale commit shows between them.
+  const [previousDeepLinkId, setPreviousDeepLinkId] = useState(deepLinkedAssetId);
+  if (previousDeepLinkId !== deepLinkedAssetId) {
+    setPreviousDeepLinkId(deepLinkedAssetId);
+    if (!deepLinkedAssetId) setClosedDeepLinkId(null);
+  }
   useEffect(() => {
-    if (!deepLinkedAssetId) {
-      setClosedDeepLinkId(null);
-      return;
-    }
+    if (!deepLinkedAssetId) return;
     if (closedDeepLinkId === deepLinkedAssetId) return;
     if (selected?.asset_id === deepLinkedAssetId) return;
     if (listedDeepLinkedAsset) {
@@ -2274,9 +2294,7 @@ export default function LibraryPage() {
     }
     if (deepLinkedAsset?.asset && isMediaKind(deepLinkedAsset.asset.kind)) {
       setSelected(deepLinkedAsset.asset);
-      return;
     }
-    setSelected(null);
   }, [
     deepLinkedAsset,
     deepLinkedAssetId,
@@ -2662,9 +2680,9 @@ export default function LibraryPage() {
             </Button>
           ) : null}
         </section>
-        <QueryFeedback label="model names" query={modelCatalogQuery} />
+        <QueryFeedback label="model names" query={{ isError: modelCatalogError, isFetching: modelCatalogFetching, refetch: refetchModelCatalog }} />
         {canChooseOwner ? <QueryFeedback label="people" query={peopleQuery} /> : null}
-        {showRunningMedia ? <QueryFeedback label="running work" query={homeQuery} /> : null}
+        {showRunningMedia ? <QueryFeedback label="running work" query={{ isError: homeError, isFetching: homeFetching, refetch: refetchHome }} /> : null}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetFetching ? <p role="status">Opening that creation…</p> : null}
         {deepLinkedAssetId && closedDeepLinkId !== deepLinkedAssetId && !selected && deepLinkedAssetError ? (
           <div className="mb-4">

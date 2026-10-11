@@ -44,6 +44,38 @@ async function routeImageJob(page: import("@playwright/test").Page) {
   );
 }
 
+/**
+ * Try picks only catalog models, and the portable fixture serves no speech,
+ * transcription, decision or embeddings model. Add one of each so those
+ * tabs have a real choice.
+ */
+async function routeAudioCatalog(page: import("@playwright/test").Page) {
+  await page.route("**/me/api/models/catalog*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const row = (id: string, capability: string, intent: string) => ({
+      id,
+      name: id,
+      capability,
+      capabilities: [{ intent, input_modalities: [capability === "transcribe" ? "audio" : "text"] }],
+      locality: "local",
+    });
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        models: [
+          ...(body.models ?? []),
+          row("demo-speech", "speech", "speech.synthesis"),
+          row("demo-transcribe", "transcribe", "speech.transcription"),
+          row("demo-decide", "decide", "decision.systemone"),
+          row("demo-embed", "embed", "text.embeddings"),
+        ],
+      },
+    });
+  });
+}
+
 async function waitForCatalog(page: import("@playwright/test").Page) {
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "Not in the catalog",
@@ -88,6 +120,7 @@ test("try creates a session key, runs public chat, and links a receipt", async (
 test("try shows empty, public API error, decision 404, and non-chat results", async ({
   page,
 }) => {
+  await routeAudioCatalog(page);
   await page.goto("/ui/try/");
   await prepareTryKey(page);
   await waitForCatalog(page);
@@ -377,6 +410,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
     });
   });
 
+  await routeAudioCatalog(page);
   await prepareTryKey(page);
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Transcribe a recording" }).click();
