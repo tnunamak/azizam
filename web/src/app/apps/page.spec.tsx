@@ -511,3 +511,56 @@ it("ignores malformed stored reminders instead of crashing the page", async () =
   );
   expect(phone.queryByText(/Old keys still work/)).toBeNull();
 });
+
+it("stores outstanding old key ids, never the secret, before the first revoke and across a reload", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [twoKeys],
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  let release: () => void = () => {};
+  vi.mocked(accountApi.revokeKey)
+    .mockReset()
+    .mockImplementation(
+      () => new Promise((resolve) => (release = () => resolve({} as never))),
+    );
+  renderApps();
+  await startRotation();
+  await waitFor(() => expect(accountApi.revokeKey).toHaveBeenCalledTimes(1));
+  expect(localStorage.getItem(unfinishedKey)).toBe(
+    JSON.stringify({ [app.id]: ["old-1", "old-2"] }),
+  );
+  expect(JSON.stringify({ ...localStorage })).not.toContain("test-key-only");
+  cleanup(); // reload while the first revoke is pending
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(row.getByText(/Old keys still work/)).toBeVisible();
+  release();
+});
+
+it("keeps only the still-active old key ids when a later revoke fails, and clears them on completion", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [twoKeys],
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  vi.mocked(accountApi.revokeKey)
+    .mockReset()
+    .mockResolvedValueOnce({} as never)
+    .mockRejectedValueOnce(new Error("The gateway did not answer."))
+    .mockResolvedValue({} as never);
+  renderApps();
+  await startRotation();
+  await screen.findByRole("alert");
+  expect(localStorage.getItem(unfinishedKey)).toBe(
+    JSON.stringify({ [app.id]: ["old-2"] }),
+  );
+  expect(JSON.stringify({ ...localStorage })).not.toContain("test-key-only");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry revoking old keys" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(localStorage.getItem(unfinishedKey)).toBeNull();
+});

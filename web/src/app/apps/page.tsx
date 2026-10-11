@@ -337,8 +337,17 @@ function AppsContents() {
     setBusy(true);
     setError(null);
     try {
+      // Record the old key ids (never the secret) before the first revoke,
+      // so a reload or a failed revoke cannot lose them.
+      const { appId } = reveal;
+      if (reveal.oldIds.length)
+        updateUnfinished((current) => ({ ...current, [appId]: reveal.oldIds }));
       for (const id of reveal.oldIds) {
         await accountApi.revokeKey(id);
+        updateUnfinished((current) => ({
+          ...current,
+          [appId]: (current[appId] ?? []).filter((oldId) => oldId !== id),
+        }));
         setReveal((current) =>
           current
             ? {
