@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -221,6 +222,98 @@ class MeMediaRouterTests(unittest.TestCase):
             ),
             path=self.jobs_db,
         )
+
+    def test_recent_order_indexes_preserve_results_and_avoid_sort(self) -> None:
+        for index in range(12):
+            media_jobs.create(media_jobs.MediaJob(
+                job_id=f"mj_order_{index:02d}", request_id=f"req_order_{index}",
+                intent="image.generate", created_at=100, updated_at=200 + index // 3,
+                status=media_jobs.STATUS_SUCCEEDED if index % 2 else media_jobs.STATUS_FAILED,
+            ), path=self.jobs_db)
+        with sqlite3.connect(str(self.jobs_db)) as conn:
+            conn.execute("DROP INDEX IF EXISTS media_jobs_updated_order")
+            conn.execute("DROP INDEX IF EXISTS media_jobs_status_updated_order")
+        expected = {
+            status: media_jobs.recent(limit=5, status=status, path=self.jobs_db)
+            for status in (None, media_jobs.STATUS_SUCCEEDED)
+        }
+        # Exercise the existing-database migration as well as a fresh schema.
+        media_jobs.init_db(self.jobs_db)
+        for status, index_name in (
+            (None, "media_jobs_updated_order"),
+            (media_jobs.STATUS_SUCCEEDED, "media_jobs_status_updated_order"),
+        ):
+            with self.subTest(status=status):
+                actual = media_jobs.recent(limit=5, status=status, path=self.jobs_db)
+                self.assertEqual(json.dumps(actual), json.dumps(expected[status]))
+                where = " WHERE status = ?" if status else ""
+                params = (status, 5) if status else (5,)
+                with sqlite3.connect(str(self.jobs_db)) as conn:
+                    plan = conn.execute(
+                        "EXPLAIN QUERY PLAN SELECT job_json FROM media_jobs" + where
+                        + " ORDER BY updated_at DESC, job_id DESC LIMIT ?", params,
+                    ).fetchall()
+                details = " ".join(str(row[3]) for row in plan)
+                self.assertIn(index_name, details)
+                self.assertNotIn("USE TEMP B-TREE", details)
+
+    def test_usage_job_receipt_join_is_linear_and_byte_identical(self) -> None:
+        count = 12
+        for index in range(count):
+            request_id = f"req_join_{index:02d}"
+            self._receipt(self.app_a["id"], request_id, cost=0.25)
+            self._job(request_id, "img_" + f"{index:064x}")
+        self._receipt(self.app_b["id"], "req_join_bob", cost=4.0)
+        self._job("req_join_bob", "img_" + "f" * 64)
+        request_id_reads = 0
+
+        class CountingReceipt(dict):
+            def get(self, key, default=None):
+                nonlocal request_id_reads
+                if key == "request_id":
+                    request_id_reads += 1
+                return super().get(key, default)
+
+        loads = json.loads
+
+        def tracked_loads(*args, **kwargs):
+            value = loads(*args, **kwargs)
+            return CountingReceipt(value) if isinstance(value, dict) and "protocol" in value else value
+
+        with patch.object(me_media.time, "time", return_value=int(time.time())):
+            expected = self.client.get("/me/api/usage/summary")
+            with patch.object(me_media.json, "loads", side_effect=tracked_loads):
+                actual = self.client.get("/me/api/usage/summary")
+            self.assertEqual(actual.status_code, 200, actual.text)
+            self.assertEqual(actual.content, expected.content)
+            self.assertLessEqual(request_id_reads, 2 * count)
+        self.assertEqual(actual.json()["requests"], count)
+        self.assertEqual(actual.json()["media_count"], count)
+        self.current_user = self.bob
+        bob = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(bob["requests"], 1)
+        self.assertEqual(bob["media_count"], 1)
+
+    def test_multi_asset_job_projects_source_once_without_cross_request_cache(self) -> None:
+        assets = ["img_" + f"{index:064x}" for index in range(3)]
+        self._receipt(self.app_a["id"], "req_multi_source")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_multi_source", intent="image.generate",
+            status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": asset_id} for asset_id in assets],
+        ), path=self.jobs_db)
+        expected = self.client.get("/me/api/media")
+        with patch.object(admin_store, "get_app", wraps=admin_store.get_app) as lookup:
+            actual = self.client.get("/me/api/media")
+            self.assertEqual(actual.status_code, 200, actual.text)
+            self.assertEqual(actual.content, expected.content)
+            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
+        with patch.object(admin_store, "get_app", return_value={**self.app_a, "name": "Renamed"}) as lookup:
+            refreshed = self.client.get("/me/api/media")
+            self.assertTrue(all(item["source"]["label"] == "Renamed" for item in refreshed.json()["assets"]))
+            lookup.assert_called_once_with(self.app_a["id"], path=self.admin_db)
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
 
     def test_media_list_detail_and_cross_user_404(self) -> None:
         alice_asset = "img_" + "a" * 64

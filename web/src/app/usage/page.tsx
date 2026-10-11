@@ -1,17 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import {
   Activity,
   CheckCircle2,
@@ -69,6 +59,7 @@ import {
   RelativeTime,
 } from "@/components/product";
 
+const UsageChart = lazy(() => import("./usage-chart"));
 
 interface UsageDay {
   date: string;
@@ -555,45 +546,9 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
         ) : (
           <>
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={rows}
-                  margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-                >
-                  <CartesianGrid vertical={false} stroke="var(--vf-border)" />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fill: "var(--subtle-foreground)", fontSize: 12 }}
-                  />
-                  <YAxis
-                    width={32}
-                    allowDecimals={false}
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fill: "var(--subtle-foreground)", fontSize: 12 }}
-                  />
-                  <Tooltip
-                    cursor={{
-                      fill: "color-mix(in srgb, var(--vf-accent) 8%, transparent)",
-                    }}
-                    contentStyle={{
-                      background: "var(--vf-panel-raised)",
-                      border: "1px solid var(--vf-border-strong)",
-                      borderRadius: "8px",
-                      color: "var(--vf-text)",
-                      fontSize: "12px",
-                    }}
-                  />
-                  <Bar
-                    dataKey="total"
-                    fill="var(--chart-1)"
-                    name="Requests"
-                    isAnimationActive={false}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={null}>
+                <UsageChart rows={rows} />
+              </Suspense>
             </div>
             {/* The wrapper clips the table: a table ignores sr-only's 1px size and
                 would otherwise widen the page. */}

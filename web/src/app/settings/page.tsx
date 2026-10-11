@@ -5,7 +5,7 @@ import { useViewer } from "@/components/shell/session";
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   adminFetch,
   ApiError,
@@ -279,6 +279,7 @@ function MutationError({ error }: { error: unknown }) {
 function InstanceSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.instance,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ instance: Instance; revision: string }>(
         "/admin/api/settings/instance",
@@ -418,6 +419,7 @@ function SignInSection() {
     refetch: refetchOidc,
   } = useQuery({
     queryKey: keys.oidc,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ oidc_config: EffectiveOidcConfig | null; revision: string }>(
         "/admin/api/oidc-config",
@@ -431,6 +433,7 @@ function SignInSection() {
     refetch: refetchSignIn,
   } = useQuery({
     queryKey: keys.signIn,
+    staleTime: 15_000,
     queryFn: () => adminFetch<SignInOptions>("/admin/api/operator/sign-in"),
   });
   return (
@@ -759,6 +762,7 @@ function OidcForm({
 function DefaultsSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.defaults,
+    staleTime: 15_000,
     queryFn: async () => {
       const [defaults, profiles] = await Promise.all([
         adminFetch<DefaultsResponse>("/admin/api/settings/defaults"),
@@ -768,31 +772,32 @@ function DefaultsSection() {
     },
   });
   const {
-    data: accessDefaults,
+    data: accessData,
     isPending: accessPending,
-    isError: accessIsError,
-    error: accessError,
+    isError: accessError,
+    error: accessErrorDetails,
     refetch: refetchAccess,
   } = useQuery({
     queryKey: keys.accessDefaults,
+    staleTime: 15_000,
     queryFn: api.userAccessDefaults.get,
   });
   return (
     <Section
       title="Defaults"
       summary={
-        data && accessDefaults
+        data && accessData
           ? {
               label: data.defaults.profile_id
                 ? (data.profiles.find((p) => p.id === data.defaults.profile_id)
                     ?.name ?? "Default access plan")
                 : "No default access plan",
               description: `${
-                accessDefaults.self_service_apps
+                accessData.self_service_apps
                   ? "People can create apps"
                   : "Only owners create apps"
               } · ${
-                accessDefaults.auto_create_personal_app
+                accessData.auto_create_personal_app
                   ? "Personal app created at sign-in"
                   : "No automatic personal app"
               }`,
@@ -813,14 +818,14 @@ function DefaultsSection() {
       )}
       {accessPending ? (
         <Loading />
-      ) : accessIsError ? (
+      ) : accessError ? (
         <SettingsError
-          error={accessError}
+          error={accessErrorDetails}
           message="Personal app defaults could not be loaded."
           onRetry={() => void refetchAccess()}
         />
       ) : (
-        <AccessDefaultsForm initial={accessDefaults} />
+        <AccessDefaultsForm initial={accessData} />
       )}
     </Section>
   );
@@ -974,6 +979,7 @@ function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
 function MediaSection() {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.media,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
         overrides: {
@@ -1161,6 +1167,7 @@ function ExtensionsSection() {
   const client = useQueryClient();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.extensions,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{
         extension_packages: { packages: Record<string, Extension> };
@@ -1414,6 +1421,7 @@ function AdvancedSection() {
   const [open, setOpen] = useState(false);
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.effective,
+    staleTime: 15_000,
     queryFn: () =>
       adminFetch<{ config: Record<string, unknown>; export_url: string }>(
         "/admin/api/settings/effective",

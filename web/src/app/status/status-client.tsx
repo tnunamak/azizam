@@ -1049,7 +1049,7 @@ export function StatusClient() {
     queryFn: api.services.registry,
   });
   const { data: profiles } = useQuery({
-    queryKey: ["status", "profiles"],
+    queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
     retry: false,
   });

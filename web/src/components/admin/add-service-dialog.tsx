@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 
 import { api, ApiError, queryKeys, type ServiceRegistry } from "@/lib/api";
 import {
@@ -20,7 +21,6 @@ import {
   IncidentBanner,
   Input,
   Skeleton,
-  toast,
 } from "@/components/ui";
 import {
   Select,

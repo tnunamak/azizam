@@ -1,27 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
-import { toast } from "sonner";
 import {
   Activity,
-  ArrowUpRight,
-  BookOpen,
   Box,
   ChartColumn,
   ChevronDown,
   ChevronRight,
-  CircleHelp,
   Cloud,
   Cpu,
   GitBranch,
   House,
   Images,
   KeyRound,
-  LogOut,
   Menu,
   Moon,
   Play,
@@ -29,12 +24,10 @@ import {
   CornerDownRight,
   Settings,
   Sun,
-  UserRoundCog,
   Users,
-  Zap,
   type LucideIcon,
 } from "lucide-react";
-import { api, createQueryClient } from "@/lib/api";
+import { createQueryClient } from "@/lib/api";
 import {
   canonicalDestinationPath,
   destinations,
@@ -51,31 +44,6 @@ import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/product/brand-mark";
 import { PersonMark } from "@/components/product/person-mark";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -88,9 +56,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Toaster } from "@/components/ui/sonner";
+import { ToastGate } from "./toast-gate";
 import { ErrorState } from "@/components/product/error-state";
-import { CopyField } from "@/components/product/copy-field";
 import { PageHeader } from "@/components/product/page-header";
 import { RelativeTime } from "@/components/product/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -100,7 +67,17 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
-import { formatAppName, formatPersonName } from "@/lib/format";
+// Keep the shortcut listener in the shell; load the existing palette on demand.
+const CommandPalette = lazy(() =>
+  import("@/components/ui/command").then((module) => ({
+    default: module.CommandPalette,
+  })),
+);
+const AccountMenuContent = lazy(() =>
+  import("./account-menu-content").then((module) => ({
+    default: module.AccountMenuContent,
+  })),
+);
 
 // One icon per destination; no two destinations share a glyph (ban-list 19).
 const icons: Record<string, LucideIcon> = {
@@ -167,112 +144,90 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   );
 }
 
-const roleLabels: Record<string, string> = {
-  owner: "Owner",
-  superadmin: "Owner",
-  admin: "Admin",
-};
-
 function AccountMenu({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
-  async function signOut() {
-    try {
-      const member = await fetch("/me/api/session", {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const snapshot = await member.json();
-      const csrf =
-        snapshot.csrf_token || (await api.session()).actor.csrf_token;
-      const response = await fetch("/logout", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "x-azizam-csrf": csrf, accept: "application/json" },
-      });
-      if (!response.ok) throw new Error("Sign out failed");
-      window.location.assign("/ui/sign-in/");
-    } catch {
-      toast.error("Could not sign out. Refresh the page and try again.");
-    }
-  }
+  const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const openMenu = () => {
+    setLoaded(true);
+    setOpen(true);
+  };
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={
-            compact
-              ? "rounded-control flex size-11 items-center justify-center"
-              : "shell-nav-footer w-full justify-center px-2 lg:justify-start lg:px-3"
+    <>
+      {loaded ? (
+        <Suspense
+          fallback={
+            <AccountMenuPlaceholder
+              compact={compact}
+              name={viewer.name}
+              expanded={open}
+              onClick={openMenu}
+            />
           }
-          aria-label={`Account menu: ${viewer.name}`}
         >
-          <PersonMark name={viewer.name} size={compact ? "md" : "sm"} />
-          {!compact && (
-            <span className="shell-nav-label text-chrome-foreground min-w-0 flex-1 truncate text-left font-medium">
-              {viewer.name}
-            </span>
-          )}
-          {!compact && <ChevronDown className="shell-nav-label size-4" />}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel className="font-normal">
-          <span className="block font-medium">{viewer.name}</span>
-          <span className="text-muted-foreground block text-xs">
-            {viewer.serviceAdmin
-              ? "Service key"
-              : (roleLabels[viewer.role] ?? "Member")}
-          </span>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          {!viewer.serviceAdmin && (
-            <DropdownMenuItem asChild>
-              <Link href="/apps">
-                <KeyRound />
-                Apps & keys
-              </Link>
-            </DropdownMenuItem>
-          )}
-          {viewer.authenticated && !viewer.serviceAdmin && (
-            <DropdownMenuItem asChild>
-              <Link href="/account">
-                <UserRoundCog />
-                Your settings
-              </Link>
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem asChild>
-            <Link href="/design">
-              <BookOpen />
-              Design system
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <a href="/docs">
-              <CircleHelp />
-              API reference
-            </a>
-          </DropdownMenuItem>
-          {viewer.authenticated ? (
-            <DropdownMenuItem onSelect={() => void signOut()}>
-              <LogOut />
-              Sign out
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem asChild>
-              <a
-                href={`/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`}
-              >
-                <LogOut />
-                Sign in
-              </a>
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <AccountMenuContent
+            compact={compact}
+            open={open}
+            onOpenChange={setOpen}
+          />
+        </Suspense>
+      ) : (
+        <AccountMenuPlaceholder
+          compact={compact}
+          name={viewer.name}
+          onClick={openMenu}
+          onFocus={() => void import("./account-menu-content")}
+          onPointerEnter={() => void import("./account-menu-content")}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              openMenu();
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function AccountMenuPlaceholder({
+  compact,
+  name,
+  expanded = false,
+  onClick,
+  ...props
+}: {
+  compact: boolean;
+  name: string;
+  expanded?: boolean;
+  onClick: () => void;
+  onFocus?: () => void;
+  onPointerEnter?: () => void;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={
+        compact
+          ? "rounded-control flex size-11 items-center justify-center"
+          : "shell-nav-footer w-full justify-center px-2 lg:justify-start lg:px-3"
+      }
+      aria-label={`Account menu: ${name}`}
+      aria-haspopup="menu"
+      aria-expanded={expanded}
+      onClick={onClick}
+      {...props}
+    >
+      <PersonMark name={name} size={compact ? "md" : "sm"} />
+      {!compact && (
+        <span className="shell-nav-label text-chrome-foreground min-w-0 flex-1 truncate text-left font-medium">
+          {name}
+        </span>
+      )}
+      {!compact && <ChevronDown className="shell-nav-label size-4" />}
+    </button>
   );
 }
 
@@ -614,288 +569,6 @@ function AlertSlot() {
   );
 }
 
-function CommandPalette({
-  open,
-  setOpen,
-  fallbackFocus,
-}: {
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  /** Where focus goes when the opener is gone, e.g. a closed navigation sheet. */
-  fallbackFocus?: React.RefObject<HTMLElement | null>;
-}) {
-  const viewer = useViewer();
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [copyAddress, setCopyAddress] = useState<string | null>(null);
-  const [addressError, setAddressError] = useState(false);
-  const [previousOpen, setPreviousOpen] = useState(open);
-  const addressRecovery = useRef<HTMLDivElement>(null);
-  const commandInvoker = useRef<HTMLElement | null>(null);
-  if (previousOpen !== open) {
-    setPreviousOpen(open);
-    setCopyAddress(null);
-    setAddressError(false);
-  }
-  useEffect(() => {
-    if (copyAddress === null) return;
-    const input = addressRecovery.current?.querySelector("input");
-    input?.focus();
-    input?.select();
-  }, [copyAddress]);
-  const { data: appData } = useQuery({
-    queryKey: ["foundation", "command-apps"],
-    queryFn: async () => {
-      const r = await fetch("/me/api/session");
-      if (!r.ok) throw new Error();
-      return r.json() as Promise<{
-        user?: { email?: string };
-        apps: Array<{ id: string; name: string }>;
-      }>;
-    },
-    enabled: open && viewer.authenticated && !viewer.serviceAdmin,
-  });
-  const { data: peopleData } = useQuery({
-    queryKey: ["foundation", "command-people"],
-    queryFn: api.users.list,
-    enabled: open && viewer.admin && !viewer.serviceAdmin,
-  });
-  const { data: modelData } = useQuery({
-    queryKey: ["foundation", "command-models"],
-    queryFn: async () => {
-      const registry = await api.services.registry();
-      const names = Object.values(registry.services).flatMap((service) =>
-        (service.config.models || [])
-          .map((model) => model.model_group)
-          .filter(Boolean),
-      );
-      return {
-        aliases: Object.fromEntries(
-          [...new Set(names)].map((name) => [name, true]),
-        ),
-      };
-    },
-    enabled: open && viewer.admin,
-  });
-  const go = (href: string) => {
-    setOpen(false);
-    router.push(href);
-  };
-  async function copyGatewayAddress() {
-    setBusy(true);
-    setAddressError(false);
-    setCopyAddress(null);
-    try {
-      const response = await fetch("/.well-known/azizam");
-      if (!response.ok) throw new Error();
-      const discovery = await response.json();
-      const base =
-        discovery.recipes?.openai?.canonical_base_url ||
-        `${discovery.service?.base_url || window.location.origin}/openai/v1`;
-      try {
-        await navigator.clipboard.writeText(base);
-        toast.success("Gateway address copied to clipboard.");
-        setOpen(false);
-      } catch {
-        setCopyAddress(base);
-      }
-    } catch {
-      setAddressError(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function testConnection() {
-    setBusy(true);
-    try {
-      const response = await fetch("/health", { cache: "no-store" });
-      if (!response.ok) throw new Error();
-      const result = await response.json();
-      if (result.status !== "healthy") throw new Error();
-      toast.success(
-        "The gateway is reachable. Engine requests are tested on Try.",
-      );
-      setOpen(false);
-    } catch {
-      toast.error("The gateway could not be reached. Try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent
-        className="overflow-hidden p-0 sm:max-w-xl"
-        showCloseButton={false}
-        onOpenAutoFocus={() => {
-          commandInvoker.current =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null;
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          // "Go to" opened from the navigation sheet: that button has left the
-          // page, so focus returns to the control that opened the sheet.
-          const opener = commandInvoker.current;
-          (opener?.isConnected && opener !== document.body
-            ? opener
-            : fallbackFocus?.current
-          )?.focus();
-        }}
-      >
-        <DialogHeader className="sr-only">
-          <DialogTitle>Go to</DialogTitle>
-          <DialogDescription>
-            Find pages, models, apps and people, or run an action.
-          </DialogDescription>
-        </DialogHeader>
-        <Command>
-          <CommandInput
-            placeholder="A page, app, model or person…"
-            aria-label="Go to"
-          />
-          <CommandList>
-            <CommandEmpty>No matches. Try a page or app name.</CommandEmpty>
-            <CommandGroup heading="Pages">
-              {destinations
-                .filter(
-                  (d) =>
-                    (d.group === "You" ||
-                      d.title === "Status" ||
-                      viewer.admin) &&
-                    (!viewer.serviceAdmin ||
-                      d.title === "Home" ||
-                      (d.group === "Gateway" &&
-                        !["People", "Activity"].includes(d.title))),
-                )
-                .map((d) => {
-                  const Icon = icons[d.title];
-                  return (
-                    <CommandItem key={d.href} onSelect={() => go(d.href)}>
-                      <Icon />
-                      {d.title}
-                    </CommandItem>
-                  );
-                })}
-              {/* A person's own settings sit under the account menu, not
-                  in the sidebar; the palette finds them too. */}
-              {!viewer.serviceAdmin && (
-                <CommandItem
-                  keywords={["prompts", "privacy", "account"]}
-                  onSelect={() => go("/account")}
-                >
-                  <UserRoundCog />
-                  Your settings
-                </CommandItem>
-              )}
-            </CommandGroup>
-            {appData?.apps.length ? (
-              <CommandGroup heading="Apps">
-                {appData.apps.map((app) => (
-                  <CommandItem
-                    key={app.id}
-                    onSelect={() =>
-                      go(`/apps?app=${encodeURIComponent(app.id)}`)
-                    }
-                  >
-                    <KeyRound />
-                    {formatAppName(app.name, appData.user?.email)}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ) : null}
-            {Object.keys(modelData?.aliases || {}).length ? (
-              <CommandGroup heading="Models">
-                {Object.keys(modelData?.aliases || {}).map((name) => (
-                  <CommandItem
-                    key={name}
-                    onSelect={() =>
-                      go(`/models?model=${encodeURIComponent(name)}`)
-                    }
-                  >
-                    <Box />
-                    {name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ) : null}
-            {peopleData?.length ? (
-              <CommandGroup heading="People">
-                {peopleData.map((person) => (
-                  <CommandItem
-                    key={person.id}
-                    value={person.id}
-                    keywords={[
-                      person.display_name || "",
-                      person.name || "",
-                      person.email || "",
-                    ]}
-                    onSelect={() =>
-                      go(`/people?person=${encodeURIComponent(person.id)}`)
-                    }
-                  >
-                    <Users />
-                    {formatPersonName(
-                      person.display_name,
-                      formatPersonName(person.name, "Person"),
-                    )}
-                    {person.email ? (
-                      <span className="text-muted-foreground truncate text-xs">
-                        {" "}
-                        {person.email}
-                      </span>
-                    ) : null}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ) : null}
-            <CommandSeparator />
-            <CommandGroup heading="Actions">
-              <CommandItem
-                onSelect={() => go("/apps?action=create-key")}
-                disabled={!viewer.authenticated || viewer.serviceAdmin}
-              >
-                <KeyRound />
-                Create key
-              </CommandItem>
-              <CommandItem onSelect={copyGatewayAddress} disabled={busy}>
-                <ArrowUpRight />
-                Copy gateway address
-              </CommandItem>
-              <CommandItem onSelect={testConnection} disabled={busy}>
-                <Zap />
-                Check gateway reachability
-              </CommandItem>
-            </CommandGroup>
-          </CommandList>
-        </Command>
-        {copyAddress !== null && (
-          <div ref={addressRecovery} className="space-y-3 border-t p-4">
-            <p role="alert" className="text-destructive text-sm">
-              Copy failed. Select the gateway address and copy it manually.
-            </p>
-            <CopyField value={copyAddress} />
-          </div>
-        )}
-        {addressError && (
-          <div className="border-t p-4">
-            <ErrorState
-              heading="Couldn’t load the gateway address"
-              message="The gateway address could not be loaded. Check your connection and try again."
-              action={{
-                label: "Try again",
-                onClick: () => void copyGatewayAddress(),
-              }}
-              retrying={busy}
-            />
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { setTheme } = useTheme();
@@ -939,6 +612,9 @@ function Shell({ children }: { children: React.ReactNode }) {
     if (/Mac|iPhone|iPad/.test(navigator.userAgent)) setShortcut("⌘K");
   }, []);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [commandMounted, setCommandMounted] = useState(false);
+  // Retain the dialog after first use so closing still restores focus.
+  if (commandOpen && !commandMounted) setCommandMounted(true);
   const [railOpen, setRailOpen] = useState(false);
   const navigationInvoker = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -1277,11 +953,16 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </SheetContent>
         </Sheet>
-        <CommandPalette
-          open={commandOpen}
-          setOpen={setCommandOpen}
-          fallbackFocus={navigationInvoker}
-        />
+        {commandMounted && (
+          <Suspense fallback={null}>
+            <CommandPalette
+              open={commandOpen}
+              setOpen={setCommandOpen}
+              fallbackFocus={navigationInvoker}
+              icons={icons}
+            />
+          </Suspense>
+        )}
       </TooltipProvider>
     </ViewerContext.Provider>
   );
@@ -1292,7 +973,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <Shell>{children}</Shell>
-        <Toaster />
+        <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>
   );

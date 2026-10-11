@@ -1103,7 +1103,10 @@ export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 15_000,
+        // Reuse fresh reads across navigation and focus; polling still controls
+        // health and active-job freshness independently of this cache window.
+        staleTime: 30_000,
+        refetchIntervalInBackground: false,
         retry: (failureCount, error) => {
           if (error instanceof ApiError && error.status < 500) return false;
           return failureCount < 2;

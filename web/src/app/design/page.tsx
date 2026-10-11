@@ -1,7 +1,7 @@
 "use client";
 import { useId, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Loader2, Plus, Search, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

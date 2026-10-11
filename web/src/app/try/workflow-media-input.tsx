@@ -44,22 +44,19 @@ function readAsDataUri(file: File): Promise<string> {
 
 /** A preview link for a chosen file, revoked when the file changes. */
 function useObjectUrl(file: File | null | undefined): string | null {
-  const [preview, setPreview] = useState<{
+  const [objectUrl, setObjectUrl] = useState<{
     file: File;
     url: string;
   } | null>(null);
-  const [previousFile, setPreviousFile] = useState(file);
-  if (previousFile !== file) {
-    setPreviousFile(file);
-    setPreview(null);
-  }
   useEffect(() => {
-    if (!file || typeof URL.createObjectURL !== "function") return;
+    if (!file || typeof URL.createObjectURL !== "function") {
+      return;
+    }
     const next = URL.createObjectURL(file);
-    setPreview({ file, url: next });
+    setObjectUrl({ file, url: next });
     return () => URL.revokeObjectURL(next);
   }, [file]);
-  return preview && preview.file === file ? preview.url : null;
+  return objectUrl && objectUrl.file === file ? objectUrl.url : null;
 }
 
 const SUBTYPE = /^[a-z]+\/([a-z0-9]+)/i;
@@ -117,9 +114,15 @@ export function MediaInput({
   const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
   const dataUriChosen = !fileMode && Boolean(value?.startsWith("data:"));
 
-  const [previousInput, setPreviousInput] = useState({ value, file });
-  if (previousInput.value !== value || previousInput.file !== file) {
-    setPreviousInput({ value, file });
+  const [previousPreviewInput, setPreviousPreviewInput] = useState({
+    value,
+    file,
+  });
+  if (
+    previousPreviewInput.value !== value ||
+    previousPreviewInput.file !== file
+  ) {
+    setPreviousPreviewInput({ value, file });
     setPreviewFailed(false);
   }
 
@@ -355,16 +358,13 @@ function LibraryPicker({
   onPick: (assetId: string) => void;
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
-    open ? "loading" : "idle",
+    "idle",
   );
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [attempt, setAttempt] = useState(0);
-  const [previousRequest, setPreviousRequest] = useState({ open, attempt });
-  if (
-    previousRequest.open !== open ||
-    previousRequest.attempt !== attempt
-  ) {
-    setPreviousRequest({ open, attempt });
+  const [previousOpen, setPreviousOpen] = useState(open);
+  if (open !== previousOpen) {
+    setPreviousOpen(open);
     if (open) setState("loading");
   }
 

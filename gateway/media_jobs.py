@@ -260,6 +260,8 @@ CREATE TABLE IF NOT EXISTS media_jobs (
 );
 CREATE INDEX IF NOT EXISTS media_jobs_created_at ON media_jobs(created_at);
 CREATE INDEX IF NOT EXISTS media_jobs_status ON media_jobs(status);
+CREATE INDEX IF NOT EXISTS media_jobs_updated_order ON media_jobs(updated_at, job_id);
+CREATE INDEX IF NOT EXISTS media_jobs_status_updated_order ON media_jobs(status, updated_at, job_id);
 CREATE INDEX IF NOT EXISTS media_jobs_app_profile ON media_jobs(app_profile);
 CREATE INDEX IF NOT EXISTS media_jobs_request_id ON media_jobs(request_id);
 CREATE UNIQUE INDEX IF NOT EXISTS media_jobs_unique_request_id
