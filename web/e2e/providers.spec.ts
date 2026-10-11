@@ -1102,3 +1102,73 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     }
   }
 });
+
+test("providers add dialog fits a 390 px phone with long preset metadata", async ({
+  page,
+}) => {
+  await setViewport(page, "light", 390);
+  await routeProviders(page, "empty");
+  await page.route("**/admin/api/providers/-/catalog", (route: Route) =>
+    route.fulfill({
+      json: {
+        providers: [
+          // The longest real preset name, URL and billing labels.
+          {
+            id: "long-preset",
+            display_name: "Google Gemini OpenAI-compatible",
+            logo_key: "go",
+            protocol: "anthropic-messages",
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            billing_dimensions: [
+              "input_tokens",
+              "output_tokens",
+              "cache_read_input_tokens",
+              "cache_creation_input_tokens",
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/ui/providers/");
+  await page.getByRole("button", { name: "Add provider" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Search providers")).toBeVisible();
+  const overflowing = () =>
+    dialog.evaluate((node) =>
+      [node, ...node.querySelectorAll<HTMLElement>("*")]
+        .filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1)
+        .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 50)}`),
+    );
+  expect(await overflowing()).toEqual([]);
+  await dialog.getByRole("button", { name: /Google Gemini/ }).click();
+  await expect(dialog.getByLabel("Provider base URL")).toBeVisible();
+  expect(await overflowing()).toEqual([]);
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport();
+});
+
+test("providers replace a saved key in a masked dialog", async ({ page }) => {
+  await routeProviders(page, "seeded");
+  let sentKey: unknown = null;
+  await page.route("**/admin/api/providers/openrouter/key", (route: Route) => {
+    sentKey = route.request().postDataJSON()?.api_key;
+    return route.fulfill({ json: { key_status: { state: "set" } } });
+  });
+  const nativeDialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    nativeDialogs.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await page.goto("/ui/providers/");
+  await page.getByText("Manage", { exact: true }).click();
+  await page.getByRole("button", { name: "More actions for OpenRouter" }).click();
+  await page.getByRole("menuitem", { name: /Replace key/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace key for OpenRouter" });
+  const input = dialog.getByLabel("New provider key");
+  await expect(input).toHaveAttribute("type", "password");
+  await input.fill("fake-replacement-key");
+  await dialog.getByRole("button", { name: "Replace key" }).click();
+  await expect(dialog).toBeHidden();
+  expect(sentKey).toBe("fake-replacement-key");
+  expect(nativeDialogs).toEqual([]);
+});

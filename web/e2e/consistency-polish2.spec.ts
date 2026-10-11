@@ -81,9 +81,10 @@ test("Providers presents the current API shape without inventing readiness or na
       const unknownSpend = missing.getByText("Cost not recorded", {
         exact: true,
       });
-      await expect(unknownSpend).toHaveCount(2);
-      await expect(unknownSpend.nth(0)).toBeVisible();
-      await expect(unknownSpend.nth(1)).toBeVisible();
+      // The collapsed row's month, then the overview's Today and This month.
+      await expect(unknownSpend).toHaveCount(3);
+      for (const index of [0, 1, 2])
+        await expect(unknownSpend.nth(index)).toBeVisible();
       await expect(missing).not.toContainText("999");
       await expect(page.getByText("Global spend cap")).toBeVisible();
       await expect(page.locator("body")).not.toContainText("888");
@@ -266,7 +267,7 @@ test("an observed-up engine with a bad health tone is shown as unavailable", asy
   await expect(card.getByText("Ready", { exact: true })).toHaveCount(0);
 });
 
-test("empty provider status exposes Add provider when API is installed", async ({
+test("empty provider status exposes Add provider; a bare 404 is a load failure", async ({
   page,
 }) => {
   await page.route("**/admin/api/providers", (route) =>
@@ -304,12 +305,15 @@ test("empty provider status exposes Add provider when API is installed", async (
     route.fulfill({ status: 404, json: {} }),
   );
   await page.reload();
+  // The provider API is always mounted; a bare 404 is a load failure.
   await expect(
-    page.getByText("Provider controls are not installed", { exact: true }),
+    page.getByText("Provider controls could not be loaded. Try again.", {
+      exact: true,
+    }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add provider" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("button", { name: "Retry providers" }),
+  ).toBeVisible();
 });
 
 test("Status offers a local action when no remote providers are configured", async ({

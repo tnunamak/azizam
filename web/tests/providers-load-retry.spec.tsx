@@ -341,21 +341,21 @@ for (const target of ["add", "provider", "global"] as const) {
 }
 
 it("shows a new cap validation error even after an older action failed", async () => {
-  const { client } = await renderProviderRegression({ ok: true }, true);
-  const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: () => {},
-  });
+  const { client, fetchMock } = await renderProviderRegression({ ok: true }, true);
+  const respond = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (input, init) =>
+    String(input).endsWith("/enabled")
+      ? Response.json({ error: { message: "Toggle failed." } }, { status: 503 })
+      : respond(input, init),
+  );
   try {
     fireEvent.click(screen.getByText("Manage"));
-    const more = screen.getByRole("button", { name: "More actions for Test provider" });
-    more.focus();
-    fireEvent.keyDown(more, { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Rotate key/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Rotation cancelled.");
+    fireEvent.click(screen.getByRole("button", { name: "Disable provider" }));
+    expect(await screen.findByRole("alert")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Edit caps" }));
     fireEvent.change(screen.getByLabelText("Test provider daily cap (USD)"), { target: { value: "-1" } });
+    // Editing a draft clears the older failure.
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     fireEvent.change(screen.getByLabelText("Test provider monthly cap (USD)"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Save caps" }));
     await waitFor(() =>
@@ -364,7 +364,6 @@ it("shows a new cap validation error even after an older action failed", async (
       ),
     );
   } finally {
-    prompt.mockRestore();
     client.clear();
   }
 });
@@ -659,7 +658,7 @@ it("keeps unknown spend and unset caps visible in the single-provider overview",
   const { client } = await renderProviderOverview(1, true);
   try {
     const row = within(screen.getByRole("list", { name: "Providers" })).getByRole("listitem");
-    for (const label of ["Cost not recorded", "Spend unknown · No cap set"]) {
+    for (const label of ["Cost not recorded", "No cap set"]) {
       const values = within(row).getAllByText(label);
       expect(values).toHaveLength(2);
       values.forEach((value) => expect(value).toBeVisible());

@@ -16,7 +16,6 @@ import {
   RefreshCw,
   RotateCw,
   Search,
-  ServerOff,
   ShieldCheck,
   Trash2,
   XCircle,
@@ -56,7 +55,8 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { adminFetch } from "@/lib/api";
+import { adminFetch, ApiError } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/cn";
 
 type CredentialMode = "key" | "env";
@@ -252,6 +252,13 @@ function priceNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** Both prices are finite non-negative decimals, so the model can be billed. */
+function pricesValid(model: ProviderModel): boolean {
+  return decimalInputValid(model.priceInput) && decimalInputValid(model.priceOutput);
+}
+
+const priceError = "Enter a price of 0 or more.";
+
 function mapModel(raw: unknown): ProviderModel {
   const obj =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -293,7 +300,7 @@ function mapModel(raw: unknown): ProviderModel {
     priceInput,
     priceOutput,
     enabled: bool(obj.enabled) ?? true,
-    priceKnown: Boolean(priceInput && priceOutput),
+    priceKnown: decimalInputValid(priceInput) && decimalInputValid(priceOutput),
   };
 }
 
@@ -546,7 +553,8 @@ async function jsonFetch(path: string, init?: RequestInit) {
       body && typeof body === "object"
         ? (body as { error?: { message?: string } }).error?.message
         : null;
-    throw new Error(message || `Request failed (${response.status})`);
+    // An unexplained status names no layer; the caller says what failed.
+    throw new Error(message || "");
   }
   return body;
 }
@@ -629,15 +637,14 @@ function SpendBar({
         <span className="text-muted-foreground">{label}</span>
         <span className="font-medium">
           {money(spent)}
-          {cap != null ? ` of ${money(cap)}` : ""}
+          {cap != null && spent != null ? ` of ${money(cap)}` : ""}
         </span>
       </div>
       {pct == null ? (
         <p className="text-muted-foreground text-meta">
-          {/* A blank cap means no cap (SE-22), so only spend can be unknown. */}
-          {[spent == null ? "Spend unknown" : null, cap == null ? "No cap set" : null]
-            .filter(Boolean)
-            .join(" · ")}
+          {/* A blank cap means no cap (SE-22); unknown spend is already
+              "Cost not recorded" above, so it is not repeated here. */}
+          {cap == null ? "No cap set" : `Cap ${money(cap)}`}
         </p>
       ) : (
         <Progress value={pct} aria-label={`${label} spend`} />
@@ -668,11 +675,97 @@ function sameModelSettings(a: ProviderModel, b: ProviderModel) {
   );
 }
 
+/**
+ * A form draft over a server value that can refresh while the form is open.
+ * A clean draft follows the server. A dirty draft keeps the edit and reports
+ * a conflict when the saved value changes underneath it; saving waits until
+ * the owner picks the saved values or keeps their own.
+ */
+function useServerDraft<T>(server: T) {
+  const serverKey = JSON.stringify(server);
+  const [state, setState] = useState({
+    draft: server,
+    baselineKey: serverKey,
+    latest: server,
+    conflict: false,
+  });
+  useEffect(() => {
+    setState((current) => {
+      if (current.baselineKey === serverKey) {
+        return current.conflict
+          ? { ...current, latest: server, conflict: false }
+          : current;
+      }
+      const draftKey = JSON.stringify(current.draft);
+      if (draftKey === current.baselineKey || draftKey === serverKey) {
+        return { draft: server, baselineKey: serverKey, latest: server, conflict: false };
+      }
+      return { ...current, latest: server, conflict: true };
+    });
+    // serverKey stands for server: a refetch builds a new but equal object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverKey]);
+  return {
+    draft: state.draft,
+    conflict: state.conflict,
+    setDraft: (update: (draft: T) => T) =>
+      setState((current) => ({ ...current, draft: update(current.draft) })),
+    useSaved: () =>
+      setState((current) => ({
+        draft: current.latest,
+        baselineKey: JSON.stringify(current.latest),
+        latest: current.latest,
+        conflict: false,
+      })),
+    keepMine: () =>
+      setState((current) => ({
+        ...current,
+        baselineKey: JSON.stringify(current.latest),
+        conflict: false,
+      })),
+  };
+}
+
+function DraftConflict({
+  onUseSaved,
+  onKeepMine,
+}: {
+  onUseSaved: () => void;
+  onKeepMine: () => void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="border-warning/30 bg-warning/10 rounded-panel border p-3 text-meta sm:col-span-full"
+    >
+      <p>These values changed on the gateway while you were editing.</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Button type="button" size="sm" variant="outline" onClick={onUseSaved}>
+          Use saved values
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={onKeepMine}>
+          Keep my changes
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The gateway's own reason, else the caller's; adminFetch's fallback for
+ * an unexplained status ("PUT /admin/api/… failed (400)") is not shown. */
+function errorText(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.code === "unexpected_response")
+    return fallback;
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function DetailCard({
   provider,
   featured = false,
   plans,
   busy,
+  error,
+  onEdit,
   onAction,
   onSaveModels,
   onSaveCaps,
@@ -682,6 +775,10 @@ function DetailCard({
   featured?: boolean;
   plans: AccessPlan[];
   busy?: boolean;
+  /** The failure of the latest action submitted for this provider. */
+  error?: string | null;
+  /** Called on any draft edit, so an old failure does not outlive it. */
+  onEdit: () => void;
   onAction: (action: string, provider: ProviderRecord) => void;
   onSaveModels: (provider: ProviderRecord, models: ProviderModel[]) => void;
   onSaveCaps: (
@@ -715,19 +812,55 @@ function DetailCard({
       }),
     );
   }, [provider.models]);
-  const [capsDraft, setCapsDraft] = useState({
+  const caps = useServerDraft({
     daily: provider.capDaily == null ? "" : String(provider.capDaily),
     monthly: provider.capMonthly == null ? "" : String(provider.capMonthly),
   });
-  const [planDraft, setPlanDraft] = useState<string[]>(provider.plans);
+  const capsDraft = caps.draft;
+  const planState = useServerDraft([...provider.plans].sort());
+  const planDraft = planState.draft;
   const [editing, setEditing] = useState<"models" | "caps" | "plans" | null>(
     null,
   );
+  const [modelPriceError, setModelPriceError] = useState<string | null>(null);
   function updateModel(id: string, patch: Partial<ProviderModel>) {
+    onEdit();
+    setModelPriceError(null);
     setModelDraft((rows) =>
       rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     );
   }
+  function setCapsDraft(update: (draft: typeof capsDraft) => typeof capsDraft) {
+    onEdit();
+    caps.setDraft(update);
+  }
+  function setPlanDraft(update: (draft: string[]) => string[]) {
+    onEdit();
+    planState.setDraft(update);
+  }
+  const queryClient = useQueryClient();
+  // The check's own result, shown on this provider; the HTTP status alone
+  // does not mean the provider answered, so only ok: true confirms it.
+  const check = useMutation({
+    mutationFn: async () => {
+      const raw = await adminFetch<unknown>(
+        `/admin/api/providers/${encodeURIComponent(provider.id)}/test`,
+        { method: "POST", body: {} },
+      );
+      const ok =
+        raw && typeof raw === "object"
+          ? bool((raw as Record<string, unknown>).ok)
+          : null;
+      if (ok !== true) throw new Error("");
+      return true;
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
+  });
+  const resetCheck = check.reset;
+  // A new key makes an earlier check result stale.
+  useEffect(() => {
+    resetCheck();
+  }, [provider.keySuffix, provider.keyUpdatedAt, resetCheck]);
   const overview = (
     <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
       <div className="space-y-3">
@@ -824,17 +957,12 @@ function DetailCard({
               </div>
               <StatusPill status={state.status} reason={state.reason} summary />
               <div className="min-w-0 space-y-2">
-                {provider.spendMonth != null ? (
-                  <SpendBar
-                    label="This month"
-                    spent={provider.spendMonth}
-                    cap={provider.capMonthly}
-                  />
-                ) : provider.capMonthly != null ? (
-                  <p className="text-muted-foreground text-meta">
-                    Monthly cap: {money(provider.capMonthly)}
-                  </p>
-                ) : null}
+                {/* Unknown spend shows as "Cost not recorded", never blank. */}
+                <SpendBar
+                  label="This month"
+                  spent={provider.spendMonth}
+                  cap={provider.capMonthly}
+                />
                 {provider.capDaily != null && (
                   <p className="text-muted-foreground text-meta">
                     Daily cap: {money(provider.capDaily)}
@@ -907,6 +1035,16 @@ function DetailCard({
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {!provider.models.length && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={4}
+                      className="text-muted-foreground whitespace-normal"
+                    >
+                      No models configured for this provider.
+                    </TableCell>
+                  </TableRow>
+                )}
                 {provider.models.map((model) => (
                   <TableRow key={model.id}>
                     <TableCell className="text-body font-medium break-words whitespace-normal">
@@ -961,9 +1099,16 @@ function DetailCard({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onAction("test", provider)}
+              onClick={() => check.mutate()}
+              disabled={check.isPending}
+              aria-busy={check.isPending || undefined}
             >
-              <RefreshCw aria-hidden="true" /> Check provider connection
+              {check.isPending ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCw aria-hidden="true" />
+              )}{" "}
+              {check.isPending ? "Checking…" : "Check provider connection"}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -983,9 +1128,9 @@ function DetailCard({
                 ) : (
                   <>
                     <DropdownMenuItem
-                      onClick={() => onAction("rotate", provider)}
+                      onClick={() => onAction("replace-key", provider)}
                     >
-                      <RotateCw aria-hidden="true" /> Rotate key
+                      <RotateCw aria-hidden="true" /> Replace key
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => onAction("delete-key", provider)}
@@ -1018,9 +1163,43 @@ function DetailCard({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          {check.isSuccess ? (
+            <p
+              role="status"
+              className="text-success mt-3 inline-flex items-center gap-2 text-meta"
+            >
+              <CheckCircle2 className="size-4" aria-hidden="true" />
+              Connection confirmed
+            </p>
+          ) : check.isError ? (
+            <p
+              role="alert"
+              className="text-danger mt-3 inline-flex items-center gap-2 text-meta"
+            >
+              <XCircle className="size-4 shrink-0" aria-hidden="true" />
+              Provider connection could not be confirmed.{" "}
+              {errorText(check.error, "Try again.")}
+            </p>
+          ) : null}
+          {error && (
+            <p role="alert" className="text-danger mt-3 text-meta">
+              <AlertCircle className="mr-1 inline size-4" aria-hidden="true" />
+              {error}
+            </p>
+          )}
           {editing === "models" && (
             <div className="mt-4 space-y-3 rounded-panel border p-3">
               <h3 className="text-meta font-medium">Edit models and prices</h3>
+              {!modelDraft.length && (
+                <p className="text-muted-foreground text-meta">
+                  No models configured for this provider.
+                </p>
+              )}
+              {modelPriceError && (
+                <p role="alert" className="text-danger text-meta">
+                  {modelPriceError}
+                </p>
+              )}
               {modelDraft.map((model) => (
                 <div
                   key={model.id}
@@ -1063,7 +1242,17 @@ function DetailCard({
                   />
                   <Button
                     size="sm"
-                    onClick={() =>
+                    onClick={() => {
+                      // Blank prices mean unpriced; anything else must be a
+                      // price, not silently sent as "no price".
+                      if (
+                        [model.priceInput, model.priceOutput].some(
+                          (value) => value.trim() && !decimalInputValid(value),
+                        )
+                      ) {
+                        setModelPriceError(priceError);
+                        return;
+                      }
                       onSaveModels(
                         provider,
                         // The server replaces the whole list: send saved rows
@@ -1071,8 +1260,8 @@ function DetailCard({
                         provider.models.map((saved) =>
                           saved.id === model.id ? model : saved,
                         ),
-                      )
-                    }
+                      );
+                    }}
                     disabled={busy}
                   >
                     Save models
@@ -1115,10 +1304,16 @@ function DetailCard({
                 onClick={() =>
                   onSaveCaps(provider, capsDraft.daily, capsDraft.monthly)
                 }
-                disabled={busy}
+                disabled={busy || caps.conflict}
               >
                 Save caps
               </Button>
+              {caps.conflict && (
+                <DraftConflict
+                  onUseSaved={caps.useSaved}
+                  onKeepMine={caps.keepMine}
+                />
+              )}
             </div>
           )}
           {editing === "plans" && (
@@ -1148,10 +1343,16 @@ function DetailCard({
                   />
                 </label>
               ))}
+              {planState.conflict && (
+                <DraftConflict
+                  onUseSaved={planState.useSaved}
+                  onKeepMine={planState.keepMine}
+                />
+              )}
               <Button
                 size="sm"
                 onClick={() => onSavePlans(provider, planDraft)}
-                disabled={busy}
+                disabled={busy || planState.conflict}
               >
                 Save access plans
               </Button>
@@ -1371,6 +1572,8 @@ function AddProviderDialog({
     checkGeneration.current += 1;
     setTestResult(null);
     setModels([]);
+    testConnection.reset();
+    saveProvider.reset();
   }
 
   function clearCredentialsAndCheck() {
@@ -1383,6 +1586,9 @@ function AddProviderDialog({
     setSelected(provider);
     setBaseUrl(provider.baseUrl === "Not supplied" ? "" : provider.baseUrl);
     clearCredentialsAndCheck();
+    // Access is chosen per provider: a plan picked for another provider
+    // must not carry over.
+    setAllowedPlans([]);
     setStep("credentials");
   }
 
@@ -1397,16 +1603,26 @@ function AddProviderDialog({
     credentialOrigin.current = origin;
     setSecret("");
     setEnvName("");
-    resetCheck();
+    // The handlers that change the origin also reset the mutations.
+    checkGeneration.current += 1;
+    setTestResult(null);
+    setModels([]);
   }, [baseUrl, selected?.id]);
 
+  // Every close starts the next add flow fresh: no key, plan, cap or
+  // earlier failure survives a cancel.
   function closeDialog(nextOpen: boolean) {
     if (!nextOpen) {
+      setSearch("");
+      setSelected(null);
+      setMode("key");
       setSecret("");
       setEnvName("");
-      setTestResult(null);
-      setModels([]);
-      checkGeneration.current += 1;
+      setBaseUrl("");
+      resetCheck();
+      setDailyCap("5");
+      setMonthlyCap("50");
+      setAllowedPlans([]);
       setStep("catalog");
     }
     onOpenChange(nextOpen);
@@ -1474,11 +1690,8 @@ function AddProviderDialog({
   const saveProvider = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error("Choose a provider first.");
-      const missing = models.filter(
-        (model) => model.enabled && (!model.priceInput || !model.priceOutput),
-      );
-      if (missing.length)
-        throw new Error("Enter prices for each enabled paid model.");
+      if (models.some((model) => model.enabled && !pricesValid(model)))
+        throw new Error(`${priceError} Each enabled model needs both prices.`);
       return adminFetch("/admin/api/providers", {
         method: "POST",
         body: {
@@ -1506,6 +1719,7 @@ function AddProviderDialog({
   });
 
   function toggleModel(id: string, enabled: boolean) {
+    saveProvider.reset();
     setModels((rows) =>
       rows.map((row) => (row.id === id ? { ...row, enabled } : row)),
     );
@@ -1516,6 +1730,7 @@ function AddProviderDialog({
     field: "priceInput" | "priceOutput",
     value: string,
   ) {
+    saveProvider.reset();
     setModels((rows) =>
       rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
     );
@@ -1531,7 +1746,9 @@ function AddProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-4xl">
+      {/* One shrinkable column, so a long URL or name cannot widen the
+          dialog past a phone screen. */}
+      <DialogContent className="max-h-[92dvh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Add provider</DialogTitle>
           <DialogDescription>
@@ -1540,7 +1757,7 @@ function AddProviderDialog({
           </DialogDescription>
         </DialogHeader>
         <div
-          className="grid gap-2 sm:grid-cols-4"
+          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
           aria-label="Provider setup steps"
         >
           {(["catalog", "credentials", "models", "limits"] as Step[]).map(
@@ -1581,9 +1798,10 @@ function AddProviderDialog({
             className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
           >
             <p>
-              {metadataError instanceof Error
-                ? metadataError.message
-                : "Provider status failed."}
+              {errorText(
+                metadataError,
+                "Provider controls could not be loaded. Try again.",
+              )}
             </p>
             <Button
               type="button"
@@ -1611,6 +1829,26 @@ function AddProviderDialog({
                 aria-label="Search providers"
               />
             </label>
+            {!catalog.length ? (
+              <p className="text-muted-foreground text-meta">
+                No provider presets available. Add one to the gateway&apos;s
+                provider catalog.
+              </p>
+            ) : !filtered.length ? (
+              <div className="flex flex-wrap items-center gap-3 text-meta">
+                <p className="text-muted-foreground">
+                  No providers match this search.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSearch("")}
+                >
+                  Clear search
+                </Button>
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               {filtered.map((provider) => (
                 <button
@@ -1618,7 +1856,7 @@ function AddProviderDialog({
                   type="button"
                   onClick={() => chooseProvider(provider)}
                   className={cn(
-                    "hover:border-primary rounded-panel border p-4 text-left transition",
+                    "hover:border-primary min-w-0 rounded-panel border p-4 text-left transition",
                     selected?.id === provider.id &&
                       "border-primary bg-primary/10",
                   )}
@@ -1633,12 +1871,16 @@ function AddProviderDialog({
                         />
                         {provider.name}
                       </div>
-                      <div className="text-muted-foreground mt-1 text-meta break-words">
+                      <div className="text-muted-foreground mt-1 text-meta [overflow-wrap:anywhere]">
                         {provider.protocol} · {provider.baseUrl}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1">
                         {provider.billingDimensions.map((dim) => (
-                          <Badge key={dim} variant="outline">
+                          <Badge
+                            key={dim}
+                            variant="outline"
+                            className="max-w-full whitespace-normal [overflow-wrap:anywhere]"
+                          >
                             {dim}
                           </Badge>
                         ))}
@@ -1798,16 +2040,8 @@ function AddProviderDialog({
                     }
                     placeholder="USD per 1M output tokens"
                   />
-                  <Badge
-                    variant={
-                      model.priceInput && model.priceOutput
-                        ? "secondary"
-                        : "outline"
-                    }
-                  >
-                    {model.priceInput && model.priceOutput
-                      ? "Priced"
-                      : "Needs price"}
+                  <Badge variant={pricesValid(model) ? "secondary" : "outline"}>
+                    {pricesValid(model) ? "Priced" : "Needs price"}
                   </Badge>
                 </div>
               ))
@@ -1822,7 +2056,10 @@ function AddProviderDialog({
                 <Input
                   aria-label="Daily cap (USD)"
                   value={dailyCap}
-                  onChange={(e) => setDailyCap(e.target.value)}
+                  onChange={(e) => {
+                    saveProvider.reset();
+                    setDailyCap(e.target.value);
+                  }}
                 />
               </label>
               <label className="space-y-2 text-meta font-medium">
@@ -1830,7 +2067,10 @@ function AddProviderDialog({
                 <Input
                   aria-label="Monthly cap (USD)"
                   value={monthlyCap}
-                  onChange={(e) => setMonthlyCap(e.target.value)}
+                  onChange={(e) => {
+                    saveProvider.reset();
+                    setMonthlyCap(e.target.value);
+                  }}
                 />
               </label>
             </div>
@@ -1858,13 +2098,14 @@ function AddProviderDialog({
                   </span>
                   <Switch
                     checked={allowedPlans.includes(plan.id)}
-                    onCheckedChange={(checked) =>
+                    onCheckedChange={(checked) => {
+                      saveProvider.reset();
                       setAllowedPlans((rows) =>
                         checked
                           ? [...new Set([...rows, plan.id])]
                           : rows.filter((id) => id !== plan.id),
-                      )
-                    }
+                      );
+                    }}
                     aria-label={`Allow ${plan.name}`}
                   />
                 </label>
@@ -1879,7 +2120,8 @@ function AddProviderDialog({
             )}
           </div>
         )}
-        <DialogFooter>
+        {/* The step's navigation stays in reach while a long step scrolls. */}
+        <DialogFooter className="bg-background sticky -bottom-6 -mx-6 -mb-6 flex-row flex-wrap justify-end border-t px-6 py-4">
           <Button variant="outline" onClick={() => closeDialog(false)}>
             Cancel
           </Button>
@@ -1968,18 +2210,29 @@ function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
 function GlobalCapsEditor({
   global,
   busy,
+  error,
+  onEdit,
   onSave,
 }: {
   global: GlobalProviderState;
   busy?: boolean;
+  error?: string | null;
+  onEdit: () => void;
   onSave: (daily: string, monthly: string) => void;
 }) {
-  const [daily, setDaily] = useState(
-    global.capDaily == null ? "" : String(global.capDaily),
-  );
-  const [monthly, setMonthly] = useState(
-    global.capMonthly == null ? "" : String(global.capMonthly),
-  );
+  const caps = useServerDraft({
+    daily: global.capDaily == null ? "" : String(global.capDaily),
+    monthly: global.capMonthly == null ? "" : String(global.capMonthly),
+  });
+  const { daily, monthly } = caps.draft;
+  const setDaily = (value: string) => {
+    onEdit();
+    caps.setDraft((draft) => ({ ...draft, daily: value }));
+  };
+  const setMonthly = (value: string) => {
+    onEdit();
+    caps.setDraft((draft) => ({ ...draft, monthly: value }));
+  };
   return (
     <section className="rounded-panel border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2016,13 +2269,25 @@ function GlobalCapsEditor({
               className="self-end"
               size="sm"
               onClick={() => onSave(daily, monthly)}
-              disabled={busy}
+              disabled={busy || caps.conflict}
             >
               Save global cap
             </Button>
+            {caps.conflict && (
+              <DraftConflict
+                onUseSaved={caps.useSaved}
+                onKeepMine={caps.keepMine}
+              />
+            )}
           </div>
         </details>
       </div>
+      {error && (
+        <p role="alert" className="text-danger mt-3 text-meta">
+          <AlertCircle className="mr-1 inline size-4" aria-hidden="true" />
+          {error}
+        </p>
+      )}
       {global.needsReconciliation && (
         <div className="border-warning/30 bg-warning/10 mt-4 rounded-panel border p-3 text-meta">
           <div className="font-medium">
@@ -2039,6 +2304,110 @@ function GlobalCapsEditor({
   );
 }
 
+/**
+ * Replace a saved provider key. The key is typed into a masked field, sent
+ * once, and cleared whenever the dialog closes; it is never logged or shown.
+ */
+function ReplaceKeyDialog({
+  provider,
+  onOpenChange,
+}: {
+  provider: ProviderRecord | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [secret, setSecret] = useState("");
+  const replace = useMutation({
+    mutationFn: ({ id, key }: { id: string; key: string }) =>
+      adminFetch(`/admin/api/providers/${encodeURIComponent(id)}/key`, {
+        method: "PUT",
+        body: { api_key: key },
+      }),
+    onSuccess: async () => {
+      setSecret("");
+      toast.success("Provider key replaced");
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      close();
+    },
+  });
+  function close() {
+    setSecret("");
+    replace.reset();
+    onOpenChange(false);
+  }
+  return (
+    <Dialog
+      open={provider !== null}
+      onOpenChange={(open) => {
+        if (!open && !replace.isPending) close();
+      }}
+    >
+      <DialogContent>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!provider || !secret.trim()) return;
+            replace.mutate({ id: provider.id, key: secret.trim() });
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Replace key for {provider?.name}</DialogTitle>
+            <DialogDescription>
+              Requests use the new key as soon as you save it. The old key
+              stops being used here; revoke it with the provider too.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label htmlFor="replacement-provider-key" className="text-label">
+              New provider key
+            </label>
+            <Input
+              id="replacement-provider-key"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              value={secret}
+              disabled={replace.isPending}
+              onChange={(event) => {
+                setSecret(event.target.value);
+                replace.reset();
+              }}
+            />
+          </div>
+          {replace.isError && (
+            <p role="alert" className="text-danger text-meta">
+              {errorText(
+                replace.error,
+                "The key could not be replaced. Try again.",
+              )}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={replace.isPending}
+              onClick={close}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!secret.trim() || replace.isPending}
+              aria-busy={replace.isPending || undefined}
+            >
+              {replace.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+              {replace.isPending ? "Replacing…" : "Replace key"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{
@@ -2048,6 +2417,8 @@ export default function ProvidersPage() {
   const [reconcileTarget, setReconcileTarget] = useState<ProviderRecord | null>(
     null,
   );
+  const [replaceKeyTarget, setReplaceKeyTarget] =
+    useState<ProviderRecord | null>(null);
   const queryClient = useQueryClient();
   const {
     data: providersData,
@@ -2088,12 +2459,6 @@ export default function ProvidersPage() {
       provider: ProviderRecord;
     }) => {
       const encoded = encodeURIComponent(provider.id);
-      if (name === "test") {
-        return adminFetch(`/admin/api/providers/${encoded}/test`, {
-          method: "POST",
-          body: {},
-        });
-      }
       if (name === "delete-key") {
         return adminFetch(`/admin/api/providers/${encoded}/key`, {
           method: "DELETE",
@@ -2115,16 +2480,6 @@ export default function ProvidersPage() {
         return adminFetch(`/admin/api/operator/services/${encoded}/enabled`, {
           method: "POST",
           body: { enabled: provider.enabled === false },
-        });
-      }
-      if (name === "rotate") {
-        const replacement = window.prompt(
-          `Paste a replacement key for ${provider.name}. It will not be shown again.`,
-        );
-        if (!replacement) throw new Error("Rotation cancelled.");
-        return adminFetch(`/admin/api/providers/${encoded}/key`, {
-          method: "PUT",
-          body: { api_key: replacement },
         });
       }
       throw new Error("Unknown provider action.");
@@ -2196,9 +2551,6 @@ export default function ProvidersPage() {
   const loading = providersIsPending || catalogIsPending || plansIsPending;
   const loadFailed = providersIsError || catalogIsError || plansIsError;
   const loadError = providersError ?? catalogError ?? plansError;
-  const missingApi =
-    providersError instanceof Error &&
-    /404|not found/i.test(providersError.message);
   const records = mapProviders(providersData);
   const globalState = mapGlobal(providersData);
   const catalogRows = catalogData ?? [];
@@ -2210,16 +2562,38 @@ export default function ProvidersPage() {
     savePlans.isPending ||
     saveGlobalCaps.isPending;
 
-  // Show the error of the most recently submitted action, so an old failure
-  // (e.g. a cancelled rotation) cannot hide a newer validation message.
-  const latestError = [action, saveModels, saveCaps, savePlans, saveGlobalCaps]
-    .filter((mutation) => mutation.error)
-    .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error;
+  // Only the most recently submitted action may show a failure, and only on
+  // the provider it was for: a later success or another provider's action
+  // replaces it, and so does editing a draft.
+  const pageMutations = [
+    { mutation: action, fallback: "The provider could not be updated. Try again." },
+    { mutation: saveModels, fallback: "The models could not be saved. Try again." },
+    { mutation: saveCaps, fallback: "The caps could not be saved. Try again." },
+    { mutation: savePlans, fallback: "The access plans could not be saved. Try again." },
+    { mutation: saveGlobalCaps, fallback: "The global cap could not be saved. Try again." },
+  ];
+  const latest = pageMutations
+    .filter(({ mutation }) => mutation.submittedAt > 0)
+    .sort((a, b) => b.mutation.submittedAt - a.mutation.submittedAt)[0];
+  const latestError = latest?.mutation.isError
+    ? errorText(latest.mutation.error, latest.fallback)
+    : null;
+  const latestVariables = latest?.mutation.variables as
+    | { provider?: ProviderRecord }
+    | undefined;
+  const errorProviderId = latestVariables?.provider?.id ?? null;
+  const clearErrors = () => {
+    for (const { mutation } of pageMutations) {
+      if (mutation.isError) mutation.reset();
+    }
+  };
   const globalCaps = (
     <GlobalCapsEditor
       key="global-caps"
       global={globalState}
       busy={busy}
+      error={errorProviderId === null ? latestError : null}
+      onEdit={clearErrors}
       onSave={(daily, monthly) =>
         saveGlobalCaps.mutate({ daily, monthly })
       }
@@ -2232,11 +2606,9 @@ export default function ProvidersPage() {
         answer="Paid models run with providers."
         tight
         actions={
-          missingApi ? undefined : (
-            <Button onClick={() => setAddOpen(true)}>
-              <Plus aria-hidden="true" /> Add provider
-            </Button>
-          )
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus aria-hidden="true" /> Add provider
+          </Button>
         }
       >
         {/* PageHeader shows only one of answer and description. */}
@@ -2255,21 +2627,16 @@ export default function ProvidersPage() {
             <Skeleton className="h-32 w-full" />
             <Skeleton className="h-64 w-full" />
           </div>
-        ) : missingApi ? (
-          <EmptyState
-            title="Provider controls are not installed"
-            description="This gateway does not expose the provider admin API yet. Local engines and explicit model aliases keep working."
-            icon={ServerOff}
-          />
         ) : loadFailed ? (
           <div
             role="alert"
             className="border-danger/30 bg-danger/10 text-danger rounded-panel border p-4 text-meta"
           >
             <p>
-              {loadError instanceof Error
-                ? loadError.message
-                : "Provider status failed."}
+              {errorText(
+                loadError,
+                "Provider controls could not be loaded. Try again.",
+              )}
             </p>
             <Button
               type="button"
@@ -2294,6 +2661,10 @@ export default function ProvidersPage() {
                   featured={records.length === 1}
                   plans={planRows}
                   busy={busy}
+                  error={
+                    errorProviderId === provider.id ? latestError : null
+                  }
+                  onEdit={clearErrors}
                   onSaveModels={(providerRecord, models) =>
                     saveModels.mutate({ provider: providerRecord, models })
                   }
@@ -2310,7 +2681,9 @@ export default function ProvidersPage() {
                   onAction={(name, providerRecord) =>
                     name === "reconcile"
                       ? setReconcileTarget(providerRecord)
-                      : name === "delete-key" || name === "remove"
+                      : name === "replace-key"
+                        ? setReplaceKeyTarget(providerRecord)
+                        : name === "delete-key" || name === "remove"
                         ? setConfirmTarget({
                             action: name,
                             provider: providerRecord,
@@ -2324,14 +2697,6 @@ export default function ProvidersPage() {
               ))}
             </ListCard>
             {records.length === 1 && globalCaps}
-            {latestError && (
-              <div role="alert" className="text-danger text-meta">
-                <AlertCircle className="mr-1 inline size-4" />
-                {latestError instanceof Error
-                  ? latestError.message
-                  : "Provider action failed."}
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -2343,6 +2708,10 @@ export default function ProvidersPage() {
         metadataLoading={catalogIsPending || plansIsPending}
         metadataError={catalogError ?? plansError}
         onRetry={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
+      />
+      <ReplaceKeyDialog
+        provider={replaceKeyTarget}
+        onOpenChange={(open) => !open && setReplaceKeyTarget(null)}
       />
       <ReconciliationDialog
         provider={reconcileTarget}
