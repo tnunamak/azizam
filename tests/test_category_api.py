@@ -385,6 +385,25 @@ def test_unchanged_assertions_keep_all_stored_provenance(categories):
     assert candidate["snapshot"] == first["snapshot"]
 
 
+def test_unchanged_retained_assertions_keep_their_own_provenance(categories):
+    client, path = categories
+    body = snapshot_to_json(snapshot())
+    # The same fact can have distinct acceptance history in an output bundle.
+    retained = body["retained"]["output"]
+    retained["members"][0]["assertions"][0].update(
+        accepting_owner="historical-owner", accepted_at="historical-time")
+    store = CategoryStore(path)
+    first = store.create_candidate(body, None, "original-owner", "trusted history")
+    store.activate(first.revision, None)
+    edited = deepcopy(body)
+    for assertion in assertion_rows(edited):
+        assertion.update(accepting_owner="forged-owner", accepted_at="forged-time")
+    response = client.post(PREFIX + "/candidates", json={
+        "base_revision": first.revision, "reason": "unchanged facts", "snapshot": edited})
+    assert response.status_code == 200, response.text
+    assert response.json()["snapshot"] == body
+
+
 @pytest.mark.parametrize("field,value", [
     ("category", "other-dimension"), ("value", "other-value"), ("source", "evidence@2"),
     ("subject", "root@2"), ("accepted", True),

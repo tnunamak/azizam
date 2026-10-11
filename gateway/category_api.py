@@ -142,26 +142,33 @@ def _stamp_acceptance(before, after, owner, accepted_at):
                 assertion.source, assertion.accepted)
 
     stored = {}
+    stored_by_bundle = {}
     if before is not None:
-        for service in tuple(before.services.values()) + tuple(before.retained.values()):
-            for subject in policy.resolve(service):
-                for assertion in subject.assertions:
-                    stored.setdefault(key(subject, assertion), assertion)
+        for group in ("services", "retained"):
+            for identifier, service in getattr(before, group).items():
+                local = {}
+                for subject in policy.resolve(service):
+                    for assertion in subject.assertions:
+                        local.setdefault(key(subject, assertion), assertion)
+                        stored.setdefault(key(subject, assertion), assertion)
+                stored_by_bundle[group, identifier] = local
 
-    def service_copy(service):
+    def service_copy(service, local):
         members = []
         for subject in service.members:
             assertions = tuple(
-                stored.get(key(subject, assertion)) or replace(
+                local.get(key(subject, assertion)) or stored.get(key(subject, assertion)) or replace(
                     assertion, accepting_owner=owner, accepted_at=accepted_at)
                 for assertion in subject.assertions)
             members.append(replace(subject, assertions=assertions))
         return replace(service, members=tuple(members),
-                       dependencies=tuple(service_copy(item) for item in service.dependencies))
+                       dependencies=tuple(service_copy(item, local) for item in service.dependencies))
 
     return replace(after,
-                   services={key: service_copy(value) for key, value in after.services.items()},
-                   retained={key: service_copy(value) for key, value in after.retained.items()})
+                   services={key: service_copy(value, stored_by_bundle.get(("services", key), {}))
+                             for key, value in after.services.items()},
+                   retained={key: service_copy(value, stored_by_bundle.get(("retained", key), {}))
+                             for key, value in after.retained.items()})
 
 
 def snapshot_to_json(snapshot: policy.PolicyVersion) -> dict:
