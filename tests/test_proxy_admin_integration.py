@@ -1268,8 +1268,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertFalse(revoked.json()["credential"]["active"])
 
         logout = self.client.get("/me/logout", follow_redirects=False)
-        self.assertEqual(logout.status_code, 302)
-        self.assertEqual(logout.headers["location"], "/")
+        self.assertEqual(logout.status_code, 303)
+        self.assertEqual(logout.headers["location"], "/auth/logout-confirm")
+        self.assertNotIn("set-cookie", logout.headers)
 
     def test_user_activity_feed_is_owner_scoped_and_receipts_dont_leak(self) -> None:
         # The activity feed and receipt-detail endpoint must show a user ONLY

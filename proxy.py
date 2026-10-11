@@ -15732,14 +15732,9 @@ async def user_portal_login():
 
 @app.get("/me/logout", include_in_schema=False)
 async def user_portal_logout():
-    response = RedirectResponse("/", status_code=302)
-    cookie = _browser_admin_cookie_config()
-    response.delete_cookie(
-        cookie.name,
-        path=cookie.path,
-        domain=cookie.domain,
-    )
-    return response
+    # Sign-out must revoke the session and the keys bound to it, which needs
+    # the CSRF-checked POST. Deleting only the cookie left both usable.
+    return RedirectResponse("/auth/logout-confirm", status_code=303)
 
 
 @app.get("/logout", include_in_schema=False)
