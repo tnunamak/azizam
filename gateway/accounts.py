@@ -143,10 +143,9 @@ def profile_for_user(user_id: str, *, path: Path) -> str | None:
     with connection(path) as conn:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
             row = conn.execute("SELECT profile_id,removed_at FROM account_access WHERE user_id=?", (user_id,)).fetchone()
-            if row and (row[0] or row[1] is not None):
-                return row[0] if row[1] is None else None
-        row = conn.execute("SELECT profile_id FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,)).fetchone()
-        return row[0] if row else None
+            if row and row[1] is None:
+                return row[0]
+        return None
 
 
 def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
@@ -373,12 +372,11 @@ def reset_password(token: str, password: str, *, path: Path):
 
 def people(*, path: Path, effective_plan_resolver: Callable | None = None) -> list[dict]:
     with connection(path) as conn:
-        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,COALESCE(a.profile_id,l.profile_id) profile_id,p.name plan_name,"
+        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,a.profile_id,p.name plan_name,"
                             "a.disabled_at,MAX(u.last_login_at,(SELECT COALESCE(MAX(c.last_used_at),0) FROM credentials c "
                             "JOIN apps app ON app.id=c.app_id WHERE app.owner_user_id=u.id)) last_active "
                             "FROM users u LEFT JOIN account_access a ON a.user_id=u.id "
-                            "LEFT JOIN legacy_identity_profile_grants l ON l.user_id=u.id "
-                            "LEFT JOIN profiles p ON p.id=COALESCE(a.profile_id,l.profile_id) "
+                            "LEFT JOIN profiles p ON p.id=a.profile_id "
                             "WHERE a.removed_at IS NULL ORDER BY u.created_at").fetchall()
         people = []
         for row in rows:
@@ -419,12 +417,9 @@ def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | Non
         conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
         if profile_id is not None:
             _valid_profile(conn, profile_id)
-            conn.execute("DELETE FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,))
             conn.execute("UPDATE account_access SET profile_id=? WHERE user_id=?", (profile_id, user_id))
             conn.execute("UPDATE apps SET default_profile_id=? WHERE owner_user_id=?", (profile_id, user_id))
             conn.execute("UPDATE credentials SET profile_id=? WHERE app_id IN (SELECT id FROM apps WHERE owner_user_id=?)", (profile_id, user_id))
-        if remove:
-            conn.execute("DELETE FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,))
         if disabled is not None or remove:
             conn.execute("UPDATE account_access SET disabled_at=?,removed_at=?,require_registered_session=1 WHERE user_id=?",
                          (ts if disabled or remove else None, ts if remove else None, user_id))
@@ -488,7 +483,6 @@ def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path,
 
 def profile_reference_count(conn, profile_id: str) -> int:
     """Active product references that an owner must clear before deletion."""
-    legacy = conn.execute("SELECT COUNT(*) FROM legacy_identity_profile_grants WHERE profile_id=?", (profile_id,)).fetchone()[0]
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-        return legacy
-    return legacy + conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]
+        return 0
+    return conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]

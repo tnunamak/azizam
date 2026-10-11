@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 
@@ -178,80 +179,74 @@ def test_sec10_admin_auth_rejects_revoked_legacy_and_service_sessions(db, servic
     assert client.get("/admin/api/session").status_code == 401
 
 
-def test_sec07_migration_freezes_existing_profile_without_retaining_aliases(tmp_path):
+def test_sec07_migration_discards_folded_claims_and_keeps_fresh_exact_claims(tmp_path):
     db = tmp_path / "admin.db"
     with sqlite3.connect(db) as conn:
         conn.executescript(admin_store._SCHEMA.replace("  provenance TEXT NOT NULL DEFAULT 'manual',\n", ""))
         conn.execute("INSERT INTO schema_version VALUES (3)")
-        conn.execute("INSERT INTO users(id,issuer,subject,email,created_at) VALUES ('legacy-member','https://idp.test','member-sub','member@example.test',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('prior-plan','Prior','{}',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('new-plan','New','{}',1)")
+        conn.execute("INSERT INTO users(id,issuer,subject,email,created_at) VALUES ('member','https://idp.test','member-sub','member@example.test',1)")
+        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('plan','Plan','{}',1)")
         # The old mapper stored both the full group path and its leaf alias.
-        conn.executemany("INSERT INTO user_identity_claims VALUES ('legacy-member','oidc_group',?,1)",
+        conn.executemany("INSERT INTO user_identity_claims VALUES ('member','oidc_group',?,1)",
                          [("untrusted/admins",), ("admins",)])
-        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('old-map','oidc_group','admins','prior-plan',20,1)")
+        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('map','oidc_group','admins','plan',20,1)")
     admin_store.init_db(db)
     from gateway import accounts
     accounts.initialize(db)
-    assert accounts.profile_for_user("legacy-member", path=db) == "prior-plan"
-    assert accounts.people(path=db)[0]["profile_id"] == "prior-plan"
-    admin_store.disable_runtime_profile_mapping("old-map", path=db)
-    with pytest.raises(ValueError):
-        admin_store.delete_profile("prior-plan", path=db)
-    assert admin_store.list_user_identity_claims("legacy-member", path=db) == []
-    with admin_store._conn(db) as conn:
-        assert conn.execute("SELECT profile_id FROM legacy_identity_profile_grants WHERE user_id='legacy-member'").fetchone()[0] == "prior-plan"
-    admin_store.create_runtime_profile_mapping(source_kind="oidc_group", source_value="admins", profile_id="new-plan", priority=0, path=db)
-    assert admin_store.resolve_runtime_profile_mapping(email="member@example.test", gateway_role="none", path=db) is None
-    assert accounts.profile_for_user("legacy-member", path=db) == "prior-plan"
-    admin_store.replace_user_identity_claims("legacy-member", {"oidc_group": ["/untrusted/admins"]}, path=db)
+    assert admin_store.list_user_identity_claims("member", path=db) == []
+    assert accounts.profile_for_user("member", path=db) is None
+    admin_store.replace_user_identity_claims("member", {"oidc_group": ["/untrusted/admins"]}, path=db)
     admin_store.init_db(db)  # A repeated migration must not remove fresh exact claims.
-    claims = admin_store.list_user_identity_claims("legacy-member", path=db)
+    claims = admin_store.list_user_identity_claims("member", path=db)
     assert [row["claim_value"] for row in claims] == ["/untrusted/admins"]
     assert admin_store.resolve_runtime_profile_mapping(email="member@example.test", gateway_role="none", oidc_groups=[row["claim_value"] for row in claims], path=db) is None
-    with admin_store._conn(db) as conn:
-        assert conn.execute("SELECT profile_id FROM legacy_identity_profile_grants WHERE user_id='legacy-member'").fetchone()[0] == "prior-plan"
-    accounts.change_person("legacy-member", "owner", profile_id="new-plan", path=db)
-    assert accounts.profile_for_user("legacy-member", path=db) == "new-plan"
-    with admin_store._conn(db) as conn:
-        assert not conn.execute("SELECT 1 FROM legacy_identity_profile_grants WHERE user_id='legacy-member'").fetchone()
 
 
-@pytest.mark.parametrize("winning_kind", ["email", "domain", "gateway_role", "all_users"])
-def test_sec07_migration_does_not_override_non_oidc_winning_profile(tmp_path, winning_kind):
+def _grants_table_exists(db):
+    with closing(sqlite3.connect(db)) as conn:
+        return conn.execute("SELECT 1 FROM sqlite_master WHERE name='legacy_identity_profile_grants'").fetchone() is not None
+
+
+def _add_grants_table(db, *rows):
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("CREATE TABLE legacy_identity_profile_grants (user_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL)")
+        conn.executemany("INSERT INTO legacy_identity_profile_grants VALUES (?,?)", rows)
+        conn.commit()
+
+
+def test_new_database_has_no_identity_profile_grants_table(tmp_path):
     db = tmp_path / "admin.db"
-    with sqlite3.connect(db) as conn:
-        conn.executescript(admin_store._SCHEMA.replace("  provenance TEXT NOT NULL DEFAULT 'manual',\n", ""))
-        conn.execute("INSERT INTO schema_version VALUES (3)")
-        conn.execute("INSERT INTO users(id,issuer,subject,email,created_at) VALUES ('member','https://idp.test','member','member@example.test',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('plan','Plan','{}',1)")
-        conn.execute("INSERT INTO user_identity_claims VALUES ('member','oidc_group','admins',1)")
-        values = {"email": "member@example.test", "domain": "example.test", "gateway_role": "none", "all_users": "*"}
-        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('winner',?,?,'plan',0,1)", (winning_kind, values[winning_kind]))
-        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('loser','oidc_group','admins','plan',20,1)")
     admin_store.init_db(db)
-    with admin_store._conn(db) as conn:
-        assert not conn.execute("SELECT 1 FROM legacy_identity_profile_grants").fetchone()
-    assert admin_store.list_user_identity_claims("member", path=db) == []
+    assert not _grants_table_exists(db)
 
 
-@pytest.mark.parametrize("reference,expected", [("default", "default"), ("default-local", "default-local"), ("Policy", "profile"), ("policy-id", "profile"), ("profile", "profile")])
-def test_sec07_legacy_profile_migration_supports_default_and_named_references(tmp_path, reference, expected):
+def test_empty_identity_profile_grants_table_is_dropped(tmp_path):
     db = tmp_path / "admin.db"
-    with sqlite3.connect(db) as conn:
-        conn.executescript(admin_store._SCHEMA.replace("  provenance TEXT NOT NULL DEFAULT 'manual',\n", ""))
-        conn.execute("INSERT INTO schema_version VALUES (3)")
-        conn.execute("INSERT INTO users(id,issuer,subject,email,created_at) VALUES ('member','https://idp.test','member','member@example.test',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('profile','Policy','{\"id\":\"policy-id\"}',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('shadow-id','profile','{}',0)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('shadow-policy','A shadow','{\"id\":\"policy-id\"}',2)")
-        conn.execute("INSERT INTO user_identity_claims VALUES ('member','oidc_group','admins',1)")
-        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('map','oidc_group','admins',?,20,1)", (reference,))
     admin_store.init_db(db)
+    _add_grants_table(db)
+    admin_store.init_db(db)
+    assert not _grants_table_exists(db)
+    admin_store.init_db(db)  # Idempotent once the table is gone.
     from gateway import accounts
-    assert accounts.profile_for_user("member", path=db) == expected
     accounts.initialize(db)
-    admin_store.disable_runtime_profile_mapping("map", path=db)
-    accounts.change_person("member", "owner", remove=True, path=db)
-    with accounts.connection(db) as conn:
-        assert not conn.execute("SELECT 1 FROM legacy_identity_profile_grants WHERE user_id='member'").fetchone()
+    user = admin_store.upsert_oidc_user("https://idp.test", "member", email="member@example.test", path=db)
+    plan = admin_store.create_profile("Plan", {}, path=db)
+    assert accounts.profile_for_user(user["id"], path=db) is None
+    accounts.change_person(user["id"], "owner", profile_id=plan["id"], path=db)
+    assert accounts.profile_for_user(user["id"], path=db) == plan["id"]
+    assert accounts.people(path=db)[0]["profile_id"] == plan["id"]
+    with pytest.raises(ValueError, match="people"):
+        admin_store.delete_profile(plan["id"], path=db)
+    accounts.change_person(user["id"], "owner", remove=True, path=db)
+    assert admin_store.delete_profile(plan["id"], path=db)["id"] == plan["id"]
+
+
+def test_identity_profile_grants_with_rows_stop_startup_and_stay_intact(tmp_path):
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    _add_grants_table(db, ("member", "plan"))
+    with pytest.raises(sqlite3.DatabaseError, match="still holds 1 access-plan grant"):
+        admin_store.init_db(db)
+    assert _grants_table_exists(db)
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT user_id, profile_id FROM legacy_identity_profile_grants").fetchall() == [("member", "plan")]

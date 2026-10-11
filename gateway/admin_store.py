@@ -102,14 +102,6 @@ CREATE TABLE IF NOT EXISTS user_identity_claims (
 CREATE INDEX IF NOT EXISTS user_identity_claims_lookup
   ON user_identity_claims(user_id, claim_kind);
 
--- Fixed manual access preserved during the v4 authorization migration. Old
--- claim aliases cannot safely reconstruct an immutable group path.
-CREATE TABLE IF NOT EXISTS legacy_identity_profile_grants (
-  user_id TEXT PRIMARY KEY,
-  profile_id TEXT NOT NULL,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-
 CREATE TABLE IF NOT EXISTS service_accounts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
@@ -286,7 +278,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
-    migrate_legacy_claims = (row is not None and int(row[0]) < 4) or "provenance" not in role_columns
+    # Claims stored before v4 folded case and path separators, so they could
+    # match a mapping the person is not in. Sign-in stores exact claims again.
+    purge_folded_claims = (row is not None and int(row[0]) < 4) or "provenance" not in role_columns
     if row is None:
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
@@ -310,8 +304,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE admin_role_assignments "
             "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'"
         )
-    if migrate_legacy_claims:
-        _migrate_legacy_identity_profiles(conn)
+    if purge_folded_claims:
+        conn.execute("DELETE FROM user_identity_claims")
+    _drop_identity_profile_grants(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
     if "created_by" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
@@ -420,76 +415,25 @@ def _freeze_missing_prompt_memory_preferences(
     )
 
 
-def _migrate_legacy_identity_profiles(conn: sqlite3.Connection) -> None:
-    """Freeze existing claim-derived access, then discard unrecoverable aliases.
+def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
+    """Drop the pre-People grant table, but never a grant someone still holds.
 
-    The v3 matcher folded case and path separators. Preserve only its current
-    winning profile, never its ability to authorize future profile mappings.
-    This runs once inside the schema migration's write transaction.
+    People access plans (``account_access``) replaced these rows. A row left
+    here would silently stop granting its plan, so refuse to start instead.
     """
-    mappings = conn.execute(
-        "SELECT source_kind,source_value,profile_id FROM runtime_profile_mappings "
-        "WHERE disabled_at IS NULL ORDER BY priority ASC,created_at ASC"
-    ).fetchall()
-    has_account_access = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
-    ).fetchone() is not None
-    users = conn.execute(
-        "SELECT id,email FROM users WHERE EXISTS "
-        "(SELECT 1 FROM user_identity_claims WHERE user_id=users.id)"
-    ).fetchall()
-    for user_id, email in users:
-        # A manual People access plan already took precedence over mappings.
-        if has_account_access and conn.execute(
-            "SELECT 1 FROM account_access WHERE user_id=? "
-            "AND profile_id IS NOT NULL AND removed_at IS NULL", (user_id,)
-        ).fetchone():
-            continue
-        email_value = _normalize_access_value(email)
-        _, _, domain = email_value.partition("@")
-        candidates = {("all_users", "*")}
-        if email_value:
-            candidates.add(("email", email_value))
-        if domain:
-            candidates.add(("domain", domain))
-        roles = {row[0] for row in conn.execute(
-            "SELECT role FROM admin_role_assignments WHERE subject_kind='user' "
-            "AND subject_id=? AND revoked_at IS NULL", (user_id,)
-        )}
-        role = next((role for role in ("owner", "superadmin", "admin") if role in roles), "none")
-        candidates.add(("gateway_role", role))
-        for kind, value in conn.execute(
-            "SELECT claim_kind,claim_value FROM user_identity_claims WHERE user_id=?", (user_id,)
-        ):
-            normalized = _normalize_access_value(value)
-            if normalized:
-                candidates.add((kind, normalized))
-        for kind, value, profile_id in mappings:
-            if (kind, value) not in candidates:
-                continue
-            if kind in IDENTITY_CLAIM_KINDS:
-                # Match the gateway's profile-reference semantics. Default
-                # policy sentinels remain fixed defaults rather than row IDs.
-                if profile_id not in {"default", "default-local"} and not conn.execute(
-                    "SELECT 1 FROM profiles WHERE id=?", (profile_id,)
-                ).fetchone():
-                    for stored_id, name, document in conn.execute(
-                        "SELECT id,name,profile_json FROM profiles ORDER BY created_at ASC"
-                    ):
-                        try:
-                            policy = json.loads(document)
-                        except (TypeError, ValueError):
-                            policy = {}
-                        policy_id = policy.get("id") if isinstance(policy, Mapping) else None
-                        if profile_id in {stored_id, name, policy_id}:
-                            profile_id = stored_id
-                            break
-                conn.execute(
-                    "INSERT OR IGNORE INTO legacy_identity_profile_grants(user_id,profile_id) "
-                    "VALUES (?,?)", (user_id, profile_id),
-                )
-            break
-    conn.execute("DELETE FROM user_identity_claims")
+    table = "legacy_identity_profile_grants"
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone():
+        return
+    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    if count:
+        raise sqlite3.DatabaseError(
+            f"admin.db table {table} still holds {count} access-plan grant(s). "
+            "Assign each listed person a plan in People (account_access), "
+            f"delete the rows from {table}, then start Azizam again."
+        )
+    conn.execute(f"DROP TABLE {table}")
 
 
 def secure_state_path(path: Path) -> None:
