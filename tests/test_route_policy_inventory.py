@@ -572,6 +572,46 @@ def _table(rows):
     )
 
 
+# 200 responses that are allowed by the access contract: they list metadata or
+# the caller's own records and never run a model. Each needs a reason; a backend
+# call still makes the row a violation.
+_DISCOVERY = "audience-scoped discovery metadata; running an entry is policy-checked"
+_A1111_METADATA = "A1111 translator metadata derived from the same discovery catalog"
+_OWN_RECORDS = "the caller's own records, scoped by owner"
+_METADATA_CONTRACT = {
+    ("GET", "/gateway/v1/capabilities"): "discovery annotated with this caller's decision",
+    ("GET", "/gateway/v1/workflows"): _DISCOVERY,
+    ("GET", "/gateway/v1/extensions"): _DISCOVERY,
+    ("GET", "/gateway/v1/aliases"): _DISCOVERY,
+    ("GET", "/gateway/v1/aliases/resolve"): _DISCOVERY,
+    ("GET", "/sdapi/v1/options"): _A1111_METADATA,
+    ("GET", "/sdapi/v1/sd-models"): _A1111_METADATA,
+    ("GET", "/sdapi/v1/samplers"): _A1111_METADATA,
+    ("GET", "/sdapi/v1/schedulers"): _A1111_METADATA,
+    ("GET", "/sdapi/v1/upscalers"): _A1111_METADATA,
+    ("GET", "/sdapi/v1/progress"): "the caller's own A1111 session state",
+    ("POST", "/sdapi/v1/interrupt"): "cancels only the caller's own A1111 session",
+    ("GET", "/me/api/make/jobs"): _OWN_RECORDS,
+    ("GET", "/me/api/media"): _OWN_RECORDS,
+    ("GET", "/me/api/usage/summary"): _OWN_RECORDS,
+}
+
+
+def _metadata_contract(method, template, response, row):
+    reason = _METADATA_CONTRACT.get((method, template))
+    if reason is None or response.status_code != 200:
+        return
+    if template == "/gateway/v1/capabilities":
+        available = [item.get("id") or item.get("intent") for item in response.json()["capabilities"]
+                     if item.get("policy_available")]
+        if available:
+            row["detail"] = f"capabilities shown as available to a caller who may use none: {available}"
+            return
+    row["outcome"] = "metadata (contract)"
+    row["rule"] = reason
+    row["detail"] = ""
+
+
 def _report(rows, title):
     gaps = [row for row in rows if row["outcome"] == "coverage gap"]
     not_exercised = [row for row in rows if row["outcome"] == "not exercised"]
@@ -625,6 +665,7 @@ def _http_inventory(gateway):
                 else:
                     row.setdefault("rule", "unexpected HTTP status")
                     row["detail"] = "response is not an allowed denial or scoped-empty collection"
+                _metadata_contract(method, template, response, row)
                 if response.status_code >= 500 and not gateway.calls:
                     row["outcome"] = "coverage gap"
                     row["rule"] = "server/harness failure is not policy proof"
