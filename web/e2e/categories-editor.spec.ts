@@ -254,7 +254,7 @@ test("empty rules reach an activated person and app grant through the real fixtu
   await expect(form.getByText("No services are saved in these rules yet.", { exact: true })).toBeVisible();
   await pick(page, form, "Service to add", service.label);
   await form.getByRole("button", { name: "Add service", exact: true }).click();
-  await expect(form.getByRole("group", { name: "Route: " + serviceId, exact: true })).toBeVisible();
+  await expect(form.getByRole("group", { name: "Release: " + serviceId, exact: true })).toBeVisible();
   await form.getByRole("button", { name: "Add service", exact: true }).click();
   await expect(form.getByRole("alert")).toHaveText(service.label + " is already in these rules. Edit the existing service instead.");
   await addCategory(page, "Audience", ["general"]);
@@ -276,7 +276,7 @@ test("empty rules reach an activated person and app grant through the real fixtu
   const candidate = await preview(page, base?.revision ?? null);
   expect(Object.keys(candidate.snapshot.services)).toEqual([serviceId]);
   expect(candidate.snapshot.services[serviceId].members).toEqual([expect.objectContaining({
-    id: serviceId, kind: "route", assertions: [expect.objectContaining({ category: "audience", value: "general", accepted: true })],
+    id: serviceId, kind: "release", assertions: [expect.objectContaining({ category: "audience", value: "general", accepted: true })],
   })]);
   for (const plans of [candidate.snapshot.people[person.id], candidate.snapshot.apps[app.id]]) {
     expect(plans[0].grants).toEqual([{ capability: "chat.completions", service: serviceId }]);

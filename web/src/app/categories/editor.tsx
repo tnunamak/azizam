@@ -52,7 +52,7 @@ function addedService(snapshot: Snapshot, entry: CatalogService): Service {
     if (match && BigInt(match[1]) >= revision) revision = BigInt(match[1]) + BigInt(1);
   }
   const id = entry.stem + "@r" + revision;
-  return { id, members: [{ id, kind: entry.kind === "workflow" ? "workflow" : "route", assertions: [] }], dependencies: [], checkable: true };
+  return { id, members: [{ id, kind: entry.kind === "workflow" ? "workflow" : "release", assertions: [] }], dependencies: [], checkable: true };
 }
 const assertionValues = (value: unknown): unknown[] => Array.isArray(value) ? value : [value];
 

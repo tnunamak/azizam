@@ -531,7 +531,7 @@ it("adds catalog services after retained revisions and refuses a second active r
   const id = "workflow:paint@r4";
   expect(saved.services[id]).toEqual({ id, members: [{ id, kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
   expect(Object.keys(saved.services)).toEqual(["studio@1", id, "model:vectors@r1"]);
-  expect(saved.services["model:vectors@r1"]).toEqual({ id: "model:vectors@r1", members: [{ id: "model:vectors@r1", kind: "route", assertions: [] }], dependencies: [], checkable: true });
+  expect(saved.services["model:vectors@r1"]).toEqual({ id: "model:vectors@r1", members: [{ id: "model:vectors@r1", kind: "release", assertions: [] }], dependencies: [], checkable: true });
   expect(saved.people).toEqual(snapshot.people);
   expect(saved.retained).toEqual(snapshot.retained);
 });
