@@ -8,17 +8,21 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type ServiceRegistry, type StatusPayload } from "@/lib/api";
+import { ApiError, api, type ServiceRegistry, type StatusPayload } from "@/lib/api";
 import { StatusClient } from "./status-client";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
-const providerState = vi.hoisted(() => ({ state: "hidden" }));
+const providerState = vi.hoisted(() => ({ state: "hidden", providers: [] as Array<Record<string, unknown>> }));
+const activityState = vi.hoisted(() => ({ data: [] as Array<Record<string, unknown>>, isPending: false, isError: false, refetch: vi.fn() }));
+vi.mock("@/lib/use-capability-views", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/use-capability-views")>(),
+  useActivitySample: () => activityState,
+}));
 vi.mock("@/lib/provider-status", () => ({
   useOptionalProviderStatus: () => ({
     ...providerState,
-    providers: [],
     refetch: vi.fn(),
   }),
 }));
@@ -59,6 +63,11 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   providerState.state = "hidden";
+  providerState.providers = [];
+  activityState.data = [];
+  activityState.isPending = false;
+  activityState.isError = false;
+  activityState.refetch.mockClear();
   homeCapabilities.rows = freshChat();
 });
 homeCapabilities.rows = freshChat();
@@ -255,7 +264,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
   });
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "The gateway’s computer is low on disk space",
+      "The gateway’s computer reported a disk problem",
     ),
   );
   expect(
@@ -278,7 +287,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       screen
         .getByRole("heading", { name: "Status", level: 1 })
         .closest("header")!,
-    ).getByText("The gateway’s computer is low on disk space", { exact: true }),
+    ).getByText("The gateway’s computer reported a disk problem", { exact: true }),
   ).toBeVisible();
   expect(
     screen.getAllByText(
@@ -360,7 +369,7 @@ it("summarizes connection failures without putting raw transport text in the ans
   // D1.6: the card's title is the consequence, once; its first fact is the
   // fault in plain words, once.
   expect(
-    screen.getAllByRole("heading", { name: "Chat requests are failing" }),
+    screen.getAllByRole("heading", { name: "Chat is unavailable right now" }),
   ).toHaveLength(1);
   expect(
     screen.getAllByText("Local chat is not accepting connections.", {
@@ -491,7 +500,7 @@ it("does not trust stale health after a status error", async () => {
     chatRegistry,
     true,
   );
-  await screen.findByText("The gateway did not return engine health");
+  await screen.findByText("Engine health couldn’t load");
   expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
   expect(screen.queryByText("Everything works")).toBeNull();
 });
@@ -545,6 +554,7 @@ it("moves from partial to healthy once provider status resolves", async () => {
 it.each(["empty", "partial"])(
   "presents %s observation explicitly",
   async (state) => {
+    providerState.state = "ready";
     mount(
       {
         current_health: {
@@ -609,7 +619,7 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   } as unknown as StatusPayload);
   const card = (
     await screen.findByRole("heading", {
-      name: "Chat requests are failing",
+      name: "Chat is unavailable right now",
     })
   ).closest("article")!;
   // Where it stands, in the strip's own word, then the day's spells.
@@ -683,4 +693,72 @@ it("waits for the status check before drawing engine rows, never a passing Unkno
   } as StatusPayload);
   const engine = await screen.findByRole("button", { name: "Local chat" });
   expect(within(engine.closest("tr")!).getByText("Ready")).toBeVisible();
+});
+
+it.each(["loading", "error"])("never calls a %s provider read an empty setup", async (state) => {
+  providerState.state = state;
+  mount({ current_health: { state: "empty", services: [], observation_available: true } } as unknown as StatusPayload, { schema_version: 1, services: {} });
+  await waitFor(() => expect(api.status).toHaveBeenCalled());
+  expect(await screen.findByText(state === "loading" ? "Checking providers…" : "Provider status couldn’t load.")).toBeVisible();
+  expect(screen.queryByText("No engines yet")).toBeNull();
+});
+
+it.each(["pending", "error"])("does not turn %s activity into no failures", async (state) => {
+  activityState.isPending = state === "pending";
+  activityState.isError = state === "error";
+  providerState.state = "ready";
+  providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: false, keyState: "set", spendText: "" }];
+  mount();
+  await screen.findByRole("heading", { name: "Data provider is down" });
+  expect(document.body.textContent).not.toMatch(/None in the latest/);
+  expect(screen.getAllByText(state === "pending" ? "Checking recent requests…" : /Recent requests couldn’t load/).length).toBeGreaterThan(0);
+  if (state === "error") {
+    await userEvent.click(screen.getByRole("button", { name: "Retry recent requests" }));
+    expect(activityState.refetch).toHaveBeenCalledOnce();
+  }
+});
+
+it("uses the loaded request count and distinguishes a missing key from an outage", async () => {
+  activityState.data = [{ receipt: { request_id: "failed", backend: "remote", status: "failed" } }, { receipt: { status: "success" } }];
+  providerState.state = "ready";
+  providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: false, keyState: "missing", spendText: "" }];
+  mount();
+  await screen.findByRole("heading", { name: "Data provider needs a key." });
+  expect(screen.getByText(/1 of the latest 2 requests/)).toBeVisible();
+  expect(screen.queryByText("Data provider is down")).toBeNull();
+  expect(screen.getByRole("link", { name: "Add provider key" })).toBeVisible();
+});
+
+it("opens provider spend and cap details and restores focus", async () => {
+  providerState.state = "ready";
+  providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: true, keyState: "set", monthlySpend: 2.5, monthlyCap: 10, spendText: "" }];
+  mount();
+  const trigger = await screen.findByRole("button", { name: "Data provider details" });
+  await userEvent.click(trigger);
+  const sheet = screen.getByRole("dialog", { name: "Data provider" });
+  expect(within(sheet).getByText("USD 2.50")).toBeVisible();
+  expect(within(sheet).getByText("USD 10.00")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  expect(trigger).toHaveFocus();
+});
+
+it("does not invent a spending-limit reset time", async () => {
+  activityState.data = [{ created_at: Date.now() / 1000, receipt: { status: "rejected", app_profile: "p", warnings: ["Paid request refused: spending cap reached; daily spending limit exceeded; monthly budget exceeded."] } }];
+  vi.spyOn(api.profiles, "list").mockResolvedValue([{ id: "p", name: "Household", profile: { remote: { budget_usd_per_month: 10 } } }] as unknown as Awaited<ReturnType<typeof api.profiles.list>>);
+  mount();
+  expect(await screen.findByText("Reset time not provided")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Edit access plan" })).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/roll off|Monthly: on/);
+});
+
+it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private exception", 503)])("keeps registry errors scoped and retryable: %s", async (error) => {
+  mount();
+  vi.mocked(api.services.registry).mockRejectedValue(error);
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  const title = await screen.findByRole("heading", { name: "Engine list couldn’t load" });
+  const card = title.closest("article")!;
+  expect(within(card).getByText(error instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  expect(within(card).getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(screen.queryByText("private exception")).toBeNull();
+  expect(screen.queryByText("No engines yet")).toBeNull();
 });

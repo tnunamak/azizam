@@ -34,10 +34,10 @@ it("keeps the disk remedy on the disk signal rather than an API signal", async (
   const row = reason.closest("article")!;
   // The card's title names its layer; the reason is the gateway's sentence.
   expect(within(row).getByRole("heading", { name: "The gateway needs attention" })).toBeVisible();
-  expect(within(row).queryByRole("button", { name: "Free disk space" })).toBeNull();
+  expect(within(row).queryByRole("button", { name: "Check disk" })).toBeNull();
   const disk = screen.getByText("Disk is almost full.").closest("article")!;
-  expect(within(disk).getByRole("heading", { name: "The gateway’s computer is low on disk space" })).toBeVisible();
-  expect(within(disk).getByRole("button", { name: "Free disk space" })).toBeVisible();
+  expect(within(disk).getByRole("heading", { name: "The gateway’s computer reported a disk problem" })).toBeVisible();
+  expect(within(disk).getByRole("button", { name: "Check disk" })).toBeVisible();
 });
 it("does not attach a disk remedy to a temperature warning", async () => {
   mount([
@@ -45,7 +45,7 @@ it("does not attach a disk remedy to a temperature warning", async () => {
     { source: "disk", tone: "warn", reasons: ["Disk is almost full."] },
   ]);
   const reason = await screen.findByText("Temperature is high.");
-  expect(within(reason.closest("article")!).queryByRole("button", { name: "Free disk space" })).toBeNull();
+  expect(within(reason.closest("article")!).queryByRole("button", { name: "Check disk" })).toBeNull();
 });
 it("counts every provider failure and signal, deduplicating identical source/reason pairs", async () => {
   const provider = { enabled: true, reachable: false, keyState: "set" as const, keySuffix: null, spendText: "", tone: "bad" as const };
@@ -65,14 +65,14 @@ it("counts every provider failure and signal, deduplicating identical source/rea
   expect(await screen.findByText("5 problems need you")).toBeVisible();
   expect(screen.getAllByText("Request failures.")).toHaveLength(1);
   expect(screen.getAllByText("Disk full.")).toHaveLength(1);
-  const first = screen.getByRole("heading", { name: "First provider is down" }).closest("article")!;
-  expect(within(first).getByText("No provider key is set.")).toBeVisible();
+  const first = screen.getByRole("heading", { name: "First provider needs a key." }).closest("article")!;
+  expect(within(first).getByRole("link", { name: "Add provider key" })).toBeVisible();
   const second = screen.getByRole("heading", { name: "Second provider is down" }).closest("article")!;
   expect(within(second).getByText("The last connection check failed.")).toBeVisible();
   expect(screen.getByText("Check failed.")).toBeVisible();
   for (const reason of ["Disk full.", "Other disk full."]) {
     const row = screen.getByText(reason).closest("article")!;
-    expect(within(row).getByRole("button", { name: "Free disk space" })).toBeVisible();
+    expect(within(row).getByRole("button", { name: "Check disk" })).toBeVisible();
   }
 });
 

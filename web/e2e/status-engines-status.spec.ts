@@ -218,7 +218,7 @@ async function mockStatusApis(
     return route.fulfill({
       status: providers,
       json: {
-        providers: [
+        providers: empty ? [] : [
           {
             id: "openrouter",
             name: "OpenRouter",
@@ -241,7 +241,7 @@ for (const theme of ["light", "dark"] as const) {
         await mockStatusApis(page, {
           empty: state === "empty",
           statusError: state === "error",
-          providers: state === "seeded" ? 200 : 404,
+          providers: state !== "error" ? 200 : 404,
         });
         await page.setViewportSize({
           width,
@@ -279,6 +279,14 @@ for (const theme of ["light", "dark"] as const) {
             // D1.5: the row header reads "OpenRouter Remote provider".
             main.getByRole("rowheader", { name: /^OpenRouter\b/ }),
           ).toBeVisible();
+          const providerDetails = page.getByRole("button", { name: "OpenRouter details" });
+          await providerDetails.click();
+          const providerSheet = page.getByRole("dialog", { name: "OpenRouter" });
+          // The sheet repeats the row's spend evidence, never "not recorded" beside it.
+          await expect(providerSheet.getByText("USD 1.25 of USD 10.00")).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(providerSheet).toHaveCount(0);
+          await expect(providerDetails).toBeFocused();
           await page.getByRole("button", { name: "Status actions" }).click();
           const details = page.getByRole("menuitem", {
             name: /Technical details/,
@@ -288,7 +296,8 @@ for (const theme of ["light", "dark"] as const) {
           await expect(details).toHaveCount(0);
         } else if (state === "empty") {
           // D1 copy: the verdict and the layer's empty state, with its action.
-          await expect(main.getByRole("status")).toContainText(
+          // The page verdict is the first status; the owner's own requests follow.
+          await expect(main.getByRole("status").first()).toContainText(
             "No engines yet",
           );
           await expect(
@@ -299,15 +308,16 @@ for (const theme of ["light", "dark"] as const) {
           ).toHaveAttribute("href", "/ui/engines/");
         } else {
           // D1 copy: the verdict and a card for the failed status check.
-          await expect(main.getByRole("status")).toContainText(
+          // The page verdict is the first status; the owner's own requests follow.
+          await expect(main.getByRole("status").first()).toContainText(
             "Couldn’t check status",
           );
           await expect(
             main.getByRole("heading", {
-              name: "The gateway did not return engine health",
+              name: "Engine health couldn’t load",
             }),
           ).toBeVisible();
-          await expect(main.getByText("Refresh to try again.")).toBeVisible();
+          await expect(main.getByText("The gateway returned an error. Try again.")).toBeVisible();
           await expect(main.getByText(/\bready\b/i)).toHaveCount(0);
         }
         await page.screenshot({
@@ -336,7 +346,7 @@ for (const theme of ["light", "dark"] as const) {
             .click();
           await expect(
             main.getByRole("heading", {
-              name: "The gateway did not return engine health",
+              name: "Engine health couldn’t load",
             }),
           ).toHaveCount(0);
           await expect(
@@ -397,7 +407,7 @@ test("failed refresh removes stale green engine observations", async ({
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(
     main.getByRole("heading", {
-      name: "The gateway did not return engine health",
+      name: "Engine health couldn’t load",
     }),
   ).toBeVisible();
   await expect(engineRows).toHaveCount(3);

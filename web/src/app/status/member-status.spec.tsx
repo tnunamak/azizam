@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemberStatus } from "./status-view";
+import { MemberStatus, StatusView } from "./status-view";
 import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
+import * as session from "@/components/shell/session";
 import { ApiError } from "@/lib/api";
 
 vi.mock("./status-client", () => ({ StatusClient: () => <p>Owner status</p> }));
@@ -296,4 +297,30 @@ describe("member Status leaves app plumbing out", () => {
       /Embeddings|Decisions|Your capabilities/,
     );
   });
+});
+
+it.each([null, "unknown", "unexpected"])("labels an unrecorded receipt outcome: %s", async (status) => {
+  serve({ ...snapshot, receipts: [{ ...snapshot.receipts[0], status }] });
+  mount();
+  expect(await screen.findByText("Outcome not recorded")).toBeVisible();
+});
+
+it("offers Retry for a successful response without status", async () => {
+  vi.spyOn(productApi, "status").mockResolvedValue(null as unknown as Snapshot);
+  mount();
+  expect(await screen.findByText("The gateway returned no status. Try again.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(screen.queryByText("No requests yet.")).toBeNull();
+});
+
+it("keeps the owner's own requests alongside the household status", async () => {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
+  serve(snapshot);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
+  expect(screen.getByText("Owner status")).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Your latest requests" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "View request receipt" })).toHaveAttribute("href", snapshot.receipts[0].href);
+  expect(screen.queryByRole("heading", { name: "What you can use" })).toBeNull();
+  // The owner is not told to ask the owner or to check their app connection here.
+  expect(screen.queryByText(/Check your connection|if it does not recover|before the limit resets/)).toBeNull();
 });

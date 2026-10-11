@@ -81,7 +81,6 @@ import {
   type StateTone,
 } from "@/lib/capability-state";
 import {
-  ACTIVITY_SAMPLE,
   capabilityLabel,
   useActivitySample,
   useCapabilityViews,
@@ -299,6 +298,7 @@ function stateWordFor(key: CapabilityStateKey) {
  */
 function failedRequestsFact(
   records: ActivityRecord[],
+  sampleSize: number,
   { who = true }: { who?: boolean } = {},
 ): ReactNode {
   if (!records.length) return null;
@@ -326,7 +326,7 @@ function failedRequestsFact(
         </span>
       ) : null}
       <span className="min-w-0">
-        {records.length} of the latest {ACTIVITY_SAMPLE} requests
+        {records.length} of the latest {sampleSize} requests
         {people.length ? `, from ${joinNames(people)}` : ""}
         {who ? (
           <>
@@ -368,6 +368,7 @@ type Problem = {
   href?: string | null;
   action?: string;
   disk?: boolean;
+  retry?: () => void;
   /** Short verdict when this is the only problem. */
   headline: string;
 };
@@ -501,6 +502,7 @@ function engineProblems(
   engines: EngineView[],
   records: ActivityRecord[],
   end: number,
+  activityFallback: ReactNode,
 ): Problem[] {
   const grouped = new Map<string, EngineView[]>();
   for (const engine of engines) {
@@ -607,8 +609,7 @@ function engineProblems(
     }
     evidence.push([
       "Failed requests",
-      failedRequestsFact(failed, { who: false }) ??
-        `None in the latest ${ACTIVITY_SAMPLE} requests`,
+      failedRequestsFact(failed, records.length, { who: false }) ?? activityFallback,
     ]);
     return {
       key: single
@@ -619,7 +620,7 @@ function engineProblems(
       // The verdict line above carries the state word, so the title says
       // what it means for people, or the fault when nothing is exposed.
       title: consequence
-        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} requests ${key === "down" ? "are failing" : "can fail right now"}`
+        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} ${failed.length ? "requests have failed" : `${exposed.length === 1 ? "is" : "are"} unavailable right now`}`
         : single
           ? symptomOf(first).replace(/\.$/, "")
           : `${affected.length} engines ${symptomOf(first)
@@ -686,14 +687,6 @@ function capProblems(
       continue;
     byPlan.set(plan, [...(byPlan.get(plan) ?? []), record]);
   }
-  const month = new Date(now * 1000);
-  const resets = new Date(
-    Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1),
-  ).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
   return [...byPlan.entries()].map(([planId, refused]) => {
     const profile = profiles?.find((item) => item.id === planId);
     const name = profile?.name ?? "An access plan";
@@ -736,7 +729,7 @@ function capProblems(
     const per = (period: PlanSpend["period"]) =>
       period === "daily" ? "in the last 24 h" : "this month";
     const facts: Array<[string, ReactNode]> = [
-      ["Affects", "Paid models for people on this plan"],
+      ["Affects", "Paid models for people on this access plan"],
       [
         "Spent",
         spend.length ? (
@@ -765,30 +758,18 @@ function capProblems(
         spend.some((item) => item.resets_at != null) ? (
           <span key="r" className="block space-y-0.5">
             {spend
-              .filter((item) => item.resets_at != null)
               .map((item) => (
                 <span key={item.period} className="block">
                   {item.period === "daily" ? "Daily" : "Monthly"}:{" "}
-                  {when(item.resets_at!)}
+                  {item.resets_at != null ? when(item.resets_at) : "Reset time not provided"}
                 </span>
               ))}
           </span>
         ) : (
-          <span key="r" className="block space-y-0.5">
-            {daily != null ||
-            !/monthly/i.test(warning) ||
-            /daily/i.test(warning) ? (
-              <span className="block">
-                Daily: as charges older than 24 hours roll off
-              </span>
-            ) : null}
-            {monthly != null || /monthly/i.test(warning) ? (
-              <span className="block">Monthly: on {resets} (UTC)</span>
-            ) : null}
-          </span>
+          "Reset time not provided"
         ),
       ],
-      ["Refused", failedRequestsFact(refused)],
+      ["Refused", failedRequestsFact(refused, records.length)],
     ];
     return {
       key: `cap:${planId}`,
@@ -797,14 +778,14 @@ function capProblems(
       // The refusals show a limit refused paid requests; they do not show
       // how much was spent.
       title: profile
-        ? `A spending limit on the ${name} plan refused paid requests`
+        ? `A spending limit on the ${name} access plan refused paid requests`
         : "A spending limit refused paid requests",
       headline: profile
-        ? `${name} plan reached its spending limit`
+        ? `${name} access plan reached its spending limit`
         : "Spending limit reached",
       facts,
       href: "/people?tab=plans",
-      action: profile ? `Edit the ${name} plan` : "Open access plans",
+      action: profile ? "Edit access plan" : "Open access plans",
     } satisfies Problem;
   });
 }
@@ -828,8 +809,9 @@ function ProblemCard({
       evidence={problem.evidence}
       history={problem.history}
       actions={
-        problem.href || problem.disk ? (
+        problem.href || problem.disk || problem.retry ? (
           <>
+            {problem.retry ? <Button variant="outline" size="sm" onClick={problem.retry}>Retry</Button> : null}
             {problem.href ? (
               <Button
                 asChild
@@ -852,7 +834,7 @@ function ProblemCard({
                 variant="outline"
                 onClick={onDiskHelp}
               >
-                Free disk space
+                Check disk
               </Button>
             ) : null}
           </>
@@ -938,14 +920,17 @@ function money(value: number | null | undefined): string | null {
 
 function providerState(provider: ProviderStatusView): CapabilityStateKey {
   if (provider.enabled === false) return "off";
-  if (provider.keyState === "missing" || provider.reachable === false)
-    return "down";
+  if (provider.keyState === "missing") return "unknown";
+  if (provider.reachable === false) return "down";
   if (provider.reachable === true) return "ready";
   return "unknown";
 }
 
 function ProviderRow({ provider }: { provider: ProviderStatusView }) {
-  const { word, tone } = stateWordFor(providerState(provider));
+  const [open, setOpen] = useState(false);
+  const { word, tone } = provider.keyState === "missing" && provider.enabled !== false
+    ? { word: "Needs a key", tone: "warn" as const }
+    : stateWordFor(providerState(provider));
   const spent = money(provider.monthlySpend);
   const cap = provider.monthlyCap ?? null;
   const share =
@@ -954,15 +939,44 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
     cap > 0
       ? Math.min(1, provider.monthlySpend / cap)
       : null;
+  const spendFallback = !/not measured|unknown/i.test(provider.spendText)
+    ? provider.spendText.replace(/\$(\d)/g, "USD $1")
+    : null;
   return (
     <tr className="border-b last:border-0">
       <th
         scope="row"
         className="py-2.5 pr-4 text-left align-middle font-normal"
       >
-        <span className="block truncate text-meta font-medium">
-          {provider.name}
-        </span>
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetTrigger asChild>
+            <button type="button" className="block min-h-11 truncate text-left text-meta font-medium hover:underline" aria-label={`${provider.name} details`}>
+              {provider.name}
+            </button>
+          </SheetTrigger>
+          <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+            <SheetHeader>
+              <SheetTitle>{provider.name}</SheetTitle>
+              <SheetDescription>{word}</SheetDescription>
+            </SheetHeader>
+            <div className="space-y-4 px-4 pb-6">
+              <KeyValueList items={[
+                // The same evidence as the row: a monthly figure when the
+                // provider reports one, else its own spend text, period unstated.
+                ...(spent != null
+                  ? ([
+                      ["Spent this month", spent],
+                      ["Monthly cap", money(cap) ?? "Cap not recorded"],
+                    ] as Array<[string, ReactNode]>)
+                  : ([
+                      ["Spend", spendFallback ?? "Spend not recorded"],
+                    ] as Array<[string, ReactNode]>)),
+                ["Last check", provider.checkedAt ? <RelativeTime ts={provider.checkedAt} /> : "Not checked yet"],
+              ]} />
+              <Button asChild variant="outline"><Link href="/providers">{provider.keyState === "missing" ? "Add provider key" : "Open providers"}</Link></Button>
+            </div>
+          </SheetContent>
+        </Sheet>
         <span className="text-muted-foreground hidden text-meta sm:block">
           Remote provider
         </span>
@@ -995,10 +1009,8 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
               month
             </span>
           </span>
-        ) : !/not measured|unknown/i.test(provider.spendText) ? (
-          <span className="figures text-meta">
-            {provider.spendText.replace(/\$(\d)/g, "USD $1")}
-          </span>
+        ) : spendFallback ? (
+          <span className="figures text-meta">{spendFallback}</span>
         ) : (
           <span className="text-muted-foreground text-meta">
             Spend not recorded
@@ -1028,6 +1040,7 @@ export function StatusClient() {
   const [showAll, setShowAll] = useState(false);
   const {
     data: statusData,
+    error: statusError,
     isError: statusIsError,
     isFetching: statusIsFetching,
     isPending: statusIsPending,
@@ -1048,7 +1061,7 @@ export function StatusClient() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: profiles } = useQuery({
+  const { data: profiles, isPending: profilesIsPending, isError: profilesIsError, refetch: refetchProfiles } = useQuery({
     queryKey: queryKeys.profiles,
     queryFn: api.profiles.list,
     retry: false,
@@ -1056,7 +1069,18 @@ export function StatusClient() {
   const providers = useOptionalProviderStatus();
   const activity = useActivitySample(true);
   const model = useCapabilityViews(true);
-  const records = activity.data ?? [];
+  const records = activity.isPending || activity.isError ? [] : (activity.data ?? []);
+  const activityFallback: ReactNode = activity.isPending
+    ? "Checking recent requests…"
+    : activity.isError || !activity.data
+      ? "Recent requests couldn’t load."
+      : records.length
+        ? `None in the latest ${records.length} requests`
+        : "No recent requests";
+  const setupEmpty = !statusIsPending && !statusIsError && statusData != null &&
+    !registryIsPending && !registryIsError && registryData != null &&
+    providers.state === "ready" && providers.providers.length === 0 &&
+    Object.keys(registryData.services).length === 0;
   const observedStatus =
     statusIsError || statusData?.current_health?.observation_available !== true
       ? undefined
@@ -1135,7 +1159,7 @@ export function StatusClient() {
   const signalProblems: Problem[] = [...signalGroups.entries()].map(
     ([key, group]) => {
       const title = group.disk
-        ? `${group.where} is low on disk space`
+        ? "The gateway’s computer reported a disk problem"
         : `${group.where} needs attention`;
       return {
         key: `signal:${key}`,
@@ -1194,42 +1218,39 @@ export function StatusClient() {
             [
               "Failed requests",
               failedRequestsFact(
-                backendFailures(records, new Set([provider.id])),
-              ) ?? `None in the latest ${ACTIVITY_SAMPLE} requests`,
+                backendFailures(records, new Set([provider.id])), records.length,
+              ) ?? activityFallback,
             ],
           ];
           return [
             {
               key: `provider:${provider.id}`,
-              severity: (exposed || !labels.length
+              severity: (provider.keyState !== "missing" && (exposed || !labels.length)
                 ? "critical"
                 : "attention") as CalloutSeverity,
-              tone: (exposed || !labels.length ? "bad" : "warn") as StateTone,
-              title: `${provider.name} is down`,
-              headline: `${provider.name} down`,
+              tone: (provider.keyState !== "missing" && (exposed || !labels.length) ? "bad" : "warn") as StateTone,
+              title: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} is down`,
+              headline: provider.keyState === "missing" ? `${provider.name} needs a key.` : `${provider.name} down`,
               facts,
-              body: [
-                provider.keyState === "missing"
-                  ? "No provider key is set."
-                  : "The last connection check failed.",
-              ],
+              body: provider.keyState === "missing" ? [] : ["The last connection check failed."],
               href: "/providers",
-              action: `Open ${provider.name}`,
+              action: provider.keyState === "missing" ? "Add provider key" : `Open ${provider.name}`,
             } satisfies Problem,
           ];
         })
       : [];
   const loadProblems: Problem[] = [
-    ...(statusIsError
+    ...((statusIsError || (!statusIsPending && statusData == null))
       ? [
           {
             key: "status",
             severity: "critical" as CalloutSeverity,
             tone: "bad" as StateTone,
-            title: "The gateway did not return engine health",
+            title: "Engine health couldn’t load",
             headline: "Couldn’t check status",
-            facts: [["Where", "The gateway"]] as Array<[string, ReactNode]>,
-            body: ["Refresh to try again."],
+            facts: [],
+            body: [!statusIsError ? "The gateway returned no status. Try again." : statusError instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again."],
+            retry: () => void refetchStatus(),
             href: null,
           },
         ]
@@ -1240,15 +1261,11 @@ export function StatusClient() {
             key: "registry",
             severity: "critical" as CalloutSeverity,
             tone: "bad" as StateTone,
-            title: "The gateway did not return the engine list",
+            title: "Engine list couldn’t load",
             headline: "Couldn’t load your engines",
-            facts: [["Where", "The gateway"]] as Array<[string, ReactNode]>,
-            body: [
-              registryError instanceof ApiError ||
-              registryError instanceof Error
-                ? registryError.message
-                : "Refresh to try again.",
-            ],
+            facts: [],
+            body: [registryError instanceof ApiError ? "The gateway returned an error. Try again." : "We couldn’t tell where this stopped. Try again."],
+            retry: () => void refetchRegistry(),
             href: null,
           },
         ]
@@ -1302,6 +1319,7 @@ export function StatusClient() {
       ),
       records,
       end,
+      activityFallback,
     ),
     ...uncheckedProblems,
     // Only once checks have loaded: while loading, everything is Unknown.
@@ -1316,7 +1334,7 @@ export function StatusClient() {
           ),
         )),
     ...providerProblems,
-    ...capProblems(records, profiles, now),
+    ...capProblems(records, profilesIsError ? undefined : profiles, now),
     ...signalProblems,
   ];
   const running = records.filter((record) =>
@@ -1334,11 +1352,10 @@ export function StatusClient() {
     !model.isPending && !model.isError && model.views.length > 0;
   if (registryIsPending || statusIsPending) {
     verdict = { tone: "unknown", text: "Checking" };
-  } else if (statusIsError || registryIsError) {
+  } else if (statusIsError || registryIsError || statusData == null) {
     verdict = { tone: "bad", text: "Couldn’t check status" };
   } else if (
-    statusData?.current_health?.state === "empty" &&
-    engines.length === 0
+    setupEmpty && statusData?.current_health?.state === "empty"
   ) {
     verdict = { tone: "off", text: "No engines yet" };
   } else if (!health) {
@@ -1388,6 +1405,9 @@ export function StatusClient() {
   const providersDown = providerList.filter(
     (provider) => providerState(provider) === "down",
   ).length;
+  const providersKeyless = providerList.filter(
+    (provider) => provider.enabled !== false && provider.keyState === "missing",
+  ).length;
   // The folded engines and providers as two labelled lines (D1.3 found
   // "4 other engines ready, 1 off, 1 provider" cryptic; D1.4 found the
   // sentences that replaced it read as prose): "Other engines: 4 ready,
@@ -1417,7 +1437,7 @@ export function StatusClient() {
       ? [
           [
             "Remote providers",
-            `${providerList.length} set up${providersDown ? `, ${providersDown} down` : ""}`,
+            `${providerList.length} set up${providersKeyless ? `, ${providersKeyless} ${providersKeyless === 1 ? "needs" : "need"} a key` : ""}${providersDown ? `, ${providersDown} down` : ""}`,
           ] as [string, string],
         ]
       : []),
@@ -1427,7 +1447,7 @@ export function StatusClient() {
   const providerError =
     providers.state === "error" ? (
       <div role="alert" className="text-destructive text-meta">
-        Provider status couldn’t load: {providers.message}{" "}
+        Provider status couldn’t load.{" "}
         <button
           type="button"
           onClick={providers.refetch}
@@ -1442,6 +1462,8 @@ export function StatusClient() {
     void refetchRegistry();
     providers.refetch();
     model.refetch();
+    void activity.refetch();
+    void refetchProfiles();
   };
 
   return (
@@ -1533,6 +1555,30 @@ export function StatusClient() {
               </section>
             ) : null}
 
+            {profilesIsError ? (
+              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
+                Access plan details couldn’t load.
+                <Button variant="outline" size="sm" onClick={() => void refetchProfiles()}>Retry access plans</Button>
+              </div>
+            ) : profilesIsPending && records.some((record) => (record.receipt?.warnings ?? []).some((warning) => CAP_WARNING.test(warning))) ? (
+              <p className="text-muted-foreground text-meta">Checking access plan details…</p>
+            ) : null}
+            {activity.isPending ? (
+              <p className="text-muted-foreground text-meta">Checking recent requests…</p>
+            ) : activity.isError || !activity.data ? (
+              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
+                Recent requests couldn’t load.
+                <Button variant="outline" size="sm" onClick={() => void activity.refetch()}>Retry recent requests</Button>
+              </div>
+            ) : null}
+            {model.isError ? (
+              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
+                Capabilities couldn’t load.
+                <Button variant="outline" size="sm" onClick={model.refetch}>Retry capabilities</Button>
+              </div>
+            ) : model.isPending ? (
+              <p className="text-muted-foreground text-meta">Checking capabilities…</p>
+            ) : null}
             {running.length ? (
               <section aria-labelledby="running-heading">
                 <SectionHeading
@@ -1600,6 +1646,7 @@ export function StatusClient() {
                   id="layers-heading"
                   title="Engines and providers"
                 />
+                {providers.state === "loading" ? <p aria-live="polite" className="text-muted-foreground text-meta">Checking providers…</p> : null}
                 {/* Rows need both answers: drawn before the status check
                     returns, every engine would read "Unknown" for a moment. */}
                 {registryIsPending || statusIsPending ? (
@@ -1608,7 +1655,7 @@ export function StatusClient() {
                     aria-label="Checking engines"
                     className="rounded-panel h-48 w-full"
                   />
-                ) : !tableEngines.length && !providerList.length ? (
+                ) : setupEmpty ? (
                   <Callout
                     severity="info"
                     title="No engines yet"
@@ -1718,9 +1765,9 @@ export function StatusClient() {
             className="w-full overflow-y-auto sm:max-w-lg"
           >
             <SheetHeader>
-              <SheetTitle>Free disk space</SheetTitle>
+              <SheetTitle>Check disk</SheetTitle>
               <SheetDescription>
-                Check the largest storage areas first.
+                Inspect the disk and its reported error before removing anything.
               </SheetDescription>
             </SheetHeader>
             <ul className="list-disc space-y-3 px-8 py-4 text-meta">

@@ -54,10 +54,11 @@ function receiptWord(status: string | null) {
   if (String(status ?? "").toLowerCase() === "rejected")
     return { word: "Refused", tone: "warn" as const };
   if (isInFlight(status)) return { word: "In progress", tone: "busy" as const };
-  return null;
+  if (isSuccess(status)) return null;
+  return { word: "Outcome not recorded", tone: "unknown" as const };
 }
 
-export function MemberStatus() {
+export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean } = {}) {
   const ownerName = useOwnerName();
   const { data, error, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["account", "status"],
@@ -66,6 +67,7 @@ export function MemberStatus() {
       !(cause instanceof ApiError && cause.status < 500) && count < 2,
     refetchInterval: 30_000,
   });
+  const retryStatus = () => void refetch();
   const model = useCapabilityViews(false);
   const expired = error instanceof ApiError && error.status === 401;
   const refusal = activeCapRefusal(model.requests);
@@ -121,7 +123,7 @@ export function MemberStatus() {
   const verdict =
     isPending || model.isPending
       ? { tone: "unknown" as const, text: "Checking" }
-      : isError || model.isError
+      : isError || model.isError || data == null
         ? { tone: "unknown" as const, text: "Couldn’t check status" }
         : modelVerdict;
   // No check time while checking or after a failed check (red team round 2).
@@ -132,7 +134,7 @@ export function MemberStatus() {
 
   return (
     <div className="page-read min-w-0">
-      <PageHeader
+      {!requestsOnly ? <PageHeader
         title="Status"
         actions={
           <Button
@@ -159,12 +161,12 @@ export function MemberStatus() {
             isPending || model.isPending ? 0 : modelVerdict.unconfirmed
           }
         />
-      </PageHeader>
+      </PageHeader> : null}
       <div className="flex min-w-0 flex-col gap-(--space-section)">
         {isPending ? (
           <div
             role="status"
-            aria-label="Loading your model status"
+            aria-label={requestsOnly ? "Loading your requests" : "Loading your model status"}
             aria-busy="true"
             className="space-y-4"
           >
@@ -193,12 +195,12 @@ export function MemberStatus() {
                 ? "The gateway returned an error. Try again."
                 : "We couldn’t tell where this stopped. Try again."
             }
-            onRetry={() => void refetch()}
+            onRetry={retryStatus}
             retrying={isFetching}
           />
         ) : data ? (
           <div className="grid items-start gap-(--space-section)">
-            <div className="min-w-0 space-y-(--space-section)">
+            {!requestsOnly ? <div className="min-w-0 space-y-(--space-section)">
               {refusal ? (
                 <CapNotice
                   warning={
@@ -238,7 +240,9 @@ export function MemberStatus() {
                   id="capability-status-heading"
                   title={memberTerms.whatYouCanUse}
                 />
-                {capabilityViews.length ? (
+                {model.isPending ? <p className="text-muted-foreground text-meta">Checking available models…</p> : model.isError ? (
+                  <ErrorState heading="Available models couldn’t load" message="Try again." onRetry={model.refetch} />
+                ) : capabilityViews.length ? (
                   <CapabilityList views={capabilityViews} columns={2} />
                 ) : (
                   <EmptyState
@@ -282,7 +286,7 @@ export function MemberStatus() {
                   </details>
                 ) : null}
               </section>
-            </div>
+            </div> : null}
             <section
               aria-labelledby="recent-status-heading"
               className="min-w-0"
@@ -293,7 +297,12 @@ export function MemberStatus() {
                 // request the owner sees is not "missing" from this list.
                 title="Your latest requests"
               />
-              {receipts.length ? (
+              {data.receipts == null ? (
+                <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-meta">
+                  Recent requests were not provided.
+                  <Button variant="outline" size="sm" onClick={retryStatus}>Retry recent requests</Button>
+                </p>
+              ) : receipts.length ? (
                 <ul className="divide-y">
                   {receipts.map((receipt) => {
                     const capability = requestCapability(receipt.intent);
@@ -344,7 +353,7 @@ export function MemberStatus() {
               {/* The next step follows the failure shown (red team round 2):
                   a spending limit is the owner's to lift, a gateway problem
                   is not the member's connection. */}
-              <p className="text-muted-foreground mt-4 text-meta">
+              {!requestsOnly ? <p className="text-muted-foreground mt-4 text-meta">
                 {refusal ? (
                   `${askOwner(ownerName)} if you need paid models before the limit resets.`
                 ) : modelVerdict.problems.length ? (
@@ -360,10 +369,10 @@ export function MemberStatus() {
                     </Link>
                   </>
                 )}
-              </p>
+              </p> : null}
             </section>
           </div>
-        ) : null}
+        ) : <ErrorState heading="Couldn’t check your status" message="The gateway returned no status. Try again." onRetry={retryStatus} retrying={isFetching} />}
       </div>
     </div>
   );
@@ -371,5 +380,12 @@ export function MemberStatus() {
 
 export function StatusView() {
   const viewer = useViewer();
-  return viewer.admin ? <StatusClient /> : <MemberStatus />;
+  return viewer.admin ? (
+    <div className="flex min-w-0 flex-col gap-(--space-section)">
+      <StatusClient />
+      <MemberStatus requestsOnly />
+    </div>
+  ) : (
+    <MemberStatus />
+  );
 }
