@@ -125,7 +125,12 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
         if principal == "member":
             case.client.cookies.set(*case.member_cookie)
         response = case.client.request(row["method"], path, json=body, headers=headers, follow_redirects=False)
-        assert response.status_code in {401, 403}, (row["method"], row["path"], principal, response.status_code)
+        if not path.startswith("/admin/api/") and response.status_code == 302:
+            # HTML entry points deny by redirecting members to their own portal.
+            assert principal == "member"
+            assert response.headers["location"].startswith(("/me", "/ui/home", "/ui/sign-in", "/login"))
+        else:
+            assert response.status_code in {401, 403}, (row["method"], row["path"], principal, response.status_code)
         assert _database_contents(gateway_test_state_dir) == before
         assert _database_contents(case.db.parent) == fixture_before
         assert proxy.DRAIN_STATE.snapshot() == drain_before
