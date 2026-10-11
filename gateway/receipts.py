@@ -16,13 +16,13 @@ from uuid import uuid4
 
 from gateway.model_ids import display_model_id
 from gateway.resource_decisions import project_decision
-
-PHASE_FIELDS = ("queued_at_ms", "started_at_ms", "first_output_at_ms", "finished_at_ms")
 from gateway.backends.request_shape import (
     TERMINAL_REASONS,
     sanitize_request_shape_fields_for_admin,
     sanitize_request_shape_stages_for_admin,
 )
+
+PHASE_FIELDS = ("queued_at_ms", "started_at_ms", "first_output_at_ms", "finished_at_ms")
 
 CLIENT_VISIBLE_FIELDS = {
     "request_id",
