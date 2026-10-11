@@ -12,22 +12,37 @@ from pathlib import Path
 
 from fastapi.openapi.utils import get_openapi
 from fastapi.routing import APIRoute
+from starlette.routing import Mount
 
 
 OWNER_OPERATIONS = json.loads(Path(__file__).with_name("owner_openapi_routes.json").read_text())
 
 
+def walk_routes(routes, prefix=""):
+    """Yield every route, including mount containers and prefixed children."""
+    for route in routes:
+        path = prefix + getattr(route, "path", "")
+        yield path, route
+        if isinstance(route, Mount):
+            yield from walk_routes(route.routes, path)
+
+
 def augment_owner_openapi(schema: dict, routes: list) -> None:
-    selected = [route for route in routes if isinstance(route, APIRoute)
-                and any(f"{method} {route.path}" in OWNER_OPERATIONS for method in route.methods)]
+    selected = []
+    for path, route in walk_routes(routes):
+        methods = getattr(route, "methods", None) or ()
+        if not any(f"{method} {path}" in OWNER_OPERATIONS for method in methods):
+            continue
+        if not isinstance(route, APIRoute):
+            raise ValueError(f"Owner schema metadata requires an APIRoute: {path}")
+        described_route = copy.copy(route)
+        described_route.path = path
+        described_route.path_format = re.sub(r"\{([^}:]+):[^}]+\}", r"{\1}", path)
+        described_route.include_in_schema = True
+        selected.append(described_route)
     # Copies let FastAPI infer typed bodies/parameters on hidden routes, while
     # keeping the running route objects and their handlers untouched.
-    described = []
-    for route in selected:
-        described_route = copy.copy(route)
-        described_route.include_in_schema = True
-        described.append(described_route)
-    owner_schema = get_openapi(title="Owner API", version="1", routes=described)
+    owner_schema = get_openapi(title="Owner API", version="1", routes=selected)
     schema.setdefault("components", {}).setdefault("schemas", {}).update(
         owner_schema.get("components", {}).get("schemas", {}))
     schema["components"].setdefault("securitySchemes", {})["OwnerBearer"] = {

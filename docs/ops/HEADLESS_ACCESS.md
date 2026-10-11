@@ -12,12 +12,20 @@ configuration. It prints a one-time secret; save its last line in a private file
 and keep its full output out of shared logs. Its default role is `owner`, which is required for the owner-only operations in the table below.
 
 ```sh
+set +x
 umask 077
 ./venv/bin/python proxy.py generate-admin-key headless-automation owner > owner-key-output.txt
 tail -n 1 owner-key-output.txt > owner-key.txt
 rm owner-key-output.txt
-AZIZAM_OWNER_KEY=$(cat owner-key.txt)
-export AZIZAM_OWNER_KEY
+chmod 600 owner-key.txt
+./venv/bin/python - <<'PY'
+from pathlib import Path
+key = Path("owner-key.txt").read_text().strip()
+header = Path("owner-header.txt")
+header.touch(mode=0o600)
+header.chmod(0o600)
+header.write_text("Authorization: Bearer " + key + "\n")
+PY
 AZIZAM_URL=https://gateway.example
 export AZIZAM_URL
 ```
@@ -26,23 +34,28 @@ An `admin` role key cannot use owner-only operations. Neither role is a
 read-only scope. The key's role is enforced on each request. The helper does
 not configure a browser session or start a server.
 
+Use a private working directory. Keep tracing off (`set +x`) while handling
+credentials. The key and header files must have mode 600. The examples read
+the secret from files; they do not put it in process arguments or environment
+variables. Keep these files out of logs and version control.
+
 ## Call the API with curl
 
 ```sh
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/apps" \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY"
+  -H @owner-header.txt
 
 # Choose an existing app ID from the list. This mints an App key, not an owner key.
 APP_ID=app_id_from_list
 curl --fail-with-body -sS -X POST "$AZIZAM_URL/admin/api/apps/$APP_ID/keys" \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY" \
+  -H @owner-header.txt \
   -H 'Content-Type: application/json' --data '{"label":"automation-client"}' \
   > app-key-response.json
 
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/activity/requests?limit=10" \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY"
+  -H @owner-header.txt
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/status" \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY"
+  -H @owner-header.txt
 ```
 
 For denied `/status*` calls, request telemetry no longer touches credential usage
@@ -61,26 +74,40 @@ silently retry a rejected mutation with a newer revision.
 Install Restish in a private tool directory to build commands from OpenAPI
 without an Azizam CLI. Its v1 `api configure` command does not work in v2.
 Use a separate config file to avoid ambient profiles. Register the trusted
-schema explicitly, configure an environment-backed token, and pass the auth header on calls:
+schema explicitly and store the token in a mode-600 Restish config file:
 
 ```sh
+set +x
 RSH_CONFIG="$PWD/restish-owner.json"
 export RSH_CONFIG
 umask 077
 test -e "$RSH_CONFIG" || printf '{}\n' > "$RSH_CONFIG"
 chmod 600 "$RSH_CONFIG"
+# Fetch the schema using curl's private header file.
+curl --fail-with-body -sS "$AZIZAM_URL/openapi.json" \
+  -H @owner-header.txt > owner-openapi.json
+# This placeholder is public text. Python replaces it from the private key file.
 restish api connect azizam "$AZIZAM_URL" \
-  'prompt.credentials.OwnerBearer.token: env:AZIZAM_OWNER_KEY' \
-  --spec "$AZIZAM_URL/openapi.json" --yes
-restish azizam owner-get-admin-api-apps \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
+  'prompt.credentials.OwnerBearer.token: configure-from-private-file' \
+  --spec "$PWD/owner-openapi.json" --replace --yes
+./venv/bin/python - <<'PY'
+import json
+import os
+from pathlib import Path
+config = Path(os.environ["RSH_CONFIG"])
+data = json.loads(config.read_text())
+profile = data["apis"]["azizam"]["profiles"]["default"]
+key = Path("owner-key.txt").read_text().strip()
+profile["credentials"]["OwnerBearer"]["auth"]["params"]["token"] = key
+profile["auth"]["params"]["token"] = key
+config.write_text(json.dumps(data, indent=2) + "\n")
+PY
+restish azizam owner-get-admin-api-apps -o json
 restish azizam owner-post-admin-api-apps-app-id-keys "$APP_ID" \
-  'label: automation-client' -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json \
+  'label: automation-client' -o json \
   > app-key-response.json
-restish azizam owner-get-admin-api-activity-requests --limit 10 \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
-restish azizam owner-get-admin-api-status \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json
+restish azizam owner-get-admin-api-activity-requests --limit 10 -o json
+restish azizam owner-get-admin-api-status -o json
 ```
 
 Use `restish azizam <command> --help` for inferred path/query/body arguments.
@@ -91,8 +118,9 @@ Session-only routes stay absent from OpenAPI. HTML owner routes remain outside
 the generated command surface. `/admin/api/drain` is loopback-only; its POST
 also requires a bearer key even for an owner browser session.
 
-Reconnect after an API upgrade to refresh the cached spec. Operation IDs depend
-on the HTTP method and path, so renaming a Python handler does not rename a CLI
+Reconnect after an API upgrade to refresh the cached spec. Repeat the schema fetch, connect, and private-token
+update above when reconnecting; `--replace` replaces the current profile.
+Operation IDs depend on the HTTP method and path, so renaming a Python handler does not rename a CLI
 command. Only explicitly inventoried owner operations receive owner metadata.
 
 ### Check results before using them
@@ -103,7 +131,7 @@ or that a JSON body describes success.
 
 ```sh
 restish azizam owner-get-admin-api-activity-requests --limit 10 \
-  -H "Authorization: Bearer $AZIZAM_OWNER_KEY" -o json \
+  -o json \
   > receipts.json 2> receipts.stderr
 rc=$?
 test "$rc" -eq 0 || { cat receipts.stderr >&2; exit "$rc"; }
@@ -132,15 +160,20 @@ handler call or injected callback, shown below. `owner-bearer` rejects app keys
 and member sessions; browser entry points can deny members by redirecting to `/`. `session-only` requires a cookie and rejects a standalone
 owner/app bearer key. `session-view` permits an unauthenticated snapshot.
 `browser/public` covers sign-in, first-run, redirect and health contracts;
-headers alone do not turn them into owner API operations. Public data-plane
-routes and static mounts are outside this control/browser inventory.
+headers alone do not turn them into owner API operations. Routes outside these
+namespaces are explicitly listed in `tests/fixtures/headless_non_control_routes.json`;
+that classification does not assert their authorization contract. The only
+opaque-mount exception is the `/ui` mount named `web_ui` whose app is exactly
+`UIStaticFiles`: it serves the static export, with owner pages guarded by middleware.
 
-The tests compare this table and its fixture with every registered route in
-these namespaces. They exercise app/member denials through HTTP and compare
-SQLite contents and drain state. Every bearer route reaches a checkpoint after
-real owner credential validation; operational effects are stopped there.
-That exhaustive test proves auth reachability, not successful execution of
-every mutation. Selected successful workflows are exercised separately.
+The tests walk every route type and recurse through mounts, preserving their
+path prefixes. An unclassified route or opaque mount fails the inventory test.
+App/member denials use HTTP and check SQLite contents, config and drain state.
+Member mutations include valid CSRF/action headers and must return a role denial.
+Owner bearer calls reach handler-level validation or a read response after all
+authorization checks. Reload and global-cap deletion stop at their first operational
+effect. These probes check bearer reachability without performing every mutation.
+Selected successful workflows are exercised separately.
 
 | Method and path | Auth class | App key | Handler / auth call | Schema |
 | --- | --- | --- | --- | --- |
@@ -333,7 +366,11 @@ server lifespan, mocked health observations, and called no inference engines.
 Setup discovered **245 operations**, including **104/104 configured owner
 operations**. This is fixture evidence, not a live deployment check.
 
-The commands above succeeded. These output filters kept the transcript short
+The earlier commands used explicit fixture bearer headers and succeeded.
+Restish 2.3.0's private config format and 104/104 configured owner bindings were
+checked offline with the committed schema. The revised file/config examples
+have not been rerun over HTTP in this recorded run.
+These output filters kept the transcript short
 and prevented the one-time App key from entering logs:
 
 ```sh
