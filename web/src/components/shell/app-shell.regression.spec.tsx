@@ -335,9 +335,11 @@ describe("Signed-out private pages", () => {
         <h1>Private consumer</h1>
       </AppShell>,
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Checking your session",
-    );
+    const loading = screen.getByRole("status", {
+      name: "Loading your account",
+    });
+    expect(loading).toHaveTextContent("Checking your session");
+    expect(loading).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByText("Private consumer")).toBeNull();
     expect(screen.queryByRole("button", { name: /Account menu/ })).toBeNull();
