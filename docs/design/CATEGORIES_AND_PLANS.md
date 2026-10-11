@@ -174,6 +174,10 @@ cover missing, None and empty tags; allowed and disallowed tags together;
 unknown categories; multiple assertions; person and app mismatch; empty
 grants; route changes; helpers; retries; cache, output and share paths.
 
+Run `scripts/categories-migration-report` against a private database snapshot.
+The [report guide](CATEGORIES_MIGRATION_REPORT.md) documents its deterministic
+conversion, static metadata call-site inventory and finite scope.
+
 ## Bundled defaults
 
 Shipped with each release as read-only base data: a few categories (audience,
