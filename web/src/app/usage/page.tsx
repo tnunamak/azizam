@@ -114,6 +114,7 @@ interface UsageSummary {
   people: UsagePerson[];
   sources: UsageSource[];
   retentionDays: number | null;
+  receiptsForever: boolean;
   coverageStart: string | null;
   coverageNote: string | null;
   spendMeasuredRequests: number | null;
@@ -491,7 +492,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
 
 function CoverageNote({ summary }: { summary: UsageSummary }) {
   const facts = [
-    summary.retentionDays ? `Receipts are kept for ${summary.retentionDays} days.` : "",
+    summary.receiptsForever ? "Receipts are kept until you delete them." : summary.retentionDays ? `Receipts are kept for ${summary.retentionDays} days.` : "",
     summary.coverageStart ? `Coverage starts ${formatDate(summary.coverageStart)}.` : "",
     summary.coverageNote ? formatSentence(summary.coverageNote) : "",
     summary.truncated ? "This view is limited to the most recent stored receipts." : "",
@@ -1164,6 +1165,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
       .filter((item) => item.id),
     people: normalizePeople(data.people),
     retentionDays: positiveNullableNumber(data.retention_days),
+    receiptsForever: data.retention_days === null,
     coverageStart: nullableString(data.coverage_start ?? data.coverageStart),
     coverageNote: nullableString(data.coverage_note ?? data.coverageNote),
     spendMeasuredRequests: nullableNumber(

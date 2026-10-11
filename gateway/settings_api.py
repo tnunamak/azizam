@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
@@ -10,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, lan_auth_policy, prompt_memory
+from gateway import admin_store, lan_auth_policy, prompt_memory, receipt_store
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 
 INSTANCE_SETTING_KEY = "instance_presentation"
@@ -100,6 +101,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
+                           receipts_path: Path | None = None,
                            on_prompt_memory_kill: Callable[[], Any] | None = None,
                            purge_status_provider: Callable[[], Mapping[str, Any]] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
@@ -148,6 +150,76 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             status_code=status_code,
             headers={"Cache-Control": "no-store"},
         )
+
+    receipt_path = receipts_path if receipts_path is not None else receipt_store.DB_PATH
+
+    def receipts_response(**extra: Any) -> JSONResponse:
+        record = admin_store.get_operator_setting(receipt_store.RETENTION_SETTING_KEY, path=admin_path)
+        return JSONResponse({
+            "retention_days": record["value"].get("retention_days") if record else None,
+            "revision": admin_store.operator_setting_revision(record),
+            "source": "admin.db", "apply_mode": "live", **extra,
+        }, headers={"Cache-Control": "no-store"})
+
+    @router.get("/receipts")
+    def get_receipts(request: Request):
+        ctx = guard(request)
+        return ctx if isinstance(ctx, JSONResponse) else receipts_response()
+
+    @router.get("/receipts/preview")
+    def preview_receipts(request: Request):
+        ctx = guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        raw = request.query_params.get("retention_days")
+        if raw not in {"forever", "365", "90", "30"}:
+            return JSONResponse({"error": {"code": "invalid_retention", "message": "Choose forever, 365, 90 or 30 days."}}, status_code=400)
+        days = None if raw == "forever" else int(raw)
+        return JSONResponse(receipt_store.retention_preview(days, path=receipt_path), headers={"Cache-Control": "no-store"})
+
+    @router.put("/receipts")
+    async def put_receipts(request: Request):
+        ctx = guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) != {"retention_days", "preview"}:
+                raise ValueError
+            days = body["retention_days"]
+            if (days is not None and type(days) is not int) or days not in receipt_store.RETENTION_DAYS:
+                raise ValueError
+        except (ValueError, TypeError):
+            return JSONResponse({"error": {"code": "invalid_retention", "message": "Supply retention_days (null, 365, 90 or 30) and preview."}}, status_code=400)
+        revision = request.headers.get("if-match")
+        if not revision:
+            return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
+        saved = False
+
+        def save_setting():
+            nonlocal saved
+            admin_store.put_operator_setting_with_audit(
+                receipt_store.RETENTION_SETTING_KEY, {"retention_days": days},
+                updated_by=ctx.subject, expected_revision=revision.strip('"'),
+                audit_action="operator.receipt_retention.update", audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting", audit_target_id=receipt_store.RETENTION_SETTING_KEY,
+                audit_metadata={"retention_days": days, "preview": body["preview"] if days is not None else None},
+                path=admin_path,
+            )
+            saved = True
+
+        try:
+            deleted = await asyncio.to_thread(receipt_store.save_retention, days, body["preview"], save_setting, path=receipt_path)
+        except (admin_store.SettingsConflictError, receipt_store.RetentionPreviewChanged) as exc:
+            return JSONResponse({"error": {"code": "settings_conflict", "message": str(exc)}}, status_code=409)
+        except sqlite3.Error:
+            if saved:
+                response = receipts_response(cleanup_pending=True)
+                response.status_code = 202
+                return response
+            return JSONResponse({"error": {"code": "receipt_retention_unavailable", "message": "The setting wasn’t saved. Try again."}}, status_code=503)
+        return receipts_response(deleted_count=deleted)
 
     @router.get("/instance")
     def get_instance(request: Request):
@@ -340,6 +412,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def effective() -> dict[str, Any]:
         snapshot = dict(config_provider())
         snapshot["instance"] = instance()
+        snapshot["receipt_retention"] = {"retention_days": receipt_store.retention_days(admin_path)}
         snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
         snapshot["runtime_profile_mappings"] = admin_store.list_runtime_profile_mappings(path=admin_path)
         snapshot["auth_policy"] = {

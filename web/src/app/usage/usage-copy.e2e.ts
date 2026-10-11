@@ -125,7 +125,7 @@ for (const theme of ["light", "dark"] as const) {
             by_day: [],
             by_model: [],
             receipts: [],
-            retention_days: 45,
+            retention_days: 90,
             people: [],
             sources: [],
           },
@@ -133,7 +133,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       await page.goto("/ui/usage/");
       await expect(page.getByText("No requests in this period")).toBeVisible();
-      await expect(page.getByText(/45-day receipts appear here/)).toBeVisible();
+      await expect(page.getByText(/90-day receipts appear here/)).toBeVisible();
       await inspect(page, `empty-${theme}-${width}`);
     });
 

@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
+import { ReceiptsSection } from "./receipts";
 import { HouseholdPromptsSection } from "./household-prompts";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
@@ -1488,6 +1489,7 @@ export default function SettingsPage() {
         <SignInSection />
         <DefaultsSection />
         <HouseholdPromptsSection />
+        <ReceiptsSection />
         <MediaSection />
         <ExtensionsSection />
         <AdvancedSection />

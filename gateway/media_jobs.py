@@ -17,7 +17,7 @@ how ComfyUI submits a workflow or how a TTS engine streams. It owns:
 
 The shape is parallel to ``gateway/receipt_store.py`` but distinct:
 
-- Receipts are immutable diagnostics about a routing decision.
+- Receipts keep routing, usage and spend facts.
 - Jobs are mutable durable records about ongoing work. They progress through
   states, accrue events, and reference assets.
 
@@ -49,8 +49,8 @@ from gateway.redaction import (
 _default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
 DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB") else _default_db
 
-# Retention: 14 days. Match the receipt store; media jobs reference durable
-# assets but the job record itself is a coordination surface, not the archive.
+# Job coordination records expire after 14 days, independently of receipts.
+# Durable assets carry their own ownership; receipts retain usage and spend.
 RETAIN_S = 14 * 24 * 3600
 
 SCHEMA_VERSION = 1

@@ -4,7 +4,9 @@ import AxeBuilder from "@axe-core/playwright";
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/settings/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    const body = path.includes("instance")
+    const body = path.includes("receipts")
+      ? { revision: "7", retention_days: null }
+      : path.includes("instance")
       ? {
           revision: "7",
           instance: {
@@ -156,6 +158,7 @@ for (const theme of ["light", "dark"] as const) {
           "Sign-in",
           "Defaults",
           "Prompts",
+          "Receipts",
           "Media admission",
           "Extensions",
           "Advanced",
@@ -170,8 +173,12 @@ for (const theme of ["light", "dark"] as const) {
           .click();
         if (state === "error") {
           await expect(
+            page.getByRole("region", { name: "Receipts", exact: true })
+              .getByText("Couldn’t load receipt settings"),
+          ).toBeVisible();
+          await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(9);
+          ).toHaveCount(10);
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),

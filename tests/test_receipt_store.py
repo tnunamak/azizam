@@ -61,8 +61,8 @@ class TestReceiptStore(unittest.TestCase):
 
     def test_upgrade_from_v1_recreates_table(self) -> None:
         # A pre-v2 receipts DB (no app_id column) is recreated, not migrated:
-        # receipts are short-lived diagnostics and old rows have no owning-App
-        # id, so they're discarded rather than unsafely attributed. The upgrade
+        # old rows have no owning-App id, so they are discarded rather than
+        # unsafely attributed. The upgrade
         # must succeed (not raise) and leave a clean v2 schema with app_id.
         import sqlite3
 
@@ -491,10 +491,10 @@ class TestReceiptStore(unittest.TestCase):
         now = int(time.time())
         old = _make_receipt()
         fresh = _make_receipt()
-        receipt_store.record(old, created_at=now - (receipt_store.RETAIN_S + 3600), path=self.db)
+        receipt_store.record(old, created_at=now - (30 * 86400 + 3600), path=self.db)
         receipt_store.record(fresh, created_at=now, path=self.db)
 
-        deleted = receipt_store.prune(path=self.db)
+        deleted = receipt_store.prune(retain_s=30 * 86400, path=self.db)
         self.assertEqual(deleted, 1)
         self.assertEqual(receipt_store.count(self.db), 1)
         self.assertIsNone(receipt_store.get(old.request_id, path=self.db))

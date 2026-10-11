@@ -1,6 +1,6 @@
 """SQLite-backed durable store for route receipts.
 
-Receipts are compact diagnostics about routing decisions. This module persists
+Receipts keep routing, usage and spend metadata. This module persists
 the *internal* audience shape of a receipt so admin/client views can be derived
 later by re-filtering, without ever having stored raw prompts, image bytes,
 secrets, or request bodies.
@@ -37,7 +37,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from gateway.receipts import RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
@@ -46,17 +46,17 @@ from gateway.ownership import stored_owner_key
 _default_db = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
 DB_PATH = Path(get_env("AZIZAM_RECEIPTS_DB")) if get_env("AZIZAM_RECEIPTS_DB") else _default_db
 
-# Retention: 14 days. Receipts are diagnostics, not audit logs; the cap keeps
-# the database bounded on a long-running gateway.
-RETAIN_S = 14 * 24 * 3600
+# Usage and spend history is durable by default. Expiry is an owner choice.
+RETAIN_S = None
+RETENTION_SETTING_KEY = "receipt_retention"
+RETENTION_DAYS = (None, 365, 90, 30)
 STALE_AFTER_MS = 5 * 60 * 1000
 
 # v2 adds the ``app_id`` column: the durable id of the owning App, so a user
 # can be shown ONLY their own receipts. ``app_profile`` (a shared permission
 # profile id) and ``api_key_name`` (a non-unique App name) are NOT safe owner
-# keys; ``app_id`` is. Receipts are 14-day diagnostics, not audit logs, so the
-# v1→v2 upgrade recreates the table rather than preserving old (unattributed)
-# rows — see ``_exec_schema``.
+# keys; ``app_id`` is. The v1→v2 upgrade discards unattributed rows because
+# they cannot be safely assigned to an owner — see ``_exec_schema``.
 SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
@@ -118,15 +118,14 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
                 f"receipt_store schema version mismatch: db={db_version} "
                 f"code={SCHEMA_VERSION} (downgrade not supported)"
             )
-        # Older schema: recreate, don't migrate. Receipts are short-lived
-        # diagnostics (14-day retention), not an audit log, and pre-v2 rows have
-        # no owning-App id — they cannot be safely attributed to a user.
+        # Pre-v2 rows have no owning-App id and cannot be safely attributed
+        # to a user. Recreate only this historical, unattributed schema.
         # Backfilling from the non-unique ``api_key_name`` would risk
         # attributing one user's calls to another, the exact leak ``app_id``
         # exists to prevent. So old rows are discarded deliberately.
         print(
             f"[receipt_store] upgrading schema {db_version}->{SCHEMA_VERSION}; "
-            "recreating receipts table (old diagnostics discarded)",
+            "recreating receipts table (unattributed rows discarded)",
             flush=True,
         )
         conn.executescript("DROP TABLE IF EXISTS receipts;\nDELETE FROM schema_version;\n")
@@ -173,6 +172,9 @@ def init_db(path: Path = DB_PATH) -> None:
 
     conn = sqlite3.connect(str(path), timeout=5.0)
     try:
+        # Fresh databases can reclaim pages without a full rebuild. Existing
+        # files need the explicit offline compaction command to enable this.
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         _apply_pragmas(conn)
         _exec_schema(conn)
     finally:
@@ -559,13 +561,99 @@ def recent(
     return out
 
 
-def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> int:
-    """Delete rows older than ``retain_s`` seconds. Returns deleted count."""
+def retention_days(admin_path: Path) -> int | None:
+    """Read the owner choice on each maintenance run, including after restart."""
+    from gateway import admin_store
+
+    record = admin_store.get_operator_setting(RETENTION_SETTING_KEY, path=admin_path)
+    days = record["value"].get("retention_days") if record else None
+    if (days is not None and type(days) is not int) or days not in RETENTION_DAYS:
+        raise ValueError("invalid receipt retention setting")
+    return days
+
+
+def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH) -> int:
+    """Delete expired history only when a finite window is explicitly supplied."""
+    if retain_s is None:
+        return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
         cur = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,))
         conn.commit()
         return cur.rowcount
+
+
+def retention_preview(days: int | None, *, path: Path = DB_PATH) -> dict[str, Any]:
+    cutoff = int(time.time()) - days * 86400 if days is not None else None
+    with _conn(path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM receipts WHERE created_at < ?", (cutoff,)).fetchone()[0]
+    return {"cutoff": cutoff, "delete_count": count}
+
+
+class RetentionPreviewChanged(ValueError):
+    """The owner must see a fresh count before saving."""
+
+
+def save_retention(
+    days: int | None, preview: Mapping[str, Any] | None,
+    save_setting: Callable[[], Any], *, path: Path = DB_PATH,
+) -> int:
+    """Validate the preview under a write lock, save the choice, then delete.
+
+    Holding the receipt lock also serializes hourly maintenance with saves.
+    The two files cannot commit atomically: if deletion fails after the setting
+    commits, maintenance retries the persisted choice at startup or hourly.
+    """
+    cutoff = None
+    if days is not None:
+        if not isinstance(preview, Mapping) or set(preview) != {"cutoff", "delete_count"}:
+            raise RetentionPreviewChanged("Preview receipt deletion before saving.")
+        cutoff = preview["cutoff"]
+        count = preview["delete_count"]
+        latest = int(time.time()) - days * 86400
+        if (type(cutoff) is not int or type(count) is not int or count < 0
+                or not latest - 900 <= cutoff <= latest):
+            raise RetentionPreviewChanged("Preview expired. Review the new deletion count.")
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if cutoff is not None:
+            count = conn.execute("SELECT COUNT(*) FROM receipts WHERE created_at < ?", (cutoff,)).fetchone()[0]
+            if count != preview["delete_count"]:
+                raise RetentionPreviewChanged("Receipt count changed. Review the new deletion count.")
+        save_setting()
+        deleted = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,)).rowcount
+        conn.commit()
+        return deleted
+
+
+def maintain(admin_path: Path, *, path: Path = DB_PATH) -> int:
+    """Apply saved expiry and reclaim at most 256 free pages off request paths."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        days = retention_days(admin_path)
+        cutoff = int(time.time()) - days * 86400 if days is not None else None
+        deleted = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,)).rowcount
+        conn.commit()
+        conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
+        return deleted
+
+
+def compact(path: Path) -> dict[str, int]:
+    """Explicit offline maintenance; never called by the gateway or its API.
+
+    SQLite holds the necessary locks during the rebuild, so concurrent writers
+    wait or report busy rather than losing rows. Schedule during quiet hours.
+    """
+    if not path.is_file():
+        raise ValueError("receipt database does not exist")
+    with _conn(path) as conn:
+        before = conn.execute("PRAGMA page_count").fetchone()[0]
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        conn.execute("VACUUM")
+        after = conn.execute("PRAGMA page_count").fetchone()[0]
+        size = conn.execute("PRAGMA page_size").fetchone()[0]
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    return {"before_bytes": before * size, "after_bytes": after * size}
 
 
 def count(path: Path = DB_PATH, *, outer_only: bool = True) -> int:
@@ -601,6 +689,11 @@ __all__ = [
     "get",
     "recent",
     "prune",
+    "retention_days",
+    "retention_preview",
+    "save_retention",
+    "maintain",
+    "compact",
     "count",
     "schema_version",
 ]
