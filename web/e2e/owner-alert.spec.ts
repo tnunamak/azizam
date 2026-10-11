@@ -49,8 +49,8 @@ for (const mode of [
     await page.goto("/ui/models/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     const alert = page.getByText(
-      "Image engine is down. Check its connection on Status.",
-      { exact: true },
+      "Image engine can’t take requests right now.",
+      { exact: false },
     );
     // Hardware signals never become an owner-wide banner. Checked on the
     // page with the banner; Status itself rightly lists the disk signal.
@@ -60,7 +60,7 @@ for (const mode of [
     if (mode === "down") {
       await expect(alert).toBeVisible();
       await page
-        .getByRole("link", { name: "View status", exact: true })
+        .getByRole("link", { name: "See Status", exact: true })
         .click();
       await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
       await expect(
@@ -98,17 +98,17 @@ test("provider alerts use explicit enabled and reachability data", async ({
   await page.goto("/ui/models/");
   await expect(
     page.getByText(
-      "Remote provider is down. Check its connection on Status.",
-      { exact: true },
+      "Remote provider can’t take requests right now.",
+      { exact: false },
     ),
   ).toBeVisible();
   const banner = page
     .getByRole("status")
     .filter({
       hasText:
-        "Remote provider is down. Check its connection on Status.",
+        "Remote provider can’t take requests right now.",
     });
-  const action = banner.getByRole("link", { name: "View status", exact: true });
+  const action = banner.getByRole("link", { name: "See Status", exact: true });
   await action.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/ui\/status\/?#providers$/);

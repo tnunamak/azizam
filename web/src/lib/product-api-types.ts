@@ -326,6 +326,7 @@ export interface ModelArchitecture {
 }
 
 export interface CatalogRow {
+  workflow?: string | null;
   capability?: string;
   recommended?: boolean;
   capability_title?: string;

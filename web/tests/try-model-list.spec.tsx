@@ -186,3 +186,27 @@ describe("Make a picture lists only models that make a picture from a prompt", (
     );
   });
 });
+
+it("keeps the model picker disabled and busy until the catalog arrives", async () => {
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((url: string) => url.includes("workflows") ? Promise.resolve(json({ workflows: [] })) : new Promise<Response>((resolve) => { finish = resolve; })));
+  render(<TryPage />);
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByText(/Unverified model/)).toBeNull();
+  finish(json(catalog));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
+  expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull();
+});
+
+it("places a selected model's outage and Status link beside its picker", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => json(url.includes("workflows") ? { workflows: [] } : {
+    aliases: [], models: [row("picture", "Picture model", "image.generate", ["text"], {
+      engine_label: "Picture studio", availability: { status: "unavailable" },
+    })],
+  })));
+  render(<TryPage />);
+  const link = await screen.findByRole("link", { name: "See Status" });
+  expect(link.closest("form")).toBe(screen.getByRole("combobox", { name: "Model" }).closest("form"));
+  expect(link.parentElement).toHaveTextContent("Picture studio can’t take requests right now. See Status");
+});

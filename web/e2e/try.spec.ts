@@ -722,3 +722,47 @@ test("a picture whose connection never returns says it may still be finishing", 
   await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
   await expect(page.getByText("Make a picture request failed")).toHaveCount(0);
 });
+
+for (const width of [390, 1440]) {
+  test(`speech voices and model loading light ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.addInitScript(() => localStorage.setItem("theme", "light"));
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const speechModel = (id: string, title: string, defaultVoice: string) => ({
+      id, title, capability: "speech", locality: "local",
+      capabilities: [{ intent: "speech.synthesis" }],
+      speech_voices: { voices: [{ id: defaultVoice, name: `${title} default` }, { id: `${id}-warm`, name: `${title} warm` }], default_voice: defaultVoice, allow_other: false },
+    });
+    await page.route("**/me/api/models/catalog", async (route) => {
+      await ready;
+      await route.fulfill({ json: { aliases: [], models: [speechModel("speech-a", "Voice studio", "a-default"), speechModel("speech-b", "Second studio", "b-default")] } });
+    });
+    await page.goto("/ui/try/?capability=speech", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeDisabled();
+    await expect(page.getByRole("combobox", { name: "Voice", exact: true })).toBeDisabled();
+    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-loading-light-${width}.png`, fullPage: true });
+    release();
+    const voice = page.getByRole("combobox", { name: "Voice", exact: true });
+    await expect(voice).toHaveValue("a-default");
+    await voice.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(voice).toHaveValue("speech-a-warm");
+    await page.getByRole("combobox", { name: "Model", exact: true }).click();
+    await page.getByRole("option", { name: "Second studio", exact: true }).click();
+    await expect(voice).toHaveValue("b-default");
+    await expect(voice.locator("option")).toHaveText(["Second studio default", "Second studio warm"]);
+    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-voices-light-${width}.png`, fullPage: true });
+    expect((await new AxeBuilder({ page }).analyze()).violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
+    await page.route("**/openai/v1/audio/speech", async (route) => {
+      expect(route.request().postDataJSON()).toMatchObject({ model: "speech-b", voice: "b-default" });
+      await route.fulfill({ contentType: "audio/wav", body: Buffer.from("RIFF") });
+    });
+    const request = page.waitForRequest("**/openai/v1/audio/speech");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await request;
+  });
+}

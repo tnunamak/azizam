@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, CircleAlert, X } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
+import { CREATION_OPENED, openedCreations } from "./opened-creations";
 
 export type LongJob = {
   job_id: string;
@@ -88,7 +89,16 @@ function PersonJobNotices({ personId }: { personId: string }) {
   const [notices, setNotices] = useState<LongJob[]>([]);
   const storageKey = `azizam:job-notices:v1:${personId}`;
   const dismissed = useRef(new Set<string>());
+  const opened = useRef(new Set<string>());
   useEffect(() => {
+    opened.current = openedCreations(personId);
+    const acknowledge = (event: Event) => {
+      const detail = (event as CustomEvent<{ personId: string; assetId: string }>).detail;
+      if (detail.personId !== personId) return;
+      opened.current.add(detail.assetId);
+      setNotices((current) => current.filter((job) => !job.assets.some((asset) => (asset.asset_id || asset.id) === detail.assetId)));
+    };
+    window.addEventListener(CREATION_OPENED, acknowledge);
     try {
       dismissed.current = new Set(
         JSON.parse(sessionStorage.getItem(storageKey) ?? "[]"),
@@ -96,7 +106,8 @@ function PersonJobNotices({ personId }: { personId: string }) {
     } catch {
       /* A disabled store does not disable in-app notices. */
     }
-  }, [storageKey]);
+    return () => window.removeEventListener(CREATION_OPENED, acknowledge);
+  }, [storageKey, personId]);
   // Finished jobs are events: record them when a poll arrives, not by
   // syncing state to the query result in an effect.
   function recordPoll(jobs: LongJob[]) {
@@ -112,7 +123,8 @@ function PersonJobNotices({ personId }: { personId: string }) {
         (previous !== undefined ||
           job.created_at >= startedAt ||
           job.updated_at >= startedAt) &&
-        !dismissed.current.has(job.job_id)
+        !dismissed.current.has(job.job_id) &&
+        !job.assets.some((asset) => opened.current.has(asset.asset_id || asset.id || ""))
       ) {
         completed.push(job);
       }
@@ -226,6 +238,7 @@ export function JobNotice({
       <Link
         className="text-link inline-flex min-h-11 items-center rounded-md px-3 underline underline-offset-4"
         href={jobLink(job)}
+        onClick={onDismiss}
       >
         {done ? "Open result" : "See details"}
       </Link>

@@ -44,6 +44,8 @@ import { costFrom } from "./result-cost";
 import { runImageJob } from "./image-job";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { ReceiptLink } from "./receipt-link";
+import { VoicePicker, selectedVoice, type SpeechVoices } from "./voice-picker";
+import { ServiceNotice, serviceUnavailable } from "@/components/product/service-notice";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
 import {
@@ -122,6 +124,8 @@ type CatalogOption = {
   locality: string;
   provider?: string;
   workflow?: WorkflowOption;
+  speechVoices?: SpeechVoices;
+  unavailableMessage?: string;
   /** Other ids that name the same model (an alias and its target). */
   alsoKnownAs?: string[];
 };
@@ -682,6 +686,10 @@ function groupCatalog(payload: unknown) {
         price: costLabel(record.cost),
         locality: localityLabel(record),
         provider: stringValue(record.provider) ?? undefined,
+        speechVoices: record.speech_voices as SpeechVoices | undefined,
+        unavailableMessage: (record.availability as { status?: string } | undefined)?.status === "unavailable"
+          ? serviceUnavailable(stringValue(record.engine_label) ?? stringValue(record.title) ?? "This model")
+          : undefined,
       };
       const targets = (aliasTargets[capability] ??= new Map());
       const sameChoice = targets.get(id);
@@ -1020,7 +1028,7 @@ export default function TryPage() {
         Object.entries(DEFAULTS).map(([tab, value]) => [tab, value.prompt]),
       ) as Record<TryTab, string>,
   );
-  const [voice, setVoice] = useState("alloy");
+  const [voicesByModel, setVoicesByModel] = useState<Record<string, string>>({});
   const [decisionState, setDecisionState] = useState(
     "It is raining and the bus is 20 minutes late.",
   );
@@ -1057,6 +1065,8 @@ export default function TryPage() {
   const [catalogState, setCatalogState] = useState<
     Record<CatalogSection, CatalogState>
   >({ models: "idle", workflows: "idle" });
+  const speechChoices = catalog.speech?.find((option) => option.id === model.speech)?.speechVoices;
+  const voice = selectedVoice(speechChoices, voicesByModel[model.speech]);
   const parsedOptions = useMemo(
     () =>
       options
@@ -1426,6 +1436,7 @@ export default function TryPage() {
   function buildRequest(
     tab: TryTab,
     selectedModel: Record<TryTab, string> = model,
+    selectedCatalog: CatalogGroups = catalog,
   ): RequestInfo {
     if (tab === "chat") {
       return {
@@ -1447,9 +1458,10 @@ export default function TryPage() {
       };
     }
     if (tab === "speech") {
+      const voice = selectedVoice(selectedCatalog.speech?.find((option) => option.id === selectedModel.speech)?.speechVoices, voicesByModel[selectedModel.speech]);
       return {
         path: "/audio/speech",
-        body: { model: selectedModel.speech, voice, input: prompt.speech },
+        body: { model: selectedModel.speech, ...(voice ? { voice } : {}), input: prompt.speech },
       };
     }
     if (tab === "transcribe") {
@@ -1580,7 +1592,7 @@ export default function TryPage() {
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
-      const built = buildRequest(tab, selectedModel);
+      const built = buildRequest(tab, selectedModel, preparedCatalog ?? catalog);
       // Preserve the promise shown when Run was pressed, even if a refresh
       // finds that another tab has since enabled memory.
       let refreshedState = keepState;
@@ -2105,6 +2117,7 @@ export default function TryPage() {
         {TAB_ITEMS.map((tab) => {
           const currentResult = results[tab.value];
           const currentError = errors[tab.value];
+          const unavailableMessage = catalog[tab.value]?.find((option) => option.id === model[tab.value])?.unavailableMessage;
           return (
             <TabsContent key={tab.value} value={tab.value} className="mt-4">
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -2124,6 +2137,7 @@ export default function TryPage() {
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">Model name</span>
                     <ModelSelect
+                      loading={["idle", "loading"].includes(catalogState[tab.value === "workflow" ? "workflows" : "models"])}
                       value={model[tab.value]}
                       fallbackLabel={DEFAULTS[tab.value].model}
                       options={catalog[tab.value] ?? []}
@@ -2135,6 +2149,9 @@ export default function TryPage() {
                       }
                     />
                   </label>
+                  {unavailableMessage ? (
+                    <ServiceNotice message={unavailableMessage} />
+                  ) : null}
                   {tab.value === activeTab && (
                     <CatalogNotice
                       state={
@@ -2251,18 +2268,12 @@ export default function TryPage() {
                     </label>
                   )}
                   {tab.value === "speech" && (
-                    <details className="border-t pt-3">
-                      <summary className="min-h-11 cursor-pointer text-sm font-medium">
-                        More options
-                      </summary>
-                      <label className="mt-3 block space-y-2">
-                        <span className="text-sm font-medium">Voice</span>
-                        <Input
-                          value={voice}
-                          onChange={(event) => setVoice(event.target.value)}
-                        />
-                      </label>
-                    </details>
+                    <VoicePicker
+                      choices={speechChoices}
+                      value={voice}
+                      loading={["idle", "loading"].includes(catalogState.models)}
+                      onChange={(next) => setVoicesByModel((current) => ({ ...current, [model.speech]: next }))}
+                    />
                   )}
                   {tab.value === "transcribe" && (
                     <div className="space-y-3">
@@ -2867,16 +2878,25 @@ function SnippetBlock({
 }
 
 function ModelSelect({
+  loading,
   value,
   fallbackLabel,
   options,
   onChange,
 }: {
+  loading: boolean;
   value: string;
   fallbackLabel: string;
   options: CatalogOption[];
   onChange: (value: string) => void;
 }) {
+  if (loading) return (
+    <div role="status" aria-label="Loading models" aria-busy="true">
+      <select aria-label="Model" disabled className="border-input bg-muted rounded-control min-h-11 w-full border px-3">
+        <option>Loading models…</option>
+      </select>
+    </div>
+  );
   const values = [
     ...((value || fallbackLabel) &&
     !options.some((option) => option.id === value)
@@ -2930,10 +2950,6 @@ function CatalogNotice({
   onRetry: () => void;
 }) {
   const label = section === "workflows" ? "Workflow" : "Model";
-  if (state === "loading")
-    return (
-      <Badge variant="outline">Loading {label.toLowerCase()} catalog</Badge>
-    );
   // ErrorState action buttons must not submit the surrounding Run form.
   if (state === "error")
     return (

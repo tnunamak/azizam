@@ -604,6 +604,7 @@ def _base_row(
         summary["price"] = cost["price"]
     return {
         "id": row_id,
+        "workflow": workflow_id or None,
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
         "display_name": presentation.get("title", display_name),
         "recommended": row_id == RECOMMENDED_ALIASES.get(presentation.get("capability")),

@@ -1059,3 +1059,15 @@ class OperationIntentMappingTests(unittest.TestCase):
 
         unmapped = [op for op in _OPERATIONS if not _intent_prefixes_for_operation(op)]
         self.assertEqual(unmapped, [])
+
+
+def test_two_workflows_with_one_intent_keep_their_exact_names():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="audio.generate", backend="studio", workflow=f"audio.generate.{name}") for name in ("first", "second")],
+        model_entries=[{"id": name, "azizam_workflow_id": f"audio.generate.{name}"} for name in ("first", "second")],
+        workflow_records=[{"id": f"audio.generate.{name}", "manifest": {"id": f"audio.generate.{name}", "display_name": title, "capability": "music"}} for name, title in (("first", "First music model"), ("second", "Second music model"))],
+    )
+    rows = {row["id"]: row for row in catalog["models"]}
+    assert rows["first"]["title"] == "First music model"
+    assert rows["second"]["title"] == "Second music model"
+    assert rows["second"]["workflow"] == "audio.generate.second"

@@ -103,3 +103,9 @@ test("scrubModelPaths shortens a declared fallback model path for members", () =
   const scrubbed = scrubModelPaths({ declared_fallback: "/private/models/Fallback.gguf" });
   expect(JSON.stringify(scrubbed)).not.toContain("/private/models/");
 });
+
+test("a grouped capability's recommendation does not name other workflows", () => {
+  const music = [{ use_name: "audio.generate.ace-step", recommended_model: "ACE-Step 1.5 XL Turbo", use_names: ["audio.generate.ace-step", "audio.generate.yue2-song"] }];
+  expect(modelDisplayName("audio.generate.yue2-song", undefined, music)).not.toContain("ACE-Step");
+  expect(modelDisplayName("audio.generate.ace-step", undefined, music)).toBe("ACE-Step 1.5 XL Turbo");
+});

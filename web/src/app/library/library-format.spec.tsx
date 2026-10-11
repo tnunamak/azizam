@@ -79,9 +79,7 @@ describe("model display names", () => {
     expect(modelDisplayName("flux-dev", catalog, capabilities)).toBe(
       "Flux Dev",
     );
-    expect(modelDisplayName("song", catalog, capabilities)).toBe(
-      "ACE-Step XL Turbo",
-    );
+    expect(modelDisplayName("song", catalog, capabilities)).toBe("Song");
     expect(modelDisplayName("music", catalog, capabilities)).toBe(
       "ACE-Step XL Turbo",
     );
