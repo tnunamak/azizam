@@ -355,17 +355,40 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     columns = {r[1] for r in conn.execute("PRAGMA table_info(media_job_events)")}
     if "sequence" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN sequence INTEGER")
-        conn.execute("""WITH numbered AS (
-            SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id) AS seq
-            FROM media_job_events
-        ) UPDATE media_job_events SET sequence=(SELECT seq FROM numbered WHERE numbered.id=media_job_events.id)""")
     if "source" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
     if "attempt_number" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
+    _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
+    # Baseline writers omit sequence. SQLite serializes this with their insert,
+    # so a surviving old process cannot leave an unreadable event behind.
+    conn.execute("""CREATE TRIGGER IF NOT EXISTS media_job_event_assign_sequence
+        AFTER INSERT ON media_job_events WHEN NEW.sequence IS NULL
+        BEGIN
+            UPDATE media_job_events SET sequence = (
+                SELECT COALESCE(MAX(sequence), 0) + 1 FROM media_job_events WHERE job_id = NEW.job_id
+            ) WHERE id = NEW.id;
+        END""")
     conn.execute("UPDATE media_jobs_schema_version SET version=?", (SCHEMA_VERSION,))
     conn.commit()
+
+
+def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None) -> None:
+    """Assign missing cursors after published ones; caller holds the write lock."""
+    where, params = ("AND job_id = ?", (job_id,)) if job_id is not None else ("", ())
+    missing = conn.execute(
+        f"SELECT id, job_id FROM media_job_events WHERE sequence IS NULL {where} ORDER BY id", params,
+    ).fetchall()
+    next_sequences: dict[str, int] = {}
+    for event_id, owner_job_id in missing:
+        if owner_job_id not in next_sequences:
+            next_sequences[owner_job_id] = conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM media_job_events WHERE job_id=?", (owner_job_id,),
+            ).fetchone()[0]
+        next_sequences[owner_job_id] += 1
+        conn.execute("UPDATE media_job_events SET sequence=? WHERE id=?",
+                     (next_sequences[owner_job_id], event_id))
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -524,11 +547,13 @@ def create(
     ``OutstandingLimitReached`` and stores nothing.
 
     ``input_data`` covers inputs omitted from the safe job metadata. Only its
-    digest is stored. For legacy rows without a digest, only retained job
-    facts can be compared; unverifiable retries conflict rather than alias.
+    digest is stored. Legacy rows and erased digests cannot prove the original
+    input; those retries conflict rather than reconstructing proof from metadata.
     """
     record = _coerce_to_job(job)
-    record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id)
+    # Auth-disabled submissions still record an explicit scope. Missing scope
+    # on historical rows must not be mistaken for a verified unscoped request.
+    record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id) or "unscoped"
     # Never accept a caller-supplied digest as proof that the input matches.
     record.input_hash = _input_hash(record, input_data)
     with _conn(path) as conn:
@@ -541,11 +566,9 @@ def create(
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
-                owner = previous.owner_scope or stored_owner_key(previous.owner_key_hash, app_id=previous.app_id)
-                # Legacy records can only compare the facts they retained.
-                previous_hash = previous.input_hash or _input_hash(previous)
-                if (owner != record.owner_scope or previous.intent != record.intent
-                        or previous_hash != record.input_hash):
+                if (not previous.owner_scope or not previous.input_hash
+                        or previous.owner_scope != record.owner_scope or previous.intent != record.intent
+                        or previous.input_hash != record.input_hash):
                     raise IdempotencyConflict()
                 conn.rollback()
                 return _coerce_to_job(data)
@@ -565,16 +588,17 @@ def create(
         for name in PHASE_FIELDS:
             setattr(record, name, None)
         record.previous_attempts = []
-        record.accepted_at = record.created_at
+        observed_at = _now()
+        record.accepted_at = observed_at
         record.attempt_number = 1
         if record.status == STATUS_QUEUED:
-            record.queued_at = record.created_at
+            record.queued_at = observed_at
         elif record.status == STATUS_RUNNING:
-            record.started_at = record.created_at
+            record.started_at = observed_at
         elif is_terminal(record.status):
-            record.finished_at = record.created_at
+            record.finished_at = observed_at
         if record.assets:
-            record.first_output_at = record.created_at
+            record.first_output_at = observed_at
         _write_job(conn, record)
         conn.commit()
     return record
@@ -948,6 +972,7 @@ def append_event(
         if not row:
             raise LookupError(f"unknown job_id {job_id!r}")
         attempt_number = json.loads(row[0]).get("attempt_number") if _source == "gateway" else None
+        _repair_event_sequences(conn, job_id)
         sequence = conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM media_job_events WHERE job_id=?", (job_id,)).fetchone()[0]
         conn.execute(
             "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json, sequence, source, attempt_number) "
@@ -982,9 +1007,14 @@ def events(
     audience: str = "internal",
     limit: int = 200,
     after_id: int | None = None,
+    after_sequence: int | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
-    """Return events for a job in insertion order.
+    """Return events using either a legacy global id or a per-job sequence.
+
+    ``after_id`` retains its pre-migration global-row meaning and ordering.
+    New clients use ``after_sequence`` with the response's ``sequence`` field.
+    Repair appends missing sequences after published ones without renumbering.
 
     Audience filtering for events:
 
@@ -997,27 +1027,41 @@ def events(
     """
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
+    if after_id is not None and after_sequence is not None:
+        raise ValueError("use either after_id or after_sequence, not both")
     if limit <= 0:
         return []
     clauses = ["job_id = ?"]
     params: list[Any] = [job_id]
     if after_id is not None:
-        clauses.append("sequence > ?")
+        clauses.append("id > ?")
         params.append(int(after_id))
+    if after_sequence is not None:
+        clauses.append("sequence > ?")
+        params.append(int(after_sequence))
     params.append(int(limit))
     where = " AND ".join(clauses)
     with _conn(path) as conn:
+        # Repair stores already damaged by a mixed-version writer, including
+        # readers on an open store that has not run initialization again.
+        if conn.execute("SELECT 1 FROM media_job_events WHERE job_id=? AND sequence IS NULL LIMIT 1",
+                        (job_id,)).fetchone():
+            conn.execute("BEGIN IMMEDIATE")
+            _repair_event_sequences(conn, job_id)
+            conn.commit()
+        order = "sequence" if after_sequence is not None else "id"
         rows = conn.execute(
-            f"SELECT sequence, created_at, event_type, payload_json, source, attempt_number FROM media_job_events "
-            f"WHERE {where} ORDER BY sequence ASC LIMIT ?",
+            f"SELECT id, sequence, created_at, event_type, payload_json, source, attempt_number FROM media_job_events "
+            f"WHERE {where} ORDER BY {order} ASC LIMIT ?",
             params,
         ).fetchall()
     out: list[dict[str, Any]] = []
-    for ev_id, created_at, event_type, payload_json, source, attempt_number in rows:
+    for ev_id, sequence, created_at, event_type, payload_json, source, attempt_number in rows:
         payload = _safe_loads(payload_json) or {}
         out.append(_filter_event_for_audience(
             {
                 "id": int(ev_id),
+                "sequence": int(sequence),
                 "job_id": job_id,
                 "created_at": int(created_at),
                 "event_type": event_type,
@@ -1036,6 +1080,7 @@ _CLIENT_EVENT_PAYLOAD_KEYS = frozenset({"progress", "step", "total", "phase", "s
 def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[str, Any]:
     base = {
         "id": event.get("id"),
+        "sequence": event.get("sequence"),
         "job_id": event.get("job_id"),
         "created_at": event.get("created_at"),
         "event_type": event.get("event_type"),
@@ -1048,6 +1093,9 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
         # Admin sees that an event happened but not the freeform breadcrumb
         # bag. Operators who need the full payload bump to internal.
         return base
+    # The global id is a household-wide counter: gaps between one caller's
+    # ids reveal other people's activity, so callers page by per-job sequence.
+    base.pop("id")
     payload = event.get("payload") or {}
     if not isinstance(payload, Mapping):
         return base

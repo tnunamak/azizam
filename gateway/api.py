@@ -61,7 +61,7 @@ MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
 MediaJobLister = Callable[..., list[dict[str, Any]]]
 MediaJobEventLister = Callable[..., list[dict[str, Any]]]
-MediaJobEventAppender = Callable[..., int]
+MediaJobEventAppender = Callable[..., int | Mapping[str, Any]]
 MediaJobCanceler = Callable[..., dict[str, Any] | None]
 MediaJobSubmitter = Callable[..., Any]
 RecordAuthorizer = Callable[[Request, str, Mapping[str, Any]], bool]
@@ -207,7 +207,13 @@ def _build_media_job_providers(
     def store_creator(
         payload: Mapping[str, Any], *, audience: str
     ) -> dict[str, Any]:
-        record = _media_jobs.create(payload, path=store_path)
+        # Raw clients submit work; only trusted adapters can report output or
+        # lifecycle state. Keep legacy creation metadata separate from phases.
+        submission = {key: payload[key] for key in (
+            "intent", "workflow", "backend", "request_id", "job_id", "created_at",
+            "app_profile", "app_id", "owner_key_hash", "api_key_name", "parent_request_id", "metadata",
+        ) if key in payload}
+        record = _media_jobs.create(submission, path=store_path)
         return record.to_dict(audience)
 
     def store_getter(job_id: str, *, audience: str) -> dict[str, Any] | None:
@@ -240,19 +246,23 @@ def _build_media_job_providers(
         payload: Mapping[str, Any] | None,
         *,
         audience: str,
-    ) -> int:
-        return _media_jobs.append_client_event(
+    ) -> dict[str, int]:
+        sequence = _media_jobs.append_client_event(
             job_id, event_type, payload, path=store_path
         )
+        event = _media_jobs.events(job_id, after_sequence=sequence - 1, limit=1, path=store_path)[0]
+        return {"id": event["id"], "sequence": event["sequence"]}
 
     def store_event_lister(
-        job_id: str, *, audience: str, limit: int, after_id: int | None = None
+        job_id: str, *, audience: str, limit: int, after_id: int | None = None,
+        after_sequence: int | None = None,
     ) -> list[dict[str, Any]]:
         return _media_jobs.events(
             job_id,
             audience=audience,
             limit=limit,
             after_id=after_id,
+            after_sequence=after_sequence,
             path=store_path,
         )
 
@@ -714,9 +724,12 @@ def create_gateway_router(
             MEDIA_JOBS_DEFAULT_LIMIT, ge=1, le=MEDIA_JOBS_MAX_LIMIT
         ),
         after_id: int | None = Query(None, ge=0),
+        after_sequence: int | None = Query(None, ge=0),
     ) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
+            if after_id is not None and after_sequence is not None:
+                raise ValueError("use either after_id or after_sequence, not both")
             row = scoped_record(media_job_getter, job_id, request, "media_job", audience)
             if row is None:
                 return JSONResponse(
@@ -735,6 +748,7 @@ def create_gateway_router(
                         audience=audience,
                         limit=limit,
                         after_id=after_id,
+                        **({"after_sequence": after_sequence} if after_sequence is not None else {}),
                     )
                 )
             )
@@ -819,9 +833,13 @@ def create_gateway_router(
             )
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
+        cursor = dict(event_id) if isinstance(event_id, Mapping) else {"id": event_id}
+        if audience not in {"admin", "internal"}:
+            # Callers page by per-job sequence; the global id reveals others' activity.
+            cursor.pop("id", None)
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
-            content={"id": event_id, "job_id": job_id, "event_type": event_type},
+            content={**cursor, "job_id": job_id, "event_type": event_type},
         )
 
     @router.post("/media/jobs/{job_id}/cancel")

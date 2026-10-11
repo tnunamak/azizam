@@ -30,8 +30,12 @@ def test_cursors_are_local_and_pollable(db, audience):
     assert media_jobs.append_event(a.job_id, 'started', path=db) == 1
     media_jobs.append_event(b.job_id, 'started', path=db)
     assert media_jobs.append_event(a.job_id, 'progress', path=db) == 2
-    events = media_jobs.events(a.job_id, audience=audience, after_id=1, path=db)
-    assert [e['id'] for e in events] == [2]
+    events = media_jobs.events(a.job_id, audience=audience, after_sequence=1, path=db)
+    assert [e['sequence'] for e in events] == [2]
+    if audience == 'client':
+        assert all('id' not in e for e in events)
+    else:
+        assert [e['id'] for e in events] == [3]
 
 
 @pytest.mark.parametrize('change', [dict(app_id='other'), dict(intent='video.generate'),
@@ -62,9 +66,10 @@ def test_api_notes_cannot_forge_lifecycle(db):
     assert media_jobs.get(a.job_id, path=db)['status'] == 'queued'
 
 
-def test_job_phases_are_once_only(db):
+def test_job_phases_are_once_only(db, monkeypatch):
+    monkeypatch.setattr(media_jobs, '_now', lambda: 100)
     a = job(db)
-    assert a.to_dict('client')['queued_at'] == a.created_at
+    assert a.to_dict('client')['queued_at'] == 100
     assert a.to_dict()['attempt_number'] == 1
     media_jobs.update_status(a.job_id, 'running', now=200, path=db)
     media_jobs.append_event(a.job_id, 'progress', {'phase': 'finished'}, now=220, path=db)
@@ -137,8 +142,9 @@ def test_v1_event_migration_is_idempotent(tmp_path):
                          (global_id, job_id, 'started', '{}'))
     media_jobs.init_db(path)
     media_jobs.init_db(path)
-    events = media_jobs.events('one', after_id=1, audience='client', path=path)
-    assert [e['id'] for e in events] == [2]
+    events = media_jobs.events('one', after_sequence=1, audience='internal', path=path)
+    assert [e['sequence'] for e in events] == [2]
+    assert [e['id'] for e in events] == [12]
     assert events[0]['source'] == 'unavailable'
     with sqlite3.connect(path) as conn:
         assert [r[0] for r in conn.execute('SELECT id FROM media_job_events ORDER BY id')] == [4, 8, 12]

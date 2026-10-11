@@ -1476,6 +1476,67 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
             self.assertNotIn(bob["job_id"], own_ids)
             self.assertEqual([job["job_id"] for job in self._make_list()], [bob["job_id"]])
 
+    def test_make_changed_input_conflicts_before_capacity_check(self) -> None:
+        self.runtime.autostart = False
+        self.runtime.limits = me_make.MakeLimits(per_person=1, household=1)
+        _, first = self._submit_make("same-key")
+        for changed in ({"prompt": "a different bird"}, {"model": "other-image"}):
+            self._refused("same-key", 409, "idempotency_conflict", **changed)
+        _, retry = self._submit_make("same-key")
+        self.assertEqual(retry["job_id"], first["job_id"])
+        self.assertEqual(len(self.runtime.pending), 1)
+
+    def test_make_parallel_conflicts_and_identical_retries(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        self.runtime.autostart = False
+        for different in (True, False):
+            with self.subTest(different=different):
+                barrier = threading.Barrier(2)
+                original = media_jobs.create
+
+                def synchronized_create(*args, **kwargs):
+                    barrier.wait(timeout=10)
+                    return original(*args, **kwargs)
+
+                key = f"parallel-{different}"
+                bodies = [self._picture(), self._picture(prompt="different") if different else self._picture()]
+
+                def submit(body):
+                    # Separate ASGI portals let both synchronous creates reach
+                    # the barrier; no backend or socket is involved.
+                    with TestClient(self.client.app, raise_server_exceptions=False) as client:
+                        return client.post(self.make_url, json=body, headers=self._make_headers(key))
+
+                with patch.object(media_jobs, "create", synchronized_create), ThreadPoolExecutor(max_workers=2) as pool:
+                    responses = list(pool.map(submit, bodies))
+                if different:
+                    self.assertEqual(sorted(r.status_code for r in responses), [202, 409])
+                    conflict = next(r for r in responses if r.status_code == 409)
+                    self.assertEqual(conflict.json()["error"]["code"], "idempotency_conflict")
+                else:
+                    self.assertEqual([r.status_code for r in responses], [202, 202])
+                    self.assertEqual(responses[0].json()["job"]["job_id"], responses[1].json()["job"]["job_id"])
+                winner_index = next(i for i, response in enumerate(responses) if response.status_code == 202)
+                winner = responses[winner_index].json()["job"]["job_id"]
+                retry = self.client.post(self.make_url, json=bodies[winner_index],
+                                         headers=self._make_headers(key))
+                self.assertEqual(retry.json()["job"]["job_id"], winner)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 2)
+        self.assertEqual(len(self.runtime.pending), 2)
+
+    def test_make_replay_refuses_missing_or_erased_proof(self) -> None:
+        self.runtime.autostart = False
+        for field in ("owner_scope", "input_hash"):
+            _, job = self._submit_make(field)
+            with sqlite3.connect(self.jobs_db) as conn:
+                stored = json.loads(conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?",
+                                                (job["job_id"],)).fetchone()[0])
+                stored.pop(field)
+                conn.execute("UPDATE media_jobs SET job_json=? WHERE job_id=?", (json.dumps(stored), job["job_id"]))
+            self._refused(field, 409, "idempotency_conflict")
+
     def test_make_cannot_read_another_person_job(self) -> None:
         # Criterion 3: job read isolation; the denial discloses nothing.
         canary = "bob-private-canary-5d1f"
