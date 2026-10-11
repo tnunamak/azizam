@@ -6,7 +6,7 @@ Stdlib sqlite3 only. WAL mode for concurrent read while one writer appends.
 Layout:
     samples         - raw 10s samples, retained 7 days
     samples_1min    - per-minute rollup, retained 30 days
-    samples_1hour   - per-hour rollup, retained 365 days
+    samples_1hour   - per-hour rollup, kept until the owner deletes it
 
 All public functions accept an optional connection. When omitted, a short-lived
 read connection is auto-opened. ``gateway.metrics_writer`` owns the long-lived writer on a dedicated thread.
@@ -29,10 +29,10 @@ from typing import Any, Iterable, Optional
 _default_db = Path(__file__).parent / "data" / "metrics.db"
 DB_PATH = Path(get_env("AZIZAM_METRICS_DB", _default_db))
 
-# Retention windows (seconds).
+# Retention windows (seconds). Each finer table expires only after the next
+# rollup holds its data; hourly rollups are the history and have no window.
 RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
-HOUR_RETAIN_S = 365 * 24 * 3600
 
 SCHEMA_VERSION = 4
 
@@ -500,11 +500,10 @@ def downsample_hour(conn: Optional[sqlite3.Connection] = None, *, now: Optional[
 
 
 def prune_old(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> dict:
-    """Delete rows older than each table's retention window. Returns counts."""
+    """Delete raw and minute rows already summarized by coarser rollups. Returns counts."""
     now = int(time.time()) if now is None else int(now)
     raw_cut = now - RAW_RETAIN_S
     min_cut = now - MINUTE_RETAIN_S
-    hr_cut = now - HOUR_RETAIN_S
 
     def _run(c: sqlite3.Connection) -> dict:
         out: dict[str, int] = {}
@@ -512,8 +511,6 @@ def prune_old(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] =
         out["raw"] = cur.rowcount or 0
         cur = c.execute("DELETE FROM samples_1min WHERE ts < ?", (min_cut,))
         out["minute"] = cur.rowcount or 0
-        cur = c.execute("DELETE FROM samples_1hour WHERE ts < ?", (hr_cut,))
-        out["hour"] = cur.rowcount or 0
         if hasattr(c, "commit"):
             c.commit()
         return out

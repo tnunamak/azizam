@@ -67,15 +67,15 @@ class MetricsWriterTests(unittest.TestCase):
                 conn.execute("INSERT INTO samples_1min VALUES (?, 'x', '', 3, 2, 4, 7)", (now - 120,))
                 conn.execute("INSERT INTO samples_1min VALUES (?, 'old', '', 5, 5, 5, 1)",
                              (now - metrics_store.MINUTE_RETAIN_S - 1,))
+                # Hourly rollups are the only long-term copy; prune must keep them.
                 conn.execute("INSERT INTO samples_1hour VALUES (?, 'old', '', 5, 5, 5, 1)",
-                             (now - metrics_store.HOUR_RETAIN_S - 1,))
+                             (now - 400 * 24 * 3600,))
         with sqlite3.connect(golden_db) as conn:
             metrics_store.record_samples(conn, rows)  # original synchronous insert path
             legacy_rollups(conn, now)
             legacy_rollups(conn, now)  # duplicate buckets must stay unchanged
             for table, retention in (("samples", metrics_store.RAW_RETAIN_S),
-                                     ("samples_1min", metrics_store.MINUTE_RETAIN_S),
-                                     ("samples_1hour", metrics_store.HOUR_RETAIN_S)):
+                                     ("samples_1min", metrics_store.MINUTE_RETAIN_S)):
                 conn.execute(f"DELETE FROM {table} WHERE ts < ?", (now - retention,))
         self.assertTrue(writer.record_samples(rows))
         for operation in ("minute", "hour", "minute", "hour", "prune"):
@@ -88,6 +88,8 @@ class MetricsWriterTests(unittest.TestCase):
             self.assertEqual(actual.execute(
                 "SELECT avg_value, count FROM samples_1hour WHERE metric='x' AND tags=''"
             ).fetchone(), (29 / 9, 9))
+            self.assertEqual(actual.execute(
+                "SELECT COUNT(*) FROM samples_1hour WHERE metric='old'").fetchone(), (1,))
 
     def test_overflow_drops_newest_and_counts_rows_without_blocking(self):
         entered = threading.Event()
