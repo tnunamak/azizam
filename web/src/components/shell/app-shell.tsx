@@ -67,17 +67,32 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
-// Keep the shortcut listener in the shell; load the existing palette on demand.
+// Keep the shortcut listener in the shell; load the palette and account menu
+// outside the first paint, then fetch them once the page is idle so the first
+// open does not wait on a network round trip.
+const loadCommandPalette = () => import("@/components/ui/command");
+const loadAccountMenu = () => import("./account-menu-content");
 const CommandPalette = lazy(() =>
-  import("@/components/ui/command").then((module) => ({
-    default: module.CommandPalette,
-  })),
+  loadCommandPalette().then((module) => ({ default: module.CommandPalette })),
 );
 const AccountMenuContent = lazy(() =>
-  import("./account-menu-content").then((module) => ({
-    default: module.AccountMenuContent,
-  })),
+  loadAccountMenu().then((module) => ({ default: module.AccountMenuContent })),
 );
+
+function usePreloadShellExtras() {
+  useEffect(() => {
+    const preload = () => {
+      void loadCommandPalette();
+      void loadAccountMenu();
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(preload, 1000);
+    return () => window.clearTimeout(timer);
+  }, []);
+}
 
 // One icon per destination; no two destinations share a glyph (ban-list 19).
 const icons: Record<string, LucideIcon> = {
@@ -969,6 +984,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  usePreloadShellExtras();
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>

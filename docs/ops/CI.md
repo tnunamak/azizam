@@ -68,3 +68,5 @@ were still stored.
   allocate one ("Pool overlaps with other one on this address space"), the
   run fails. `--skip-compose` records the step as skipped, and the run then
   cannot pass.
+
+The fresh-instance Compose journey runs only after every browser lane has finished. It creates and removes a Docker network, and Chromium aborts in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`); overlapping it with the browser lanes made unrelated journeys fail. It still finishes before the Python suite, so it adds no wall time.

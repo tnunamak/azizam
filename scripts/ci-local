@@ -64,6 +64,7 @@ run=$(cd "$run" && pwd)
 work=$run/web-build
 worktrees=()
 pids=()
+lane_pids=()
 cleanup() {
   local pid directory deadline=$((SECONDS + 20))
   trap '' INT TERM
@@ -147,15 +148,9 @@ start_job "$run/fresh" bash -c '
   failed=0
   step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
   step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
-  if ((skip_compose)); then
-    printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
-    failed=1
-    echo "== fresh-compose SKIPPED: the run cannot pass without it"
-  else
-    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
-  fi
   exit "$failed"
 '
+fresh_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
   step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
@@ -200,7 +195,24 @@ for ((i=1; i<=shards+2; i++)); do
     step "$name" "$@"
     exit "$failed"
   ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
+  lane_pids+=("$last_pid")
 done
+# The Compose journey creates and removes a Docker bridge network. Chromium
+# aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
+# so Compose must never overlap the browser lanes: run it after they finish,
+# while the Python suite (the longest job) is still running.
+for pid in "${lane_pids[@]}" "$fresh_pid"; do wait_job "$pid"; done
+if ((skip_compose)); then
+  printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
+  failed=1
+  echo "== fresh-compose SKIPPED: the run cannot pass without it"
+else
+  start_job "$run/fresh" bash -c '
+    failed=0
+    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
+    exit "$failed"
+  '
+fi
 for pid in "${pids[@]}"; do wait_job "$pid"; done
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
