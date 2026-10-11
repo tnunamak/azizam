@@ -13665,6 +13665,11 @@ _DISCOVERY_OPERATION_INTENTS = {
 def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any]) -> bool:
     """Resolve catalog handles to the target and intent used for execution."""
     model = str(entry.get("id") or "")
+    if not model:
+        # A nameless row cannot identify a runtime service. An empty request
+        # has no category grant, while callers outside category governance
+        # retain the original upstream metadata.
+        return category_enforcement.visible(auth_context.identity, make_policy_request())
     operations = entry.get("azizam_resolves_to")
     if isinstance(operations, Mapping) and operations:
         return any(_category_entry_visible(auth_context, {"id": model, "operation": op})
@@ -13730,10 +13735,20 @@ async def _filter_model_list_for_profile(
             if not ready:
                 item["reason"] = "provider_key_missing"
         visible.append(item)
+    declared_intents: dict[str, list[str]] = {}
+    if category_intents is None:
+        for capability in registered_model_capabilities(registry):
+            if capability.model:
+                declared_intents.setdefault(capability.model, []).append(capability.intent)
     filtered = []
     for item in visible:
-        category_entries = ([{**item, "azizam_intent": intent} for intent in category_intents]
-                            if category_intents is not None else [item])
+        intents = category_intents
+        if intents is None and not any(item.get(key) for key in (
+            "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
+        )):
+            intents = declared_intents.get(str(item.get("id") or ""))
+        category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
+                            if intents is not None else [item])
         if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
             filtered.append(item)
 
@@ -25076,13 +25091,11 @@ async def list_models(request: Request):
     for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
         entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
+        if not _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
+            continue
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
-
-    data = [item for item in data if _category_entry_visible(
-        auth_context, {**item, "azizam_intent": "decision.systemone"} if item.get("id") in decision_ids else item,
-    )]
 
     # Preserve only upstream observations ahead of loaded-record inheritance;
     # values added by the annotation pass may be static alias configuration.

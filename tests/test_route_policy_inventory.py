@@ -1163,3 +1163,38 @@ def test_model_discovery_uses_the_frontends_runtime_intent(gateway, intent, path
     assert {item.get("id", item.get("model")) for item in entries} == {"current"}
     other_path = "/api/tags" if path == "/anthropic/v1/models" else "/anthropic/v1/models"
     assert _category_listing_empty(gateway.client.get(other_path, headers=gateway.headers))
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("entry", [{}, {"id": ""}, {"description": "unattributed model metadata"}])
+def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway, entry):
+    _activate_decoy_snapshot(gateway, {"chat.completions"})
+    auth = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models")
+    filtered, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], auth)
+    assert filtered == []
+    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], proxy.NO_AUTH_CONTEXT)
+    assert ungoverned == [entry]
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatch):
+    _activate_discovery_grants(gateway, {"encoder": ("text.embeddings", "models.list")})
+    registry = {"services": {"vectors": {
+        "id": "vectors", "enabled": True, "capabilities": ["embeddings"],
+        "config": {"models": [{"id": "encoder"}, {"id": "restricted-encoder"}]},
+    }}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    monkeypatch.setattr(proxy, "_litellm_runtime_config", lambda: SimpleNamespace(enabled=True, service_id="catalog"))
+
+    async def catalog(*_args, **_kwargs):
+        return {"object": "list", "data": [
+            {"id": "encoder", "object": "model", "created": 0},
+            {"id": "restricted-encoder", "object": "model", "created": 0},
+        ]}
+
+    monkeypatch.setattr(proxy, "_litellm_models_payload", catalog)
+    gateway.calls.clear()
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    assert {item["id"] for item in response.json()["data"]} == {"encoder"}
