@@ -80,6 +80,40 @@ class MigrationTests(unittest.TestCase):
         media_jobs.init_db(self.db)  # must not raise a schema-version mismatch
         self.assertIn("p1", video_job_records.load_all(path=self.db))
 
+    def test_legacy_prompt_removal_keeps_a_concurrent_save(self) -> None:
+        import json
+        from unittest.mock import patch
+        from gateway import sqlite_startup
+        video_job_records.save("p1", {"owner_key_hash": "app:a", "created_at": 1}, path=self.db)
+        with sqlite_startup.connect(self.db) as conn:  # a pre-upgrade row with an inline prompt
+            conn.execute("UPDATE video_job_records SET record_json = ?",
+                         (json.dumps({"owner_key_hash": "app:a", "created_at": 1, "prompt": "secret"}),))
+        real_connect = video_job_records.connect
+        db = self.db
+
+        class SaveBeforeWrite:
+            def __init__(self, conn):
+                self.conn = conn
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+            def execute(self, sql, *args):
+                if sql.lstrip().upper().startswith("UPDATE VIDEO_JOB_RECORDS"):
+                    video_job_records.save("p1", {"owner_key_hash": "app:a", "created_at": 1,
+                                                  "deleted_at": 99}, path=db)
+                return self.conn.execute(sql, *args)
+
+        calls = []
+        def connect_once(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+            calls.append(conn)
+            return SaveBeforeWrite(conn) if len(calls) == 1 else conn
+        with patch.object(video_job_records, "connect", connect_once):
+            loaded = video_job_records.load_all(path=self.db)
+        stored = video_job_records.load_all(path=self.db)["p1"]
+        self.assertEqual(stored["deleted_at"], 99)
+        self.assertNotIn("prompt", stored)
+        self.assertNotIn("prompt", loaded["p1"])
+
     def test_save_load_remove_keeps_unrelated_old_records(self) -> None:
         now = int(time.time())
         video_job_records.save("new", {"created_at": now, "prompt": "pé", "deleted_at": None}, path=self.db)

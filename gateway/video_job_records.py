@@ -103,20 +103,17 @@ def load_all(*, path: Path | None = None) -> dict[str, dict]:
     """Return every stored record, oldest first."""
     conn = _connect(path)
     try:
+        # Remove only the legacy prompt from the current JSON in one statement;
+        # rewriting a snapshot read earlier could undo a concurrent save.
+        conn.execute(
+            "UPDATE video_job_records SET record_json = json_remove(record_json, '$.prompt') "
+            "WHERE json_valid(record_json) AND json_type(record_json) = 'object' "
+            "AND json_type(record_json, '$.prompt') IS NOT NULL"
+        )
+        conn.commit()
         rows = conn.execute(
             "SELECT prompt_id, record_json, created_at FROM video_job_records ORDER BY created_at"
         ).fetchall()
-        for prompt_id, blob, _ in rows:
-            try:
-                data = json.loads(blob)
-            except ValueError:
-                continue
-            if isinstance(data, dict) and "prompt" in data:
-                data.pop("prompt", None)
-                conn.execute("UPDATE video_job_records SET record_json=? WHERE prompt_id=?", (
-                    json.dumps(data, ensure_ascii=False, sort_keys=True), prompt_id,
-                ))
-        conn.commit()
     finally:
         conn.close()
     out: dict[str, dict] = {}
