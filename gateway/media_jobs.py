@@ -361,6 +361,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         ) UPDATE media_job_events SET sequence=(SELECT seq FROM numbered WHERE numbered.id=media_job_events.id)""")
     if "source" not in columns:
         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
+    if "attempt_number" not in columns:
+        conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     conn.execute("UPDATE media_jobs_schema_version SET version=?", (SCHEMA_VERSION,))
     conn.commit()
@@ -939,17 +941,18 @@ def append_event(
     ts = int(now if now is not None else _now())
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        exists = conn.execute(
-            "SELECT 1 FROM media_jobs WHERE job_id = ?",
+        row = conn.execute(
+            "SELECT job_json FROM media_jobs WHERE job_id = ?",
             (job_id,),
         ).fetchone()
-        if not exists:
+        if not row:
             raise LookupError(f"unknown job_id {job_id!r}")
+        attempt_number = json.loads(row[0]).get("attempt_number") if _source == "gateway" else None
         sequence = conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM media_job_events WHERE job_id=?", (job_id,)).fetchone()[0]
         conn.execute(
-            "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json, sequence, source) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, ts, event_type, json.dumps(safe_payload, ensure_ascii=False, sort_keys=True), sequence, _source),
+            "INSERT INTO media_job_events(job_id, created_at, event_type, payload_json, sequence, source, attempt_number) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (job_id, ts, event_type, json.dumps(safe_payload, ensure_ascii=False, sort_keys=True), sequence, _source, attempt_number),
         )
         conn.commit()
         return int(sequence)
@@ -1005,12 +1008,12 @@ def events(
     where = " AND ".join(clauses)
     with _conn(path) as conn:
         rows = conn.execute(
-            f"SELECT sequence, created_at, event_type, payload_json, source FROM media_job_events "
+            f"SELECT sequence, created_at, event_type, payload_json, source, attempt_number FROM media_job_events "
             f"WHERE {where} ORDER BY sequence ASC LIMIT ?",
             params,
         ).fetchall()
     out: list[dict[str, Any]] = []
-    for ev_id, created_at, event_type, payload_json, source in rows:
+    for ev_id, created_at, event_type, payload_json, source, attempt_number in rows:
         payload = _safe_loads(payload_json) or {}
         out.append(_filter_event_for_audience(
             {
@@ -1019,6 +1022,7 @@ def events(
                 "created_at": int(created_at),
                 "event_type": event_type,
                 "source": source,
+                "attempt_number": attempt_number,
                 "payload": payload if isinstance(payload, Mapping) else {},
             },
             audience,
@@ -1036,6 +1040,7 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
         "created_at": event.get("created_at"),
         "event_type": event.get("event_type"),
         "source": event.get("source", "unavailable"),
+        "attempt_number": event.get("attempt_number"),
     }
     if audience == "internal":
         return {**base, "payload": dict(event.get("payload") or {})}

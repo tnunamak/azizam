@@ -266,3 +266,15 @@ def test_old_attempt_cannot_fill_new_attempt_output(db):
     assert current['attempt_number'] == 2
     assert current['started_at'] == 300
     assert current['first_output_at'] is None
+
+
+def test_only_trusted_events_carry_observed_attempt_number(db):
+    a = job(db)
+    media_jobs.update_status(a.job_id, 'running', now=200, path=db)
+    media_jobs.append_event(a.job_id, 'started', now=200, path=db)
+    media_jobs.begin_attempt(a.job_id, now=300, path=db)
+    media_jobs.append_event(a.job_id, 'started', now=300, path=db)
+    media_jobs.append_client_event(a.job_id, 'progress', {'progress': 20}, path=db)
+    rows = media_jobs.events(a.job_id, audience='client', path=db)
+    assert [row['attempt_number'] for row in rows] == [1, 2, None]
+    assert [row['source'] for row in rows] == ['gateway', 'gateway', 'client']
