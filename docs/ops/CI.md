@@ -28,6 +28,37 @@ were still stored.
   (`gh workflow run CI --ref <branch>`). It uploads diagnostics only when a
   job fails, keeps them 1 day, and cancels an older run on the same ref.
 
+## Parallel local layout
+
+- Python hermetic tests and the native/Compose fresh-instance job start
+  alongside web installation/check/build/unit tests. Each job has a separate
+  clean detached worktree, so helper scripts cannot race on Python environments,
+  generated files or the web build.
+- After web preparation finishes, `--shards N` (default `4`) starts all main
+  Playwright shards with `--shard i/N`, plus live-data and household in parallel.
+  Workers remain `1` within each fixture; no test filters or assertions change.
+- `--port BASE` defaults to `18640`. Main shard `i` uses `BASE + 10*i`
+  (i starts at 1); live-data and household use the next two lanes. Each lane
+  reserves gateway +0, fake engine +1 and strict-engine candidates +2 through +9.
+  The entire allocation must fit within 18000–18998 or the command fails early.
+- Each browser lane has its own port-named worktree, state root, results,
+  screenshots and auth files. It receives an isolated copy of the completed web
+  directory (copy-on-write on supporting filesystems), and shares only the
+  completed, read-only browser Python environment. No npm install or build runs
+  concurrently against that directory. Legacy live-data auth/manifest names stay
+  compatible because their containing worktree is private to that lane.
+- Every step writes a private receipt and log. The parent waits for every job,
+  aggregates receipts, rejects missing/nonzero/skipped steps, and retains all
+  failing-run browser evidence by port. Interrupts terminate job process groups
+  before worktrees are removed. `setsid` and GNU-compatible `cp --reflink` are
+  required. Extra worktrees and copied dependencies need additional disk space.
+- Expected duration is the maximum of Python, fresh-instance, and web preparation
+  plus the slowest browser lane, including copying and contention overhead.
+  There is no measured speedup yet. Validate a fresh commit with the same Python
+  counts and 680 + 4 + 15 browser cases before trusting a new time comparison.
+  File-level sharding preserves each file's ordering; unseen cross-file state
+  dependencies must be checked by that full run.
+
 ## Limits
 
 - A signoff is the owner's attestation that the local run passed. GitHub does
