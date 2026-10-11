@@ -298,3 +298,34 @@ def test_saved_conversation_survives_restart_and_maintenance(stores):
     proxy.responses_store.init_db(path)
     proxy._maintain_prompt_memory()
     assert proxy.responses_store.get("resp_old", path=path)["request_json"] == {"input": "keep"}
+
+
+def test_corrupt_job_history_recovery_keeps_original_request_spool(stores):
+    _root, _admin, jobs, _user, _app, _auth = stores
+    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate"), path=jobs)
+    payload = proxy._image_media_job_payload_path(job.job_id)
+    payload.parent.mkdir(parents=True, exist_ok=True)
+    payload.write_text('{"body": {"prompt": "recover me"}}')
+    jobs.write_bytes(b'not a database')
+    media_jobs.init_db(jobs)
+    assert media_jobs.get(job.job_id, path=jobs) is None
+    assert proxy._prune_orphaned_media_job_payloads() == 0
+    assert payload.read_text() == '{"body": {"prompt": "recover me"}}'
+
+
+@pytest.mark.parametrize("store", ["responses_store", "receipt_store", "media_jobs"])
+def test_critical_store_failure_aborts_lifespan_before_workers(stores, monkeypatch, store):
+    import sqlite3
+    from unittest.mock import Mock
+    monkeypatch.setattr(proxy.ADMIN_STORE, "init_db", lambda: None)
+    for name in ("responses_store", "receipt_store", "media_jobs"):
+        monkeypatch.setattr(getattr(proxy, name), "init_db", lambda: None)
+    monkeypatch.setattr(getattr(proxy, store), "init_db", Mock(side_effect=sqlite3.OperationalError("database is locked")))
+    launch = Mock(side_effect=AssertionError("worker started before stores were ready"))
+    monkeypatch.setattr(proxy.providers, "recover_provider_spend", launch)
+    async def start():
+        async with proxy.lifespan(proxy.app):
+            pytest.fail("startup should fail")
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        asyncio.run(start())
+    launch.assert_not_called()

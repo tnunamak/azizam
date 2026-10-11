@@ -70,7 +70,7 @@ def test_failed_payload_is_removed(tmp_path):
     assert not temporary.exists()
 
 
-def test_pruner_removes_interrupted_payload_temp_file(tmp_path):
+def test_pruner_keeps_payload_without_job_history(tmp_path):
     payload_dir = tmp_path / "cache" / "payloads"
     payload_dir.mkdir(parents=True)
     file = payload_dir / "mj_interrupted.json.tmp"
@@ -78,8 +78,8 @@ def test_pruner_removes_interrupted_payload_temp_file(tmp_path):
     jobs_db = tmp_path / "data" / "jobs.db"
     media_jobs.init_db(jobs_db)
     with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", jobs_db):
-        assert proxy._prune_orphaned_media_job_payloads() == 1
-    assert not file.exists()
+        assert proxy._prune_orphaned_media_job_payloads() == 0
+    assert file.exists()
 
 
 def test_owner_kill_switch_removes_pending_payload_files(tmp_path):

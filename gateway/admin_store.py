@@ -32,7 +32,7 @@ of scope here — this module is the durable substrate those routes call into.
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway.sqlite_startup import check_database
+from gateway.sqlite_startup import check_database, check_quarantine_pending
 
 import json
 import os
@@ -498,6 +498,7 @@ def secure_state_path(path: Path) -> None:
     SQLite inherits database permissions for new WAL/SHM files. Precreating the
     database avoids a process-wide umask change in this multithreaded gateway.
     """
+    check_quarantine_pending(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.parent.chmod(0o700)
     try:

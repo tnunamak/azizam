@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from gateway import admin_store, media_jobs, media_metadata
+from gateway.sqlite_startup import check_quarantine_pending
 
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
@@ -301,6 +302,7 @@ def _effective_retention(member_retention: str, cap_retention: str) -> str:
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path or media_jobs.DB_PATH)
+    check_quarantine_pending(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(target), timeout=5)
     conn.row_factory = sqlite3.Row

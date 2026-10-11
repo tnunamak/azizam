@@ -12942,6 +12942,12 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    # Ownership and history stores must be ready before any worker can write.
+    # In particular, do not run cleanup beside an unfinished quarantine.
+    ADMIN_STORE.init_db()
+    responses_store.init_db()
+    receipt_store.init_db()
+    media_jobs.init_db()
     providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
@@ -13045,7 +13051,6 @@ async def lifespan(app: FastAPI):
     # Responses API persistence: SQLite-backed store for stateful
     # Saved /v1/responses conversations survive until explicit deletion.
     try:
-        responses_store.init_db()
         print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Responses store failed to start: {e}", flush=True)
@@ -13053,7 +13058,6 @@ async def lifespan(app: FastAPI):
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = None
     try:
-        receipt_store.init_db()
         pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
         receipts_maintenance_task = asyncio.create_task(
             _receipts_maintenance_loop(receipts_maintenance_stop)
@@ -13066,7 +13070,6 @@ async def lifespan(app: FastAPI):
         print(f"[proxy] Receipt store failed to start: {e}", flush=True)
 
     try:
-        media_jobs.init_db()
         _fail_orphaned_identity_jobs()
         print(f"[proxy] Hydrated {_hydrate_video_job_records()} persisted video job record(s)", flush=True)
         print(
@@ -13078,7 +13081,6 @@ async def lifespan(app: FastAPI):
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
     try:
-        ADMIN_STORE.init_db()
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
         app_key_count = active_app_credential_count()
         print(
@@ -21077,12 +21079,12 @@ def _delete_image_media_job_payload(job_id: str) -> None:
 
 
 def _prune_orphaned_media_job_payloads() -> int:
-    """Remove spools only when their job is absent or terminal."""
+    """Remove terminal-job spools; absent history may be in quarantine."""
     with _MEDIA_PAYLOAD_LOCK:
         removed = 0
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
                 _release_ephemeral_media_job_payload(job_id)
                 removed += 1
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -21091,7 +21093,7 @@ def _prune_orphaned_media_job_payloads() -> int:
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
             job_id = path.name.split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed

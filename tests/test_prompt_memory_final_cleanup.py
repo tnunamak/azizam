@@ -72,7 +72,7 @@ def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys
 
 
 @pytest.mark.parametrize('cache_state', ['missing', 'empty'])
-def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, cache_state, capsys):
+def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, cache_state):
     hh = household
     if cache_state == 'empty':
         proxy.IMAGE_CACHE_DIR.mkdir()
@@ -80,7 +80,6 @@ def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, c
     assert prompt_memory.put(asset, hh.robin['id'], 'saved text', kept_until=None, admin_path=hh.admin)
     proxy._maintain_prompt_memory()
     assert prompt_memory.get(asset, hh.robin['id'])['prompt_text'] == 'saved text'
-    assert 'orphan prompt pruning skipped' in capsys.readouterr().out
 
 
 def test_request_policy_reads_do_not_wait_for_admin_writer(household):

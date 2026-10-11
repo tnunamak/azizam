@@ -37,6 +37,13 @@ def quarantine_database(path: Path, reason: object) -> None:
     pending.unlink()
 
 
+def check_quarantine_pending(path: Path) -> None:
+    """Refuse new connections while database recovery is incomplete."""
+    pending = path.with_name(f"{path.name}.quarantine-pending")
+    if pending.exists():
+        raise RuntimeError(f"Unfinished database quarantine: {pending}; restore or finish it before startup")
+
+
 def check_database(path: Path, *, full_check: bool = True) -> None:
     """Quarantine confirmed corruption; retry other database errors, then raise.
 
@@ -44,9 +51,7 @@ def check_database(path: Path, *, full_check: bool = True) -> None:
     bound lock contention to roughly 16 seconds. Do not change journal mode
     while checking: verification should not modify a healthy database.
     """
-    pending = path.with_name(f"{path.name}.quarantine-pending")
-    if pending.exists():
-        raise RuntimeError(f"Unfinished database quarantine: {pending}; restore or finish it before startup")
+    check_quarantine_pending(path)
     if not path.exists():
         return
     for attempt in range(3):

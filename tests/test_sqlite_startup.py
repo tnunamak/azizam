@@ -146,3 +146,28 @@ def test_stale_metrics_marker_does_not_quarantine_healthy_history(tmp_path):
     with sqlite3.connect(path) as conn:
         assert conn.execute('SELECT value FROM sentinel').fetchall() == [('keep',)]
     assert not list(tmp_path.glob('*.broken-*'))
+
+
+@pytest.mark.parametrize('store,read', [
+    (media_jobs, lambda path: media_jobs.count(path)),
+    (receipt_store, lambda path: receipt_store.count(path)),
+    (admin_store, lambda path: admin_store.schema_version(path)),
+    (responses_store, lambda path: responses_store.count(path)),
+    (metrics_store, lambda path: metrics_store.open_writer(path)),
+])
+def test_runtime_connector_cannot_recreate_pending_database(store, read, tmp_path):
+    path = tmp_path / 'history.db'
+    path.with_name('history.db.quarantine-pending').write_text('unfinished')
+    with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
+        read(path)
+    assert not path.exists()
+
+
+def test_shared_job_database_connectors_respect_quarantine(tmp_path):
+    from gateway import prompt_memory, video_job_records
+    path = tmp_path / 'jobs.db'
+    path.with_name('jobs.db.quarantine-pending').write_text('unfinished')
+    for operation in (lambda: prompt_memory.init_db(path=path), lambda: video_job_records.load_all(path=path)):
+        with pytest.raises(RuntimeError, match='Unfinished database quarantine'):
+            operation()
+        assert not path.exists()
