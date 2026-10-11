@@ -188,3 +188,25 @@ def test_two_active_revisions_of_one_service_are_rejected():
                                      {**base.services, "flux@r2": second})
     with pytest.raises(policy.PolicyError, match="one active revision per service"):
         policy.validate_snapshot(ambiguous)
+
+
+@pytest.mark.parametrize("identity,workflow,intent,expected", [
+    (Identity("sam", "work-app"), "other", "image.edit", True),
+    (Identity("mia", "family-app"), "flux", "image.generate", True),
+    (Identity("mia", "family-app"), "other", "image.generate", False),
+    (Identity("mia", "family-app"), "flux", "image.edit", False),
+    (Identity("mia", "other-app"), "flux", "image.generate", False),
+])
+def test_visible_uses_the_runtime_category_decision(gate, identity, workflow, intent, expected):
+    _activate(gate, _snapshot())
+    assert category_enforcement.visible(identity, _request(workflow, intent)) is expected
+
+
+def test_visible_without_a_gate_keeps_discovery():
+    category_enforcement.configure(None)
+    assert category_enforcement.visible(Identity("mia", "family-app"), _request())
+
+
+def test_visible_fails_closed_when_the_store_is_unreadable(gate):
+    gate.write_text("not a database")
+    assert not category_enforcement.visible(Identity("sam", "work-app"), _request())

@@ -166,3 +166,8 @@ def apply(identity: Any, request: PolicyRequest, decision: PolicyDecision) -> Po
     # The access plan's allow reasons do not explain a denial; callers show reasons[0].
     return PolicyDecision(decision=DENIED, sources=decision.sources + denial.sources,
                           reasons=denial.reasons, visibility_level=decision.visibility_level)
+
+
+def visible(identity: Any, request: PolicyRequest) -> bool:
+    """Show a discovery entry only when its runtime category check passes."""
+    return _GATE is None or _GATE.check(identity, request) is None

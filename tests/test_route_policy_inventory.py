@@ -10,6 +10,7 @@ import json
 import re
 import socket
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -120,15 +121,15 @@ def gateway(monkeypatch, tmp_path, request):
     category_enforcement.configure(None)
     profile_id = (
         "restricted-workflow" if restricted_workflow
-        else "grant-everything" if category_mode else "grant-nothing"
+        else "grant-everything" if category_mode or mode == "discovery" else "grant-nothing"
     )
     # Missing allow/protocol/workflow/model/backend restrictions means
     # unrestricted access; a wildcard allow-list is not the same profile.
-    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode}}
+    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode or mode == "discovery"}}
     if restricted_workflow:
         profile_body["allow"] = {"intents": ["image.edit", "image.variation"]}
         profile_body["workflows"] = ["no-inventory-request-uses-this-workflow"]
-    elif not category_mode:
+    elif not category_mode and mode != "discovery":
         profile_body["allow"] = {"intents": []}
     profile = admin_store.create_profile(
         profile_id, profile_body, path=paths["admin"],
@@ -691,16 +692,41 @@ def _probe_request(headers):
 _STATUS_PROBES = {("GET", "/api/ps"), ("GET", "/ollama/api/ps")}
 
 
-def _decoy_oracle(method, template, row, gateway):
+_CATEGORY_LISTINGS = {
+    "/v1/models", "/openai/v1/models", "/anthropic/v1/models",
+    "/v1/audio/models", "/openai/v1/audio/models", "/v1/audio/voices",
+    "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices",
+    "/api/tags", "/ollama/api/tags", "/gateway/v1/workflows",
+    "/gateway/v1/aliases", "/sdapi/v1/sd-models",
+}
+
+
+def _category_listing_empty(response):
+    body = response.json()
+    if isinstance(body, list):
+        return body == []
+    collections = [body[key] for key in ("data", "models", "voices", "engines", "workflows", "operations")
+                   if key in body]
+    return bool(collections) and all(value in ([], {}) for value in collections)
+
+
+def _decoy_oracle(method, template, row, gateway, response):
     """Classify the decoy pass, where the member holds grants on a decoy service.
 
-    Discovery is allowed and is not proof. Anything that runs a model must still
+    Restricted discovery must be empty. Anything that runs a model must still
     be refused, and a backend call from any other route stays a violation.
     """
     status = row["status"]
     if row.get("dispatched") == "yes":
         return  # A dispatched receipt stays a violation.
-    if ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
+    if method == "GET" and template in _CATEGORY_LISTINGS and status == 200 and not gateway.calls:
+        if _category_listing_empty(response):
+            row["outcome"], row["rule"] = "scoped-empty", "category discovery hides ungranted services"
+            row["detail"] = ""
+        else:
+            row["outcome"], row["rule"] = "VIOLATION", "category discovery exposes ungranted services"
+            row["detail"] = row.get("body", "")
+    elif ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
             and set(gateway.calls) <= {"health", "model-state", "HTTP backend", "network connection"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
@@ -922,7 +948,7 @@ def _http_inventory(gateway, title=None, report=True):
                 row["rule"] = "backend call overrides response classification"
                 row["detail"] += f" backend calls={gateway.calls!r}"
             if getattr(gateway, "decoy", False):
-                _decoy_oracle(method, template, row, gateway)
+                _decoy_oracle(method, template, row, gateway, response)
             _category_oracle(gateway, row)
             rows.append(row)
     assert rows, "No model-facing HTTP routes discovered; inventory would be vacuous"
@@ -1181,3 +1207,344 @@ def test_websocket_route_policy_inventory(gateway, monkeypatch):
         "Every websocket route must demonstrate a category-rules refusal after "
         f"decoy grants allow early checks; missing resolved check(s):\n{_table(unproved)}"
     )
+
+
+@pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
+def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
+    """Full JSON bytes captured on the parent implementation remain unchanged."""
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    monkeypatch.setattr(proxy.time, "time", lambda: 123)
+    monkeypatch.setattr(proxy.ollama_protocol, "_iso_utc_now", lambda: "1970-01-01T00:02:03Z")
+    monkeypatch.setattr(proxy, "_workflow_model_entry_created", lambda _path: 123)
+    monkeypatch.setattr(proxy, "_entry_created_ts", lambda _path: 123)
+    responses = {}
+    for path in sorted(_CATEGORY_LISTINGS):
+        gateway.calls.clear()
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, (path, response.status_code)
+        assert not gateway.calls, (path, gateway.calls)
+        responses[path] = response.content.decode()
+    expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
+    assert responses == expected
+    # An active snapshot governing other identities must preserve the same bytes.
+    from tests.test_category_enforcement import _activate, _snapshot
+    _activate(gateway.category_path, _snapshot())
+    category_enforcement.configure(gateway.category_path)
+    for path, body in expected.items():
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, path
+        assert response.content.decode() == body, path
+
+
+def _activate_discovery_grants(gateway, grants):
+    fact = category_policy.Assertion(
+        "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "discovery",
+    )
+    services = {target + "@r1": category_policy.Service(
+        target + "@r1", (category_policy.Subject(target + "@1", "workflow", (fact,)),),
+    ) for target in grants}
+    plan = category_policy.Plan(
+        "discovery-grants",
+        tuple(category_policy.Grant(intent, target + "@r1")
+              for target, intents in grants.items() for intent in intents),
+        (category_policy.Row("aud", "audience", "in", ("general",)),),
+    )
+    snapshot = category_policy.PolicyVersion(
+        "discovery-rules",
+        {"audience": category_policy.Category("audience", "Audience", values=("general",))},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, services,
+    )
+    store = CategoryStore(gateway.category_path)
+    active = store.get_active()
+    candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "discovery")
+    store.activate(candidate.revision, active.revision)
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
+    """Mixed grants keep allowed handles and hide their restricted neighbors."""
+    _activate_discovery_grants(gateway, {
+        "current": ("chat.completions", "chat.messages", "models.list"),
+        "audio.generate.ace-step-1.5-2b-base": ("audio.generate",),
+        "image.generate.flux2-klein-4b": ("image.generate",),
+        "supertonic": ("speech.synthesis",),
+    })
+
+    def get(path):
+        gateway.calls.clear()
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, (path, response.status_code, response.text)
+        assert not gateway.calls, (path, gateway.calls)
+        return response.json()
+
+    models = {item["id"] for item in get("/v1/models")["data"]}
+    assert "current" in models and "current-fast" not in models
+    assert "flux2-klein-4b" in models and "krea2-turbo" not in models
+    assert "image-fast" in models and "image" not in models
+    assert {item["id"] for item in get("/anthropic/v1/models")["data"]} == {"current"}
+    assert {item["model"] for item in get("/api/tags")["models"]} == {"current"}
+    assert {item["id"] for item in get("/v1/audio/models")["data"]} == {"ace-step-1.5-2b-base"}
+    assert {item["id"] for item in get("/gateway/v1/workflows")["workflows"]} == {
+        "image.generate.flux2-klein-4b", "audio.generate.ace-step-1.5-2b-base",
+    }
+    aliases = get("/gateway/v1/aliases")["operations"]
+    assert {item["alias"] for item in aliases["images"]["stable"]} == {"image-fast"}
+    assert "image_edits" not in aliases
+    assert all(set(item.get("candidates", [])) <= {"supertonic"} for item in aliases["speech"]["stable"])
+    speech_aliases = [item for item in get("/v1/models")["data"] if item["id"] in {"tts", "tts-fast"}]
+    assert speech_aliases
+    assert all(set(item["azizam_engine_candidates"]["speech"]) == {"supertonic"} for item in speech_aliases)
+    assert {item["title"] for item in get("/sdapi/v1/sd-models")} == {"image-fast", "flux2-klein-4b"}
+    voices = get("/v1/audio/voices")
+    assert voices["voices"]
+    assert set(voices["engines"]) == {"supertonic"}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path", sorted(_CATEGORY_LISTINGS))
+def test_category_discovery_hides_decoy_grants(gateway, path, monkeypatch):
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    _activate_decoy_snapshot(gateway, {
+        "models.list", "chat.completions", "text.embeddings", "image.generate", "image.edit",
+        "video.generate", "audio.generate", "speech.synthesis", "speech.transcription",
+        "decision.systemone", "text.rerank",
+    })
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200, (path, response.status_code)
+    assert not gateway.calls, (path, gateway.calls)
+    assert _category_listing_empty(response), (path, _body_summary(response))
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("intent,path", [
+    ("chat.messages", "/anthropic/v1/models"),
+    ("chat.completions", "/api/tags"),
+    ("chat.generate", "/api/tags"),
+])
+def test_model_discovery_uses_the_frontends_runtime_intent(gateway, intent, path):
+    _activate_discovery_grants(gateway, {"current": (intent, "models.list")})
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    body = response.json()
+    entries = body.get("data", body.get("models"))
+    assert {item.get("id", item.get("model")) for item in entries} == {"current"}
+    other_path = "/api/tags" if path == "/anthropic/v1/models" else "/anthropic/v1/models"
+    assert _category_listing_empty(gateway.client.get(other_path, headers=gateway.headers))
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("entry", [{}, {"id": ""}, {"description": "unattributed model metadata"}])
+def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway, entry):
+    _activate_decoy_snapshot(gateway, {"chat.completions"})
+    auth = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models")
+    filtered, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], auth)
+    assert filtered == []
+    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], proxy.NO_AUTH_CONTEXT)
+    assert ungoverned == [entry]
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path", ["/v1/models", "/api/tags"])
+def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatch, path):
+    _activate_discovery_grants(gateway, {"encoder": ("text.embeddings", "models.list")})
+    registry = {"services": {"vectors": {
+        "id": "vectors", "enabled": True, "capabilities": ["embeddings"],
+        "config": {"models": [{"id": "encoder"}, {"id": "restricted-encoder"}]},
+    }}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    monkeypatch.setattr(proxy, "_litellm_runtime_config", lambda: SimpleNamespace(enabled=True, service_id="catalog"))
+
+    async def catalog(*_args, **_kwargs):
+        return {"object": "list", "data": [
+            {"id": "encoder", "object": "model", "created": 0},
+            {"id": "restricted-encoder", "object": "model", "created": 0},
+        ]}
+
+    monkeypatch.setattr(proxy, "_litellm_models_payload", catalog)
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    body = response.json()
+    entries = body.get("data", body.get("models"))
+    assert {item.get("id", item.get("model")) for item in entries} == {"encoder"}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path", ["/v1/audio/voices", "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices"])
+@pytest.mark.parametrize("grants,compatible", [
+    ({"supertonic": ("speech.synthesis",)}, []),
+    ({"omnivoice": ("speech.synthesis",)}, ["omnivoice"]),
+])
+def test_custom_voice_discovery_requires_a_permitted_compatible_engine(gateway, monkeypatch, path, grants, compatible):
+    _activate_discovery_grants(gateway, grants)
+    voice = {"id": "voice_" + "1" * 24, "object": "audio.voice", "name": "Narrator"}
+    store = SimpleNamespace(list_voices=lambda *_args, **_kwargs: ([voice], True))
+    monkeypatch.setattr(proxy, "_voice_store", lambda: store)
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    body = response.json()
+    if compatible:
+        assert [row["id"] for row in body["data"]] == [voice["id"]]
+        assert body["data"][0]["compatible_engines"] == compatible
+        assert body["has_more"] is True
+    else:
+        assert body["data"] == []
+        assert body["first_id"] is None and body["last_id"] is None
+        assert body["has_more"] is False
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("operation,alias,intent", [
+    ("speech", "tts", "speech.synthesis"),
+    ("chat", "fast", "chat.completions"),
+])
+def test_category_discovery_checks_the_resolved_alias_instead_of_its_granted_name(gateway, operation, alias, intent):
+    _activate_discovery_grants(gateway, {alias: (intent, "models.list")})
+    response = gateway.client.get("/gateway/v1/aliases", params={"operation": operation}, headers=gateway.headers)
+    assert response.status_code == 200
+    assert response.json()["operations"] == {}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert alias not in {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_category_discovery_hides_an_unresolved_alias_even_when_its_name_is_granted(gateway, monkeypatch):
+    _activate_discovery_grants(gateway, {"tts": ("speech.synthesis", "models.list")})
+    aliases = {"speech": {"stable": {"tts": ["absent"]}, "engines": {"absent": {
+        "service": "missing-service", "model": "absent-model",
+    }}}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    response = gateway.client.get("/gateway/v1/aliases", headers=gateway.headers)
+    assert response.status_code == 200
+    assert response.json()["operations"] == {}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert "tts" not in {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_category_alias_patterns_use_their_declared_runtime_target(gateway, monkeypatch):
+    _activate_discovery_grants(gateway, {"current": ("chat.completions",)})
+    aliases = {"chat": {"stable": {"fast": "current"}, "openai": [
+        {"match": "model-[ab]", "to": "fast"},
+    ]}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    gateway.calls.clear()
+    response = gateway.client.get("/gateway/v1/aliases", headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    view = response.json()["operations"]["chat"]
+    assert view["stable"] == [{"alias": "fast", "resolves_to": "current"}]
+    assert view["openai"] == proxy._gateway_aliases_provider("chat")["chat"]["openai"]
+    assert [row["match"] for row in view["openai"]] == ["model-[ab]"]
+    assert proxy.resolve_stable_alias("chat", "model-a").target == "current"
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path,expected", [
+    ("/anthropic/v1/models", {("anthropic.messages", "chat.messages", "current")}),
+    ("/api/tags", {("ollama.chat", "chat.completions", "current"),
+                   ("ollama.generate", "chat.generate", "current"),
+                   ("ollama.embeddings", "text.embeddings", "current")}),
+])
+def test_frontend_discovery_builds_the_runtime_policy_request(gateway, monkeypatch, path, expected):
+    _activate_decoy_snapshot(gateway, {"models.list", "chat.messages", "chat.completions",
+                                       "chat.generate", "text.embeddings"})
+    real_check = category_enforcement.CategoryGate.check
+    probes = set()
+
+    def recording_check(self, identity, request):
+        if request.model == "current":
+            probes.add((request.protocol, request.intent, request.model))
+        return real_check(self, identity, request)
+
+    monkeypatch.setattr(category_enforcement.CategoryGate, "check", recording_check)
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert _category_listing_empty(response)
+    assert probes == expected
+
+
+@pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
+def test_ungoverned_discovery_preserves_custom_voices_and_unresolved_aliases(gateway, monkeypatch):
+    voice = {"id": "voice_" + "1" * 24, "object": "audio.voice", "name": "Narrator"}
+    store = SimpleNamespace(list_voices=lambda *_args, **_kwargs: ([voice], True))
+    monkeypatch.setattr(proxy, "_voice_store", lambda: store)
+    aliases = {"speech": {"stable": {"tts": ["absent"]}, "engines": {"absent": {
+        "service": "missing-service", "model": "absent-model",
+    }}}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    paths = ["/v1/audio/voices", "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices",
+             "/gateway/v1/aliases"]
+    baseline = {}
+    for path in paths:
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200
+        body = response.json()
+        if path.endswith("aliases"):
+            assert body["operations"]["speech"]["stable"][0]["alias"] == "tts"
+            assert body["operations"]["speech"]["stable"][0]["resolves_to"] is None
+        else:
+            assert [row["id"] for row in body["data"]] == [voice["id"]]
+            assert body["data"][0]["compatible_engines"] == []
+            assert body["has_more"] is True
+        baseline[path] = response.content
+    from tests.test_category_enforcement import _activate, _snapshot
+    _activate(gateway.category_path, _snapshot())
+    category_enforcement.configure(gateway.category_path)
+    for path, expected in baseline.items():
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200
+        assert response.content == expected
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("service,operation,intent,model,aliases", [
+    ("video.generate.video-ltx-2.5-t2v", "videos", "video.generate",
+     "video-ltx-2.5-t2v", {"video", "video-fast"}),
+    ("image.edit.flux2-klein-4b", "image_edits", "image.edit",
+     "flux2-klein-4b-edit", {"image-fast", "image-edit-fast"}),
+])
+def test_media_discovery_uses_the_execution_workflow_target(gateway, service, operation, intent, model, aliases):
+    _activate_discovery_grants(gateway, {service: (intent, "models.list")})
+    gateway.calls.clear()
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    entries = {row["id"] for row in response.json()["data"]}
+    assert {model, *aliases} <= entries
+    response = gateway.client.get("/gateway/v1/aliases", params={"operation": operation}, headers=gateway.headers)
+    assert response.status_code == 200
+    assert {row["alias"] for row in response.json()["operations"][operation]["stable"]} == aliases
+    assert not gateway.calls
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_video_model_discovery_does_not_use_the_gateway_manifest_service(gateway):
+    _activate_discovery_grants(gateway, {"video.generate.ltx-2.5-t2v": ("video.generate", "models.list")})
+    response = gateway.client.get("/gateway/v1/workflows", headers=gateway.headers)
+    assert response.status_code == 200
+    assert {row["id"] for row in response.json()["workflows"]} == {"video.generate.ltx-2.5-t2v"}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert not {"video", "video-fast", "video-ltx-2.5-t2v"} & {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_rerank_discovery_uses_the_runtime_embedding_intent(gateway):
+    target = proxy.resolve_stable_alias("rerank", "rerank").target
+    _activate_discovery_grants(gateway, {target: ("text.embeddings", "models.list")})
+    response = gateway.client.get("/gateway/v1/aliases", params={"operation": "rerank"}, headers=gateway.headers)
+    assert response.status_code == 200
+    assert {row["alias"] for row in response.json()["operations"]["rerank"]["stable"]} == {"rerank"}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert "rerank" in {row["id"] for row in response.json()["data"]}
