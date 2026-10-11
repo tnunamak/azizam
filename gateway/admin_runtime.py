@@ -550,7 +550,10 @@ class AdminSQLiteStore:
             actor_label=actor.actor_label,
             target_kind="profile",
             target_id=profile_id,
-            metadata={"name": record.get("name")},
+            metadata={
+                "name": record.get("name"),
+                "cleared_revoked_credential_ids": record["cleared_revoked_credential_ids"],
+            },
             path=self.path,
         )
         return _profile_summary(record)

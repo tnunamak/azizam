@@ -235,7 +235,7 @@ def test_empty_identity_profile_grants_table_is_dropped(tmp_path):
     accounts.change_person(user["id"], "owner", profile_id=plan["id"], path=db)
     assert accounts.profile_for_user(user["id"], path=db) == plan["id"]
     assert accounts.people(path=db)[0]["profile_id"] == plan["id"]
-    with pytest.raises(ValueError, match="people"):
+    with pytest.raises(ValueError, match=r"1 person \(member@example.test\)"):
         admin_store.delete_profile(plan["id"], path=db)
     accounts.change_person(user["id"], "owner", remove=True, path=db)
     assert admin_store.delete_profile(plan["id"], path=db)["id"] == plan["id"]

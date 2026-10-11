@@ -481,8 +481,13 @@ def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path,
     return token
 
 
-def profile_reference_count(conn, profile_id: str) -> int:
-    """Active product references that an owner must clear before deletion."""
+def profile_people_and_invites(conn, profile_id: str) -> tuple[list[str], int]:
+    """People assigned a plan and its pending invitations, which block deletion."""
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-        return 0
-    return conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]
+        return [], 0
+    people = [row[0] or row[1] or row[2] for row in conn.execute(
+        "SELECT u.display_name,u.email,u.id FROM account_access a JOIN users u ON u.id=a.user_id "
+        "WHERE a.profile_id=? AND a.removed_at IS NULL ORDER BY u.created_at", (profile_id,))]
+    invites = conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL "
+                           "AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]
+    return people, invites

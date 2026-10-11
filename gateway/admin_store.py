@@ -1068,40 +1068,77 @@ def delete_profile(
 ) -> dict[str, Any] | None:
     """Delete a profile row. Returns the deleted record or None if not found.
 
-    Raises ValueError if any app or runtime-profile-mapping still references
-    this profile, to prevent dangling foreign-key references.
+    Raises ValueError, naming every user, while an app (enabled or not), a
+    key that is not revoked, an active mapping, a person or a pending invite
+    uses the plan. Revoked keys cannot authenticate and cannot be deleted, so
+    they would block the plan forever; their plan is cleared instead and the
+    record's ``cleared_revoked_credential_ids`` lists them for the audit.
     """
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM profiles WHERE id = ?", (profile_id,)
         ).fetchone()
         if row is None:
+            conn.rollback()
             return None
-        app_count = conn.execute(
-            "SELECT COUNT(*) FROM apps WHERE default_profile_id = ?", (profile_id,)
-        ).fetchone()[0]
-        if app_count:
+        users = _profile_users(conn, profile_id)
+        if users:
+            conn.rollback()
             raise ValueError(
-                f"profile {profile_id!r} is assigned to {app_count} app(s); "
-                "reassign or clear those apps before deleting"
+                f"Access plan {row['name']!r} is still used by "
+                + "; ".join(users)
+                + ". Move them to another plan, revoke the keys or the invitations, "
+                "or disable the mappings, then delete the plan."
             )
-        mapping_count = conn.execute(
-            "SELECT COUNT(*) FROM runtime_profile_mappings "
-            "WHERE profile_id = ? AND disabled_at IS NULL",
-            (profile_id,),
-        ).fetchone()[0]
-        if mapping_count:
-            raise ValueError(
-                f"profile {profile_id!r} is used by {mapping_count} active runtime "
-                "mapping(s); disable those mappings before deleting"
-            )
-        from gateway.accounts import profile_reference_count
-        if profile_reference_count(conn, profile_id):
-            raise ValueError("access plan is assigned to people or pending invitations; "
-                             "change their plan or revoke the invitations before deleting")
+        cleared = [r[0] for r in conn.execute(
+            "SELECT id FROM credentials WHERE profile_id = ? AND revoked_at IS NOT NULL "
+            "ORDER BY id", (profile_id,),
+        )]
+        conn.execute(
+            "UPDATE credentials SET profile_id = NULL "
+            "WHERE profile_id = ? AND revoked_at IS NOT NULL", (profile_id,),
+        )
         conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.commit()
-    return _profile_row_to_dict(row)
+    return {**_profile_row_to_dict(row), "cleared_revoked_credential_ids": cleared}
+
+
+def _profile_users(conn: sqlite3.Connection, profile_id: str) -> list[str]:
+    """Describe what still depends on a plan, one phrase per kind of user."""
+    def phrase(noun: str, plural: str, names: list[str]) -> str | None:
+        if not names:
+            return None
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        return f"{len(names)} {noun if len(names) == 1 else plural} ({shown})"
+
+    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
+        "SELECT name, disabled_at FROM apps WHERE default_profile_id = ? ORDER BY name",
+        (profile_id,),
+    )]
+    keys = [
+        f"{r[0] or r[1]} on {r[2] or 'an unknown app'}" for r in conn.execute(
+            "SELECT c.display_name, c.prefix, a.name FROM credentials c "
+            "LEFT JOIN apps a ON a.id = COALESCE(c.app_id, c.subject_id) "
+            "WHERE c.profile_id = ? AND c.revoked_at IS NULL ORDER BY c.created_at",
+            (profile_id,),
+        )
+    ]
+    mappings = [f"{r[0]}={r[1]}" for r in conn.execute(
+        "SELECT source_kind, source_value FROM runtime_profile_mappings "
+        "WHERE profile_id = ? AND disabled_at IS NULL ORDER BY priority, created_at",
+        (profile_id,),
+    )]
+    from gateway.accounts import profile_people_and_invites
+    people, invites = profile_people_and_invites(conn, profile_id)
+    found = [
+        phrase("app", "apps", apps),
+        phrase("key", "keys", keys),
+        phrase("active mapping", "active mappings", mappings),
+        phrase("person", "people", people),
+        f"{invites} pending invitation{'' if invites == 1 else 's'}" if invites else None,
+    ]
+    return [item for item in found if item]
 
 
 def _profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
