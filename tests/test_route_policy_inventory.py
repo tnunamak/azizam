@@ -234,6 +234,7 @@ def gateway(monkeypatch, tmp_path, request):
         yield SimpleNamespace(
             client=client, member_client=member_client, calls=calls, paths=paths,
             headers=headers, session_headers=session_headers, category_mode=category_mode,
+            connection_test_body={"api_key": key},
             person_id=user["id"], app_id=app["id"],
             category_path=paths["admin"].parent / "categories.db",
         )
@@ -250,6 +251,7 @@ def _member_model_path(path, route):
     module = getattr(getattr(route, "endpoint", None), "__module__", "")
     return (
         "make" in parts or "media" in parts
+        or path.rstrip("/").endswith("/me/api/connection-test")
         or module in {"gateway.me_make", "gateway.me_media"}
     )
 
@@ -342,7 +344,7 @@ _PNG = bytes.fromhex(
 )
 
 
-def _request_kwargs(route, path, method):
+def _request_kwargs(route, path, method, gateway=None):
     dependant = getattr(route, "dependant", None)
     params = {}
     for field in getattr(dependant, "query_params", ()):
@@ -360,6 +362,12 @@ def _request_kwargs(route, path, method):
     kwargs = {"params": params}
     if method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return kwargs
+
+    if method == "POST" and path.rstrip("/").endswith("/me/api/connection-test"):
+        # This is the isolated member's own freshly minted test credential.
+        # Never send the generic model placeholder to the Home key validator.
+        assert gateway is not None
+        return {**kwargs, "json": dict(gateway.connection_test_body)}
 
     body = {"model": "inventory-placeholder"}
     if path.endswith("/images/generations"):
@@ -501,7 +509,7 @@ def _category_reasons(gateway, value, row, source):
 def _category_oracle(gateway, row):
     if not gateway.category_mode or row["outcome"] == "VIOLATION":
         return
-    if row.get("category evidence") and row["outcome"] in {"denied", "refused", "closed"}:
+    if row.get("category evidence") and row["outcome"] in {"denied", "refused", "closed", "refused (wrapped)"}:
         row["rule"] = "category-rules refusal with no backend call"
         return
     previous = row["rule"]
@@ -629,6 +637,30 @@ _METADATA_CONTRACT = {
 }
 
 
+def _connection_test_contract(method, template, response, row, gateway):
+    """Judge only Home's explicit wrapper; receipts and backend calls still veto it."""
+    if (method, template) != ("POST", "/me/api/connection-test"):
+        return
+    if response.status_code != 200 or gateway.calls or row.get("dispatched") != "no":
+        return
+    body = response.json()
+    if not isinstance(body, dict):
+        return
+    reason = body.get("reason")
+    if body.get("ok") is False and isinstance(reason, str) and reason.strip():
+        row["outcome"] = "refused (wrapped)"
+        row["rule"] = "connection test reported a refusal; no model ran"
+        row["detail"] = reason
+        if "category rules:" in reason:
+            _category_reasons(
+                gateway, {"reason": reason[reason.index("category rules:"):]}, row, "wrapper",
+            )
+    elif body.get("ok") is True and body.get("path") == "/v1/models":
+        row["outcome"] = "metadata (contract)"
+        row["rule"] = "connection test fell back to the catalog; no model ran"
+        row["detail"] = ""
+
+
 def _metadata_contract(method, template, response, row):
     reason = _METADATA_CONTRACT.get((method, template))
     if reason is None or response.status_code != 200:
@@ -681,6 +713,137 @@ def _decoy_oracle(method, template, row, gateway):
         row["detail"] = ""
 
 
+
+@pytest.mark.parametrize("method,template,dispatched,calls", [
+    ("GET", "/api/ps", "yes", ["health"]),
+    ("GET", "/ollama/api/ps", "yes", ["HTTP backend"]),
+    ("GET", "/v1/models", "yes", []),
+    ("POST", "/me/api/make/jobs", "yes", []),
+    ("GET", "/api/ps", "no", ["send_llm_execution_request"]),
+    ("GET", "/ollama/api/ps", "no", ["health", "network connection"]),
+    ("POST", "/me/api/connection-test", "yes", []),
+    ("POST", "/me/api/connection-test", "no", ["HTTP backend"]),
+])
+@pytest.mark.parametrize("oracle", ["decoy", "category"])
+def test_inventory_oracles_preserve_dispatch_and_backend_violations(
+    method, template, dispatched, calls, oracle,
+):
+    env = SimpleNamespace(category_mode=True, calls=calls)
+    row = {
+        "status": 200, "outcome": "VIOLATION", "dispatched": dispatched,
+        "backend called": "yes" if calls else "no",
+        "category evidence": True, "category reasons": "category rules: NO_GRANT",
+        "rule": "dispatched receipt" if dispatched == "yes" else "backend call",
+        "detail": "existing violation evidence",
+    }
+    original = dict(row)
+    if oracle == "decoy":
+        _decoy_oracle(method, template, row, env)
+    else:
+        _category_oracle(env, row)
+    assert row["outcome"] == "VIOLATION"
+    assert row == original, "Oracles must retain the original violation evidence"
+
+
+@pytest.mark.parametrize("available,expected", [
+    (True, "VIOLATION"), (False, "metadata (contract)"),
+])
+def test_client_capabilities_metadata_contract_checks_available(available, expected):
+    response = httpx.Response(200, json={
+        "audience": "client",
+        "capabilities": [{"id": "inventory-chat", "available": available}],
+    })
+    row = {"outcome": "VIOLATION", "rule": "unexpected success", "detail": ""}
+    _metadata_contract("GET", "/gateway/v1/capabilities", response, row)
+    assert row["outcome"] == expected
+    if available:
+        assert "inventory-chat" in row["detail"]
+
+
+def test_capabilities_metadata_contract_requires_availability_field():
+    response = httpx.Response(200, json={
+        "audience": "client", "capabilities": [{"id": "inventory-chat"}],
+    })
+    row = {"outcome": "VIOLATION", "rule": "unexpected success", "detail": ""}
+    with pytest.raises(AssertionError):
+        _metadata_contract("GET", "/gateway/v1/capabilities", response, row)
+    assert row["outcome"] == "VIOLATION"
+
+
+
+@pytest.mark.parametrize("ok,path,reason,expected", [
+    (False, "/v1/chat/completions", "The gateway returned HTTP 403.", "refused (wrapped)"),
+    (True, "/v1/models", "Your key can reach the model catalog.", "metadata (contract)"),
+    (True, "/v1/chat/completions", "A one-token local chat request succeeded.", "VIOLATION"),
+    (False, "/v1/chat/completions", "", "VIOLATION"),
+    (False, "/v1/chat/completions", "   ", "VIOLATION"),
+    (None, "/v1/models", "Missing verdict", "VIOLATION"),
+])
+def test_connection_test_wrapper_contract(ok, path, reason, expected):
+    env = SimpleNamespace(category_mode=False, calls=[])
+    row = {"outcome": "VIOLATION", "dispatched": "no", "rule": "unexpected success", "detail": ""}
+    response = httpx.Response(200, json={
+        "ok": ok, "path": path, "model": "fast" if path.endswith("completions") else None,
+        "reason": reason, "request_id": None,
+    })
+    _connection_test_contract("POST", "/me/api/connection-test", response, row, env)
+    assert row["outcome"] == expected
+
+
+@pytest.mark.parametrize("ok,path", [(False, "/v1/chat/completions"), (True, "/v1/models")])
+@pytest.mark.parametrize("calls,dispatched", [(["HTTP backend"], "no"), ([], "yes")])
+def test_connection_test_wrapper_never_overrides_backend_or_dispatch(ok, path, calls, dispatched):
+    env = SimpleNamespace(category_mode=True, calls=calls)
+    row = {
+        "outcome": "VIOLATION", "dispatched": dispatched,
+        "rule": "backend or receipt violation", "detail": "original evidence",
+    }
+    original = dict(row)
+    response = httpx.Response(200, json={
+        "ok": ok, "path": path, "model": None,
+        "reason": "category rules: NO_GRANT", "request_id": "synthetic-receipt",
+    })
+    _connection_test_contract("POST", "/me/api/connection-test", response, row, env)
+    _category_oracle(env, row)
+    assert row == original
+
+
+@pytest.mark.parametrize("reason,receipt_evidence,expected", [
+    ("The gateway returned HTTP 403.", False, "not exercised"),
+    ("Refused: category rules: NO_GRANT", False, "refused (wrapped)"),
+    ("The gateway returned HTTP 403.", True, "refused (wrapped)"),
+])
+def test_connection_test_wrapper_requires_category_proof(reason, receipt_evidence, expected):
+    env = SimpleNamespace(category_mode=True, calls=[])
+    row = {
+        "outcome": "VIOLATION", "dispatched": "no", "rule": "unexpected success",
+        "detail": "", "category evidence": receipt_evidence,
+    }
+    response = httpx.Response(200, json={
+        "ok": False, "path": "/v1/chat/completions", "model": "fast",
+        "reason": reason, "request_id": "synthetic-receipt",
+    })
+    _connection_test_contract("POST", "/me/api/connection-test", response, row, env)
+    _category_oracle(env, row)
+    assert row["outcome"] == expected
+
+
+def test_connection_test_is_selected_without_selecting_home_metadata():
+    route = SimpleNamespace(endpoint=SimpleNamespace(__module__="gateway.home_api"))
+    assert _member_model_path("/me/api/connection-test", route)
+    assert _model_path("/me/api/connection-test", route)
+    assert not _member_model_path("/me/api/home", route)
+    assert not _model_path("/me/api/home", route)
+
+
+def test_connection_test_request_uses_owned_fixture_credential(gateway):
+    route = SimpleNamespace()
+    kwargs = _request_kwargs(route, "/me/api/connection-test", "POST", gateway)
+    assert kwargs["json"] == gateway.connection_test_body
+    assert gateway.headers["Authorization"] == f"Bearer {kwargs['json']['api_key']}"
+    assert kwargs["json"] is not gateway.connection_test_body
+
+
 def _report(rows, title):
     gaps = [row for row in rows if row["outcome"] == "coverage gap"]
     not_exercised = [row for row in rows if row["outcome"] == "not exercised"]
@@ -711,7 +874,7 @@ def _http_inventory(gateway, title=None, report=True):
                 headers = gateway.session_headers if member else gateway.headers
                 response = client.request(
                     method, path, headers=headers, follow_redirects=False,
-                    **_request_kwargs(route, path, method),
+                    **_request_kwargs(route, path, method, gateway),
                 )
                 row["status"] = response.status_code
                 if response.status_code == 200:
@@ -748,6 +911,7 @@ def _http_inventory(gateway, title=None, report=True):
                     except ValueError:
                         pass
                 _record_receipts(gateway, before, row)
+                _connection_test_contract(method, template, response, row, gateway)
             except Exception as exc:
                 row["outcome"] = "VIOLATION"
                 row["rule"] = "unexpected exception"
@@ -762,6 +926,10 @@ def _http_inventory(gateway, title=None, report=True):
             _category_oracle(gateway, row)
             rows.append(row)
     assert rows, "No model-facing HTTP routes discovered; inventory would be vacuous"
+    assert any(
+        row["method"] == "POST" and row["path"] == "/me/api/connection-test"
+        for row in rows
+    ), "The session connection test must appear in ordinary, category and decoy inventories"
     if gateway.category_mode:
         for target in ("paid chat models", "paid decision paths"):
             rows.append({
