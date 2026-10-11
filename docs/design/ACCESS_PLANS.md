@@ -1,620 +1,649 @@
-# Access plans (design v1)
+# Access plans (design v2)
 
-Status: proposed design, not implemented. 2026-10-11. Red-team: partial. An
-independent Codex pass stalled after 30 minutes. Before it stalled it named
-three bypass paths (LiteLLM key delegation, signed creation links,
-configurable public paths). I checked all three in the code and they are
-covered in §2.5. A full independent red-team is still required before any
-build starts (P20).
+Status: proposed design, not implemented. 2026-10-11. v2 resolves the
+independent red-team of v1 (`azizam-redteam-access-plans-e20b388-r0.md`: 3
+blockers, 9 major, 3 minor). The resolution table is §9. An independent
+consistency check of this revision (a different model) found 20 defects
+(missing revocations, a direct-access gain through Try, cross-reference and
+citation errors); all are fixed here. A go decision on this version is still
+required before any build starts (P20).
 
 This design replaces the built-in default access, the "Legacy …" plans and the
 separate category-rule plans with one kind of thing: an **access plan** that
-the owner names and assigns. It amends `CATEGORIES_AND_PLANS.md` (v3) in the
-places listed in §2.10. Everything else in v3 stays.
+the owner names and assigns. It amends `CATEGORIES_AND_PLANS.md` (v3) where
+§2.12 says. Everything else in v3 stays.
 
 Inputs:
-- Research: `~/Documents/azizam/ux-findings/research-results/azizam-research-access-plan-composition-20261011-b.md`
-  (AWS IAM, Google Workspace, Microsoft 365, Tailscale, Cloudflare Access,
-  Discord, Slack, GitHub, Notion, Figma, OpenRouter, LiteLLM, Open WebUI,
-  Family Link, Screen Time, Microsoft Family Safety, Plex, Jellyfin; §29
-  network-location trust: Tailscale, Home Assistant, Plex, Jellyfin). Cited
-  below as [R§n].
+- Research: `~/Documents/azizam/ux-findings/research-results/azizam-research-access-plan-composition-20261011-b.md`.
+  Cited as [R§n].
+- Red-team of v1: `~/Documents/azizam/ux-findings/research-results/azizam-redteam-access-plans-e20b388-r0.md`.
+  Cited as [RT B1] … [RT m3].
 - Owner data preview: `~/Documents/azizam/ux-findings/reports/access-plan-migration-preview-2026-10-11.md`
   (read-only copy of `admin.db`). Cited as [P§n].
-- Backlog D1: PF-D101 to PF-D107 in `principles-fix-backlog-2026-10-11.md`.
-- Divan `local-ai-gateway/`, 2026-10-10: the categories v3 evidence and
-  red-teams.
-- Code at `origin/release/r17` (`0061d150`). All `file:line` references
-  below are at that commit. I read them myself unless marked [P].
+- Divan `local-ai-gateway/`, 2026-10-10: the categories v3 evidence.
+- In-flight branch `fix/access-hygiene`, which this design assumes has landed:
+  Try keys bound to the sign-in session and expiring with it; the OIDC client
+  secret in the secret store; plan deletion refused while keys, apps, people,
+  invitations or mappings use the plan; `legacy_identity_profile_grants`
+  dropped. This design does not redesign those.
+- Code: all `file:line` references are at `e20b3882`. The code there is the
+  same as `0061d150` (only this file differs).
 
 ## 1. Problem
 
-### 1.1 The owner's questions, answered from the code
+### 1.1 The owner's questions
 
 | Owner, 2026-10-11 | Answer |
 |---|---|
-| "I don't want legacy anything so why do we still have them vs mapping old keys to modern stuff? And why do we have so many?" | Five plans named "Legacy …" came from a one-time import of `proxy_api_keys.yml` on 2026-05-22 [P§6]. Nothing mapped them to current plans afterwards. The settings picker hides two of them by name (`web/src/app/settings/page.tsx:99-101`), so the other three still show. The instance has 9 plans for 15 live apps. With one rule change (§2.1, plans do not restrict by API protocol) they reduce to 4 (§4.3). |
-| "'Use the default (None — built-in local access)' is None as an access plan supported by divan?" | No. Categories v3 (rule A10) says "A missing identity, an empty plan list or a failed lookup denies. There is no implicitly unrestricted app." The "None" option (`settings/page.tsx:954`) and its copy "Choosing none does not block AI access" (`:986`) contradict the validated design. |
-| "personally I don't want the default to be anything local in my own instance" | In this design there is no runtime default anywhere. A person or app with no plan cannot generate. The invite form can preselect a plan you choose, and its initial setting is "Ask each time" (§2.6). |
-| "merge category rules into access plans" | Yes. v3 already put category rules inside its plans. The implementation then stored those plans in a second store, apart from the access plans, so the gateway now has two things called "plan". This design keeps one (§2.2). |
-| "tag models or workflows … as NSFW … have a default access plan filter out NSFW things? And maybe some other category?" | You define a category (for example "Audience": Everyone, Teens, Adults only), tag models and workflows with it, and add "Block: Audience is Adults only" to a plan. Untagged items are blocked by that plan until you tag them. Walkthrough in §2.7. |
-| "Invite someone … Choose an access plan < what are the options and specifically what is the default" | Today the options are all 9 plans, including the 5 Legacy ones (`web/src/app/people/page.tsx:72-99`). Nothing is preselected (`:953`), and the server requires a plan (`gateway/accounts_api.py:62-63`). The Settings "Default plan" does not feed the invite form; it is a runtime fallback for people with no plan. After this design: the options are your current plans, each with a one-line summary. The preselection is whatever you set in Settings, initially none (§3.4). |
+| "I don't want legacy anything so why do we still have them vs mapping old keys to modern stuff? And why do we have so many?" | Five "Legacy …" plans came from a one-time import of `proxy_api_keys.yml` on 2026-05-22 [P§6]. Nothing mapped them afterwards. The instance has 9 plans for 15 live apps. After this design it has 5 (§8). |
+| "Is None as an access plan supported by divan?" | No. Categories v3 rule A10: "A missing identity, an empty plan list or a failed lookup denies." The "None" option (`web/src/app/settings/page.tsx:954`) and "Choosing none does not block AI access" (`:986`) contradict it. |
+| "I don't want the default to be anything local in my own instance" | There is no runtime default anywhere. A person with no plan cannot generate. Keyless LAN access is removed, not remapped (§2.8). |
+| "merge category rules into access plans" | Yes (§2.2). |
+| "tag models or workflows … as NSFW … have a default access plan filter out NSFW things?" | Define a category, tag items, add a Blocked row to a plan. Untagged items are blocked by that plan until tagged (§2.10). |
+| "Invite someone … what are the options and specifically what is the default" | Today: all 9 plans, nothing preselected (`web/src/app/people/page.tsx:72-99`, `:953`). After: your plans with a summary each; the preselection is your Settings choice, initially "Ask each time" (§2.9). |
 
 ### 1.2 How a request gets its plan today
 
-`authenticate_request` (`proxy.py:2461-2496`) checks, in this order:
+`authenticate_request` (`proxy.py:2461-2496`), in order:
 
 | Step | Condition | Plan used | Code |
 |---|---|---|---|
 | 0 | Auth disabled, or a public path | Built-in default (`NO_AUTH_CONTEXT`) | `proxy.py:2468-2469`, `:13406-13409` |
-| 1 | An app key | Key plan → app plan → the app owner's person plan (only if self-service apps are on and the owner is human) → **built-in default** | `gateway/admin_runtime.py:1682-1720` (default at `:1703`); `proxy.py:1997-2007` |
-| 1a | Person plan | `account_access.profile_id`, then `legacy_identity_profile_grants`, then an active `runtime_profile_mappings` row (all users, email, domain, role, OIDC group), then nothing | `gateway/accounts.py:140-149`; `proxy.py:1919-1975` (`_default_plan_for_user`, `_effective_plan_for_person`) |
-| 2 | No key, client IP in `lan_bypass_cidrs` | **Built-in default**, plus full media metadata | `proxy.py:2487-2489`, `:2385-2402` |
-| 3 | No key, path starts with a configured path token | **Built-in default** | `proxy.py:2491-2494` |
-| — | Browser sessions (Home, Make, catalog) | Person plan, else `"default-local"` → built-in default | `proxy.py:1992-1994`, `:15884`, `:16026`; `gateway/user_runtime.py:110-116`, `:229`; `gateway/home_api.py:49-65` |
+| 1 | An app key | Key plan → app plan → owner's person plan (only if self-service apps are on and the owner is a person) → **built-in default**. First found wins; there is no intersection | `gateway/admin_runtime.py:1682-1720` (default `:1703`); `proxy.py:1997-2007` |
+| 1a | Person plan | `account_access.profile_id`, then an active `runtime_profile_mappings` row, then nothing | `gateway/accounts.py:140-149`; `proxy.py:1919-1975` |
+| 2 | No key, client IP in `lan_bypass_cidrs` | **Built-in default**, full media metadata, identity `lan-bypass` with no person or app | `proxy.py:2385-2401`, `:2487-2489` |
+| 3 | No key, a configured path token | **Built-in default** | `proxy.py:2491-2494` |
+| 4 | Unknown `sk-` key on a delegation route | **No Azizam plan**; LiteLLM decides | `proxy.py:2498-2535`, e.g. `:25490` |
+| — | Browser surfaces | Person plan, else `default-local` | `proxy.py:1992-1994`; `gateway/user_runtime.py:110-116`; `gateway/home_api.py:49-65` |
 
-Two more fallbacks make an empty plan mean "everything":
-- `load_profile(None or {})` returns the built-in default (`gateway/profiles.py:365-371`).
-- `evaluate_and_apply` uses the default when the identity is missing (`gateway/runtime_auth.py:283-302`).
+Two more fallbacks make an empty plan mean "everything": `load_profile(None
+or {})` (`gateway/profiles.py:365-371`) and `evaluate_and_apply` with a missing
+identity (`gateway/runtime_auth.py:283-302`). 12 active keys on 5 apps resolve
+to the default [P§4].
 
-On this instance no mapping is active, so every person without an assigned
-plan falls to the default. 12 active keys on 5 apps resolve to it [P§4].
+The default (`DEFAULT_PROFILE = AppProfile()`, `gateway/policy.py:280`) grants
+every local model, workflow and capability, may load models, has no paid
+providers, no direct engine access, basic receipt detail and no cap [P§1].
 
-### 1.3 What the built-in default grants
-
-`DEFAULT_PROFILE = AppProfile()` (`gateway/policy.py:280`). Every allow-list
-is `None`, which means "no opinion" (`policy.py:177-185`). In effect: every
-local model, workflow, capability and protocol; it may load models; no remote
-providers (`policy.py:517-523`); no direct engine access; basic receipt
-detail; no spending cap [P§1]. The settings page calls this "None — built-in
-local access".
-
-### 1.4 Keyless requests
-
-The repository config turns LAN bypass on for 127/8, ::1, 192.168/16, 10/8
-and 100.64/10 (`proxy_config.yml:1432-1434`), although the comment above it
-says "all OFF by default" (`:1420`). Whether the deployed config matches is
-**UNVERIFIED** (I did not read the live config). Any device on those networks
-that sends no key runs with the built-in default. A list of placeholder keys
-(`gateway/lan_auth_policy.py:43-54`) lets LAN clients send a dummy key and
-still get the bypass.
-
-Path tokens are configured empty (`proxy_config.yml:1450`), and the config
-comment says no public route accepts a token prefix (`:1446-1448`). The code
-path still exists (`proxy.py:2374-2384`, `:30212-30214`).
-
-A third path has no plan at all. When a key is not an Azizam key but starts
-with `sk-`, many routes forward it to LiteLLM with an empty Azizam identity
-and skip Azizam's route policy (`proxy.py:2498-2535`; for example `:25490`).
-LiteLLM then decides alone. Whether LiteLLM is enabled on the instance is
+The repository config turns LAN bypass on for 127/8, ::1, 192.168/16, 10/8 and
+100.64/10 (`proxy_config.yml:1432-1434`). The deployed config is
 **UNVERIFIED**.
 
-Signed creation links check only the signature and expiry
-(`proxy.py:23631-23670`), not whether the creator may still use the work.
+### 1.3 Two systems called "plan"
 
-### 1.5 Two systems called "plan"
+1. **Access plans**: `profiles` table, `AppProfile`, `gateway/policy.py:373`.
+2. **Category plans**: a snapshot in `categories.db`, evaluated by
+   `gateway/category_policy.py:375`, attached in `PolicyVersion.people/apps`.
 
-1. **Access plans** (`profiles` table, `AppProfile`, evaluated by
-   `gateway/policy.py:373`). These are what the People, Apps, Invite and
-   Settings pages show.
-2. **Category plans** (inside a snapshot in `categories.db`, evaluated by
-   `gateway/category_policy.py:375`, attached to people and apps in
-   `PolicyVersion.people/apps`, `:459-466`). These have grants, require/deny
-   rows and a `legacy` mode (`:256-257`).
+The category gate only tightens an allowed decision, and it passes in four
+cases: no gate configured (`gateway/category_enforcement.py:153-162`); a
+store file that was never opened (`:68-70`); no active snapshot (`:87-90`,
+`:112-113`); both the person and the app unlisted (`:116-117`; the LAN
+identity has neither, so it always skips). `visible()` passes with no gate
+(`:171-173`). The adapter resolves the service by its stem without a
+revision and takes the first match (`:43-44`, `:135`). It never passes phase,
+output or metadata completeness, so `decision_for` assumes `dispatch` and
+complete metadata (`category_policy.py:482`, `:497`) [RT B1]. Whether an
+active snapshot exists on the instance is **UNVERIFIED**.
 
-The category gate only tightens an allowed decision. It does nothing with no
-active snapshot (`gateway/category_enforcement.py:116-118`). It skips any
-person or app that the snapshot does not list (`:122-123`). The Categories
-page says "Nothing is enforced by this page yet"
-(`web/src/app/categories/page.tsx:273`). The v3 header says "not
-implemented", but the kernel, store, API (`gateway/category_api.py:389-396`)
-and gate exist. Whether an active snapshot exists on the instance is
-**UNVERIFIED** (the store is in `data/`).
+### 1.4 Two provider allow-lists
 
-### 1.6 Two provider allow-lists
+A paid provider call passes only if both agree [RT M3]:
+- the plan's `remote.providers` (`gateway/policy.py:517-534`);
+- the provider's `allowed_plans` (`gateway/providers.py:1281-1302`). An absent
+  key means no restriction. `null`, an empty list or an invalid value denies.
+  A non-mapping provider policy counts as absent (`:1279`). Membership compares
+  the plan's JSON `id`, not its row id.
 
-A remote provider call passes only if both lists agree:
-- the plan's `remote.providers` (`gateway/policy.py:517-523`), and
-- the provider's `allowed_plans` in provider settings, when that key exists
-  (`gateway/providers.py:1281-1297`; discovery repeats it at
-  `proxy.py:13947-13948`).
+On this instance both providers list `["owner-local"]` [P§2]. Changing a
+plan's display name is safe: it does not change the JSON id
+(`gateway/admin_store.py:1082-1092`). Changing the JSON id or merging plans
+would drop provider access.
 
-`allowed_plans` stores the plan's JSON `id` (`owner-local`), not its row id
-[P§2]. Renaming or merging that plan would silently remove provider access.
-The Providers page shows only the second list (PF-D107).
+### 1.5 Spending today
 
-### 1.7 Other legacy items (P11)
+Plan caps add up `provider_spend` rows by `profile_id`, the plan id
+(`gateway/providers.py:303-316`, `:1060-1073`). The ledger has no person or
+app column, so every app on one plan shares one total [RT M1]. The day is a
+rolling 24 hours (`:425`, `:1131`); the month is the UTC calendar month
+(`:1091-1093`). A per-request ceiling exists (`gateway/policy.py:74`,
+`providers.py:406-408`). Unknown costs become `needs_reconciliation`, which
+blocks new paid requests in scope until the owner reconciles them
+(`providers.py:352-376`, `:564-570`, `:1032-1044`, `:613-649`). No stored plan
+sets a cap [P§2]. Provider and global caps add up by provider only
+(`providers.py:1000-1012`, `:1066-1075`).
 
-- `legacy_identity_profile_grants` table, 0 rows, still read in 4 places
-  (`gateway/accounts.py:148`, `:380`, `:422`, `:427`, `:491`).
-- Five imported keys with a `legacy-…` prefix, a `legacy-key-import` service
-  account that owns 3 apps, and the `proxy_api_keys.yml` import path
-  (`gateway/runtime_auth.py`) [P§6].
-- `runtime_profile_mappings` (2 rows, both disabled) and the YAML bootstrap
-  maps `role_profile_ids`, `domain_profile_ids`, `email_profile_ids`,
-  `default_profile_id` (`proxy.py:1939-1958`).
-- `ModelAccessPolicy`, documented as a "Backward-compatible alias for older
-  LLM-only profile configs" (`gateway/policy.py:138-140`).
-- Built-in pseudo-plans `default` and `default-local` accepted as ids without
-  rows (`gateway/admin_store.py:473`, `:2001`; `proxy.py:1684`, `:1766`).
-- The "Let people create their own apps" toggle changes which plan an app
-  gets: when it is off, apps without a plan use the built-in default
-  instead of the person's plan (`settings/page.tsx:1060`; `proxy.py:1998`).
+### 1.6 Other legacy items (P11)
 
-### 1.8 What the owner sees
-
-- Settings offers "None — built-in local access", "Default local (built-in)"
-  and "Default (built-in)" (`settings/page.tsx:953-963`).
-- Apps says "Each app gets a key with your account's access plan"
-  (`web/src/app/apps/page.tsx:337`), which is false for apps with their own
-  plan and, when self-service is off, for apps without one (PF-D102).
-- Plan summaries say "Capabilities follow gateway defaults"
-  (`web/src/app/people/people-api.ts:134`, `:143`) (PF-D104).
-- A provider chip says "Local only by default" for any plan without paid
-  access (`web/src/app/providers/page.tsx:1856`) (PF-D105).
+Five keys with a `legacy-` prefix and the `legacy-key-import` service account
+that owns daisy, cap and open-webui [P§6]; `runtime_profile_mappings` (2 rows,
+disabled) and the YAML bootstrap maps (`proxy.py:1939-1958`);
+`ModelAccessPolicy` (`gateway/policy.py:137-141`, `:170-173`); the `default` and
+`default-local` ids (`gateway/admin_store.py:473`, `:2001`); first-run seeding
+of live plans (`gateway/default_profiles.py`); the category kernel's legacy
+mode (`category_policy.py:256-257`, `:306`, `:327`); the "Let people create
+their own apps" toggle changing which plan an app gets
+(`settings/page.tsx:1060`; `proxy.py:1998`).
 
 ## 2. The model
 
-### 2.1 Unit of permission: one access plan
+### 2.1 An access plan
 
-An **access plan** is a named, reusable object. Many people and apps can use
-the same plan. It has these parts:
+An **access plan** is a named, reusable object. Many people and apps can hold
+the same plan.
 
 | Part | UI label | Meaning |
 |---|---|---|
-| Grants | **Can use** | Per capability, the exact models and workflows allowed. Nothing is allowed unless it is listed. |
-| Providers | **Paid providers** | The providers a granted model may route to. An empty list means engines on this gateway only. |
-| Provider fallback | **Use a paid provider when the engine is unavailable** | Off by default. A fallback route must also pass every other rule (§2.4). |
-| Category rules | **Blocked categories**, **Must match** | Deny rows and require rows over owner-defined categories (v3 semantics, unchanged). |
-| Caps | **Spending caps** | Per person and per app, per day and per month, for paid routes (§2.8). |
-| Direct engine access | **Direct engine access** | Lets an app call an engine's own API through the gateway (today's native passthrough). Audited. |
-| Other settings | under **Details** | May load models that aren't running; receipt detail (basic, standard, full); metadata in delivered files. |
+| Grants | **Can use** | Per capability, the exact models and workflows (pinned revisions). Nothing is allowed unless listed. |
+| Direct engine access | **Direct engine access** | Exact engines and operations an app may call through the engine's own API (§2.7). Empty means none. |
+| Providers | **Paid providers** | Providers a granted item may route to. Empty means engines on this gateway only. |
+| Provider fallback | **Use a paid provider when the engine is unavailable** | Off by default. A fallback route passes every other rule as its own bundle. |
+| Category rules | **Blocked categories**, **Must match** | v3 deny and require rows over the shared category catalog. |
+| Caps | **Spending caps** | Per request, per day, per month, for paid routes. A cap applies to the counter of whoever holds the plan (§2.11). |
+| Settings | under **Details** | May load models that aren't running; receipt detail; metadata in delivered files. |
 
-Capabilities are the glossary list (`VOICE.md`): Chat, Images, Video, Voice,
-Transcription, Music, Sound effects, Embeddings, plus Direct engine access.
-Decisions (`decision.systemone`) also needs a capability name; the glossary
-does not list one yet (**UNVERIFIED** which word the UI uses today). Model
-discovery (`models.list`, `models.show` and similar) is not a capability. Any
-identity that may generate can list models, and the list is filtered by the
-same evaluator. Model management through the Ollama API (`models.pull`,
-`push`, `create`, `copy`, `delete`) returns 501 today (`proxy.py:27215-27281`)
-and is never grantable.
+Grants are exact (v3 A9). Each capability in a plan has an authoring flag
+**Offer new models and workflows** (`offer_new`). When the owner adds a model
+or workflow, the add flow ends with "Who can use it?". It preselects every
+plan whose flag is on for that capability and shows the gain preview. The
+kernel sees only exact grants [R§21; Plex "All Libraries", R§17].
 
-**Plans stop restricting by API protocol** (OpenAI, Anthropic, Ollama). A
-protocol is the shape of a request, not what the request may use: the same
-model is reachable through each. No product in the research restricts access
-by wire protocol: OpenRouter guardrails restrict models and providers [R§11],
-LiteLLM restricts model groups [R§12], Open WebUI restricts features and
-models [R§13]. Protocol rules today act as capability rules in two places,
-and the migration converts them: `openai.audio` only becomes Voice,
-Transcription, Music and Sound effects; `provider-native` becomes Direct
-engine access. Risk: if some capability is reachable only through one
-protocol, dropping the rule widens a plan. The migration dry-run must list
-every intent each protocol reaches (§4.2, check M4). **UNVERIFIED** until
-that check runs.
+**Plans do not restrict by API protocol** (OpenAI, Anthropic, Ollama). A
+protocol is the shape of a request, not what it may use. Protocol rules that
+act as capability rules today are converted by the intent table in §2.2. No
+product in the research restricts by wire protocol [R§11-§13].
 
-Grants are exact (v3 rule A9). A plan never matches "every model" by
-pattern. To keep a household plan easy to maintain, each capability in a plan
-has an authoring flag **Offer new models and workflows** (stored as
-`offer_new`). When the owner adds a model or workflow, the add flow ends with
-a step "Who can use it?". That step preselects every plan whose flag is on
-for that capability and shows the gain preview. The kernel still sees only
-exact grants. Nothing widens without that previewed owner step (v3
-principle 5). This is the "currently reviewed items versus future automatic
-membership" distinction in [R§21], and Plex's warning that "All Libraries"
-silently includes new libraries [R§17].
+### 2.2 Capabilities
 
-### 2.2 Category rules belong inside the plan
+The capability ids are the catalog's existing keys
+(`gateway/model_presentation.py:121-124`). The evaluator receives the
+capability, never a raw intent. `PROTOCOL_CAPABILITIES` (same file,
+`:130-143`) becomes the one mapping from intent to capability [RT M4]. It
+does not yet list every intent the routes emit: the build adds the intents
+marked † below, and a test fails if a route emits an intent the map does not
+list.
 
-Decision: category **rules** (Blocked categories, Must match) are part of
-each access plan. Category **definitions** and the **tags** on models,
-workflows and provider routes are a shared catalog, edited once and used by
-every plan.
+| Capability id | Label (catalog) | Intents mapped to it today |
+|---|---|---|
+| `chat` | Chat | `chat.completions`, `text.completions`†, `chat.responses`†, `chat.generate`†, `chat.messages`†, `chat.messages.count_tokens`† |
+| `image` | Images | `image.generate`, `image.edit` |
+| `video` | Video | `video.generate` |
+| `speech` | Speech | `speech.synthesis`, `audio.speech` |
+| `transcribe` | Transcription | `speech.transcription`, `speech.translation` |
+| `music` | Music | `music.generate`† |
+| `sfx` | Sound effects | `sfx.generate`† |
+| `audio` | Audio | `audio.generate` (no subtype) |
+| `decide` | Decisions | `decision.systemone` |
+| `embed` | Embeddings | `text.embeddings` |
+| `rerank` | Rerank | `text.rerank` |
+| (§2.7) | Direct engine access | `provider.native` |
 
-Evidence:
-- v3 already designed it this way: its plan has `grants`, `require` and
-  `deny` together (`CATEGORIES_AND_PLANS.md`, Plans). The split into two
-  stores happened in the implementation, not the design.
-- Jellyfin keeps blocked tags, required tags and maximum rating in the same
-  per-user policy that grants libraries, and checks blocked tags first
-  [R§18]. OpenRouter keeps model allow-lists and privacy rules in one
-  guardrail object [R§11]. Plex keeps rating and label restrictions on the
-  share itself [R§17].
-- Tailscale Aperture shows what happens when labels sit beside grants
-  without rules: "Additive and allow-only", so a broad grant still allows a
-  labelled resource [R§4]. A label must be referenced by a rule to restrict.
-- A second engine beside the plans needs its own "who does it govern" rule.
-  Today that rule is "unlisted identities skip it"
-  (`category_enforcement.py:122-123`), which is the gap D1 must close.
-- P16: one name per thing. Two objects both called "access plan" fail the
-  check by construction.
+Not capabilities:
+- Discovery (`models.list`, `models.show`, `models.running`,
+  `models.version`) is allowed for any identity that passes step 1 of §2.5.
+  The list is filtered by the same evaluator.
+- Model management through Azizam's Ollama routes (`models.pull`, `push`,
+  `create`, `copy`, `delete`) returns 501 (`proxy.py:27215-27281`) and is
+  never grantable. Direct engine access is a separate grant (§2.7).
 
-v3 constraints kept: deny-wins; unknown deny input blocks
-(`DENY_INPUT_UNKNOWN`); `in` passes only when every accepted value is in the
-row; bundles (every member of the selected closure must pass); waivers only
-on one require row's missing value; outside metadata is evidence, never a
-grant; one evaluator for runtime, preview and "why denied".
+The catalog says "Speech" where `VOICE.md` says "Voice". This is an existing
+P16 conflict, outside this design; the plan uses the id `speech`.
 
-Not adopted: an instance-wide "always block" bound beside plans [R§21
-mentions it as optional]. An owner who wants it adds the same Blocked row to
-each plan; the change preview shows every plan it touches. Revisit if an
-owner runs many plans.
+### 2.3 Category rules belong inside the plan
 
-### 2.3 Assignment
+Category **rules** (Blocked categories, Must match) are part of each plan.
+Category **definitions** and **tags** on models, workflows, routes and
+engines are a shared catalog. Evidence: v3 already designed plans with
+`grants`, `require` and `deny` together; Jellyfin, OpenRouter and Plex keep
+restrictions on the same object that grants [R§17, R§18, R§11]; a second
+engine beside the plans needs its own "who does it govern" rule, which is the
+bypass in §1.3; P16 forbids two things called "access plan".
 
-- Every **person** has exactly one access plan, or none.
-- Every **app** has exactly one access plan, or **Same as its person**, or
-  none. "Same as its person" is a stored choice on the app, not a fallback.
-  It follows the person's plan when that plan changes.
-- **Keys have no plan.** A key acts for its app. Today's key-level plans
-  (`credentials.profile_id`) go away.
-- Every app belongs to one person, who is accountable for it. Service
-  accounts no longer own runtime apps. The migration moves the
-  `legacy-key-import` apps to the owner (§4.3). Research says not to invent a
-  person-less exemption [R§20, item 6].
-- A request runs only if **both** the person's plan and the app's plan allow
-  it (intersection, v3 A10). With "Same as its person" the two are the same
-  plan. Attaching a plan can only narrow access, never widen it [R§20,
-  Rank 1; R§26].
+v3 semantics are kept unchanged [RT keep 5]: deny wins; a deny over a missing
+value blocks (`DENY_INPUT_UNKNOWN`); `in` passes only when every accepted
+value is in the row; every applicable member of the selected closure must
+pass; alternative routes are separate bundles; a waiver waives only one
+require row's missing value; outside metadata is evidence, never a grant.
+The operators are the kernel's (`category_policy.py:270-279`): require `in`,
+`exists`, `missing`; deny `in`, `missing`.
+
+### 2.4 Assignment and the accountable person
+
+- Every **person** has one plan, or none.
+- Every **app** has exactly one assignment: a plan, or **Same as its
+  person**. "Same as its person" is a stored choice, not a fallback. An app
+  with no assignment cannot be created or kept; to stop an app, disable it
+  [RT m2]. App creation writes the assignment first (compare-and-swap in the
+  access settings, with the new app id) and then the app row. A crash between
+  the two leaves an assignment for an unknown app, which the next apply drops,
+  never an app without an assignment. Step 3 still denies if one is missing.
+- **Keys have no plan.** A key acts for its app. The key-level plan
+  (`credentials.profile_id`) goes away. If an app's active keys have
+  different effective plans today, the migration requires a choice per app:
+  split the app, narrow every key to one plan, or revoke keys (§4.4) [RT M5].
+- Every app has an **accountable person**: `apps.owner_user_id`, for both app
+  kinds. The person must exist and be enabled; a missing account row denies
+  (today it is accepted, `gateway/admin_runtime.py:1694-1701`) [RT B3].
+  Service accounts no longer own apps.
+- A request runs only if **both** the accountable person's plan and the
+  app's assignment allow it (v3 A10). Composition is §2.6.
+- The accountable person is **only** the policy and spending subject. It
+  does not make a key act as that person for personal data. That stays as
+  today: `person_for_app_credential` returns a person only for a `personal`
+  app whose key was created by its owner (`admin_runtime.py:1562-1572`).
+  Migrated apps keep kind `service`, so moving daisy to Tim does not give
+  daisy's key Tim's saved prompts or Library [RT B3]. Which consumers read
+  `person_for_app_credential` is **UNVERIFIED**; the build must trace them
+  before it changes app ownership.
 - A role (Owner, Admin, Member) controls management screens. It never grants
-  generation. The owner needs a plan like anyone else [R§20, item 5]. The
-  admin API does not depend on access plans, so an owner can always fix a
-  plan that locks them out.
-- Browser surfaces (Home, Make, Try, Library) run as the signed-in person and
-  a built-in app named **Azizam** with "Same as its person". It is shown in
-  Apps so the owner can narrow web use. **UNVERIFIED**: which app id each
-  browser surface uses today; Home uses the person's app and credential
-  (`gateway/home_api.py:49-65`), and Try mints keys on a "Try" app
-  (`web/src/app/try/page.tsx:1242`).
+  generation. The admin API does not depend on plans, so the owner can always
+  repair a plan that locks them out [R§20 item 5].
+- **Browser surfaces** keep their existing identities [RT M7]. Make uses the
+  per-person session app (`session_apps`, one row per person, credentials
+  blocked by triggers, `gateway/admin_store.py:139-188`;
+  `ensure_session_app_for_user`, `:1268-1303`). Home uses the person's
+  personal app (`home_api.py:49-65`). Try uses the person's Try app with
+  session-bound keys (fix/access-hygiene). Each is an app with an
+  assignment. The migration sets "Same as its person" on them, except the
+  owner's own, which follow decision 1 (§7). `ensure_session_app_for_user` writes
+  "Same as its person" when it creates a missing row. **UNVERIFIED**: which
+  app Library uses.
 
-Why one plan per side: it makes "which plan applies?" one answer, matches the
-research's first-ranked option, and keeps the v3 intersection [R§20]. The
-kernel keeps its list of plans per identity (`PolicyVersion.people`), and the
-store allows exactly one entry. Several plans per side, or additive grant
-packages, are deferred until an owner needs them [R§20, Rank 2].
+One plan per side makes "which plan applies?" one answer [R§20 Rank 1]. The
+kernel keeps its list type; the store allows one entry per side.
 
-### 2.4 Evaluation order
+### 2.5 Evaluation order
 
-One evaluator answers runtime requests, discovery, "Check access" and the
-change preview. Every step must pass. The order fixes which reason is shown
-first, never the outcome.
+One evaluator answers runtime requests, discovery, Check access and the
+change preview. The order is total, so the first reason is deterministic
+[RT m1]. A request stops at the first failing step.
 
-| # | Check | Fails with | Layer (VOICE rule 4) |
+| # | Check | Fails with | Layer |
 |---|---|---|---|
-| 1 | The key, session or token resolves an enabled app and an enabled person | 401 `key_required` or `key_invalid`; 403 `app_disabled`, `person_disabled` | your key / your app |
-| 2 | The access settings load (one valid active snapshot) | 503 `access_settings_unavailable` (v3 `POLICY_UNAVAILABLE`) | gateway |
-| 3 | The person has a plan; the app has a plan or "Same as its person" | 403 `no_access_plan` (says which side) | access plan |
-| 4 | For each of the two plans: no Blocked row matches any member of the selected closure, and none is unknown | 403 `blocked_by_category`, `not_reviewed` | access plan |
-| 5 | For each plan: the capability and item are granted; each provider route in the closure is in Paid providers; fallback routes need fallback on | 403 `not_in_access_plan` (says which side) | access plan |
-| 6 | For each plan: every Must match row passes | 403 `not_reviewed` (missing value) or `blocked_by_category` (known mismatch) | access plan |
-| 7 | For paid routes: every cap that applies has room (§2.8) | 429 `cap_reached` | spending |
+| 1 | Key or sign-in session resolves an enabled app; its accountable person exists and is enabled | 401 `key_required`, `key_invalid`; 403 `app_disabled`, `person_disabled` (a missing person row counts as disabled) | your key / your app |
+| 2 | The gate is initialized and one valid active access revision is loaded | 503 `access_settings_unavailable` | gateway |
+| 3 | The person has a plan, and the active revision has an assignment for the app | 403 `no_access_plan` (side named) | access plan |
+| 4 | Blocked rows: person's plan, then the app's plan, over every member of the selected closure | 403 `blocked_by_category`, `not_reviewed` (unknown deny input) | access plan |
+| 5 | Grants: person's plan, then the app's plan. Capability and item revision; each paid route in Paid providers; each fallback route needs fallback on; direct engine scope | 403 `not_in_access_plan` (side named) | access plan |
+| 6 | Must match rows: person's plan, then the app's plan | 403 `not_reviewed` (missing value), `blocked_by_category` (known mismatch) | access plan |
+| 7 | Paid routes only: per-request ceiling, then one atomic reservation against every applicable cap (§2.11) | 429 `cap_reached`; 503 `spending_unavailable` | spending |
 | 8 | Capacity admission (`HEADLESS_AND_RESOURCES.md`, Release A) | as designed there | gateway / engine |
 
-Explicit deny: the only deny in a plan is a category rule. To keep one item
-out, leave it out of Can use. A deny always beats a grant, and step 4 runs
-before step 5 so the reason names the block, not the grant.
+When both sides hold the same plan, it is evaluated once and the
+explanation says "your access plan". The kernel today checks grants and
+requirements per plan in one loop (`category_policy.py:421-443`); the build
+changes it to the phases above. No reservation happens before steps 1-6 pass.
 
-Re-checks: v3 enforcement (R4, A17) stays. The evaluator runs after alias and
-fallback resolution, on every route or revision change and retry, at job
-dispatch, and at output download and share.
+How the phases of §2.13 use the steps:
 
-### 2.5 Deny by default on every path
+| Phase | Steps run | Notes |
+|---|---|---|
+| `list` | 1-6 | No reservation; never a Permit |
+| `dispatch`, `attempt` | 1-8 | Step 7 reserves; a denial at step 8 releases that reservation (nothing was billed) |
+| `output` | 1-6 | Uses the recorded person, app and closure; no spending |
 
-| Path | After this design | Code to remove or change |
+### 2.6 How two plans compose
+
+Every part has one rule [RT M9]. A gain on either side never widens the
+other side.
+
+| Part | Effective value |
+|---|---|
+| Can use (capability, item revision) | Both plans grant it |
+| Direct engine access (engine, operation) | Both plans grant it |
+| Paid providers | Intersection |
+| Provider fallback | Both on |
+| Blocked, Must match | Every row of both plans applies |
+| Caps | The person's plan caps the person's counter; the app's plan caps the app's counter; provider and global caps apply too. One charge row counts in every counter once |
+| May load models | Both on |
+| Receipt detail | The lower of the two (`none` < `basic` < `standard` < `full`) |
+| Metadata in delivered files | A bound: the lower of the two (`none` < `full`). A request may ask for less, never more. Today the plan value is a default that a request can override (`policy.py:148-158`); this is a behavior change, listed in §8 (N5) |
+
+A change to a person's plan reaches every app that is "Same as its person"
+and every app's intersection. The change preview lists all of those apps.
+
+### 2.7 Direct engine access
+
+Today `native_passthrough` has `enabled`, `allowed_backends`,
+`allowed_operations` and `audit`; empty lists mean "unrestricted"
+(`gateway/policy.py:93-98`, `:542-576`, `:326-366`) [RT B2]. A boolean would
+lose those bounds.
+
+The new grant:
+
+```json
+"direct_engine_access": {
+  "engines": ["svc_llama_bee"],
+  "operations": ["POST /v1/completions", "GET /props"]
+}
+```
+
+- `engines` lists exact engine service ids. `operations` uses today's scope
+  syntax (`"METHOD /path"`, `"METHOD *"`, prefix ending in `*`, or `"*"`).
+  An empty list grants nothing. There is no implicit "all".
+- Azizam does not parse an engine's own API (AGENTS.md binding principle), so
+  it cannot see which model a direct call uses. The **engine** is therefore
+  the closure member that category rules check: a plan with a Blocked or Must
+  match row allows direct access only to an engine whose own tags pass. The
+  owner's tag on an engine is an assertion about everything behind its API.
+- `"*"` can include the engine's own model management (for example loading or
+  deleting models). Azizam cannot tell which paths of an engine's API manage
+  models without engine knowledge in code, so it does not try. The owner
+  narrows with operation scopes, and the plan editor says in words: "This app
+  can do anything {engine}'s own API allows, including loading or deleting
+  models." Azizam's own management routes stay 501 whatever the plan says.
+- Direct engine routes accept only app keys. A browser session identity is
+  denied there.
+- Direct engine access never bypasses identity, categories, caps or the
+  provider rules. Paid remote targets are already refused for direct access
+  (`proxy.py:29964-29976`).
+- Every direct call writes a receipt (today's `audit` flag is never read by
+  the evaluator; auditing becomes unconditional).
+
+Rejected alternative: allow only "named native adapters whose effects can be
+checked" [RT B2]. Checking effects needs a parser per engine API, which is
+engine knowledge as code.
+
+### 2.8 Deny by default on every path
+
+| Path | After this design | Code removed or changed |
 |---|---|---|
 | App key | Steps 1-8 | `admin_runtime.py:1703` default; key-level plan |
-| Browser session | Steps 1-8 as person + Azizam app | `user_runtime.py:110-116`, `:229`; `proxy.py:15884`, `:16026`; `home_api.py:53` |
-| LAN request without a key | **Removed.** 401 `key_required`: "This gateway needs an app key. Create one in Apps." | `proxy.py:2187-2230` (LAN part), `:2385-2402`, `:2487-2489`; `lan_auth_policy.py`; config keys `lan_bypass_enabled`, `lan_bypass_cidrs` |
-| Path token | **Removed.** Not routed today and none are configured | `proxy.py:2234`, `:2374-2384`, `:2491-2494`, `:30212-30214`; config key `path_tokens` |
-| Auth disabled | **Removed.** Authentication is always on | `AUTH_ENABLED` branch at `proxy.py:2468`; config key `auth.enabled` |
-| Public paths (`/health`, showcase pages and examples) | Kept. They never call the evaluator and never dispatch, list models or return creations. `public_paths` is config data (`proxy.py:1574`) and accepts `*` prefixes, so startup rejects any entry that matches a protected route in the route inventory | `is_public_path` (`proxy.py:2431-2444`) |
-| Public Ollama discovery (`ollama_compat_discovery`) | **Removed.** With no identity there is no plan to filter the list. Off today (`proxy_config.yml:1418`) | `proxy.py:2172-2175`, `:2436-2437` |
+| Browser session | Steps 1-8 as the person and the surface's app | `user_runtime.py:110-116`, `:229`; `proxy.py:15884`, `:16026`; `home_api.py:52-53` |
+| LAN request without a key, or with a placeholder key | **Removed** (mandatory) [RT M8]. 401 `key_required` | `proxy.py:2187-2230` (LAN part), `:2385-2402`, `:2487-2489`; `gateway/lan_auth_policy.py`; config `lan_bypass_enabled`, `lan_bypass_cidrs` |
+| Path token | **Removed** | `proxy.py:2234`, `:2374-2384`, `:2491-2494`, `:30212-30214`; config `path_tokens` |
+| Auth disabled | **Removed** | `proxy.py:2468`; config `auth.enabled` |
+| Unknown `sk-` key forwarded to LiteLLM | **Removed**. Models served through LiteLLM become catalog items that plans grant | `proxy.py:2498-2535`; `delegated_to_litellm` skips, e.g. `:25490`; `allow_litellm_delegation=True` call sites |
+| Public Ollama discovery | **Removed** | `proxy.py:2172-2175`, `:2436-2437` |
+| Public paths (`/health`, showcase) | Kept. Never call the evaluator, dispatch, list protected models or return creations. Startup rejects a `public_paths` entry that matches a protected route in the route inventory | `is_public_path` (`proxy.py:2431-2444`) |
 | `?api_key=` | Kept (it is a key). Off by default | — |
-| Unknown `sk-` key forwarded to LiteLLM ("delegation") | **Removed.** Today any `sk-` key that is not an Azizam key runs with no Azizam identity, and Azizam's route policy is skipped. Only LiteLLM checks it. Models served through LiteLLM become catalog items that plans grant like any other | `_is_delegatable_litellm_key` and `authenticate_runtime_or_litellm_request` (`proxy.py:2498-2535`); the `delegated_to_litellm` skips, e.g. `proxy.py:25490`; `allow_litellm_delegation=True` call sites (`:25485`, `:26439`, `:26897`, `:26957`, `:27019`, `:27058`, `:27097`, `:27292`) |
-| Signed creation links (`/v1/assets/{id}/content`, `/v1/images/{id}/content`) | Kept as links, but each creation records its person and app. Download checks that their current plans still allow the recorded bundle (v3 R4). A link cannot outlive a disabled person or app, or a plan that no longer allows the work. A link never grants generation | `_signed_asset_content_response` checks signature and expiry only (`proxy.py:23631-23670`); the "URL without md predates the control" branch (`:23655-23656`) also goes (P11) |
-| Missing identity anywhere | Deny; never `DEFAULT_PROFILE` | `runtime_auth.py:292`; `proxy.py:13406-13409`, `:29875`; `profiles.py:365-371`; `DEFAULT_PROFILE` itself |
-| First-run setup network (`setup_allowed_cidrs`) | Kept as its own setting. It falls back to the LAN list today (`proxy.py:2370-2371`); it must not after the LAN list is removed | — |
+| Signed creation links | Kept as links. Each creation records person, app and closure digest. Download is `authorize(phase=output)` (§2.13) | `proxy.py:23631-23670`; the "URL without md" branch `:23655-23656` |
+| Missing gate, snapshot or identity anywhere | Deny; never `DEFAULT_PROFILE` | `category_enforcement.py:68-70`, `:87-90`, `:112-117`, `:153-173`; `runtime_auth.py:292`; `proxy.py:13406-13409`, `:29875`; `profiles.py:365-371` |
+| First-run setup network (`setup_allowed_cidrs`) | Kept as its own setting. It admits only first-run owner creation, and only while no owner exists. It no longer falls back to the LAN list (`proxy.py:2370-2371`) | — |
 
-Why remove LAN bypass instead of mapping it to a plan: a source address is
-not an identity. Plex documents that apps allowed in without auth on its LAN
-list "will be treated as the admin/owner" [R§29, NT4]. Home Assistant's
-trusted networks still pick a real user and default `allow_bypass_login` to
-false [NT2]. Tailscale separates network admission from application grants
-[NT1]. Mapping all LAN traffic to a shared plan would create a new implicit
-audience and lose who made each request [R§29, item 3]. The alternative, a
-named app for keyless home devices with its own plan, is owner decision 1.
+A source address is not an identity: Plex treats LAN clients without auth as
+the owner; Home Assistant trusted networks still pick a user; Tailscale
+separates network admission from grants [R§29]. There is no keyless option.
+Every device gets an app and a key.
 
-### 2.6 What "default" means
-
-The research separates four meanings that must not share one control [R§22].
+### 2.9 What "default" means
 
 | Meaning | Behavior | Owner sees |
 |---|---|---|
-| No plan | Cannot generate. Can sign in, see their account and ask for access. | "No access plan" |
-| New invitation | The invite form preselects a plan you chose in Settings. The invitation stores the plan id when you send it. Changing the setting later does not change sent invitations. Initial setting: **Ask each time** (nothing preselected). | "Access plan for new invitations" |
-| New app | The creator chooses. Members get "Same as my access plan" with no picker. Owners and admins see a picker with "Same as {person}'s access plan" first. The server rejects an app with no choice. | "Access plan" field in New app |
-| Starting templates | Bundled, read-only, inert until copied (v3 Bundled defaults). Copying creates a normal plan. A template update never changes a copied plan. | "Use as a starting point" |
+| No plan | Cannot generate. Can sign in, see their account and ask for access | "No access plan" |
+| New invitation | The form preselects the plan chosen in Settings; the invitation stores the plan id when sent. Initial setting: **Ask each time** | "Access plan for new invitations" |
+| New app | Members get "Same as my access plan" with no picker. Owners and admins pick, "Same as {person}'s access plan" first. The server rejects an app with no assignment | "Access plan" in New app |
+| Starting templates | Bundled, read-only, inert until copied. Replaces first-run seeding of live plans (`default_profiles.py`) | "Use as a starting point" |
 
-The existing "Default plan" setting (an `all_users` mapping, `admin_store.py:1994-2024`)
-is deleted, with every other runtime mapping. OIDC sign-in without an
-invitation creates a person with no plan; People shows "Needs an access
-plan". Group-to-plan rules for large schools are deferred. If added, they
-must write an assignment at first sign-in, shown as "Assigned from group
-{name}", never act as a live fallback [R§22; Slack and Figma default-team
-precedents, R§7, R§10].
+The "Default plan" setting (an `all_users` mapping,
+`admin_store.py:1994-2024`) is deleted with every other runtime mapping.
+OIDC sign-in without an invitation creates a person with no plan [R§22].
+Invitation accept writes the person's plan and creates "My first app" with
+"Same as its person" (today it copies the plan to the app and key,
+`gateway/accounts.py:337-345`).
 
-Invitation accept stops copying the plan id onto the new app and key
-(`gateway/accounts.py:337-345`). It writes the person's plan and creates "My
-first app" with "Same as its person".
+### 2.10 Tagging and a plan that blocks a category
 
-### 2.7 Tagging and a plan that blocks a category
+1. **Define** (once): Categories → New category "Audience" with values
+   "Everyone", "Teens", "Adults only", for models, workflows, routes and
+   engines. Shipped as an editable starting category; the code never knows
+   what a value means (P12).
+2. **Tag**: one picker per category on each item page; bulk "Set category"
+   in lists. Outside evidence shows as a dated suggestion ("Hugging Face
+   lists this as not-for-all-audiences. Set Audience to Adults only?"). Only
+   the owner's choice makes it a tag.
+3. **Rule**: Access plans → Family → Blocked categories → "Audience is Adults
+   only".
+4. **Review and apply**: "4 access changes · Review" shows who gains, who
+   loses, and **Not tagged yet**. "Apply changes" activates them together.
 
-Example: the owner wants a "Family" plan with no NSFW content.
+Results: Adults only is blocked; untagged is blocked ("This hasn't been
+reviewed for your access plan yet."); {Everyone, Adults only} is blocked; a
+workflow with an Adults-only or untagged member is blocked; discovery hides
+blocked items; plans without the row ignore the tag.
 
-1. **Define the category** (once). Categories → New category. Name
-   "Audience". Values: "Everyone", "Teens", "Adults only". Applies to models,
-   workflows and provider routes. Azizam ships "Audience" with these values
-   as an editable starting category (v3 Bundled defaults); the gateway code
-   never knows what any value means (P12, `ENGINE_KNOWLEDGE_BOUNDARY.md`).
-   v3 supports set categories only (A14), so "NSFW yes/no" is a set with two
-   values.
-2. **Tag**. On a model or workflow page, the Categories section has one
-   picker per category. In Models and Workflows lists, select several rows,
-   then "Set category". A tag is an owner assertion with who and when (v3
-   Evidence). Outside evidence shows as a suggestion with its source and
-   date, for example "Hugging Face lists this as not-for-all-audiences. Set
-   Audience to Adults only?" Only the owner's choice makes it a tag.
-3. **Add the rule**. Access plans → Family → Blocked categories → Add →
-   "Audience is Adults only".
-4. **Review and apply**. Tag edits and plan edits collect as pending changes
-   ("4 access changes · Review"). The review shows, for known people, apps
-   and items: who gains, who loses, and **Not tagged yet** (items the plan
-   now blocks because their Audience is unknown). "Apply changes" activates
-   them together (v3 compare-and-swap).
+### 2.11 Spending
 
-Results under v3 semantics:
-- An item tagged Adults only is blocked for Family.
-- An untagged item is blocked for Family (unknown deny input). Family members
-  see "This hasn't been reviewed for your access plan yet."
-- An item tagged both Everyone and Adults only is blocked (any match).
-- A workflow is blocked if any model or route in its closure is Adults only
-  or untagged.
-- Discovery hides blocked items from Family members (same evaluator,
-  `category_enforcement.visible`).
-- Plans without the rule ignore the Audience tag.
+Resolves [RT M1, M2].
 
-Other categories work the same way. Examples from v3 Bundled defaults:
-"Licence use" (block non-commercial for a team plan), "Data handling" (must
-match "No training on our data"), "Runs where" (block cloud for a kids plan).
-"Runs where" overlaps with Paid providers. Keep it only if the owner wants a
-category for route location beyond the provider list (not an owner decision;
-leave it out of the starting set).
+- **Ledger**: each charge row records the person, the app, the provider, the
+  request id and the attempt number. It does not record a plan. A plan
+  change, rename or reassignment never resets a counter. Counters are sums
+  over the ledger by person, app, provider or all, per period.
+- **Caps** that apply to one paid attempt: the person plan's caps on the
+  person counter, the app plan's caps on the app counter, the provider caps,
+  the global caps. With "Same as its person" the same amounts cap both
+  counters; the person counter already includes the app's spend, so that
+  never charges twice.
+- **Periods** stay as today: day = rolling 24 hours; month = UTC calendar
+  month. `usd_per_request` stays. Copy shows the real reset: "You can spend
+  again from 14:32" (when the oldest charge in the window leaves it) and
+  "Resets on 1 November at 01:00" (the UTC boundary in the reader's time
+  zone).
+- **Reservation**: check and reserve atomically against every applicable
+  counter, once per paid attempt. A retry or fallback is a new attempt: it
+  is re-authorized (§2.13) and reserves on its own; the idempotency key is
+  (request id, attempt). A reservation is released only on a proven unbilled
+  failure; an unknown result becomes `needs_reconciliation`, which blocks
+  paid requests for that person, app and provider until the owner
+  reconciles it (today's rule, `providers.py:1032-1044`, with the new
+  subjects).
+- **Unavailable**: if the ledger cannot be read or written, or a row needs
+  reconciliation, paid routes fail with 503 `spending_unavailable`. Local
+  routes still run.
 
-### 2.8 Spending caps
-
-- **Plan caps**: amount per day and per month, per person and per app. Each
-  person and each app has its own counter; sharing a plan never shares money
-  [R§11 OpenRouter, R§23].
-- **Provider caps** (existing provider settings, for example the global
-  USD 2 per day): a shared pool for the whole gateway, checked as well.
-- Every cap that applies must have room. The request reserves an upper bound
-  before the paid call and records the measured cost after.
-- If spend accounting is unavailable, paid routes deny (`cap_reached` is not
-  used for that case; it is `access_settings_unavailable` for the spend
-  layer). Local routes are not affected.
-- Changing a plan never resets a counter. Counters belong to the person or
-  app and the period, not to the plan.
-- **UNVERIFIED**: how the existing `remote.budget_usd_per_day` and
-  `budget_usd_per_month` fields (`gateway/policy.py:72-77`) are counted today
-  (per key, per plan or per app). No stored plan sets them [P§2], so the
-  migration moves no values. The implementation must confirm the counter
-  subject before it reuses the fields.
-
-### 2.9 Storage
+### 2.12 Storage and changes to categories v3
 
 One versioned document, the **access settings**, holds categories, tags,
-plans and assignments (person → plan, app → plan or "same as person"). It
-uses the existing snapshot store (`gateway/category_store.py`): immutable
-revisions, compare-and-swap activation, history, restore as a new revision.
-People, apps and keys stay in `admin.db` and are referenced by id.
+plans, assignments and the plan preselected for new invitations. It uses the existing snapshot store
+(`gateway/category_store.py`): immutable revisions, compare-and-swap
+activation, history, restore as a new revision. People, apps and keys stay in
+`admin.db`. Plans are referenced only by an opaque, immutable plan id; there
+is no second id inside the plan, so the `owner-local` coupling (§1.4) cannot
+recur.
 
-Removed from `admin.db`: the `profiles` table, `account_access.profile_id`,
-`apps.default_profile_id`, `credentials.profile_id`,
-`account_links.profile_id` (replaced by a plan id inside the invitation
-record that the evaluator checks at accept), `runtime_profile_mappings`,
-`legacy_identity_profile_grants`, and the `user_access_defaults` setting.
-Removed from provider settings: `allowed_plans`.
-
-Plans are referenced only by an opaque, immutable plan id. The display name
-can change freely. There is no second id inside the plan document, so the
-`owner-local` coupling (§1.6) cannot recur.
+Removed from `admin.db`: `profiles`, `account_access.profile_id`,
+`apps.default_profile_id`, `apps.owner_service_account_id`,
+`credentials.profile_id`, `account_links.profile_id` (an invitation holds a
+plan id), `runtime_profile_mappings`, the `user_access_defaults` setting.
+Removed from provider settings: `allowed_plans`. Ledger: `profile_id`
+replaced by `person_id`, `app_id`, `attempt`.
 
 Creating a person or app adds an assignment through the same store. An
-invitation's plan was chosen and previewed by the owner when they sent it,
-so accept commits it without another review. A concurrent change makes the
-compare-and-swap retry.
-
-### 2.10 Changes to categories v3
+invitation's plan was previewed when the owner sent it, so accept commits it
+without another review; a concurrent change makes the compare-and-swap retry.
 
 | v3 text | Change |
 |---|---|
-| Migration (R3): "Existing plans run in an explicitly named legacy mode that keeps any-tag OR semantics" | Removed (P11). The kernel drops `mode` and `legacy_tags` (`category_policy.py:256-257`, `:306`, `:327`). No stored plan sets tags today [P§2], so nothing needs the mode. This also removes the empty-tag oracle disagreement the research found [R§19]. |
-| Plans live in the policy snapshot, apart from access plans | The snapshot's plans are the access plans. `AppProfile` fields that remain (providers, fallback, direct engine access, caps, settings) move into the plan document. |
-| Enforcement adapter: ungoverned identities and no active snapshot pass | Removed. No active snapshot denies (v3 Preview: "With no valid committed snapshot, protected access denies"). Every identity is governed. |
-| Several plans per identity | The store allows one per side. The kernel keeps its list type. |
-| Status header "not implemented" | Update when this design lands: the kernel, store, API and gate exist. |
+| Migration R3: legacy mode with any-tag OR | Removed. The kernel drops `mode` and `legacy_tags`. No stored plan sets tags [P§2] |
+| Plans live apart from access plans | The snapshot's plans are the access plans |
+| Adapter: no gate, no snapshot, unlisted identities pass | Removed (§2.8) |
+| Several plans per identity | The store allows one per side |
+| Waiver as `missing: {row: allow}` on the plan | Kept in the kernel; the API puts it on the row as `waive_missing` |
 
-Everything else in v3 stands: evidence and assertions, bundles, waivers,
-re-authorization points, preview-as, change preview, compare-and-swap,
-restore, layered read-only defaults, no timers.
+### 2.13 The authorization contract
+
+Resolves [RT B1]. Reusing today's adapter is not enough: it authorizes a
+service stem, not the graph about to run.
+
+```
+authorize(AuthzRequest) -> Permit | Denial
+
+AuthzRequest:
+  person_id, app_id     from step 1 only, never from the request body
+  revision              the active access revision the caller loaded
+  capability            a capability id (§2.2)
+  service_revision      the root, after alias, wrapper and fallback resolution
+  closure_digest        digest of every route, helper and engine in the graph
+  phase                 list | dispatch | attempt | output
+  output_id             required when phase = output
+
+Permit:
+  revision, closure_digest, phase, reservation_id (paid attempts)
+```
+
+Rules:
+- The dispatcher runs only a graph whose digest equals the Permit's
+  `closure_digest`, under a revision that is still active. Any route,
+  helper, revision or retry change calls `authorize` again with
+  `phase=attempt`.
+- The provider-call boundary takes the Permit. It does not build its own
+  policy request.
+- `phase=list` answers discovery. Its result is a hint and is never accepted
+  as a Permit.
+- `phase=output` checks the person, app and closure recorded with the output
+  against the current plans. Download, share and signed links use it.
+- Deny if: the gate is not initialized; no valid active revision; unknown,
+  disabled or missing person or app; closure metadata missing or not matching
+  the revision; a route that cannot be checked before its effect.
 
 ## 3. Interfaces
 
-API first (P21). The UI, CLI and MCP call the same server operations. None of
-them decides policy.
+API first (P21). UI, CLI and MCP call the same server operations.
 
 ### 3.1 Owner API
 
-Pattern from the Tailscale policy file: read with a revision, preview, write
-with `If-Match` [R§4, T7].
-
 | Operation | Endpoint | Notes |
 |---|---|---|
-| Read access settings | `GET /admin/api/access` | Returns categories, tags, plans, assignments, `revision`; `ETag: "<revision>"` |
-| Preview a change | `POST /admin/api/access/preview` | Body: `{"base_revision": n, "changes": [...]}`. Pure. Returns gains, losses, reason changes, `not_tagged`, and the finite scope it covered |
-| Apply a change | `POST /admin/api/access` with `If-Match` | Same body. 409 `stale_base` if the revision moved. Returns the new revision |
+| Read | `GET /admin/api/access` | Categories, tags, plans, assignments, `revision`; `ETag` |
+| Preview | `POST /admin/api/access/preview` | `{"base_revision", "changes"}`. Pure. Gains, losses, reason changes, `not_tagged`, covered scope |
+| Apply | `POST /admin/api/access` with `If-Match` | 409 `stale_base` if the revision moved |
 | History | `GET /admin/api/access/history` | Revisions with actor and time |
-| Restore | `POST /admin/api/access/revisions/{n}/restore` | Returns a preview of a new candidate; apply with the call above |
-| Check access | `POST /admin/api/access/check` | Body: `{"person", "app", "capability", "model" or "workflow"}`. Returns the decision, the side and rule that failed, and the closure member |
+| Restore | `POST /admin/api/access/revisions/{n}/restore` | Returns a preview; apply as above |
+| Check access | `POST /admin/api/access/check` | `{"person", "app", "capability", "model" or "workflow"}`. Decision, side, rule, closure member |
 
 Change operations: `create_plan`, `update_plan`, `rename_plan`,
-`delete_plan` (rejected while assigned or in an open invitation; the error
-lists who uses it), `assign_person`, `assign_app` (plan id or `"person"`),
-`create_category`, `update_category`, `tag` (subject, category, values),
-`untag`, `accept_evidence`.
+`delete_plan` (refused while assigned or in an open invitation; lists the
+users), `assign_person` (plan id or `null`), `assign_app` (plan id or
+`"person"`; no `null`), `set_invite_plan` (plan id or `null` for "Ask each
+time"), `create_category`, `update_category`, `tag`, `untag`,
+`accept_evidence`.
 
-Plan document (API shape):
+Plan document. Every field is required; a missing field is a validation
+error, not "no opinion" [RT M4]:
 
 ```json
 {
   "id": "plan_7Hq2",
   "name": "Family",
   "can_use": {
-    "chat":   {"models": ["family-chat", "homework-helper"], "offer_new": true},
-    "images": {"workflows": ["storybook-pictures"], "offer_new": false},
-    "voice":  {"models": ["reader-voice"], "offer_new": true}
+    "chat":   {"items": [{"model": "family-chat", "revision": "r4"}], "offer_new": true},
+    "image":  {"items": [{"workflow": "storybook-pictures", "revision": "r2"}], "offer_new": false}
   },
+  "direct_engine_access": {"engines": [], "operations": []},
   "paid_providers": [],
   "provider_fallback": false,
-  "blocked": [{"id": "family-no-adult", "category": "audience", "values": ["adults-only"]}],
-  "must_match": [],
-  "caps": {"per_person": {"usd_per_day": null, "usd_per_month": null},
-           "per_app":    {"usd_per_day": null, "usd_per_month": null}},
-  "direct_engine_access": false,
+  "blocked": [
+    {"id": "family-no-adult", "category": "audience", "op": "in", "values": ["adults-only"]}
+  ],
+  "must_match": [
+    {"id": "family-data", "category": "data_handling", "op": "in",
+     "values": ["no-training"], "waive_missing": false}
+  ],
+  "caps": {"usd_per_request": null, "usd_per_day": null, "usd_per_month": null},
   "can_load_models": true,
   "receipt_detail": "basic",
   "media_metadata": "none"
 }
 ```
 
-A missing field is a validation error, not "no opinion". A `null` cap means
-no cap for that period. Model and workflow names are the public model names
-(`VOICE.md`), resolved to pinned revisions inside the snapshot.
+- `id` is server-assigned and immutable. `can_use` keys are capability ids;
+  a capability not listed grants nothing.
+- An item without `revision` in a change is pinned to its current reviewed
+  revision; the preview shows the pin.
+- `blocked[].op` is `in` or `missing`; `must_match[].op` is `in`, `exists`
+  or `missing`. `values` only with `in`. `waive_missing` only on `in` or
+  `exists` rows.
+- `null` cap means no cap for that period.
 
-Removed endpoints, with no redirect (P11): `/admin/api/profiles*`,
+Removed endpoints, no redirect (P11): `/admin/api/profiles*`,
 `/admin/api/runtime-profile-mappings*`, the user-access-defaults setting,
-the provider `allowed_plans` endpoint (`PUT /{provider_id}/allowed-plans`, `gateway/provider_admin.py:563-575`),
-and `/admin/api/categories/*` (folded into `/admin/api/access`).
+`PUT /{provider_id}/allowed-plans` (`gateway/provider_admin.py:563-575`),
+`/admin/api/categories/*`.
 
-People, apps and invitations keep their endpoints. Their bodies change:
-- `POST /admin/api/invites`: `access_plan` (required plan id) replaces
-  `profile_id`.
-- `POST /admin/api/apps` and the member app endpoint: `access_plan` (plan id
-  or `"person"`) is required; members may send only `"person"`.
-- `PATCH /admin/api/people/{id}`: `access_plan` (plan id or `null`).
+Body changes: `POST /admin/api/invites` takes `access_plan` (required).
+`POST /admin/api/apps` and the member endpoint take `access_plan` (plan id or
+`"person"`, required; members may send only `"person"`); the server writes the
+assignment through the access settings with compare-and-swap and returns the
+app's effective access. A person's plan changes only through
+`assign_person` (preview and `If-Match`); `PATCH /admin/api/people/{id}` does
+not take a plan.
 
 ### 3.2 Member API
 
-`GET /me/access`: the plan name, a summary computed from the plan
-("Chat, Images and Voice. No paid models."), caps with remaining amount and
-reset time, and, per app, whether the app narrows it. Discovery
-(`/v1/models`, MCP `capabilities`) already lists only what the evaluator
-allows.
+`GET /me/access`: plan name, a summary computed from the plan, each cap with
+period, remaining amount and reset (§2.11), and per app whether it narrows
+the plan. Discovery (`/v1/models`, MCP `capabilities`) lists only what
+`authorize(phase=list)` allows.
 
-### 3.3 Errors on the data plane
+### 3.3 Data-plane errors
 
-OpenAI error shape, `type: "access_error"`, with these `code` values and
-messages. Members see the plain sentence; the `details` object carries the
-plan, rule and closure member for builders and owners.
+OpenAI error shape, `type: "access_error"`. Members see the sentence;
+`details` carries side, plan, rule, closure member, cap scope and period.
 
 | Code | Message |
 |---|---|
 | `key_required` | This gateway needs an app key. Create one in Apps. |
 | `key_invalid` | This key isn't valid. It may have been revoked. Create a new key in Apps. |
+| `app_disabled` | This app is turned off. Ask {owner name} to turn it on. |
+| `person_disabled` | Your account is turned off. Ask {owner name}. For a key: The person this app belongs to is turned off or missing. Ask {owner name}. |
 | `no_access_plan` (person) | You don't have an access plan yet. Ask {owner name} to choose one. |
-| `no_access_plan` (app) | This app has no access plan. Choose one in Apps. |
+| `no_access_plan` (app) | This app has no access plan. Ask {owner name} to choose one. |
 | `not_in_access_plan` (person) | {model name} isn't in your access plan. |
-| `not_in_access_plan` (app) | Your access plan allows {model name}, but this app's access plan doesn't. |
+| `not_in_access_plan` (app) | Your access plan allows {model name}, but this app's access plan doesn't. Ask {owner name} to change the app's access plan. |
 | `blocked_by_category` | {model name} is blocked for your access plan. |
 | `not_reviewed` | {model name} hasn't been reviewed for your access plan yet. |
-| `cap_reached` | Your monthly cap for paid models is reached (USD 5.00). It resets on 1 November. |
+| `cap_reached` | Built from `details`: whose cap (yours, this app's, the gateway's), the period and the reset. Example: "Your monthly cap for paid models is reached (USD 5.00). It resets on 1 November at 01:00." Example: "The gateway's daily cap for {provider} is reached. You can use it again from 14:32." |
+| `spending_unavailable` | Paid models are unavailable because spending can't be checked. Models on this gateway still work. |
 | `access_settings_unavailable` | Access settings couldn't be loaded, so nothing can run. Ask {owner name} to check the gateway. |
 
 ### 3.4 UI copy
 
-Follows `VOICE.md`. Owner surfaces may name rules; member surfaces never show
-rule ids, category ids or "policy".
+Follows `VOICE.md`. Member surfaces never show rule ids or "policy".
 
-**Invite someone** (People):
-- Field label "Access plan". Placeholder "Choose an access plan". No "None"
-  option.
-- Each option: plan name, then a summary from the plan data, for example
-  "Family — Chat, Images and Voice. No paid models. Blocks Adults only."
-- Below the picker, the chosen plan in full: "They can use: …", "Paid
-  models: up to USD 5.00 per month" or "No paid models" (PF-D103).
-- Preselected plan: the Settings choice, else nothing.
-- No plans yet: "Create an access plan before inviting someone." with
-  "Create access plan" (`people/page.tsx:252` already has the title).
-- Plans failed to load: "Access plans couldn't be loaded. Try again."
-- Send is disabled until a plan is chosen.
+**Invite someone**: label "Access plan", placeholder "Choose an access
+plan", no "None". Each option: name and summary ("Family — Chat, Images and
+Speech. No paid models. Blocks Adults only."). Below: the chosen plan in full
+(PF-D103). Preselected: the Settings choice, else nothing. No plans: "Create
+an access plan before inviting someone." with "Create access plan". Load
+failure: "Access plans couldn't be loaded. Try again." Send disabled until
+a plan is chosen.
 
-**New app** (Apps):
-- Member: no picker. "Access plan: Family (yours)". Replaces "Each app gets a
-  key with your account's access plan" (`apps/page.tsx:337`).
-- Owner or admin: "Access plan" picker. First option "Same as {person}'s
-  access plan ({plan name})", then each plan with its summary. Helper: "This
-  app can use only what both its access plan and {person}'s access plan
-  allow."
-- App row: "Access plan: {name}" or "Access plan: same as {person} ({name})".
-- App with no plan (only possible if a plan was deleted mid-flight or after
-  migration hold): "No access plan. This app can't make requests." Action
-  "Choose a plan".
+**New app**: member: no picker, "Access plan: Family (yours)" (replaces
+`apps/page.tsx:337`). Owner or admin: picker, "Same as {person}'s access plan
+({plan})" first. Helper: "This app can use only what both its access plan
+and {person}'s access plan allow." App row: "Access plan: {name}" or "Access
+plan: same as {person} ({name})".
 
-**Settings → People and access**:
-- "Access plan for new invitations". Options: "Ask each time" (initial),
-  then each plan. Helper: "Preselected when you invite someone. People
-  already invited keep the plan in their invitation."
-- Removed: "Default plan", "None — built-in local access", "Default local
-  (built-in)", "Default (built-in)" and the consequence sentence at
-  `settings/page.tsx:986`.
-- "Let people create their own apps" help text loses its sentence about
-  built-in local access (`:1060`). The toggle no longer affects plans.
+**Settings → People and access**: "Access plan for new invitations", "Ask
+each time" first. Removed: "Default plan", "None — built-in local access",
+"Default local (built-in)", "Default (built-in)", the sentence at
+`settings/page.tsx:986`, and the self-service sentence at `:1060`.
 
-**People**:
-- Person with no plan: badge "No access plan", action "Choose a plan".
-- A member with no plan sees on Home: "You can't use models yet. Ask {owner
-  name} to choose an access plan for you."
+**People**: "No access plan" badge with "Choose a plan". A member with no
+plan sees on Home: "You can't use models yet. Ask {owner name} to choose an
+access plan for you."
 
-**Access plans** (People → Access plans):
-- List row: name, computed summary, "Used by 3 people and 5 apps".
-- Empty: "No access plans yet. Start from a template or create one."
-- Plan editor sections in this order: Can use, Paid providers, Blocked
-  categories, Spending caps, Details (Must match, Direct engine access,
-  model loading, receipt detail, file metadata).
-- Summaries come from plan data only. "Capabilities follow gateway
-  defaults" and "Model locations follow gateway defaults"
-  (`people-api.ts:134`, `:143`) are removed: nothing follows a default.
-- Pending changes bar: "{n} access changes · Review". Review page: "{a}
-  people and {b} apps gain access · {c} lose access · {d} items not tagged
-  yet", then "Apply changes".
-- Delete a plan in use: "{name} is used by 3 people and 2 apps. Move them to
-  another plan first." with the list.
-- Settings unavailable: "Access settings couldn't be loaded. Requests are
-  stopped until this is fixed." with "Try again" and "View history".
+**Access plans**: row: name, summary, "Used by 3 people and 5 apps". Editor
+sections: Can use, Paid providers, Blocked categories, Spending caps, Details
+(Must match, Direct engine access, model loading, receipt detail, file
+metadata). "Capabilities follow gateway defaults" and "Model locations
+follow gateway defaults" (`web/src/app/people/people-api.ts:134`, `:143`) are
+removed. Pending bar: "{n} access changes · Review". Delete in
+use: "{name} is used by 3 people and 2 apps. Move them to another plan
+first." Settings unavailable: "Access settings couldn't be loaded. Requests
+are stopped until this is fixed." with "Try again" and "View history".
 
-**Providers**: the "Allowed plans" control is replaced by a read-only line
-"Access plans that can use {provider}: Everything", linking to each plan.
-With none: "No access plan includes {provider}." The chip "Local only by
-default" (`providers/page.tsx:1856`) is removed.
+**Providers**: "Allowed plans" becomes read-only "Access plans that can use
+{provider}: Everything, Local and paid". None: "No access plan includes
+{provider}." "Local only by default" (`providers/page.tsx:1856`) is removed.
 
-**Check access** (owner): pick a person and an app, see every model and
-workflow each can use, and for each denied one the first failing check from
-§2.4. Replaces "Preview as" on the Categories page.
+**Check access** (owner): pick a person and an app; each item with its
+first failing step. Replaces "Preview as" on Categories.
 
 ### 3.5 CLI and MCP
 
-The CLI from `HEADLESS_AND_RESOURCES.md` Release B gains, using the same
-endpoints and an owner credential:
+The CLI from `HEADLESS_AND_RESOURCES.md` Release B gains:
 
 ```
 azizam access show [--json]
@@ -624,290 +653,373 @@ azizam access apply --changes changes.json --base-revision 42
 azizam access history
 azizam access restore 41
 azizam plans list
-azizam people set-plan <person> <plan>
+azizam people set-plan <person> <plan|none>
 azizam apps set-plan <app> <plan|person>
 azizam categories tag <model-or-workflow> audience=adults-only
 ```
 
-MCP: the data-plane tools (`capabilities`, `run`, `job`) return the error
-codes of §3.3. Owner MCP tools stay deferred, as
-`HEADLESS_AND_RESOURCES.md` already says.
+MCP data-plane tools (`capabilities`, `run`, `job`) return the §3.3 codes.
+Owner MCP tools stay deferred (`HEADLESS_AND_RESOURCES.md`).
 
 ## 4. Owner data migration
 
 ### 4.1 Shape
 
-A one-time, reviewed operation. There is no compatibility layer and no
-period where old and new rules both run [R§24 item 9; Tailscale's indefinite
-coexistence rejected, R§4].
+One-time and reviewed. No compatibility layer and no period where old and
+new rules both run [R§24].
 
-1. **Dry run** on copies: `scripts/access-migrate dry-run --admin-db <copy>
-   --categories-db <copy> --receipts-db <copy> --config <proxy_config.yml>
-   --out <dir>`. It opens every input read-only and writes only to `--out`:
-   `report.md` (for the owner), `report.json`, and `approval.yaml` (every
-   proposed row, each with `decision: accept` and its listed alternatives).
-2. **Owner review**: the owner edits `approval.yaml`. A row that is not
-   accepted or changed to a listed alternative blocks apply.
-3. **Apply**, during a planned stop of the gateway:
-   `scripts/access-migrate apply --approval approval.yaml --admin-db ...
-   --categories-db ... --config ...`. It refuses if a fingerprint of the
-   input rows differs from the dry run, writes a `.backup` of each database
-   first, runs one transaction per database, activates the first access
-   settings revision, and edits the config to remove deleted keys.
-4. **Verify**: the script runs Check access for every person × app ×
-   capability × item and compares with the approved preview. Any difference
-   restores the backups and exits non-zero.
-5. The new gateway code refuses to start until the migration has been
-   applied (schema version check with an instruction). This is a guard, not
-   a compatibility path.
+1. **Dry run**, from the release **before** the cut-over, so the old
+   evaluator computes "today" and the new release ships none of it [RT m3]:
+   `scripts/access-migrate dry-run --admin-db <copy> --categories-db <copy>
+   --spend-db <copy> --receipts-db <copy> --config <copy> --out <dir>`. It
+   opens inputs read-only and writes `report.md`, `report.json` (old
+   decisions, §4.4) and `approval.yaml`.
+2. **Owner review**: every row in `approval.yaml` starts as `decision:
+   pending` with its listed alternatives. The owner sets `accept` or an
+   alternative. The file records the candidate digest [RT M6].
+3. **Apply** (new release) with the commit protocol in §4.2.
+4. The new gateway refuses to start until the manifest says `committed`.
 
-Rollback is restoring the backups together with the previous release. There
-is no partial undo.
+### 4.2 Commit protocol
 
-### 4.2 Checks the dry run must report
+Resolves [RT M6]. The stores are separate files, so one transaction cannot
+cover them; the protocol stages complete files and swaps them.
+
+1. **Preconditions** (apply refuses otherwise): the gateway is stopped and
+   `data/.access-migration.lock` is held; every `approval.yaml` row is
+   decided and the candidate digest matches; the input fingerprints match
+   the dry run; no active key would keep a `legacy-` prefix (§4.5); no ledger
+   row is `reserved` or `needs_reconciliation`; no `-wal` file is non-empty.
+2. **Before**: SQLite online backup (`.backup`) of `admin.db`, the
+   categories store and the spend ledger, plus a copy of the config, into
+   `data/access-migration/<id>/before/`. SHA-256 of each goes in
+   `manifest.json`. Receipts are read, not changed.
+3. **Stage**: apply the approved changes to copies in `after/`. Validate the
+   new schema and run the §4.4 oracle on the staged files. Any unapproved
+   difference stops here; live files are untouched.
+4. **Manifest** `state: staged` with before and after digests; fsync.
+5. **Swap**: rename each `after/` file over its live path (same filesystem,
+   atomic per file); fsync the directory.
+6. **Commit**: `state: committed`; fsync.
+
+On start, the new release reads the manifest. Any state other than
+`committed` stops it with the instruction `scripts/access-migrate recover`.
+`recover` marks the migration committed if every live file matches its
+`after` digest; otherwise it restores every file from `before/` and writes
+`state: rolled_back`. Rollback after commit is `before/` plus the previous
+release. Tests inject a crash before and after each step and check every
+file, not only the databases.
+
+### 4.3 Old field to new field
+
+Every old field has one outcome [RT M4]. A stored value with no
+representation blocks apply and is listed as unrepresentable.
+
+| Old field (`gateway/policy.py`) | New | On this instance [P§2] |
+|---|---|---|
+| `id`, row id | Opaque plan id; the report maps both old ids | 9 plans |
+| `protocols` | Removed. Report lists each capability the protocol rule withheld | Several plans; gains listed in §8 |
+| `allow.intents` | Capabilities via `PROTOCOL_CAPABILITIES`; `None` = all | Assistant, Media creator |
+| `models`, `workflows` (`None` = all) | `can_use` items; `None` = every current item, `offer_new: true` | None set |
+| `backends` | Removed; exact grants pin routes | None set |
+| `allow.exposure`, `trust_tiers`, `resource_tiers`, `tags` | Removed; categories replace them | None set |
+| `fallback.cloud_allowed`, `remote.allow_paid_fallback` | `provider_fallback` = both true | Both false everywhere |
+| `remote.providers` ∩ provider `allowed_plans` (§1.4 semantics) | `paid_providers` | Owner (local): OpenRouter, TypeSafe |
+| `remote.max_usd_per_request`, `budget_usd_per_day`, `budget_usd_per_month` | `caps` | None set |
+| `native_passthrough` | `direct_engine_access`; empty old lists become the explicit list of engines with a native target at dry run and `["*"]` | LibreChat full runtime, Legacy daisy (both unrestricted) |
+| `status_visibility.level` | `receipt_detail` | basic, standard, full |
+| `target_policy.activation` | `can_load_models` | **UNVERIFIED** per plan |
+| `target_policy.visibility` | Removed: discovery lists granted items with their state (running or loadable). A stored `available` value is unrepresentable | **UNVERIFIED** per plan |
+| `model_access.mode` | Read once into `target_policy`, then removed | **UNVERIFIED** |
+| `media_metadata.default` | `media_metadata` as a bound (§2.6) | none |
+| Category snapshot plans | If the active snapshot governs anyone, each attached plan's rows must map into one access plan per identity, or apply refuses | **UNVERIFIED** (store in `data/`) |
+| Ledger `profile_id` | `person_id`, `app_id`: from the receipt with the same request id; if none, every app and person that held the plan at cut-over (counts in each counter; never undercounts) | **UNVERIFIED** (ledger in `data/`) |
+
+### 4.4 Checks the dry run must report
 
 | # | Check | Why |
 |---|---|---|
-| M1 | Every person, app and active key, with effective rules today and after | The approval is per row |
-| M2 | Receipts in the last 90 days by app and by the synthetic LAN identity (`api_key_name = "lan-bypass"`), grouped by path and capability | Which apps and how much keyless traffic will stop. Receipts have no client IP column (`gateway/receipt_store.py:67-92`), so **the dry run cannot name LAN devices**; the owner must list them. Whether LAN receipts are stored at all after the v2 receipts change is **UNVERIFIED** |
-| M3 | The active category snapshot, if any: every identity it governs and every category plan | If it governs anyone, apply refuses until each category plan's rows are mapped to one access plan in `approval.yaml` |
-| M4 | For each protocol that a plan restricts today, every intent reachable through it | Confirms that dropping protocol rules (§2.1) widens nothing beyond what the report lists |
-| M5 | Credentials whose `profile_id` points at a plan being deleted, including revoked keys | `delete_profile` does not check them [P§2] |
-| M6 | Apps owned by service accounts | They move to the owner |
-| M7 | Disabled apps and revoked keys | Candidates for owner decision 4 |
-| M8 | The deployed config's `auth` block | Shows whether LAN bypass is really on |
-| M9 | Whether LiteLLM is enabled, and receipts or LiteLLM logs of delegated `sk-` requests | Which clients use LiteLLM virtual keys directly and will need Azizam keys. Whether delegated requests write receipts is **UNVERIFIED** |
-| M10 | Creations without a recorded person and app | Their signed links stop working after the cut-over unless the owner assigns them (owner keeps the files; only the links change) |
+| D1 | Every person, app and active key with today's effective plan; each app's active keys grouped by effective plan | An app with more than one group needs a split, narrow or revoke decision [RT M5] |
+| D2 | Provider matrix: each old plan × provider, plan side, provider side (absent, null, empty, string, list), effective result; duplicate JSON ids | Paid access comes from the intersection [RT M3] |
+| D3 | The oracle: for every person × app × capability × item revision × route (local, each paid provider, fallback) and each engine × direct operation, old decision and reason against new; plus per pair: receipt detail, metadata, model loading, caps | Every difference must be a row of §8 or apply refuses. Covers known subjects only, not future traffic |
+| D4 | Receipts in the last 90 days by app and for `api_key_name = "lan-bypass"` (written today, `proxy.py:2489`, `:29844`) by path and capability | Keyless traffic that will stop. Receipts have no client IP (`gateway/receipt_store.py:67-92`), so the owner must name the devices |
+| D5 | Whether LiteLLM is on; delegated `sk-` traffic | Clients that need Azizam keys. Whether delegated requests write receipts is **UNVERIFIED** |
+| D6 | The deployed config's `auth` block, `public_paths` and `ollama_compat_discovery` | Confirms LAN bypass, auth-off and public discovery state; flags public entries that match protected routes |
+| D7 | Each app's accountable person after the move, that person's plan, and the app's effective access (person ∩ app); apps whose person would be missing or disabled | The owner approves the owner column of §8; a missing person blocks apply [RT B3] |
+| D8 | Ledger rows in the current day and month, their attribution, and any `reserved` or `needs_reconciliation` rows | Reconcile before apply [RT M1] |
+| D9 | Creations without a recorded person and app | Their signed links stop working unless the owner assigns them |
+| D10 | Stored values listed as unrepresentable in §4.3 | Blocks apply |
 
-### 4.3 Proposed mapping for this instance
+### 4.5 Prerequisites on this instance
 
-Source: [P§2-§7], `admin.db` copy of 2026-10-11. Final rows come from the
-dry run. Plan rows:
+Done by the owner through the normal Apps and Providers flows before apply
+[RT M8, m3]. Revocations and disables listed in §8 are approved rows that
+apply performs; these steps are the ones that need a client changed:
+1. `fix/access-hygiene` has landed (it revokes unbound Try keys once).
+2. Create new keys for **daisy** and **open-webui** in Apps, update those
+   clients, and revoke their two `legacy-` keys. The other three `legacy-`
+   keys (simon, librechat, cap) were never used; apply revokes them as
+   approved rows. Apply refuses if any active key would still have a
+   `legacy-` prefix after the approved revocations, so no legacy string stays
+   in live data (P11). Receipts and audit events keep the old names as
+   history (P19).
+3. Give every LAN device found in D4 an app and a key.
+4. Give every client found in D5 an Azizam app key.
+5. Reconcile any ledger row that D8 lists.
 
-| Today | After | Rules after |
-|---|---|---|
-| Owner (local) | **Everything** (same plan id, renamed) | All capabilities, all local models and workflows (offer new: on), Paid providers OpenRouter and TypeSafe, Direct engine access **on** (new, owner decision 2), receipt detail full |
-| LibreChat vivid.fish full runtime | **Local with direct engine access** (renamed) | All capabilities, local only, Direct engine access on, receipt detail full |
-| Legacy daisy | merged into Local with direct engine access | — |
-| *(built-in default)* | **Local only** (new plan, explicit copy of the default's rules) | All capabilities, local only, no Direct engine access, receipt detail basic |
-| Legacy open-webui | merged into Local only | — |
-| Assistant (chat + RAG) | **Chat** (renamed; "RAG" is jargon, P15) | Chat and Embeddings, local only, receipt detail basic |
-| Legacy simon, Legacy librechat, Legacy cap | deleted (only never-used keys refer to them) | — |
-| Media creator | deleted (nothing refers to it) | — |
+### 4.6 Removed data and code (P11)
 
-9 plans become 4: Everything, Local with direct engine access, Local only,
-Chat. Provider access lives only in Everything's Paid providers; the
-providers' `allowed_plans: ["owner-local"]` is deleted.
-
-Assignments and data changes:
-
-| Person or app | Today | After |
-|---|---|---|
-| Tim Nunamaker (person) | no plan → built-in default | Everything |
-| Simon Agent (person) | no plan → built-in default | Local only |
-| Tim ODL (person) | Assistant | Chat |
-| t3-pi-agent | Owner (local) | Same as its person (Everything) |
-| Try (Tim) | default | Same as its person (Everything) |
-| Try (Simon) | default | Same as its person (Local only) |
-| OpenWhispr | default | Local only |
-| open-webui | Legacy open-webui; owner `legacy-key-import` | Local only; owner Tim Nunamaker |
-| daisy | Legacy daisy; owner `legacy-key-import` | Local with direct engine access; owner Tim Nunamaker |
-| librechat.vivid.fish | LibreChat full runtime (key-level) | Local with direct engine access (app-level) |
-| paperless, My first app (Tim ODL) | Assistant (app and key) | Same as its person (Chat) |
-| Anna's Museum App | Owner (local), key never used | Local only (owner decision 3) |
-| Tim personal access, Simon personal access | no app plan | Same as its person |
-| cap | Legacy cap; key never used | disabled, key revoked; owner Tim Nunamaker |
-| waspflow-dsh-probe | default; last used 2026-08-14 | disabled, key revoked |
-| Paid provider proof | Owner (local); key made and used 2026-10-11 15:41 | disabled, key revoked (owner confirms the key was a test) |
-| Azizam (browser surfaces) | — | new app, Same as its person |
-| 7 disabled test apps (Temporary empathy Jev triage ×3, copy-triage ×4) | disabled, keys revoked | owner decision 4 |
-
-Keys revoked: "Imported legacy simon key", "Imported legacy librechat key",
-"Imported legacy cap key", "Testing" (Tim personal access), all 8 "Try
-session" keys, "dsh-probe", the Paid provider proof "Default key". Revoked
-keys that still name a Legacy plan (2× "Paid proof … denied plan", 2×
-"TEMP-diagnosis-verify-DELETE-ME") lose that reference with the column.
-
-The daisy and open-webui imported keys stay active; only their names lose
-"Imported legacy" (they become "daisy key" and "open-webui key"). Their
-`legacy-` prefix is part of the stored key prefix; it cannot change without
-rotating the key. **Rotation is recommended** so no `legacy-` string remains
-(P11), but it needs the owner to update daisy and Open WebUI, so apply does
-not do it.
-
-Removed data and code (P11): `legacy_identity_profile_grants` and its 4 read
-sites; the `legacy-key-import` service account; `runtime_profile_mappings`;
-the YAML bootstrap maps; the `proxy_api_keys.yml` import; `ModelAccessPolicy`;
-the `default`/`default-local` ids; `DEFAULT_PROFILE`; `LEGACY_ACCESS_PLAN_NAMES`
-(`settings/page.tsx:99-101`); the category kernel's legacy mode; LAN bypass,
-LAN placeholder keys, path tokens, the auth-off switch and public Ollama
-discovery; LiteLLM key delegation. Audit events and receipts are kept unchanged (P19): history
-records what happened under the old names.
-
-### 4.4 Behavior changes for owner approval
-
-Relative to today's rules, not traffic. Traffic per key is **UNVERIFIED**
-until check M2 runs.
-
-| # | Who | Change |
-|---|---|---|
-| 1 | Any device on the LAN that sends no key (or a placeholder key) | **Loses all access** (401 `key_required`). Which devices: unknown until the owner lists them (M2). Each needs an app and key, or owner decision 1 |
-| 2 | Tim Nunamaker in the browser (Home, Make, Library) | Gains OpenRouter and TypeSafe within caps, full receipt detail, Direct engine access (unused by those pages) |
-| 3 | Try (Tim) | Gains OpenRouter and TypeSafe within caps and full receipt detail. Its 7 session keys are revoked; Try mints a new key when next opened (**UNVERIFIED** that an open Try tab recovers without a reload) |
-| 4 | t3-pi-agent | Gains Direct engine access (audited). Nothing else changes |
-| 5 | daisy | Gains full receipt detail (was standard) and Decisions if a local Decisions engine exists (**UNVERIFIED**; the TypeSafe route stays denied because the plan has no paid providers) |
-| 6 | open-webui | Gains the Anthropic API shape for the same local models. No new models |
-| 7 | librechat.vivid.fish | None. Its never-used legacy key is revoked |
-| 8 | Anna's Museum App | Loses OpenRouter and TypeSafe and full receipt detail. Its key was never used |
-| 9 | cap | Disabled. Its key was never used |
-| 10 | waspflow-dsh-probe | Disabled. Last used 2026-08-14 |
-| 11 | Paid provider proof | Disabled. Its key was created and used on 2026-10-11 15:41 |
-| 12 | Simon personal access, Tim personal access | None in practice. Their only keys were never used and are revoked |
-| 13 | OpenWhispr, Try (Simon), Simon Agent, Tim ODL, paperless, My first app | None |
-| 14 | Providers page | "Allowed plans" becomes a read-only list. The set of plans with provider access is unchanged |
-| 15 | Settings | "Default plan" is gone; "Access plan for new invitations" starts at "Ask each time" |
-| 16 | Any person created later without an invitation (OIDC) | Cannot generate until the owner chooses a plan (today: built-in default) |
-| 17 | Any client that sends a LiteLLM virtual key (`sk-…`) to Azizam | **Loses access** (401 `key_invalid`). It needs an Azizam app key. Which clients: check M9 |
-| 18 | Signed creation links already shared | Stop working if the creating person or app is disabled, or its plan no longer allows the work. Links to creations with no recorded person and app follow check M10 |
+The `legacy-key-import` service account; `runtime_profile_mappings`; the YAML
+bootstrap maps; the `proxy_api_keys.yml` import (`gateway/runtime_auth.py`);
+`ModelAccessPolicy`; the `default` and `default-local` ids; `DEFAULT_PROFILE`;
+`seed_default_profiles`; `LEGACY_ACCESS_PLAN_NAMES`
+(`settings/page.tsx:99-101`); the kernel's legacy mode; LAN bypass,
+placeholder keys, path tokens, the auth-off switch and public Ollama
+discovery; LiteLLM key delegation. Revoked keys that name a Legacy plan lose
+the reference with the column. Disabled apps stay disabled; nothing is
+purged (P19) [RT m3]. Whether service accounts have uses other than owning
+apps is **UNVERIFIED**; this design removes only their app ownership.
 
 ## 5. Test plan
 
 ### 5.1 Evaluator (unit, pure)
 
-- Truth table over: no plan on person; no plan on app; "same as person";
-  person allows and app does not, and the reverse; both allow.
-- Deny wins over grant; unknown deny input blocks; mixed values {Everyone,
-  Adults only} match a block; `in` with no accepted value fails; a waiver
-  never overrides a block or a known mismatch (v3 scenarios in
-  `categories_model/` carry over).
-- Closure: a workflow with an Adults-only helper is blocked; a fallback route
-  to a provider not in Paid providers is blocked; fallback with fallback off
-  is blocked.
-- A missing plan field fails validation; an empty `can_use` grants nothing.
-- No active snapshot and a corrupt snapshot both deny with
-  `access_settings_unavailable`.
+- No plan on person; person allows and app does not, and the reverse; both
+  allow; same plan on both sides evaluated once.
+- First reason with simultaneous category deny, missing grant, requirement
+  failure and exhausted cap: the order of §2.5; no reservation before step 7.
+- v3 scenarios from `categories_model/`: deny over grant; unknown deny
+  input; mixed values; each operator; waiver never overrides a deny, a known
+  mismatch or a missing grant.
+- Composition: one test per row of §2.6, including receipt detail and
+  metadata minimum and a metadata request above the bound.
+- Accountable person: a `service` app owned by a person gets no access to
+  that person's saved prompts or Library; a `personal` app key created by
+  someone other than the owner does not act as the owner; a missing person
+  row denies.
+- Missing plan field fails validation; empty `can_use` grants nothing; an
+  empty `direct_engine_access` list grants nothing.
 
-### 5.2 Server denial tests (every path)
+### 5.2 Authorization contract (§2.13)
 
-Extend the existing route inventory test so every protected route is listed
-with its enforcing boundary. For each route, with a mock engine that fails
-the test if called:
+- Stem unchanged, revision changed: deny until re-authorized.
+- Alternative route changed, helper changed, retry, fallback: each calls
+  `authorize(phase=attempt)`; a stale Permit is refused by the dispatcher
+  and by the provider boundary.
+- Output: wrong recorded bundle denies; plan changed after creation uses the
+  current plan.
+- Gate not initialized, store file missing, no active revision, both
+  identities unlisted: deny.
+- A `phase=list` result passed to dispatch is refused.
+
+### 5.3 Server denial tests (every path)
+
+Extend the route inventory test so every protected route lists its
+enforcing boundary. A mock engine fails the test if called.
 
 | Case | Expected |
 |---|---|
-| No key from 127.0.0.1, ::1, 192.168.1.50, 10.0.0.5, 100.64.1.1, an IPv6 ULA and a public address | 401 `key_required`; engine not called |
+| No key from 127.0.0.1, ::1, 192.168.1.50, 10.0.0.5, 100.64.1.1, a ULA and a public address | 401 `key_required` |
 | Placeholder key from a LAN address | 401 `key_invalid` |
-| Former path-token prefix `/tok_x/v1/chat/completions` | 401; no token stripping |
-| Unknown `sk-` key on every former delegation route, with LiteLLM enabled | 401 `key_invalid`; LiteLLM not called |
-| Signed creation link after the creator's app is disabled, or its plan stops allowing the work | 403; file not returned |
-| Forged `X-Forwarded-For: 192.168.1.5` from an untrusted peer | 401 |
-| Config still containing `lan_bypass_enabled`, `path_tokens` or `auth.enabled: false` | Startup fails with a message naming the removed key |
-| Revoked key; key of a disabled app; key of an app whose person is disabled | 401 / 403 |
-| App with no plan; person with no plan | 403 `no_access_plan`, side named |
-| Person plan allows, app plan does not | 403 `not_in_access_plan` (app) |
-| Browser session of a person with no plan on Home, Make, Try, Library, catalog | 403 / empty list; engine not called |
-| `/health` and showcase pages | 200; never dispatch, list models or return creations |
-| Config `public_paths` containing `/v1/*` or any protected route | Startup fails naming the entry |
-| `/v1/models`, Ollama `/api/tags`, MCP `capabilities` | Only allowed items, equal to Check access |
-| Output download and share after the plan is changed | Current plan checked (v3 R4) |
-| Static guard | `DEFAULT_PROFILE`, `default-local`, `lan_bypass`, `path_tokens`, `allowed_plans`, `legacy_identity`, `LEGACY_ACCESS_PLAN`, `delegated_litellm` do not appear in `gateway/`, `proxy.py` or `web/src` (like `tests/test_engine_knowledge_boundary.py`) |
+| Former path-token prefix | 401; no token stripping |
+| Unknown `sk-` key on every former delegation route, LiteLLM on | 401 `key_invalid`; LiteLLM not called |
+| Forged `X-Forwarded-For` from an untrusted peer | 401 |
+| Config with `lan_bypass_enabled`, `path_tokens` or `auth.enabled: false` | Startup fails naming the key |
+| `public_paths` matching a protected route | Startup fails naming the entry |
+| Revoked key; disabled app; disabled person; app whose person row is missing | 401 / 403 |
+| Person with no plan, on every browser surface and by key | 403 `no_access_plan` / empty list |
+| Native request: ungranted engine; ungranted operation; engine blocked by category | 403; engine not called |
+| Native request to a paid remote target | 400 `provider_native_paid_remote_forbidden` (today's code, `proxy.py:29964-29976`) |
+| Native request from a browser session identity | 403; engine not called |
+| Azizam management route (`/api/pull`, `/api/delete`, …) with a plan that has direct engine access `"*"` | 501 |
+| Signed link after the app is disabled or the plan stops allowing the work | 403; file not returned |
+| `/health` and showcase | 200; never dispatch, list or return creations |
+| `/v1/models`, `/api/tags`, MCP `capabilities` | Equal to Check access |
 
-### 5.3 Category exclusion
+Static guard (like `tests/test_engine_knowledge_boundary.py`): an AST check
+that `DEFAULT_PROFILE`, `allowed_plans`, the LAN bypass functions and the
+delegation helpers are not defined or imported in `gateway/` or `proxy.py`.
+The startup validator may name removed config keys [RT m3].
 
-With "Family" blocking "Audience is Adults only" and models A (Everyone), B
-(Adults only), C (untagged), workflow W (Everyone, helper B):
-- A runs; B returns `blocked_by_category`; C returns `not_reviewed`; W
-  returns `blocked_by_category` naming B in `details`.
+### 5.4 Spending
+
+Concurrent requests against one cap; cap edit during a reservation; plan
+reassignment and rename without a counter change; app recreated; same plan
+on both sides charged once; restart with a `reserved` row; unknown cost;
+reconciliation; ledger unavailable gives `spending_unavailable` while local
+routes run; rolling-day and UTC-month boundaries; per-request ceiling.
+
+### 5.5 Category exclusion
+
+"Family" blocks "Audience is Adults only"; models A (Everyone), B (Adults
+only), C (untagged); workflow W (Everyone, helper B):
+- A runs; B `blocked_by_category`; C `not_reviewed`; W `blocked_by_category`
+  naming B.
 - `/v1/models` for a Family app lists A only.
-- Tagging C as Everyone has no effect until "Apply changes"; after apply, C
-  runs on the next request (cache invalidation, v3 A22).
-- Restore the previous revision: C is blocked again.
-- An "Everything" person and app run A, B, C and W.
-- A Family person with an app on "Everything": B is blocked (intersection).
+- Tagging C has no effect until apply; after apply C runs on the next
+  request; restore blocks it again.
+- A Family person with an app on Everything: B is blocked.
 
-### 5.4 Migration
+### 5.6 Migration
 
-Fixture: a synthetic `admin.db` and `categories.db` with the same shapes as
-the owner's data (9 plans with the same rules, the 22 apps, keys with fake
-hashes, the disabled mappings, the empty legacy grants table, the
-`legacy-key-import` service account), built by a test helper. No secrets, no
-copy of `data/`.
+Fixture: synthetic `admin.db`, categories store and ledger with the owner's
+shapes (9 plans, 22 apps, fake key hashes, disabled mappings, the service
+account, two keys with different plans on one app). No copy of `data/`.
 
-- Dry run writes nothing: input file hashes are unchanged, and only `--out`
-  has new files.
-- Dry-run report matches a golden file, including every row of §4.4.
-- Apply with an unedited `approval.yaml` that contains a blocked row
-  refuses.
-- Apply on the fixture produces exactly the approved Check access matrix.
-- Apply twice: the second run reports nothing to do.
-- Input changed after the dry run (one key revoked): apply refuses.
-- A fault injected mid-apply leaves both databases byte-identical to the
-  backups.
-- After apply: no table, column, setting, config key or plan name from
-  §4.3's removed list exists.
-- Rehearsal on a `.backup` copy of the owner's real `admin.db` in `~/.tmp`
-  (never `data/`), report reviewed by the owner before the real apply.
+- Dry run writes only to `--out`; input hashes unchanged.
+- Report matches a golden file, including every row of §8.
+- `approval.yaml` with any `pending` row: apply refuses.
+- Input changed after the dry run: apply refuses.
+- An app with two key groups and no decision: apply refuses.
+- Daisy and open-webui moved to the owner keep kind `service`;
+  `person_for_app_credential` returns no person for their keys.
+- A stored unrepresentable value: apply refuses and names it.
+- Crash injected before and after each §4.2 step: `recover` gives either all
+  `after` or all `before`, for every file.
+- Apply twice: the second run does nothing.
+- After apply: no removed table, column, setting, config key or plan name
+  exists; the Check access matrix equals the approved one.
+- Rehearsal on a `.backup` copy of the real stores in `~/.tmp` (never
+  `data/`), report reviewed by the owner before the real apply.
 
-### 5.5 UI
+### 5.7 UI
 
-- Invite: no "None"; Send disabled without a plan; summary shown; 390 px.
-- Settings: no default-plan control; "Access plan for new invitations" shows
-  "Ask each time" first.
-- Apps: member sees no picker; owner sees "Same as …" first.
-- Review page counts equal the API preview for the same change.
+Invite: no "None"; Send disabled without a plan; 390 px. Settings: "Ask each
+time" first. Apps: member sees no picker. Review counts equal the API
+preview.
 
 ## 6. Risks
 
 | Risk | Mitigation |
 |---|---|
-| The owner locks themselves out of generation by narrowing their own plan | The review warns "You will lose access to …"; the admin API never depends on plans, so the owner can always repair it |
-| Clients that use LiteLLM virtual keys directly stop working | Check M9 before apply; each gets an Azizam app key |
-| Unknown LAN devices stop working after the cut-over | Check M2 shows keyless traffic volume; the owner lists devices before apply; owner decision 1 offers a named app |
-| Untagged items vanish for blocked plans, which may surprise a household | The review counts "Not tagged yet" before apply; Categories shows an "Untagged" list with bulk tagging |
-| Exact grants make plans tedious as models change | "Offer new models and workflows" and the "Who can use it?" step; revision re-pins show in the preview |
-| Dropping protocol rules widens a plan in a way nobody listed | Check M4 must pass before apply; the behavior table lists every known widening |
-| The category gate becomes the only authority on the hot path | It already caches by `PRAGMA data_version` (`category_enforcement.py:47-55`); measure request overhead before release |
-| Browser surfaces use apps in ways this design has not traced | Trace each surface's app identity before build (UNVERIFIED in §2.3) |
-| Spend counters' current subject is unknown | Confirm before reusing the fields (§2.8); no stored plan sets them today |
-| One snapshot store for people and app assignments creates write contention on invites and app creation | Compare-and-swap with retry; assignment-only changes are small |
-| This design was written by one agent from one research pass | Independent red-team before build (P20); the owner's decisions below |
+| The owner narrows their own plan and loses generation | Preview warns "You will lose access to …"; the admin API never depends on plans |
+| Unknown LAN devices or LiteLLM clients stop | D4 and D5 before apply; prerequisites 3-4 |
+| Untagged items vanish for a blocking plan | Review counts "Not tagged yet"; Categories lists untagged items |
+| Exact grants are tedious as models change | `offer_new` and "Who can use it?" |
+| Direct engine access with `"*"` exposes an engine's own management | Explicit engines; editor warning; category check on the engine; receipts |
+| The gate is now the only authority on the hot path | It caches by `PRAGMA data_version` (`category_enforcement.py:47-55`); measure overhead before release |
+| Consumers of `person_for_app_credential` are not traced | Trace before changing ownership (§2.4) |
+| Assignment writes contend on the snapshot store | Compare-and-swap with retry; assignment changes are small |
 
 ## 7. Owner decisions
 
-At most five. Each has a recommended default; everything else above is
-decided.
+Each row has a recommended default. Everything else is decided above. The
+recommended defaults add nothing to automated apps. Decision 1 adds paid
+models to your own browser use; decisions 3 and 4 remove access from apps
+that have not used it. §8 lists every gain and loss.
 
-1. **Keyless LAN access.** Recommended: **remove it**. Every device uses an
-   app key. Alternative: keep one named app, "Home network devices", owned
-   by you, with its own plan (for example Local only) and an "only from these
-   networks" condition. It is visible and revocable, but every LAN device
-   shares one identity in receipts.
-2. **What your own apps inherit.** Recommended: Everything gains Direct
-   engine access, and t3-pi-agent and Try (Tim) use "Same as its person"
-   (rows 2-4 of §4.4). Alternative: keep a fifth plan, "Local and paid
-   models" (today's Owner (local) exactly), for t3-pi-agent and Try.
-3. **Anna's Museum App.** Recommended: **Local only** (it loses paid
-   providers; its key was never used). Alternatives: Chat; disable it; keep
-   paid providers.
-4. **Disabled test apps and revoked keys.** Recommended: **delete the rows**
-   of the 7 disabled test apps (plus cap, waspflow-dsh-probe and Paid
-   provider proof after they are disabled) and their revoked keys, and keep
-   their audit events and receipts. This needs a new purge operation with a
-   preview (P19); none exists today [P§5]. Alternative: keep them disabled.
-5. **Access plan for new invitations.** Recommended: **Ask each time**.
-   Alternative: preselect one plan, for example Chat.
+| # | Decision | Recommended | Why | Alternatives |
+|---|---|---|---|---|
+| 1 | What your browser apps and Try (Tim) use | **Local and paid** | The browser acts as you, so paid models under the existing caps (global USD 2 per day) are expected. It does not get direct engine access: Home and Try use app keys, and no browser page needs an engine's own API | Same as you (Everything, adds direct engine access); Local only (no change) |
+| 2 | t3-pi-agent | **Local and paid** (today's rules exactly) | An automated agent gains nothing. Everything would add direct engine access, which can delete models on an engine | Everything |
+| 3 | Anna's Museum App | **Local only** | Its key was never used; a museum app has no shown need for paid models | Disable it; Local and paid (no change) |
+| 4 | cap, waspflow-dsh-probe, Paid provider proof | **Disable and revoke their keys** | Never used; last used 2026-08-14; a test key made and used on 2026-10-11 15:41 (confirm it was a test). A disabled app can be turned on again | Keep, on Local only |
+| 5 | Access plan for new invitations | **Ask each time** | No default anywhere; affects future invitations only | Preselect Chat |
+
+## 8. Migration effect on this instance
+
+Plans after (9 become 5):
+
+Every plan below grants "every current item" as exact pinned grants with
+`offer_new` on. File metadata is `none` in all five, as today. May load
+models keeps each source plan's value (`target_policy.activation`,
+**UNVERIFIED** per plan until D3; the built-in default may load).
+
+| Plan | From | Rules | Held by (recommended) |
+|---|---|---|---|
+| **Everything** | new | All capabilities and items; OpenRouter, TypeSafe; direct engine access to every engine with a native target, all operations; receipt full | Tim Nunamaker |
+| **Local and paid** | Owner (local), same rules | All capabilities and items; OpenRouter, TypeSafe; no direct access; receipt full | t3-pi-agent; Tim's browser apps and Try (decision 1) |
+| **Local with direct engine access** | LibreChat full runtime; Legacy daisy merged | All capabilities and items, local only; direct engine access as Everything; receipt full | librechat.vivid.fish, daisy |
+| **Local only** | new, exact copy of the built-in default; Legacy open-webui merged | All capabilities and items, local only; no direct access; receipt basic | Simon Agent, OpenWhispr, open-webui, Anna's Museum App, disabled apps |
+| **Chat** | Assistant (chat + RAG), renamed | Chat and Embeddings, local only; receipt basic | Tim ODL; paperless |
+
+Deleted: Legacy simon, Legacy librechat, Legacy cap (only never-used or
+revoked keys use them), Media creator (unused). Provider `allowed_plans` is
+deleted. Today only Owner (local) reaches OpenRouter and TypeSafe; after,
+Local and paid (the same plan) and the new Everything do. The apps that reach
+them are listed below (D2).
+
+People:
+
+| # | Person | Today | After | Change |
+|---|---|---|---|---|
+| P1 | Tim Nunamaker | no plan → built-in default | Everything | His person plan now bounds his apps (they all fit inside Everything) |
+| P2 | Simon Agent | no plan → built-in default | Local only | None |
+| P3 | Tim ODL | Assistant | Chat | None |
+
+Apps. "Owner after" is the accountable person. Rows marked **UNVERIFIED**
+are confirmed by D7, which also prints person ∩ app for each row; if the
+owner turns out to be Simon (Local only), an app on Local and paid would lose
+paid access, and D3 lists that as an unapproved difference. N7 applies to
+every row; the Loses column names it only for apps that use the built-in
+default or unrestricted lists today. Approve each row or pick its
+alternative.
+
+| # | App | Owner after | Today | After | Gains | Loses | Keys | Alternative |
+|---|---|---|---|---|---|---|---|---|
+| A1 | Tim's browser apps (Tim personal access; session app if it exists) | Tim | built-in default | Local and paid — decision 1 | OpenRouter, TypeSafe within caps; receipt basic → full | New items (N7) | "Testing" (never used) revoked | Same as Tim (also direct engine access); Local only (no change) |
+| A2 | Try (Tim) | Tim | built-in default | Local and paid — decision 1 | as A1 | New items (N7) | Session-bound keys only | as A1 |
+| A3 | t3-pi-agent | Tim **UNVERIFIED** | Owner (local) | Local and paid — decision 2 | — | — | 1 active, used 2026-10-11 | Everything (gains direct engine access) |
+| A4 | OpenWhispr | Tim | built-in default | Local only | — | New items (N7) | 2 active | Local and paid (gains paid) |
+| A5 | Try (Simon) | Simon | built-in default | Same as Simon (Local only) | — | New items (N7) | Session-bound keys only | — |
+| A6 | Simon personal access | Simon | no app plan; one key on Legacy simon | Same as Simon (Local only) | — | Legacy simon key (never used) | Legacy simon key revoked | — |
+| A7 | paperless | Tim ODL **UNVERIFIED** | Assistant (app and key) | Chat (explicit, so the result does not depend on the owner) | — | — | 1 active | — |
+| A8 | My first app (Tim ODL) | Tim ODL | Assistant (app and key) | Same as Tim ODL (Chat) | — | — | 1 active | — |
+| A9 | librechat.vivid.fish | Tim **UNVERIFIED** | LibreChat full runtime (key level) | Local with direct engine access (app level) | — | New items and engines (N7) | Legacy librechat key (never used) revoked | — |
+| A10 | daisy | Tim (was `legacy-key-import`); kind stays service | Legacy daisy | Local with direct engine access | Receipt standard → full; Decisions on a local engine if one exists (**UNVERIFIED**); Anthropic and Ollama shapes already allowed | New items and engines (N7) | Rotate before apply (§4.5) | Own plan with receipt standard (6 plans) |
+| A11 | open-webui | Tim (was `legacy-key-import`); kind stays service | Legacy open-webui | Local only | Anthropic API shape for the same models | New items (N7) | Rotate before apply (§4.5) | — |
+| A12 | Anna's Museum App | Tim **UNVERIFIED** | Owner (local) | Local only — decision 3 | — | OpenRouter, TypeSafe; receipt full → basic | 1 (never used) | Disable; Local and paid |
+| A13 | cap | Tim (was `legacy-key-import`) | Legacy cap | Disabled, Local only — decision 4 | — | All (key never used) | Revoked | Keep on Local only |
+| A14 | waspflow-dsh-probe | Tim (was service account `gateway-admin`) | built-in default | Disabled, Local only — decision 4 | — | All (last used 2026-08-14) | Revoked | Keep on Local only |
+| A15 | Paid provider proof | Tim **UNVERIFIED** | Owner (local) | Disabled, Local only — decision 4 | — | All (key used 2026-10-11 15:41) | Revoked | Keep on Local and paid |
+| A16-A18 | Temporary empathy Jev triage ×3 | Tim **UNVERIFIED** | disabled | disabled, Local only | — | — | Already revoked | — |
+| A19-A22 | copy-triage ×4 (one names Owner (local)) | Tim **UNVERIFIED** | disabled | disabled, Local only | — | — | Already revoked | — |
+
+Not apps:
+
+| # | Who | Change |
+|---|---|---|
+| N1 | Any device that reaches the gateway from the LAN with no key or a placeholder key; any client of public Ollama discovery; any setup that ran with auth off | **Loses all access** (401). Devices from D4 need keys first |
+| N2 | Any client that sends a LiteLLM virtual key | **Loses access** (401). Clients from D5 need Azizam keys |
+| N3 | People created later through OIDC without an invitation | No plan until the owner chooses one (today: built-in default) |
+| N4 | Signed creation links | Stop working if the creator's app or person is disabled or the plan no longer allows the work; links to creations without a recorded creator per D9 |
+| N5 | Any request that asks for more file metadata than its plans allow | Gets the plan's level (today a request may override) |
+| N6 | Settings and Providers pages | "Default plan" gone; "Allowed plans" read-only |
+| N7 | Every app and person | Models, workflows and new revisions added after the cut-over are not usable until the owner grants them (the "Who can use it?" step preselects plans with offer new on). Today the built-in default and plans without model lists include them at once |
+
+## 9. Red-team resolution
+
+| ID | Finding | Resolution | Where |
+|---|---|---|---|
+| B1 | The gate authorizes a service stem, not the executed graph; unconfigured gate passes | **Applied.** `authorize()` contract with closure digest, phase and output; Permit required at dispatch and provider boundary; every pass case denies; negative tests. Code confirms `category_enforcement.py:43-44`, `:135`, `:153-173` | §2.13, §2.8, §5.2 |
+| B2 | Direct engine access as a boolean loses backend and operation bounds | **Applied in part.** Bounded grant (exact engines and operations; empty grants nothing); engine is the category subject; session identities denied; migration enumerates engines; tests for ungranted engine, operation, category and Azizam management routes. Rejected: "only checkable native adapters" and keeping engine-side management out of grants, because both need a parser per engine API (AGENTS.md binding principle; operation scopes are generic, `policy.py:326-366`). Azizam's own management routes stay never grantable (501); engine-side management is disclosed in the editor | §2.7, §4.3, §5.3 |
+| B3 | Moving service apps to a person can make keys act as that person | **Applied** with existing fields: `apps.owner_user_id` is the policy and spending subject only; `person_for_app_credential` unchanged and still needs kind `personal` (`admin_runtime.py:1562-1572`); migrated apps keep kind `service`; missing owner row denies. A new `policy_account_id` field is not needed | §2.4, D7 |
+| M1 | Spend ledger keyed by plan id; migration omitted it | **Applied.** Ledger by person, app, provider, attempt; ledger in backup, stage and swap; attribution by request id, else conservative; reconcile first. Code `providers.py:303-316`, `:1060-1073` | §2.11, §4.2, §4.3, D8 |
+| M2 | Per-request cap, periods, reservation lifecycle missing | **Applied.** `usd_per_request` kept; rolling day and UTC month kept with honest copy; atomic reserve per attempt; reconciliation kept; `spending_unavailable` separate | §2.11, §3.3 |
+| M3 | Provider ACL removal must translate the intersection | **Applied.** D2 matrix with absent/null/empty semantics; display-name wording fixed | §1.4, §4.3, D2 |
+| M4 | Plan shape cannot express v3 rules or old axes | **Applied.** Normative schema with `op`, `values`, `waive_missing`; capability id table; field-by-field conversion; unrepresentable values block | §2.2, §3.1, §4.3 |
+| M5 | Key-level and multi-plan collapse; richer oracle | **Applied.** Key groups per app need a decision; oracle over routes, engines, settings and reasons; scope stated as known subjects only | §2.4, D1, D3 |
+| M6 | No cross-store commit protocol; approval defaults to accept | **Applied.** Lock, online backups, staged files, manifest, rename swap, committed marker, `recover`; rows start `pending`; crash tests per step | §4.1, §4.2, §5.6 |
+| M7 | Session apps exist; a global Azizam app is wrong | **Applied.** Reuse each surface's existing app; no global app; triggers kept | §2.4 |
+| M8 | Keyless LAN should not be an owner decision; finish the cut-over | **Applied.** Removal mandatory; the v1 keyless option is gone from the owner decisions; all five `legacy-` keys are rotated or revoked and apply enforces it | §2.8, §4.5 |
+| M9 | Non-grant settings have no composition rule | **Applied.** Composition table; metadata becomes a bound (listed as N5) | §2.6 |
+| m1 | Reason order differs from the kernel | **Applied.** Total phase order across both plans; kernel loop change named (`category_policy.py:421-443`) | §2.5 |
+| m2 | No-plan app states and cap copy incomplete | **Applied.** An app always has an assignment (disable to stop it); the existing clear path (`admin_store.py:1337-1354`) is removed; member errors name the next step; cap copy built from scope and period | §2.4, §3.1, §3.3 |
+| m3 | Purge scope and string-ban static guard | **Applied.** Purge removed (decision 4 v1 deleted); AST guard; rotation done through Apps, not migration code | §4.5, §4.6, §5.3 |
+| — | v1 said unlisted identities skip the gate | **Corrected**: both must be unlisted (`category_enforcement.py:116-117`) | §1.3 |
+| — | v1 cut for simplicity | Per-person and per-app cap pairs collapsed to one cap set; purge operation, global Azizam app and keyless option removed; an app can no longer be left without an assignment | §2.11, §2.4, §2.8 |
 
 ## Appendix: research to decision trace
 
 | Decision | Research |
 |---|---|
-| One named plan per person and per app; intersection | R§20 Rank 1; OpenRouter member and key guardrails R§11; v3 A10 |
-| No runtime default; four meanings of "default" kept apart | R§22; Tailscale allow-all bootstrap R§4; LiteLLM empty list means all R§12; Jellyfin all-libraries flag R§18 |
-| Category rules inside plans, catalog beside | R§21; Jellyfin R§18; Tailscale Aperture R§4; Plex additive labels rejected R§17 |
-| Deny wins; unknown blocks | v3; AWS explicit deny R§1; Jellyfin blocked tags first R§18 |
-| Remove LAN bypass and path tokens | R§29; Plex LAN treated as owner NT4; Home Assistant NT2; Tailscale NT1 |
-| Invite default is a preselection, future-only | Slack default channels R§7; Figma default teams R§10; Notion retroactive defaults rejected R§9 |
-| Per-person and per-app cap counters | OpenRouter R§11; R§23 |
-| Preview, apply with revision, restore | Tailscale policy file and tests R§4; Cloudflare reusable policies R§5; v3 |
-| One-time migration, no coexistence | R§24; Microsoft verify-then-remove R§3; AWS inline to managed R§1; Tailscale coexistence rejected R§4 |
-| No protocol restrictions in plans | OpenRouter R§11, LiteLLM R§12, Open WebUI R§13 restrict models and features, not wire protocols |
+| One plan per person and per app; intersection | R§20 Rank 1; OpenRouter R§11; v3 A10 |
+| No runtime default; four meanings of default | R§22; Tailscale R§4; LiteLLM R§12; Jellyfin R§18 |
+| Category rules inside plans, catalog beside | R§21; Jellyfin R§18; Tailscale Aperture R§4; Plex R§17 |
+| Deny wins; unknown blocks | v3; AWS R§1; Jellyfin R§18 |
+| Remove LAN bypass and path tokens | R§29; Plex NT4; Home Assistant NT2; Tailscale NT1 |
+| Invite default is a future-only preselection | Slack R§7; Figma R§10; Notion R§9 |
+| Spend by person and app, never by plan | OpenRouter R§11; R§23 |
+| Preview, apply with revision, restore | Tailscale R§4; Cloudflare R§5; v3 |
+| One-time migration, verify then remove | R§24; Microsoft R§3; AWS R§1 |
+| No protocol restrictions | OpenRouter R§11; LiteLLM R§12; Open WebUI R§13 |
