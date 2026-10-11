@@ -586,7 +586,7 @@ def test_admission_rechecks_selected_fallback_before_backend_dispatch():
         return httpx.Response(529, json={'error': {'message': 'Busy'}})
     with patch('gateway.decision_routing.httpx.AsyncClient', lambda **kw: real(transport=httpx.MockTransport(handler))):
         result = asyncio.run(rt.dispatch(None, None, {**BODY, 'model': 'decide-quality'}, 'r'))
-    assert admitted == ['large', 'small']
+    assert admitted == ['large', 'large', 'small']
     assert sent == [18092]
     assert result.status_code == 503
     assert result.body['error']['code'] == 'resource_admission_denied'

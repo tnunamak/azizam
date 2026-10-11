@@ -109,7 +109,9 @@ function PersonJobNotices({ personId }: { personId: string }) {
         terminalJob(job) &&
         job.status !== "canceled" &&
         previous !== job.status &&
-        (previous !== undefined || job.created_at >= startedAt || job.updated_at >= startedAt) &&
+        (previous !== undefined ||
+          job.created_at >= startedAt ||
+          job.updated_at >= startedAt) &&
         !dismissed.current.has(job.job_id)
       ) {
         completed.push(job);
@@ -136,13 +138,14 @@ function PersonJobNotices({ personId }: { personId: string }) {
         let watermark: number | null = null;
         do {
           const params = new URLSearchParams({ watch: "1" });
-          if (since.current !== null) params.set("since", String(since.current));
+          if (since.current !== null)
+            params.set("since", String(since.current));
           if (cursor) params.set("cursor", cursor);
-          const page: { jobs: LongJob[]; next_cursor?: string | null; polled_at?: number } =
-            await jobRequest(
-              `/me/api/jobs?${params}`,
-              signal,
-            );
+          const page: {
+            jobs: LongJob[];
+            next_cursor?: string | null;
+            polled_at?: number;
+          } = await jobRequest(`/me/api/jobs?${params}`, signal);
           watermark ??= page.polled_at ?? null;
           jobs.push(...page.jobs);
           cursor = page.next_cursor ?? null;

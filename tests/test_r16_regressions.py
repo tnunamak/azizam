@@ -2,9 +2,12 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from fastapi.responses import JSONResponse
 
 import proxy
@@ -21,13 +24,20 @@ def test_make_database_cancel_always_settles(tmp_path, cancel_before_start):
     job = media_jobs.create(media_jobs.MediaJob(intent='image.generate', metadata={'mode': me_make.JOB_MODE}), path=path)
     job_id = job.job_id
     payloads = {job_id: {'body': {}}}
+    from gateway.api import create_gateway_router
+    from gateway.discovery import WorkflowRegistry
+    app = FastAPI()
+    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=path))
+    client = TestClient(app)
 
     class Runtime:
         load_payload = lambda self, key: payloads.get(key)
         drop_payload = lambda self, key: payloads.pop(key, None)
 
         async def execute(self, payload):
-            media_jobs.request_cancel(job_id, path=path)
+            response = client.post(f'/gateway/v1/media/jobs/{job_id}/cancel')
+            assert response.status_code == 202
+            assert media_jobs.get(job_id, path=path)['status'] == 'running'
             return [{'asset_id': 'img_result'}]
 
     if cancel_before_start:
@@ -120,7 +130,7 @@ def test_decision_rechecks_policy_after_readiness():
 def test_direct_traffic_ignores_untracked_limits(dispatch_env, monkeypatch, cfg, path, body):
     client, calls = dispatch_env
     monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', cfg)
-    monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: __import__('types').SimpleNamespace(logical_service_id='selected'))
+    monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: SimpleNamespace(logical_service_id='selected'))
     monkeypatch.setitem(proxy.config['backends'], 'selected', {'enabled': True})
     # This path has an app identity but no tracked queue or active-request counter.
     from gateway.receipts import RouteReceipt
@@ -159,3 +169,28 @@ def test_admission_translation_is_idempotent(protocol):
     body = resource_admission_http.admission_http_response(decision).body
     once = resource_admission_http.admission_protocol_body(body, protocol)
     assert resource_admission_http.admission_protocol_body(once, protocol) == once
+
+
+def test_media_app_load_failure_is_unknown_not_zero(dispatch_env, monkeypatch):
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'max_app_concurrency': {'mine': 1}})
+    from gateway.receipts import RouteReceipt
+    receipt = RouteReceipt(protocol='test', intent='image.generate', app_id='mine')
+    monkeypatch.setattr(media_jobs, 'active_count', lambda **kw: (_ for _ in ()).throw(OSError('unavailable')))
+    response = proxy._media_job_admission_response('image.generate', receipt=receipt)
+    assert 'app_load_unknown' in json.loads(response.body)['admission']['reason_codes']
+
+
+def test_media_dispatch_counts_app_and_exempts_its_worker(dispatch_env, monkeypatch):
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'max_app_concurrency': {'mine': 1}})
+    from gateway.receipts import RouteReceipt
+    receipt = RouteReceipt(protocol='test', intent='image.generate', app_id='mine')
+    args = dict(resource_class='image', service_available=True, queue_key=proxy._MEDIA_JOB_QUEUE_KEY, receipt=receipt)
+    assert proxy._dispatch_admission_response('image.generate', **args) is None
+    media_jobs.create(media_jobs.MediaJob(intent='image.generate', app_id='mine'), path=media_jobs.DB_PATH)
+    response = proxy._dispatch_admission_response('image.generate', **args)
+    assert 'app_concurrency_full' in json.loads(response.body)['admission']['reason_codes']
+    token = proxy._ADMISSION_WORKER.set(True)
+    try:
+        assert proxy._dispatch_admission_response('image.generate', **args) is None
+    finally:
+        proxy._ADMISSION_WORKER.reset(token)
