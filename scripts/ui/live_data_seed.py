@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys as _compat_sys
 from pathlib import Path as _CompatPath
 _compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
-from gateway.compat import get_env
 
 import argparse
 import contextlib
@@ -76,8 +75,9 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
     home = state / "home"
     home.mkdir(parents=True, exist_ok=True)
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PATH": os.defpath,
         "HOME": str(home),
+        "LANG": "C.UTF-8",
         "PYTHONPATH": str(REPO),
         "PYTHONDONTWRITEBYTECODE": "1",
         "AZIZAM_CONFIG_PATH": str(config),
@@ -87,6 +87,8 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "AZIZAM_IMAGE_CACHE_DIR": str(state / "images"),
+        "UI_E2E_PORT": str(port),
+        "UI_E2E_ALLOWED_PORTS": "",
     }
     for name, filename in {
         "AZIZAM_ADMIN_DB": "admin.db",
@@ -97,6 +99,13 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
     }.items():
         env[name] = str(state / filename)
     return env
+
+
+def _child_commands(port: int, engine_port: int) -> list[list[str]]:
+    return [
+        [sys.executable, "-m", "uvicorn", "scripts.ui.fake_engine:app", "--host", "127.0.0.1", "--port", str(engine_port)],
+        [sys.executable, "-m", "scripts.ui.fixture_gateway", str(port), str(engine_port)],
+    ]
 
 
 def _sha_asset(cache: Path, content: bytes, suffix: str, owner_hashes: list[str], request_id: str) -> str:
@@ -142,17 +151,16 @@ def seed(state: Path, port: int) -> dict[str, object]:
     state.mkdir(parents=True, exist_ok=True)
     (state / "images").mkdir(exist_ok=True)
     engine_port = port + 1
-    config = _write_config(state, port, engine_port)
-    os.environ.update(_env(state, port, engine_port, config))
+    _write_config(state, port, engine_port)
 
     from gateway import accounts, admin_store, media_jobs, receipt_store
     from gateway.local_owner import hash_password as local_hash_password
     from gateway.receipts import RouteReceipt
     from gateway.runtime_auth import hash_api_key
 
-    admin_path = Path(get_env("AZIZAM_ADMIN_DB"))
-    receipts_path = Path(get_env("AZIZAM_RECEIPTS_DB"))
-    jobs_path = Path(get_env("AZIZAM_MEDIA_JOBS_DB"))
+    admin_path = state / "admin.db"
+    receipts_path = state / "receipts.db"
+    jobs_path = state / "media_jobs.db"
     admin_store.init_db(admin_path)
     accounts.initialize(admin_path)
     receipt_store.init_db(receipts_path)
@@ -261,11 +269,8 @@ def serve(state_base: Path, port: int, copy_from: Path | None = None, restarted:
             ]
         else:
             manifest = seed(state, port)
-            env = dict(os.environ)
-            commands = [
-                [sys.executable, "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(child_port)]
-                for module, child_port in [("scripts.ui.fake_engine:app", engine_port), ("proxy:app", port)]
-            ]
+            env = _env(state, port, engine_port, state / "config.yml")
+            commands = _child_commands(port, engine_port)
         try:
             for command, child_port in zip(commands, (engine_port, port)):
                 log = (state / f"{child_port}.log").open("w")
