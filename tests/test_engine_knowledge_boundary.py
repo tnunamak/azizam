@@ -9,11 +9,8 @@ engine CLI flag literals).
 
 HOW THIS TEST WORKS
 -------------------
-Five engine checks run over four core files:
-  - proxy.py
-  - gateway/transforms.py
-  - gateway/service_registry.py
-  - gateway/toolcall_detection.py
+The engine checks scan proxy.py and all gateway Python modules. This is a
+syntactic tripwire, not proof that all backend policy is operator-owned data.
 
 A retirement check also scans proxy.py and every Python file under gateway/
 for the removed executor, loader and retry constants.
@@ -24,11 +21,9 @@ has no allowlist.
 
 ALLOWLIST KEY FORMAT (content-keyed, drift-proof)
 --------------------------------------------------
-Allowlists are keyed by (relative_file, stripped_line_text) — NOT by line
-number.  This makes them DRIFT-PROOF: inserting code above an allowlisted
-site no longer shifts every entry and causes spurious failures.  Only a
-change to the actual content of an allowlisted line (or a genuinely new
-pattern) causes a failure.
+Branch exceptions are keyed by (relative_file, normalized AST expression/pattern);
+class and flag exceptions use (relative_file, stripped_line_text). Inserting
+code above a reviewed site does not change its key.
 
 Where two legitimate sites share identical stripped text (e.g. the same
 `if backend == "kobold":` appears at two locations), one allowlist entry
@@ -58,13 +53,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent
 _PROXY = _REPO_ROOT / "proxy.py"
 _TRANSFORMS = _REPO_ROOT / "gateway" / "transforms.py"
-_SERVICE_REGISTRY = _REPO_ROOT / "gateway" / "service_registry.py"
-_TOOLCALL = _REPO_ROOT / "gateway" / "toolcall_detection.py"
 # The residual engine literals are isolated in the quarantine module; the
 # LOCAL_SWAP_BACKENDS frozen set now lives there (proxy aliases it).
 _QUARANTINE = _REPO_ROOT / "gateway" / "engine_quarantine.py"
 
-_CORE_FILES = [_PROXY, _TRANSFORMS, _SERVICE_REGISTRY, _TOOLCALL]
+def _core_files() -> list[Path]:
+    """Discover new gateway modules too; no module has a blanket exemption."""
+    return [_PROXY, *sorted((_REPO_ROOT / "gateway").rglob("*.py"))]
 
 
 # ---------------------------------------------------------------------------
@@ -94,34 +89,28 @@ def _fail_message(check_name: str, violations: list[str]) -> str:
 # ---------------------------------------------------------------------------
 # Check 1: Engine-named branches
 #
-# Pattern: string literals that are engine names appearing in comparison
-# expressions ("vllm" in hint, preset == "kobold", etc.)
+# Pattern: engine-name string literals in conditions, comparisons, loop
+# iterables, or match cases ("vllm" in hint, preset == "kobold", etc.).
 #
-# ENGINE_NAMES is the denylist.  Any appearance in an `if` condition (or a
-# loop guard) that contains one of these strings as a literal is flagged.
+# ENGINE_NAMES is a supplementary syntactic denylist, not a semantic policy
+# check. P2-1 voice compiler, P2-2 reasoning dialect, P2-4 voice catalog,
+# P2-5 audio intake, P2-6 STT diagnostics, P2-7 UI fallback, P2-8 public
+# design alias, P2-9 STT planning, and P2-10 think format need separate
+# config/behavior ownership review. P2-3 quarantine is frozen below.
 # ---------------------------------------------------------------------------
 
 _ENGINE_NAMES: frozenset[str] = frozenset({
     "vllm", "sglang", "ollama", "mistral", "qwen", "gemma", "hermes",
+    "functionary",
     "command_r", "tgi", "lmstudio", "lm-studio",
     "llama-cpp-python", "llama_cpp_python", "llama-server", "llamacpp",
     "llama.cpp", "tabbyapi", "tabby", "kobold", "koboldcpp",
 })
 
-# Pattern: a string literal containing an engine name (as a substring check or
-# equality).  We look for these inside conditional lines (if/elif/for).
-_ENGINE_BRANCH_PATTERN = re.compile(
-    r'(?:if|elif|for)\b.*(?:in\s+hint|==\s*["\']|["\'\s]in\s+["\'])',
-    re.IGNORECASE,
-)
-
-# Allowlisted entries: {(relative_file, stripped_line_text): reason}
+# Allowlisted entries: {(relative_file, ast.unparse(expression_or_pattern)): reason}
 #
-# Keyed on NORMALIZED LINE CONTENT (line.strip()) instead of line number so
-# the allowlist is DRIFT-PROOF.  Code insertions above an allowlisted site
-# no longer shift entries and cause spurious failures.  A genuinely new
-# engine branch at any site still fails — only previously-reviewed patterns
-# are recorded here.
+# Keyed on normalized expression, not line number. Adding a condition changes
+# the expression and fails the guard; a line move does not.
 #
 # Where two legitimate sites share identical stripped text, one entry covers
 # both — they represent the same reviewed pattern.
@@ -132,13 +121,15 @@ _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # (gateway/engine_quarantine.py); proxy.py calls named predicates
     # (engine_quarantine.is_local_swap_backend(...), etc.) instead of branching
     # on a backend id inline. So there are no proxy.py allowlist entries — if a
-    # new `if backend == "..."` ever appears in proxy.py, this guard fails and
-    # the fix is to add the property to the quarantine, not an entry here.
+    # new `if backend == "..."` ever appears in proxy.py, this guard fails;
+    # put the property in operator-owned service data.
     #
-    # The quarantine module itself holds the literals as DATA (frozensets keyed
-    # by property) and is intentionally NOT scanned as a violation — it is the
-    # one sanctioned home, reviewed as a unit. See its module docstring for the
-    # per-property removal recipe.
+    # P2-3: quarantine tables are data-shaped transitional debt; G2 freezes
+    # every table and predicate. This is an exact expression exception only.
+    # Resource admission's protocol discriminator parses the Ollama HTTP error
+    # envelope. It is a declared transport protocol, not backend-ID routing.
+    ("gateway/resource_admission_http.py", "protocol == 'ollama' and isinstance(body.get('error'), str)"): "P2-G1 reviewed protocol error envelope",
+    ("gateway/resource_admission_http.py", "protocol == 'ollama'"): "P2-G1 reviewed protocol error envelope",
     #
     # D-3 migration is COMPLETE: advisory_for_backend is engine-agnostic.
     # No toolcall_detection.py entries needed here.
@@ -159,26 +150,50 @@ def _check_engine_named_branches(
     if _source_lines is None:
         sources: list[tuple[str, list[str]]] = [
             (str(path.relative_to(_REPO_ROOT)), _lines(path))
-            for path in _CORE_FILES
+            for path in _core_files()
         ]
     else:
         sources = _source_lines
     for rel, file_lines in sources:
-        for lineno, line in enumerate(file_lines, start=1):
-            # Only look at lines that contain a branch keyword
-            if not re.search(r'\b(?:if|elif|for)\b', line):
+        try:
+            tree = ast.parse("\n".join(file_lines), filename=rel)
+        except SyntaxError as exc:
+            violations.append(f"{rel}:{exc.lineno}: cannot parse Python source: {exc.msg}")
+            continue
+        covered: set[int] = set()
+        candidates: list[ast.AST] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.If, ast.While, ast.IfExp)):
+                candidates.append(node.test)
+                covered.update(id(child) for child in ast.walk(node.test))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                if id(node.iter) not in covered:
+                    candidates.append(node.iter)
+                    covered.update(id(child) for child in ast.walk(node.iter))
+            elif isinstance(node, ast.match_case):
+                candidates.append(node.pattern)
+                covered.update(id(child) for child in ast.walk(node.pattern))
+                if node.guard is not None:
+                    candidates.append(node.guard)
+                    covered.update(id(child) for child in ast.walk(node.guard))
+        candidates.extend(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Compare) and id(node) not in covered
+        )
+        for expr in candidates:
+            engines = sorted({
+                node.value.lower() for node in ast.walk(expr)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and node.value.lower() in _ENGINE_NAMES
+            })
+            if not engines:
                 continue
-            # Check if any engine name appears as a string literal on this line
-            for engine in _ENGINE_NAMES:
-                # Match engine name as a quoted string literal
-                if re.search(r'["\']' + re.escape(engine) + r'["\']', line):
-                    key = (rel, line.strip())
-                    if key not in _ENGINE_BRANCH_ALLOWLIST:
-                        violations.append(
-                            f"{rel}:{lineno}: engine literal {engine!r} in branch: "
-                            f"{line.strip()[:100]}"
-                        )
-                    break  # one engine match per line is enough to flag/allowlist
+            expression = ast.unparse(expr)
+            if (rel, expression) not in _ENGINE_BRANCH_ALLOWLIST:
+                violations.append(
+                    f"{rel}:{expr.lineno}: engine literal {engines!r} in condition/compare: {expression[:100]}"
+                )
     return violations
 
 
@@ -208,7 +223,7 @@ _ENGINE_CLASS_ALLOWLIST: dict[tuple[str, str], str] = {
 
 def _check_engine_named_classes() -> list[str]:
     violations: list[str] = []
-    for path in _CORE_FILES:
+    for path in _core_files():
         rel = str(path.relative_to(_REPO_ROOT))
         for lineno, line in enumerate(_lines(path), start=1):
             if _ENGINE_CLASS_PATTERN.search(line):
@@ -255,7 +270,7 @@ _ENGINE_FLAG_ALLOWLIST: dict[tuple[str, str], str] = {}
 
 def _check_engine_flag_literals() -> list[str]:
     violations: list[str] = []
-    for path in _CORE_FILES:
+    for path in _core_files():
         rel = str(path.relative_to(_REPO_ROOT))
         for lineno, line in enumerate(_lines(path), start=1):
             # Skip pure comment lines and docstring lines (heuristic: leading #)
@@ -282,6 +297,141 @@ def _check_engine_flag_literals() -> list[str]:
 # ---------------------------------------------------------------------------
 
 _EXPECTED_LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold", "tabby"})
+
+# P2-3 transitional inventory. Every table and its consumer predicate is
+# explicit; adding a capability must be reviewed as a service-data migration.
+_QUARANTINE_TABLES: dict[str, frozenset[str]] = {
+    "LOCAL_SWAP_BACKENDS": frozenset({"kobold", "tabby"}),
+    "_HAS_DEFAULT_MODEL_FALLBACK": frozenset({"tabby"}),
+    "_ACTIVATION_FROM_UPSTREAM_ID": frozenset({"tabby"}),
+    "_ACTIVATION_REQUIRES_ABS_PATH": frozenset({"kobold"}),
+    "_HAS_AUX_MMPROJ": frozenset({"kobold"}),
+    "_LOADED_MODEL_IS_PATH": frozenset({"kobold"}),
+    "_LOADED_MODEL_IS_HTTP_ID": frozenset({"tabby"}),
+    "_ROLES_MAY_BE_UNPINNED": frozenset({"tabby"}),
+    "_VISION_VIA_AUX": frozenset({"kobold"}),
+    "_CONTEXT_WINDOW_FROM_MODEL_PARAMS": frozenset({"tabby"}),
+    "_CONTEXT_WINDOW_FROM_LIVE_PROBE": frozenset({"kobold"}),
+}
+
+_QUARANTINE_PREDICATES: dict[str, str] = {
+    "is_local_swap_backend": "LOCAL_SWAP_BACKENDS",
+    "has_default_model_fallback": "_HAS_DEFAULT_MODEL_FALLBACK",
+    "activation_from_upstream_id": "_ACTIVATION_FROM_UPSTREAM_ID",
+    "activation_requires_abs_path": "_ACTIVATION_REQUIRES_ABS_PATH",
+    "has_aux_mmproj": "_HAS_AUX_MMPROJ",
+    "loaded_model_is_path": "_LOADED_MODEL_IS_PATH",
+    "loaded_model_is_http_id": "_LOADED_MODEL_IS_HTTP_ID",
+    "roles_may_be_unpinned": "_ROLES_MAY_BE_UNPINNED",
+    "vision_via_aux": "_VISION_VIA_AUX",
+    "context_window_from_model_params": "_CONTEXT_WINDOW_FROM_MODEL_PARAMS",
+    "context_window_from_live_probe": "_CONTEXT_WINDOW_FROM_LIVE_PROBE",
+}
+
+
+def _check_quarantine_frozen(source: str | None = None) -> list[str]:
+    """Freeze the 11 literal sets and their exact one-lookup predicate shapes."""
+    tree = ast.parse(source if source is not None else _QUARANTINE.read_text(encoding="utf-8"))
+    violations: list[str] = []
+    tables: dict[str, ast.expr] = {}
+    predicates: dict[str, ast.FunctionDef] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            continue  # module docstring
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id in tables:
+                violations.append(f"engine_quarantine.py:{node.lineno}: duplicate table {node.target.id}")
+            tables[node.target.id] = node.value
+        elif isinstance(node, ast.FunctionDef):
+            if node.name in predicates:
+                violations.append(f"engine_quarantine.py:{node.lineno}: duplicate predicate {node.name}")
+            predicates[node.name] = node
+        else:
+            violations.append(f"engine_quarantine.py:{node.lineno}: unreviewed top-level code")
+    if tables.keys() != _QUARANTINE_TABLES.keys():
+        violations.append(f"quarantine tables changed: expected {sorted(_QUARANTINE_TABLES)}, found {sorted(tables)}")
+    for name, expected in _QUARANTINE_TABLES.items():
+        value = tables.get(name)
+        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                and value.func.id == "frozenset" and len(value.args) == 1
+                and not value.keywords and isinstance(value.args[0], ast.Set)
+                and all(isinstance(item, ast.Constant) and isinstance(item.value, str)
+                        for item in value.args[0].elts)
+                and frozenset(item.value for item in value.args[0].elts) == expected):
+            violations.append(f"quarantine table {name} changed value or definition")
+    if predicates.keys() != _QUARANTINE_PREDICATES.keys():
+        violations.append(f"quarantine predicates changed: expected {sorted(_QUARANTINE_PREDICATES)}, found {sorted(predicates)}")
+    for name, table in _QUARANTINE_PREDICATES.items():
+        node = predicates.get(name)
+        if node is None:
+            continue
+        body = node.body[1:] if (node.body and isinstance(node.body[0], ast.Expr)
+                                   and isinstance(node.body[0].value, ast.Constant)
+                                   and isinstance(node.body[0].value.value, str)) else node.body
+        expected_return = ast.parse(f"return backend in {table}").body[0]
+        if (node.decorator_list or len(node.args.args) != 1 or node.args.args[0].arg != "backend"
+                or node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg
+                or node.args.kwarg or node.args.defaults or node.args.kw_defaults
+                or len(body) != 1 or ast.dump(body[0], include_attributes=False)
+                != ast.dump(expected_return, include_attributes=False)):
+            violations.append(f"quarantine predicate {name} changed shape")
+    return violations
+
+
+# Reviewed semantic findings from the audit. These anchors make deletion or
+# relocation visible in this guard. They do not prove the policies are safe;
+# behavior/config tests are needed for each migration. P2-7 lives in web TSX
+# and is outside this Python-only guard.
+_SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
+    "P2-1 voice compiler": {
+        "gateway/voice_design.py": {"_CATEGORIES", "_ORDER", "_NOISE", "design_instruct"},
+        "proxy.py": {"_design_voice"},
+    },
+    "P2-2 reasoning dialect": {
+        "gateway/transforms.py": {"ReasoningEffortTransform", "apply_thinking_suppression"},
+    },
+    "P2-4 voice catalog": {
+        "gateway/transforms.py": {"DEFAULT_TTS_VOICE", "CANONICAL_TTS_VOICES", "LEGACY_TTS_VOICE_ALIASES"},
+    },
+    "P2-5 audio intake": {
+        "gateway/voice_audio.py": {"SampleLimits", "process_sample"},
+        "proxy.py": {"_probe_voice_quality"},
+    },
+    "P2-6 STT diagnostics": {
+        "gateway/stt_chunking.py": {"_ENGINE_DIAGNOSTIC_FIELDS", "_parse_mergeable_chunk_payload"},
+    },
+    "P2-8 public design alias": {"gateway/voices_api.py": {"register_voice_routes"}},
+    "P2-9 generic STT planning": {
+        "gateway/stt_chunking.py": {"SttExecutionConfig", "plan_silence_only_segments"},
+    },
+    "P2-10 think format": {
+        "gateway/transforms.py": {"split_reasoning_visible_text", "StreamingThinkSplitTransform"},
+    },
+}
+
+
+def _check_semantic_policy_anchors() -> list[str]:
+    violations: list[str] = []
+    for finding, files in _SEMANTIC_POLICY_ANCHORS.items():
+        for rel, expected in files.items():
+            tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
+            found = {
+                node.name for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            }
+            found.update(
+                node.target.id for node in tree.body
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            )
+            found.update(
+                target.id for node in tree.body if isinstance(node, ast.Assign)
+                for target in node.targets if isinstance(target, ast.Name)
+            )
+            if missing := expected - found:
+                violations.append(f"{finding}: {rel} missing reviewed anchors {sorted(missing)}")
+    return violations
 
 # The frozen set now lives in the quarantine as LOCAL_SWAP_BACKENDS (proxy.py
 # aliases it). Match the quarantine definition.
@@ -437,7 +587,7 @@ class TestEngineKnowledgeBoundary:
         """No engine-named string literal should appear in a branch condition
         outside the allowlist.
 
-        Engine names in `if`/`elif`/`for` conditions mean per-engine code paths.
+        Engine names in conditions or comparisons suggest per-engine paths.
         New engine quirks belong in DATA (a transform row / preset).
         """
         violations = _check_engine_named_branches()
@@ -476,6 +626,14 @@ class TestEngineKnowledgeBoundary:
         violations = _check_local_swap_backends_frozen()
         assert not violations, _fail_message("_LOCAL_SWAP_BACKENDS frozen set", violations)
 
+    def test_quarantine_tables_and_predicates_frozen(self) -> None:
+        violations = _check_quarantine_frozen()
+        assert not violations, _fail_message("quarantine inventory", violations)
+
+    def test_reviewed_semantic_policy_anchors_are_tracked(self) -> None:
+        violations = _check_semantic_policy_anchors()
+        assert not violations, _fail_message("semantic policy inventory", violations)
+
     def test_primitive_vocabulary_closed(self) -> None:
         """_PRIMITIVE_KINDS must equal the documented fixed set.
 
@@ -497,9 +655,9 @@ class TestEngineKnowledgeBoundary:
         synthetic_lines = [
             # An engine-agnostic line (calls the quarantine predicate, no engine
             # literal) — must NOT be flagged.
-            'if engine_quarantine.is_local_swap_backend(backend):',
+            'if engine_quarantine.is_local_swap_backend(backend): pass',
             # A synthetic new inline engine branch — must BE flagged.
-            'if backend == "vllm":',            # not in allowlist → violation
+            'if backend == "vllm": pass',            # not in allowlist → violation
         ]
         violations = _check_engine_named_branches(
             _source_lines=[("proxy.py", synthetic_lines)]
@@ -516,3 +674,55 @@ class TestEngineKnowledgeBoundary:
             "Guard failed to catch a synthetic new engine branch "
             '(`if backend == "vllm":`) — the boundary check is broken!'
         )
+
+    def test_multiline_and_expression_engine_branches_are_caught(self) -> None:
+        sources = [("gateway/new_adapter.py", [
+            "if (backend ==",
+            '        "vllm"): pass',
+            'selected = "tabby" if backend == "tabby" else "other"',
+            'while backend in ("kobold",): break',
+            'is_special = backend == "gemma"',
+            'name = "ollama"',
+        ])]
+        violations = _check_engine_named_branches(sources)
+        assert len(violations) == 4
+        assert all("gateway/new_adapter.py" in item for item in violations)
+
+    def test_loop_and_comprehension_iterables_with_engine_literals_are_caught(self) -> None:
+        sources = [("gateway/new_adapter.py", [
+            'for backend in ("vllm",): pass',
+            'async def check():',
+            '    async for backend in stream("tabby"): pass',
+            'engines = [backend for backend in ("kobold",)]',
+            'engines = (backend for backend in (item for item in ("functionary",)))',
+        ])]
+        violations = _check_engine_named_branches(sources)
+        assert len(violations) == 4
+        assert all("gateway/new_adapter.py" in item for item in violations)
+
+    def test_match_cases_and_guards_with_engine_literals_are_caught(self) -> None:
+        sources = [("gateway/new_adapter.py", [
+            "match backend:",
+            '    case "vllm": pass',
+            '    case "tabby" | "kobold": pass',
+            '    case "generic": pass',
+            "match backend:",
+            '    case _ if supports("functionary"): pass',
+        ])]
+        violations = _check_engine_named_branches(sources)
+        assert len(violations) == 3
+        assert all("gateway/new_adapter.py" in item for item in violations)
+
+    def test_quarantine_freeze_rejects_new_backend_table_and_predicate(self) -> None:
+        source = _QUARANTINE.read_text(encoding="utf-8")
+        assert not _check_quarantine_frozen(source)
+        for name in _QUARANTINE_TABLES:
+            pattern = rf'({re.escape(name)}: frozenset\[str\] = frozenset\(\{{)'
+            changed, count = re.subn(pattern, r'\g<1>"vllm", ', source, count=1)
+            assert count == 1, name
+            assert any(name in violation for violation in _check_quarantine_frozen(changed)), name
+        assert _check_quarantine_frozen(source + '\n_NEW_BACKENDS = frozenset({"vllm"})\n')
+        assert _check_quarantine_frozen(source.replace(
+            "return backend in _HAS_DEFAULT_MODEL_FALLBACK",
+            "return True",
+        ))
