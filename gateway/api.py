@@ -446,13 +446,22 @@ def create_gateway_router(
         operations = aliases_provider(operation)
         if entry_visible is not None:
             original_operations = operations
-            operations = {
-                op: {key: [row for row in rows if entry_visible(request, {
-                    "operation": op,
-                    "id": row.get("alias") or row.get("engine") or row.get("match") or "",
-                })] for key, rows in view.items()}
-                for op, view in operations.items()
-            }
+            def visible_rows(op: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                kept = []
+                for row in rows:
+                    model = row.get("alias") or row.get("engine") or row.get("match") or ""
+                    if not entry_visible(request, {"operation": op, "id": model}):
+                        continue
+                    row = dict(row)
+                    for field in ("candidates", "skipped_engines"):
+                        if field in row:
+                            row[field] = [target for target in row[field]
+                                          if entry_visible(request, {"operation": op, "id": target})]
+                    kept.append(row)
+                return kept
+
+            operations = {op: {key: visible_rows(op, rows) for key, rows in view.items()}
+                          for op, view in operations.items()}
             operations = {op: view for op, view in operations.items()
                           if any(view.values()) or view == original_operations[op]}
         return JSONResponse(

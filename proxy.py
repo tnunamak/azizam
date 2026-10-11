@@ -25099,6 +25099,12 @@ async def list_models(request: Request):
     # caller cannot see. This does not change which alias entries are listed.
     visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
     for item in data:
+        if isinstance(item.get("azizam_engine_candidates"), Mapping):
+            item["azizam_engine_candidates"] = {
+                operation: [target for target in targets
+                            if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
+                for operation, targets in item["azizam_engine_candidates"].items()
+            }
         if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
             item["azizam_resolves_to"] = {
                 operation: target for operation, target in item["azizam_resolves_to"].items()

@@ -1119,6 +1119,10 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     aliases = get("/gateway/v1/aliases")["operations"]
     assert {item["alias"] for item in aliases["images"]["stable"]} == {"image-fast"}
     assert "image_edits" not in aliases
+    assert all(set(item.get("candidates", [])) <= {"supertonic"} for item in aliases["speech"]["stable"])
+    speech_aliases = [item for item in get("/v1/models")["data"] if item["id"] in {"tts", "tts-fast"}]
+    assert speech_aliases
+    assert all(set(item["azizam_engine_candidates"]["speech"]) == {"supertonic"} for item in speech_aliases)
     assert {item["title"] for item in get("/sdapi/v1/sd-models")} == {"image-fast", "flux2-klein-4b"}
     voices = get("/v1/audio/voices")
     assert voices["voices"]
