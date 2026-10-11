@@ -7,9 +7,6 @@
   .vf-focus-ring:focus-visible,
   .vf-button:focus-visible,
   .vf-icon-button:focus-visible,
-  .vf-field-input:focus-visible,
-  .vf-select:focus-visible,
-  .vf-textarea:focus-visible,
   .vf-tab:focus-visible,
   .vf-shell-link:focus-visible,
   .vf-card[href]:focus-visible,
@@ -772,16 +769,6 @@
     opacity: 0.45;
   }
 
-  .vf-button-secondary {
-    border-color: var(--vf-border-strong);
-    background: var(--vf-surface-2);
-    color: var(--vf-text);
-  }
-
-  .vf-button-secondary:hover {
-    background: var(--vf-surface-3);
-  }
-
   .vf-button-ghost {
     border-color: transparent;
     background: transparent;
@@ -793,26 +780,10 @@
     color: var(--vf-text);
   }
 
-  .vf-button-danger {
-    border-color: color-mix(in srgb, var(--vf-bad) 70%, transparent);
-    background: transparent;
-    color: var(--vf-bad);
-  }
-
   .vf-button-sm {
     min-height: 36px;
     padding-inline: 14px;
     font-size: var(--vf-text-sm);
-  }
-
-  .vf-button-lg {
-    min-height: 52px;
-    padding-inline: 22px;
-    font-size: var(--vf-text-md);
-  }
-
-  .vf-button-full {
-    width: 100%;
   }
 
   .vf-icon-button {
@@ -832,60 +803,6 @@
     border-color: var(--vf-border-strong);
     background: var(--vf-surface-2);
     color: var(--vf-text);
-  }
-
-  .vf-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .vf-field-label {
-    color: var(--vf-text-muted);
-    font-size: var(--vf-text-sm);
-    font-weight: 500;
-  }
-
-  .vf-field-input,
-  .vf-select,
-  .vf-textarea {
-    width: 100%;
-    min-height: 48px;
-    padding: 0 14px;
-    border: 1px solid var(--vf-border);
-    border-radius: var(--vf-radius-md);
-    background: var(--vf-field);
-    color: var(--vf-text);
-    font-family: var(--vf-font-sans);
-    font-size: var(--vf-text-md);
-  }
-
-  .vf-textarea {
-    min-height: 112px;
-    padding-block: 12px;
-    line-height: 1.5;
-    resize: vertical;
-  }
-
-  .vf-field-input::placeholder,
-  .vf-textarea::placeholder {
-    color: var(--vf-text-subtle);
-  }
-
-  .vf-field-input[aria-invalid="true"],
-  .vf-select[aria-invalid="true"],
-  .vf-textarea[aria-invalid="true"] {
-    border-color: var(--vf-bad);
-  }
-
-  .vf-field-help {
-    color: var(--vf-text-subtle);
-    font-size: var(--vf-text-sm);
-    line-height: 1.4;
-  }
-
-  .vf-field-error {
-    color: var(--vf-bad);
   }
 
   .vf-pill,

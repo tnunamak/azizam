@@ -118,6 +118,18 @@ test("real registry journey preserves disabled state and unknown config through 
   sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("button", { name: "Detect", exact: true }).click();
   await expect(sheet.getByText(/Detected models:/).first()).toBeVisible();
+  await sheet.getByLabel("Public name for demo-chat").fill("journey-chat");
+  await sheet.getByLabel("Use existing access rules for these models").check();
+  const applied = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith("/services/" + record.id),
+  );
+  await sheet.getByRole("button", { name: "Apply models" }).click();
+  const appliedResponse = await applied;
+  expect(appliedResponse.status()).toBe(200);
+  expect(appliedResponse.request().headers()["if-match"]).toBeTruthy();
+  await expect(sheet.getByText(/models applied/)).toBeVisible();
   await page.keyboard.press("Escape");
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
@@ -136,6 +148,19 @@ test("real registry journey preserves disabled state and unknown config through 
     .click();
   const edit = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await edit.getByLabel(/^Name/).fill("Renamed journey engine");
+  await edit.getByText("Advanced fields", { exact: true }).click();
+  const advancedInput = edit.getByLabel("Advanced JSON");
+  const advanced = JSON.parse(await advancedInput.inputValue());
+  const transforms = [{ kind: "default-params", set: { max_tokens: 9 } }];
+  const lifecycle = {
+    type: "external",
+    managed: false,
+    idle_timeout: 123,
+    operator_note: "keep lifecycle extension",
+  };
+  await advancedInput.fill(
+    JSON.stringify({ ...advanced, transforms, lifecycle }),
+  );
   await edit
     .getByLabel("Endpoint", { exact: true })
     .fill(`http://127.0.0.1:${enginePort}/v2`);
@@ -148,6 +173,8 @@ test("real registry journey preserves disabled state and unknown config through 
   expect(after.config.port).toBe(enginePort);
   expect(after.config.base_path).toBe("/v2");
   expect(after.config.custom_operator_field).toEqual({ preserve: true });
+  expect(after.config.transforms).toEqual(transforms);
+  expect(after.config.lifecycle).toEqual(lifecycle);
   expect(after.config.models).toEqual([
     expect.objectContaining({
       id: "legacy-chat",
@@ -162,6 +189,10 @@ test("real registry journey preserves disabled state and unknown config through 
       deployment: "real",
       routing_hint: "keep-slot",
     }),
+    expect.objectContaining({
+      id: "journey-chat",
+      upstream_model: "demo-chat",
+    }),
   ]);
   card = page.locator(`tr[data-engine-id="${record.id}"]`);
   await card.getByRole("button", { name: /Actions|More/ }).click();
@@ -173,7 +204,15 @@ test("real registry journey preserves disabled state and unknown config through 
     exact: true,
   });
   const typed = remove.getByRole("textbox");
-  if (await typed.count()) await typed.fill("Renamed journey engine");
+  await expect(typed).toBeVisible();
+  const confirm = remove.getByRole("button", {
+    name: "Remove engine",
+    exact: true,
+  });
+  await expect(confirm).toBeDisabled();
+  await typed.fill("wrong name");
+  await expect(confirm).toBeDisabled();
+  await typed.fill("Renamed journey engine");
   await remove
     .getByRole("button", { name: "Remove engine", exact: true })
     .click();

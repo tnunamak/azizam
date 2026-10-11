@@ -10,8 +10,9 @@ import {
   type ServiceRegistryResponse,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Field } from "@/components/ui/field";
-import { IncidentBanner } from "@/components/ui/operational";
+import { Callout } from "@/components/product/status-ui";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { detectedModelsPatch, type DetectedModelRow } from "./detected-models";
@@ -195,48 +196,53 @@ export function EngineChecks({
         </Button>
       </div>
       {result && (
-        <IncidentBanner
-          tone={result.ok ? "info" : "bad"}
-          title={result.title}
-          detail={result.detail}
-          className="[&_.vf-incident-banner-body]:break-words"
-          actions={
-            !result.ok ? (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  type="button"
-                  size="sm"
-                  onClick={() =>
-                    result.retry === "detect" ? detect.mutate() : test.mutate()
-                  }
-                  disabled={busy}
-                >
-                  {result.retry === "detect" ? "Retry detection" : "Retry test"}
-                </Button>
-                {service.editable !== false && (
+        <div role={result.ok ? "status" : undefined}>
+          <Callout
+            as="div"
+            severity={result.ok ? "info" : "critical"}
+            title={result.title}
+            meta={result.detail}
+            className="break-words"
+            actions={
+              !result.ok ? (
+                <div className="flex flex-wrap gap-2">
                   <Button
+                    variant="outline"
                     type="button"
                     size="sm"
-                    variant="ghost"
-                    onClick={onEdit}
+                    onClick={() =>
+                      result.retry === "detect"
+                        ? detect.mutate()
+                        : test.mutate()
+                    }
+                    disabled={busy}
                   >
-                    Edit endpoint
+                    {result.retry === "detect"
+                      ? "Retry detection"
+                      : "Retry test"}
                   </Button>
-                )}
-              </div>
-            ) : undefined
-          }
-        />
+                  {service.editable !== false && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={onEdit}
+                    >
+                      Edit endpoint
+                    </Button>
+                  )}
+                </div>
+              ) : undefined
+            }
+          />
+        </div>
       )}
       {rows && (
         <section
           aria-label={`Detected models for ${service.name}`}
-          className="min-w-0 border-t border-border pt-4"
+          className="border-border min-w-0 border-t pt-4"
         >
-          <h3 className="text-body font-semibold">
-            Preview detected models
-          </h3>
+          <h3 className="text-body font-semibold">Preview detected models</h3>
           <p className="text-meta text-muted-foreground mt-1 break-all">
             Detected models: {rows.map((row) => row.upstream).join(", ")}
           </p>
@@ -250,21 +256,22 @@ export function EngineChecks({
                 key={row.upstream}
                 className="grid min-w-0 gap-2 sm:grid-cols-2 sm:items-center"
               >
-                <label className="flex min-h-8 max-sm:min-h-11 min-w-0 items-center gap-3 text-meta">
-                  <input
-                    type="checkbox"
+                <label className="text-meta flex min-h-8 min-w-0 items-center gap-3 max-sm:min-h-11">
+                  <Checkbox
+                    className="max-sm:min-h-11 max-sm:min-w-11"
+                    aria-label={row.upstream}
                     checked={row.selected}
                     disabled={apply.isPending}
-                    onChange={(event) => {
+                    onCheckedChange={(checked) => {
                       setApplyError(null);
                       setRows(
                         rows.map((item, i) =>
                           i === index
-                            ? { ...item, selected: event.target.checked }
+                            ? { ...item, selected: checked === true }
                             : item,
                         ),
                       );
-                  }}
+                    }}
                   />
                   <span className="min-w-0 break-all">{row.upstream}</span>
                 </label>
@@ -293,27 +300,27 @@ export function EngineChecks({
               include these names immediately. Restricted plans need an existing
               matching grant. No access plan is edited here.
             </p>
-            <label className="mt-2 flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta">
-              <input
-                type="checkbox"
+            <label className="text-meta mt-2 flex min-h-8 items-center gap-3 max-sm:min-h-11">
+              <Checkbox
+                className="max-sm:min-h-11 max-sm:min-w-11"
+                aria-label="Use existing access rules for these models"
                 checked={accessConfirmed}
                 disabled={apply.isPending}
-                onChange={(event) => setAccessConfirmed(event.target.checked)}
+                onCheckedChange={(checked) =>
+                  setAccessConfirmed(checked === true)
+                }
               />
               Use existing access rules for these models
             </label>
             <a
               href="/ui/people/?tab=plans"
-              className="text-meta text-muted-foreground inline-flex min-h-8 max-sm:min-h-11 items-center underline underline-offset-4"
+              className="text-meta text-muted-foreground inline-flex min-h-8 items-center underline underline-offset-4 max-sm:min-h-11"
             >
               Review access plans in People
             </a>
           </div>
           {applyError && (
-            <p
-              role="alert"
-              className="text-meta text-danger mt-3 break-words"
-            >
+            <p role="alert" className="text-meta text-danger mt-3 break-words">
               {applyError}
             </p>
           )}
@@ -330,7 +337,9 @@ export function EngineChecks({
                 variant="default"
                 aria-busy={apply.isPending || undefined}
                 disabled={
-                  apply.isPending || !accessConfirmed || !rows.some((row) => row.selected)
+                  apply.isPending ||
+                  !accessConfirmed ||
+                  !rows.some((row) => row.selected)
                 }
                 onClick={() => {
                   setApplyError(null);
