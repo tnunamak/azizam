@@ -1442,6 +1442,8 @@ function CreationViewer({
     ),
     staleTime: 0,
     refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
   });
   const linkExpiry = renewed?.download_url
@@ -2342,7 +2344,7 @@ export default function LibraryPage() {
           switch, a search button and Filters, so the controls stay under a
           fifth of the screen (D1.5); the search field opens below it. The
           heading keeps a ref so the viewer can return focus to it. */}
-      {searchParams.get("job") ? <JobResult jobId={searchParams.get("job")!} /> : null}
+      {searchParams?.get("job") ? <JobResult jobId={searchParams?.get("job")!} /> : null}
       <header className="mb-(--space-title) flex min-h-8 items-center">
         <h1 ref={headingRef} tabIndex={-1} className="text-title">
           Library

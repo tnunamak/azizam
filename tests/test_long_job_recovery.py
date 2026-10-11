@@ -32,7 +32,7 @@ def test_restart_recovers_or_explains_every_job(store, monkeypatch, kind, intent
     monkeypatch.setattr(proxy, f"_schedule_{kind}_media_job", scheduled)
     getattr(proxy, f"_resume_pending_{kind}_media_jobs")()
     current = media_jobs.get(job.job_id, path=store)
-    if enabled and payload:
+    if enabled and payload and status == "queued":
         scheduled.assert_called_once_with(job.job_id)
     else:
         assert current["status"] == "failed"
@@ -123,3 +123,18 @@ def test_video_restart_polls_existing_submission(store, monkeypatch):
     submit.assert_not_called()
     status.assert_awaited_once()
     assert media_jobs.get(job.job_id, path=store)["status"] == "failed"
+
+
+@pytest.mark.parametrize("status,enabled", [("queued", True), ("running", True), ("queued", False), ("running", False)])
+def test_make_restart_does_not_duplicate_unconfirmed_work(store, status, enabled):
+    job = media_jobs.MediaJob(intent="image.generate", status=status, metadata={"mode": me_make.JOB_MODE})
+    media_jobs.create(job, path=store)
+    runtime = Mock()
+    runtime.load_payload.return_value = {"body": {"prompt": "a picture"}}
+    me_make.resume_jobs(runtime=runtime, jobs_path=store, enabled=enabled)
+    if enabled and status == "queued":
+        runtime.schedule.assert_called_once()
+    else:
+        assert media_jobs.get(job.job_id, path=store)["status"] == "failed"
+        runtime.schedule.assert_not_called()
+        runtime.drop_payload.assert_called_once_with(job.job_id)

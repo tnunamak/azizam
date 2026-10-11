@@ -282,6 +282,10 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
             _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
             runtime.drop_payload(job_id)
             continue
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            _fail(job_id, "The gateway restarted before completion could be confirmed; this job was not run again", jobs_path)
+            runtime.drop_payload(job_id)
+            continue
         runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
         resumed += 1
     return resumed

@@ -21463,6 +21463,10 @@ async def _run_image_media_job(job_id: str) -> None:
 
         max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
         for attempt in range(1, max_attempts + 1):
+            current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
+            if (current.get("metadata") or {}).get("cancel_requested_at"):
+                _mark_image_media_job_failed(job_id, "Cancellation was requested; the backend stop could not be confirmed")
+                return
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
             receipt.job_id = job_id
             try:
@@ -21662,6 +21666,9 @@ def _resume_pending_image_media_jobs() -> int:
             continue
         if metadata.get("cancel_requested_at"):
             _mark_image_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            _mark_image_media_job_failed(job_id, "The gateway restarted before completion could be confirmed; this job was not run again")
             continue
         if _schedule_image_media_job(job_id):
             resumed += 1
@@ -22090,6 +22097,9 @@ def _resume_pending_audio_media_jobs() -> int:
             continue
         if metadata.get("cancel_requested_at"):
             _mark_audio_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            _mark_audio_media_job_failed(job_id, "The gateway restarted before completion could be confirmed; this job was not run again")
             continue
         if _schedule_audio_media_job(job_id):
             resumed += 1
@@ -22652,6 +22662,9 @@ def _resume_pending_video_media_jobs() -> int:
             continue
         if metadata.get("cancel_requested_at"):
             _mark_video_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if job.get("status") == media_jobs.STATUS_RUNNING and not metadata.get("upstream_video_id"):
+            _mark_video_media_job_failed(job_id, "The gateway restarted before completion could be confirmed; this job was not run again")
             continue
         if _schedule_video_media_job(job_id):
             resumed += 1

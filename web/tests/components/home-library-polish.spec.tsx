@@ -272,7 +272,9 @@ describe("Home and Library polish", () => {
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ assets, models: [] })),
+      vi.fn(async (input: RequestInfo | URL) => String(input).includes("/download?")
+        ? Response.json({ download_url: "/signed/audio1" })
+        : Response.json({ assets, models: [] })),
     );
     const { container } = renderPage(<LibraryPage />);
     await screen.findByRole("button", { name: "Open Ocean sounds" });
@@ -312,7 +314,7 @@ describe("Home and Library polish", () => {
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeVisible();
     // The viewer draws its own player around the labelled audio element.
-    expect(screen.getByLabelText("Generated audio")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Generated audio")).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", { name: "Play Ocean sounds" }),
     ).toBeVisible();
