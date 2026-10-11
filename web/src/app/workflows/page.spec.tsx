@@ -471,7 +471,7 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.queryByText("Face Likeness Check")).toBeNull();
     expect(screen.queryByText("Turned off")).toBeNull();
     expect(screen.queryByText(/Not set up/)).toBeNull();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows2");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows 2");
     expect(document.querySelector('a[href^="/engines"], a[href^="/status"], a[href^="/people"]')).toBeNull();
   });
 
@@ -495,7 +495,7 @@ describe("WorkflowsPage empathy copy", () => {
     const section = screen.getByText("Not set up (1)").closest("details")!;
     expect(section).not.toHaveAttribute("open");
     expect(within(section).getByRole("listitem", { name: "Face Likeness Check", hidden: true })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows2");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows 2");
     fireEvent.click(screen.getByText("Not set up (1)"));
     expect(section).toHaveAttribute("open");
   });

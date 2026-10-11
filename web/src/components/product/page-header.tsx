@@ -55,7 +55,9 @@ export function PageHeader({
           <h1 className="text-title text-balance">
             {title}
             {typeof count === "number" ? (
+              // The space keeps the accessible name "Workflows 29", not "Workflows29".
               <span className="text-subtle-foreground figures text-heading ml-2.5 font-normal">
+                <span className="sr-only"> </span>
                 {count}
               </span>
             ) : null}

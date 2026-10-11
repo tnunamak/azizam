@@ -596,7 +596,7 @@ test("a member does not see workflows that are not set up", async ({ page }) => 
   await expect(page.getByText("Face Likeness Check")).toHaveCount(0);
   await expect(page.getByText("Voiceover")).toHaveCount(0);
   await expect(page.getByText(/Not set up/)).toHaveCount(0);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Workflows1");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Workflows 1");
 });
 
 test("workflow sheet shows controls, code, links and seeded recent jobs", async ({

@@ -267,7 +267,7 @@ it("opens workflow details from the list row and exposes named capability segmen
   const list = await screen.findByRole("list", { name: "Pictures workflows" });
   const row = within(list).getByRole("listitem", { name: "Product render" });
   expect(row).toHaveAttribute("data-lines", "2");
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows1");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Workflows 1");
   const filters = within(screen.getByRole("group", { name: "Workflow task" }));
   expect(filters.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await user.click(filters.getByRole("button", { name: "Images" }));
