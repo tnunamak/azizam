@@ -322,3 +322,28 @@ def test_unconfigured_dispatch_still_evaluates_without_inventing_availability(mo
     available = next(fact for fact in seen[0].details.facts if fact.name == 'available')
     assert available.value is None and available.quality == 'unavailable'
     assert receipt.resource_decision is None
+
+
+def test_image_rechecks_policy_after_async_preparation(dispatch_env, monkeypatch):
+    client, calls = dispatch_env
+    original = proxy._apply_workflow_extensions_to_image_request
+    async def prepare(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['image.generate']})
+        return result
+    monkeypatch.setattr(proxy, '_apply_workflow_extensions_to_image_request', prepare)
+    response = client.post('/v1/images/generations', json={'model': 'flux2-klein-4b', 'prompt': 'hi'})
+    assert response.status_code == 503
+    assert 'intent_disabled' in response.json()['admission']['reason_codes']
+    assert not calls
+
+
+def test_speech_rechecks_policy_after_service_start(dispatch_env, monkeypatch):
+    client, calls = dispatch_env
+    async def start(*args, **kwargs):
+        monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['speech.synthesis']})
+        return None
+    monkeypatch.setattr(proxy, '_ensure_speech_service_ready', start)
+    response = client.post('/v1/audio/speech', json={'model': 'tts-1', 'input': 'hi', 'voice': 'alloy'})
+    assert response.status_code == 503
+    assert not calls

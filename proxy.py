@@ -4499,6 +4499,13 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if tts_service_id != "tts":
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
+    admission = _dispatch_admission_response(
+        "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
+        service_available=TTS_ENABLED, resource_class="audio", receipt=receipt,
+    )
+    if admission is not None:
+        return admission
+
     url = f"{_tts_host}/v1/audio/speech"
     if receipt is not None:
         receipt.backend = tts_service_id
@@ -8367,6 +8374,12 @@ async def proxy_comfy_request(
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+            admission = _dispatch_admission_response(
+                "image.generate", auth_context=auth_context, service_id="comfyui",
+                service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            )
+            if admission is not None:
+                return admission
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -9038,6 +9051,12 @@ async def proxy_comfy_edit_request(
                 if "noise_seed" in inputs:
                     seed_field = "noise_seed"
 
+            admission = _dispatch_admission_response(
+                "image.edit", auth_context=auth_context, service_id="comfyui",
+                service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            )
+            if admission is not None:
+                return admission
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -10672,6 +10691,12 @@ async def _submit_video_graph(
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            admission = _dispatch_admission_response(
+                "video.generate", auth_context=auth_context, service_id="comfyui",
+                service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            )
+            if admission is not None:
+                return admission
             # client_id routes ws events for this submission to our listener.
             resp = await client.post(
                 f"{COMFY_HOST}/prompt",
@@ -15024,6 +15049,12 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             if upload_error is not None:
                 raise RuntimeError("ComfyUI image upload failed")
             graph[node_id]["inputs"]["image"] = name
+        admission = _dispatch_admission_response(
+            "image.edit", auth_context=auth_context, service_id="comfyui",
+            service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+        )
+        if admission is not None:
+            raise identity_api.IdentityUnavailable(admission)
         error, images = await _comfy_run_round(
             client, graph, dict(headers), "identity scene",
             max_wait_s=int(IDENTITY_CFG.get("max_wait_s", 3600)),
@@ -23779,6 +23810,12 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         ).request
 
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
+            admission = _dispatch_admission_response(
+                "video.edit", auth_context=auth_context, service_id="comfyui",
+                service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            )
+            if admission is not None:
+                return None, admission
             submitted = await client.post(
                 f"{COMFY_HOST}/prompt", headers=headers,
                 json=_build_comfy_submit_payload(workflow),
@@ -24423,6 +24460,12 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            admission = _dispatch_admission_response(
+                "audio.generate", auth_context=auth_context, service_id="comfyui",
+                service_available=COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            )
+            if admission is not None:
+                return admission
             resp = await client.post(
                 f"{COMFY_HOST}/prompt",
                 headers=headers,
