@@ -20617,9 +20617,7 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"):
                 job_id = path.stem
-                if (job.get("metadata") or {}).get("cancel_requested_at"):
-            raise media_jobs.CancellationPending()
-        payload = _load_image_media_job_payload(job_id)
+                payload = _load_image_media_job_payload(job_id)
                 if person_id is not None and (payload or {}).get("auth", {}).get("person_id") != person_id:
                     continue
                 if spared(payload):
@@ -21435,6 +21433,8 @@ async def _run_image_media_job(job_id: str) -> None:
         if job.get("status") in media_jobs.TERMINAL_STATUSES:
             return
 
+        if (job.get("metadata") or {}).get("cancel_requested_at"):
+            raise media_jobs.CancellationPending()
         payload = _load_image_media_job_payload(job_id)
         request_shim = _request_shim_from_image_job_payload(payload or {})
         if payload is None or request_shim is None:

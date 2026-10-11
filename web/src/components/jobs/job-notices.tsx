@@ -61,7 +61,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
       dismissed.current = new Set(JSON.parse(sessionStorage.getItem(storageKey) ?? "[]"));
     } catch { /* A disabled store does not disable in-app notices. */ }
   }, [storageKey]);
-  const { data } = useQuery({
+  const { data, dataUpdatedAt } = useQuery({
     queryKey: ["person-jobs", personId],
     queryFn: async ({ signal }) => {
       const jobs: LongJob[] = [];
@@ -98,7 +98,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
     }
     unchanged.current = changed ? 0 : unchanged.current + 1;
     if (completed.length) setNotices((current) => [...current.filter((job) => !completed.some((next) => next.job_id === job.job_id)), ...completed]);
-  }, [data, startedAt]);
+  }, [data, dataUpdatedAt, startedAt]);
   function dismiss(id: string) {
     dismissed.current.add(id);
     setNotices((current) => current.filter((job) => job.job_id !== id));
