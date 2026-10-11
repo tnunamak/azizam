@@ -5,10 +5,55 @@ must reject those probes before any socket connection or host-control process
 is created. This guard lives only in fixture entrypoints, never production.
 """
 
+import os
 import socket
 import sys
 import tempfile
 from pathlib import Path
+
+
+def _media_buffer(path, name):
+    """Accept only this process's anonymous media buffer, never a disk fd."""
+    target = Path(path)
+    if target.parent != Path("/proc/self/fd") or not target.name.isdecimal():
+        return False
+    try:
+        return os.readlink(target) == f"/memfd:azizam-media-{name} (deleted)"
+    except OSError:
+        return False
+
+
+def _anonymous_media_command(executable, command):
+    if not isinstance(command, (list, tuple)):
+        return False
+    command = list(command)
+    probe = ["ffprobe", "-v", "error", "-print_format", "json",
+             "-show_format", "-show_streams"]
+    if executable == "ffprobe" and command[:-1] == probe:
+        return _media_buffer(command[-1], "input")
+    if not (
+        executable == "ffmpeg"
+        and len(command) >= 16
+        and command[:6] == ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i"]
+        and command[7:9] == ["-map", "0"]
+        and command[-7:-2] == ["-c", "copy", "-fflags", "+bitexact", "-f"]
+        and command[-2] in {"mp4", "mov", "webm", "matroska", "avi", "wav",
+                                "flac", "mp3", "ogg", "adts"}
+        and _media_buffer(command[6], "input")
+        and _media_buffer(command[-1], "output")
+    ):
+        return False
+    middle = command[9:-7]
+    if middle == ["-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1"]:
+        return True
+    if middle[-2:] == ["-movflags", "+use_metadata_tags"]:
+        middle = middle[:-2]
+    return (
+        len(middle) >= 2
+        and len(middle) % 2 == 0
+        and all(flag == "-metadata" for flag in middle[::2])
+        and all("=" in str(value) for value in middle[1::2])
+    )
 
 
 def parse_allowed_ports(raw):
@@ -43,6 +88,10 @@ def check_event(event, args, allowed_ports, media_root=None):
     elif event in {"os.system", "subprocess.Popen", "os.posix_spawn", "os.exec"}:
         if event == "subprocess.Popen" and media_root is not None:
             executable, command, _cwd, _env = args
+            # Metadata reads and rewrites now use inherited anonymous buffers.
+            # Keep the exact command boundary and reject ordinary disk fds.
+            if _anonymous_media_command(executable, command):
+                return
             expected = [
                 "ffprobe",
                 "-v",
