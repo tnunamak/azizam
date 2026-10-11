@@ -119,7 +119,16 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
   );
   await page.route("**/admin/api/profiles", (route) =>
     route.fulfill({
-      json: { profiles: [{ id: "local", name: "Local only" }] },
+      json: {
+        profiles: [
+          {
+            id: "local",
+            name: "Local only",
+            description: "Fixture local access",
+            profile: {},
+          },
+        ],
+      },
     }),
   );
 }
@@ -157,6 +166,7 @@ for (const theme of ["light", "dark"] as const) {
           "Instance",
           "Sign-in",
           "Defaults",
+          "App creation",
           "Prompts",
           "Receipts",
           "Media admission",
@@ -179,6 +189,14 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             page.getByRole("button", { name: "Try again" }),
           ).toHaveCount(10);
+          for (const name of ["Defaults", "App creation"]) {
+            const retry = page
+              .getByRole("region", { name, exact: true })
+              .getByRole("button", { name: "Try again" });
+            expect((await retry.boundingBox())?.height).toBeGreaterThanOrEqual(
+              44,
+            );
+          }
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),
@@ -218,7 +236,7 @@ for (const theme of ["light", "dark"] as const) {
             ).toContainText("No extensions installed");
             await editSection(page, "Extensions");
             await expect(
-              page.getByText("No extensions installed").nth(1),
+              page.getByText("No extensions installed", { exact: true }),
             ).toBeVisible();
             await expect(
               page.getByText(/No identity provider is connected yet/),
@@ -254,9 +272,16 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   // (try-media-inputs read an empty catalog). Put the original plan back.
   const defaults = await page.request.get("/admin/api/settings/defaults");
   expect(defaults.ok()).toBe(true);
-  const originalPlan = ((await defaults.json()) as {
-    defaults: { profile_id: string | null };
-  }).defaults.profile_id;
+  const originalPlan = (
+    (await defaults.json()) as {
+      defaults: { profile_id: string | null };
+    }
+  ).defaults.profile_id;
+  const accessDefaults = await page.request.get(
+    "/admin/api/operator/overrides",
+  );
+  const originalApps = (await accessDefaults.json()).overrides
+    .user_access_defaults;
   try {
     await settingsJourney(page);
   } finally {
@@ -269,6 +294,17 @@ test("settings saves each section through its own API and keeps OIDC secret writ
       data: { profile_id: originalPlan },
     });
     expect(restored.ok(), "restore the default access plan").toBe(true);
+    const appsRestored = await page.request.put(
+      "/admin/api/operator/user-access-defaults",
+      {
+        headers: {
+          "x-azizam-admin-action": "1",
+          "x-azizam-csrf": session.actor.csrf_token,
+        },
+        data: originalApps,
+      },
+    );
+    expect(appsRestored.ok(), "restore app creation settings").toBe(true);
   }
 });
 
@@ -311,7 +347,9 @@ async function settingsJourney(page: Page) {
   await page.reload();
   await editSection(page, "Media admission");
   await expect(page.getByLabel("Maximum queued jobs")).toHaveValue("7");
-  await editSection(page, "Defaults");
+  await expect(
+    page.getByRole("region", { name: "Defaults", exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Default access plan").click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   const planSaved = page.waitForResponse(
@@ -321,8 +359,33 @@ async function settingsJourney(page: Page) {
   );
   await page.getByRole("button", { name: "Save default plan" }).click();
   expect((await planSaved).status()).toBe(200);
+  await expect(
+    page
+      .getByRole("region", { name: "Defaults", exact: true })
+      .getByRole("status"),
+  ).toHaveText("Default access plan saved");
+  const personalApp = page.getByRole("switch", {
+    name: "Create a personal app automatically",
+  });
+  const wasAutomatic = await personalApp.isChecked();
+  await personalApp.click();
+  const appSaved = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/admin/api/operator/user-access-defaults") &&
+      r.request().method() === "PUT",
+  );
+  await page.getByRole("button", { name: "Save app defaults" }).click();
+  expect((await appSaved).status()).toBe(200);
+  await expect(
+    page
+      .getByRole("region", { name: "App creation", exact: true })
+      .getByRole("status"),
+  ).toHaveText("Personal app defaults saved");
   await page.reload();
-  await editSection(page, "Defaults");
+  await expect(personalApp).toBeChecked({ checked: !wasAutomatic });
+  await expect(
+    page.getByRole("region", { name: "Defaults", exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Default access plan")).toContainText(
     "Local chat",
   );
@@ -572,7 +635,9 @@ test("built-in default plans remain visible without a database profile row", asy
     }),
   );
   await page.goto("/ui/settings/");
-  await editSection(page, "Defaults");
+  await expect(
+    page.getByRole("region", { name: "Defaults", exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Default access plan")).toContainText(
     "Default local (built-in)",
   );
@@ -739,7 +804,9 @@ test("independent sign-in and defaults saves retain the other form's drafts", as
   await expect(
     page.getByText(/Once any grant exists, this list grants no role/),
   ).toBeVisible();
-  await editSection(page, "Defaults");
+  await expect(
+    page.getByRole("region", { name: "Defaults", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("switch", { name: "Let people create their own apps" })
     .click();
@@ -752,7 +819,7 @@ test("independent sign-in and defaults saves retain the other form's drafts", as
   ).not.toBeChecked();
   await page.getByLabel("Default access plan").click();
   await page
-    .getByRole("option", { name: "No default plan", exact: true })
+    .getByRole("option", { name: "None — built-in local access", exact: true })
     .click();
   await page.route("**/admin/api/operator/user-access-defaults", (route) =>
     route.fulfill({
@@ -769,7 +836,7 @@ test("independent sign-in and defaults saves retain the other form's drafts", as
     page.getByText("Personal app defaults saved", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Default access plan")).toContainText(
-    "No default plan",
+    "None — built-in local access",
   );
 });
 
@@ -850,7 +917,9 @@ test("cached owner settings do not expose owner-only forms to administrators", a
   await expect(
     page.getByRole("button", { name: "Save instance", exact: true }),
   ).toHaveCount(0);
-  await editSection(page, "Defaults");
+  await expect(
+    page.getByRole("region", { name: "Defaults", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Save default plan", exact: true }),
   ).toHaveCount(0);
@@ -1077,4 +1146,138 @@ for (const form of revisionForms) {
     ).toContainText("Only the owner can change this.");
     await expectRevisionField(page, form, form.draft);
   });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`default access choices, keyboard, targets and 200% text: ${theme}, ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.addInitScript(
+        (value) => localStorage.setItem("theme", value),
+        theme,
+      );
+      await seed(page, "empty");
+      await page.goto("/ui/settings/");
+      const defaults = page.getByRole("region", {
+        name: "Defaults",
+        exact: true,
+      });
+      const apps = page.getByRole("region", {
+        name: "App creation",
+        exact: true,
+      });
+      const plan = page.getByLabel("Default access plan");
+      await expect(plan).toContainText("None — built-in local access");
+      await expect(
+        defaults.getByText(/Choosing none does not block AI access/),
+      ).toBeVisible();
+      await expect(
+        apps.getByRole("switch", {
+          name: "Create a personal app automatically",
+        }),
+      ).toBeChecked();
+      await defaults.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/after-${width}-${theme}.png`,
+        fullPage: true,
+      });
+      await plan.focus();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByRole("option", {
+          name: "None — built-in local access",
+          exact: true,
+        }),
+      ).toBeFocused();
+      await page.keyboard.press("End");
+      await expect(
+        page.getByRole("option", { name: "Local only", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(plan).toContainText("Local only");
+      await expect(plan).toBeFocused();
+      await expect(
+        defaults.getByText(/capabilities allowed by this plan/),
+      ).toBeVisible();
+      await page.screenshot({
+        path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/after-plan-${width}-${theme}.png`,
+        fullPage: true,
+      });
+      await expect(
+        defaults.getByRole("link", { name: "View and edit access plans" }),
+      ).toHaveAttribute("href", "/ui/people/?tab=plans");
+      for (const textSize of ["100%", "200%"]) {
+        await page.evaluate((size) => {
+          document.documentElement.style.fontSize = size;
+        }, textSize);
+        await expect(plan).toBeVisible();
+        if (textSize === "200%") {
+          await plan.click();
+          await page
+            .getByRole("option", {
+              name: "None — built-in local access",
+              exact: true,
+            })
+            .click();
+          await expect(plan).toContainText("None — built-in local access");
+          await expect(
+            page.locator('[data-slot="select-content"]'),
+          ).toHaveCount(0);
+        }
+        const overflow = await page.locator("body *").evaluateAll((elements) =>
+          elements
+            .filter(
+              (el) =>
+                el.getBoundingClientRect().width > 0 &&
+                el.getBoundingClientRect().right > innerWidth + 1,
+            )
+            .map((el) => ({
+              tag: el.tagName,
+              slot: el.getAttribute("data-slot"),
+              text: el.textContent?.slice(0, 70),
+              right: el.getBoundingClientRect().right,
+            })),
+        );
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+          JSON.stringify(overflow),
+        ).toBe(true);
+        for (const section of [defaults, apps]) {
+          for (const control of await section
+            .locator("button, a, summary")
+            .all()) {
+            const bounds = await control.boundingBox();
+            const sectionBounds = await section.boundingBox();
+            expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+              sectionBounds!.x + sectionBounds!.width,
+            );
+            expect(
+              bounds?.height,
+              (await control.textContent()) ?? "control",
+            ).toBeGreaterThanOrEqual(44);
+          }
+        }
+      }
+      await page.screenshot({
+        path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/after-200pct-${width}-${theme}.png`,
+        fullPage: true,
+      });
+      const axe = await new AxeBuilder({ page })
+        .include('[aria-labelledby="defaults"]')
+        .include('[aria-labelledby="app-creation"]')
+        .analyze();
+      expect(axe.violations).toEqual([]);
+      // The secondary link opens the plan editor, not the People tab.
+      await defaults
+        .getByRole("link", { name: "View and edit access plans" })
+        .click();
+      await expect(
+        page.getByRole("tab", { name: "Access plans" }),
+      ).toHaveAttribute("data-state", "active");
+    });
+  }
 }
