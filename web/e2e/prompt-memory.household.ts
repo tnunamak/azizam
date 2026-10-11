@@ -368,8 +368,8 @@ test.describe("Try: Don't keep this prompt", () => {
       )
     ).json();
     const ids = everyone.assets.map((a: { asset_id: string }) => a.asset_id);
-    expect(ids).toContain(keptItem.asset_id);
-    expect(ids).toContain(newest.asset_id);
+    expect(ids).toContain(keptItem!.asset_id);
+    expect(ids).toContain(newest!.asset_id);
     expect(JSON.stringify(everyone)).not.toContain(kept);
     expect(JSON.stringify(everyone)).not.toContain(forgotten);
     await owner.ctx.close();
