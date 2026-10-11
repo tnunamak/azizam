@@ -746,7 +746,7 @@ def _decoy_oracle(method, template, row, gateway, response):
     ("GET", "/v1/models", "yes", []),
     ("POST", "/me/api/make/jobs", "yes", []),
     ("GET", "/api/ps", "no", ["send_llm_execution_request"]),
-    ("GET", "/ollama/api/ps", "no", ["health", "network connection"]),
+    ("GET", "/ollama/api/ps", "no", ["health", "_forward_current_loaded_openai_request"]),
     ("POST", "/me/api/connection-test", "yes", []),
     ("POST", "/me/api/connection-test", "no", ["HTTP backend"]),
 ])
