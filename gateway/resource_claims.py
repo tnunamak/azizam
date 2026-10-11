@@ -212,6 +212,9 @@ def evaluate_admission(
             elif total <= 0:
                 reason("gpu_unavailable", "delay", "gpu", "gpu required but no gpu capacity is advertised")
 
+    reasons.extend(DecisionReason("estimate_reason", "info", "resource", rule) for rule in claim.reasons)
+    if not reasons:
+        reasons.append(DecisionReason("resources_available", "info", "resource", "capacity available"))
     details = DecisionDetails(tuple(reasons), tuple(facts))
     if rejections:
         return AdmissionDecision(AdmissionStatus.REJECTED, request.request_id,

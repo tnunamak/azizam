@@ -237,6 +237,8 @@ def advise_resource_admission(
     _append_retry_after(retry_after_values, constraints.retry_after)
     reasons.extend(DecisionReason("estimate_reason", "info", "resource", rule) for rule in estimate.reasons)
     reasons.extend(DecisionReason("constraint_reason", "info", "policy", rule) for rule in constraints.reasons)
+    if not reasons:
+        reasons.append(DecisionReason("resources_available", "info", "resource", "resources available"))
     details = DecisionDetails(tuple(reasons), tuple(facts))
     # Preserve the legacy summaries, including their precedence and prose.
     # All concurrent causes live in details, including on a denied decision.

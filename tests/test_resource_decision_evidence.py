@@ -147,6 +147,7 @@ def test_receipt_roundtrip_preserves_owner_facts_and_redacts_client(tmp_path):
     receipt = RouteReceipt(protocol="test", intent="image.generate", app_id="mine")
     receipt.resource_decision = decision.details.as_dict(decision.status.value)
     receipt.resource_decision["wait_deadline"] = 456
+    receipt_store.init_db(tmp_path / "receipts.db")
     receipt_store.record(receipt, path=tmp_path / "receipts.db")
     admin = receipt_store.get(receipt.request_id, path=tmp_path / "receipts.db", audience="admin")
     client = receipt_store.get(receipt.request_id, path=tmp_path / "receipts.db", audience="client")
@@ -186,3 +187,64 @@ def test_stt_refusal_keeps_decision_on_exception(tmp_path):
             stt_chunking.SttResourceGate().acquire(request_id="req", config=config)
     assert caught.value.decision.status.value == "rejected"
     assert caught.value.decision.details.reasons[0].code == "queue_full"
+
+
+def test_unknown_app_and_queue_counts_are_not_zero():
+    args = (ServiceAvailability(available=True), ResourceEstimate("chat.generate", app_id="mine"),
+            AdmissionConstraints(max_app_concurrency={"mine": 1}))
+    assert advise_resource_admission(*args).denied
+    assert advise_resource_admission(*args, CurrentLoad(active_by_app={"mine": 0})).allowed
+    request = AdmissionRequest("req", ResourceClaim())
+    assert not evaluate_admission(request, CapacitySnapshot(queue_limits={QueueClass.INTERACTIVE: 1})).accepted
+    assert evaluate_admission(request, CapacitySnapshot(queue_limits={QueueClass.INTERACTIVE: 1},
+                                                        active_by_queue={QueueClass.INTERACTIVE: 0})).accepted
+
+
+def test_empty_queue_read_is_measured_and_admitted():
+    import proxy
+    from unittest.mock import patch
+    with patch.object(proxy, "COMFY_ENABLED", True), \
+         patch.object(proxy, "_operator_service_availability_overrides", return_value={}), \
+         patch.object(proxy, "_effective_media_job_admission_cfg", return_value={"max_queue_depth": 1}), \
+         patch.object(proxy.media_jobs, "recent", return_value=[]):
+        receipt = RouteReceipt(protocol="test", intent="image.generate")
+        assert proxy._media_job_admission_response("image.generate", receipt=receipt) is None
+    facts = {f["name"]: f for f in receipt.resource_decision["facts"]}
+    assert facts["queue_active"]["value"] == 0
+    assert facts["queue_active"]["quality"] == "measured"
+    assert facts["queue_active"]["observed_at"] is not None
+
+
+@pytest.mark.parametrize("quality", ["declared", "estimated", "measured"])
+def test_capacity_source_quality_survives(quality):
+    decision = evaluate_admission(AdmissionRequest("req", ResourceClaim(ram_mb=1)),
+                                 CapacitySnapshot(total_ram_mb=10, used_ram_mb=0, quality=quality, observed_at=123))
+    facts = {f.name: f for f in decision.details.facts}
+    assert facts["available_ram_mb"].quality == quality
+    assert all(f.observed_at == 123 for f in facts.values())
+
+
+@pytest.mark.parametrize("available,degraded,expected", [
+    (True, False, '{"outcome": "allowed", "allowed": true, "retry_after": null, "reasons": ["resources available"], "reason_codes": ["resources_available"]}'),
+    (True, True, '{"outcome": "degraded", "allowed": true, "retry_after": null, "reasons": ["service degraded"], "reason_codes": ["service_degraded"]}'),
+    (False, False, '{"outcome": "denied", "allowed": false, "retry_after": null, "reasons": ["service unavailable"], "reason_codes": ["service_unavailable"]}'),
+])
+def test_legacy_route_outcomes_are_byte_identical(available, degraded, expected):
+    decision = advise_resource_admission(ServiceAvailability(available=available, degraded=degraded),
+                                         ResourceEstimate("image.generate"))
+    assert json.dumps(decision.as_dict()) == expected
+
+
+@pytest.mark.parametrize("requested,total,active,expected_status,expected_reasons", [
+    (1, 10, 0, "accepted", ["capacity available"]),
+    (20, 10, 0, "delayed", ["not enough vram_mb: requested 20, available 10"]),
+    (20, 10, 1, "rejected", ["queue concurrency limit reached for interactive"]),
+])
+def test_legacy_claim_outcomes_are_byte_identical(requested, total, active, expected_status, expected_reasons):
+    decision = evaluate_admission(AdmissionRequest("req", ResourceClaim(vram_mb=requested)),
+                                 CapacitySnapshot(total_vram_mb=total, used_vram_mb=0,
+                                                  active_by_queue={QueueClass.INTERACTIVE: active},
+                                                  queue_limits={QueueClass.INTERACTIVE: 1}))
+    expected = {"request_ref": "c3f7bdf537c4", "status": expected_status, "accepted": expected_status == "accepted",
+                "reasons": expected_reasons, "caveats": []}
+    assert json.dumps(summarize_decision(decision)) == json.dumps(expected)

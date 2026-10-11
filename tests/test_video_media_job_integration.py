@@ -177,7 +177,7 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers["retry-after"], "45")
         payload = json.loads(response.body.decode("utf-8"))
-        self.assertEqual(payload["error"]["message"], "reserved for video maintenance")
+        self.assertEqual(payload["error"]["message"], "This service is not available right now.")
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
     async def test_executor_polls_video_route_and_stores_rendered_bytes(self) -> None:

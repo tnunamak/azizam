@@ -186,7 +186,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload("image.generate")))
         self.assertEqual(raised.exception.http_status, 503)
-        self.assertIn("intent disabled", raised.exception.public_message)
+        self.assertEqual("This kind of work is disabled.", raised.exception.public_message)
 
     def test_execution_does_not_count_its_own_job_against_the_queue_limit(self) -> None:
         media_jobs.create(media_jobs.MediaJob(job_id="mj_runtime", intent="image.generate", request_id="req_self",
@@ -216,7 +216,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             with self.assertRaises(me_make.MakeBackendError) as raised:
                 asyncio.run(self.runtime.execute(self._payload("image.edit")))
         self.assertEqual(raised.exception.http_status, 503)
-        self.assertIn("resource class disabled: image", raised.exception.public_message)
+        self.assertEqual("This kind of resource is disabled.", raised.exception.public_message)
 
     def test_queued_edit_and_identity_jobs_count_toward_the_queue_limit(self) -> None:
         # Review repro (P2-6): a queued edit counted 0 toward max_queue_depth. Identity
@@ -229,7 +229,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
             self.assertEqual(proxy._media_job_queue_depth(1), 1, f"a queued {intent} job is queued work")
             refused = proxy._media_job_admission_response("image.generate")
             self.assertIsNotNone(refused, f"a queued {intent} job fills a one-job queue")
-            self.assertIn("queue full", json.loads(refused.body)["error"]["message"])
+            self.assertEqual("Shared capacity is busy.", json.loads(refused.body)["error"]["message"])
             media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, path=media_jobs.DB_PATH)
 
     def test_at_most_the_configured_number_of_make_jobs_run_at_once(self) -> None:

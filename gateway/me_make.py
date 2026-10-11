@@ -304,9 +304,11 @@ def _submit(
     if refusal is not None:
         evidence = getattr(refusal, "resource_decision", None)
         if evidence is not None:
-            app = admin_store.ensure_session_app_for_user(user_id, name=APP_NAME, path=admin_path)
+            app = admin_store.get_session_app_for_user(user_id, path=admin_path)
+            app_id = str(app["id"]) if app else None
             refused = RouteReceipt(protocol="azizam.make", intent=intent, path=ROUTE_PATH,
-                                   app_id=str(app["id"]), owner_key_hash=ownership.principal_key("app", str(app["id"])),
+                                   app_id=app_id, owner_key_hash=(ownership.principal_key("app", app_id)
+                                       if app_id else ownership.principal_key("user", user_id)),
                                    resource_decision=evidence)
             refused.finish("rejected")
             try:

@@ -484,3 +484,19 @@ def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
                                               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
     result = resp.json()["result"]
     assert result["isError"] is True and "secret" not in json.dumps(result)
+
+
+def test_admission_refusal_keeps_safe_reasons_and_actions(env):
+    from gateway.resource_admission_http import advise_route_admission, admission_http_response
+    decision = advise_route_admission(intent="image.generate", service_available=False,
+                                     service_reasons=("private other-person capacity: 98765",))
+    refusal = admission_http_response(decision, wait_deadline=456)
+    env.core.routes[("POST", "/gateway/v1/media/jobs")] = httpx.Response(503, json=refusal.body)
+    result = call(env, "run", {"target": "krea", "mode": "async", "inputs": {"prompt": "x"}})
+    assert result["isError"] is True
+    payload = result["structuredContent"]
+    assert payload["code"] == "resource_admission_denied"
+    assert payload["decision"] == refusal.body["error"]["decision"]
+    assert payload["decision"]["next_actions"][0]["deadline"] == 456
+    assert "other-person" not in json.dumps(result)
+    assert "98765" not in json.dumps(result)

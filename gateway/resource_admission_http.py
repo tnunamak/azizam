@@ -53,8 +53,8 @@ def advise_route_admission(
     max_app_concurrency: Mapping[str, int] | None = None,
     constraint_retry_after: int | None = None,
     constraint_reasons: tuple[str, ...] = (),
-    queue_depths: Mapping[str, int] | None = None,
-    active_by_app: Mapping[str, int] | None = None,
+    queue_depths: Mapping[str, int | None] | None = None,
+    active_by_app: Mapping[str, int | None] | None = None,
     load_retry_after: int | None = None,
     observed_at: float | None = None,
     load_quality: Quality = "declared",
@@ -139,4 +139,3 @@ def admission_http_response(
         headers=headers,
         body={"admission": admission, "decision": projected},
     )
-
