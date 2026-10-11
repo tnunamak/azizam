@@ -1,5 +1,8 @@
 import { test, expect } from "@playwright/test";
 
+// Measure settled controls, not the dialog's 95%-to-100% entrance zoom.
+test.use({ contextOptions: { reducedMotion: "reduce" } });
+
 for (const width of [1440, 390]) {
   test(`engine controls and dialog layout at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });

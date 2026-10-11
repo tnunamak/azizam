@@ -11,6 +11,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+// Axe must inspect settled toast colours, not their entrance/exit opacity.
+test.use({ contextOptions: { reducedMotion: "reduce" } });
+
 let engine: ChildProcess;
 let enginePort: number;
 let registryApi: APIRequestContext;
