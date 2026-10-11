@@ -326,6 +326,8 @@ Selected successful workflows are exercised separately.
 | `GET /me/api/credentials/{credential_id}/access` | session-only | denied | `proxy.user_portal_credential_access`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/credentials/{credential_id}/revoke` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/home` | session-only | denied | `gateway.home_api.home`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/jobs` | session-only | denied | `gateway.me_media.list_jobs`; Browser session; own jobs only | hidden |
+| `GET /me/api/jobs/{job_id}` | session-only | denied | `gateway.me_media.job_detail`; Browser session; own jobs only | hidden |
 | `GET /me/api/make/jobs` | session-only | denied | `gateway.me_make.list_jobs`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/make/jobs` | session-only | denied | `gateway.me_make.submit`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/make/jobs/{job_id}` | session-only | denied | `gateway.me_make.get_job`; Browser session; mutations require CSRF/action header | hidden |
