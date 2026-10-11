@@ -108,6 +108,7 @@ def dispatch_env(monkeypatch, tmp_path):
         calls.append('systemone-executor')
         return proxy.decisions_api.DecisionDispatchResult(body={'model': 'test', 'usage': {}, 'answers': {'q': {'type': 'choice', 'choice': 'a', 'confidence': 1.0, 'probabilities': {'a': 1.0, 'b': 0.0}}}})
     monkeypatch.setattr(proxy.DECISION_RUNTIME, 'dispatch', systemone)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, 'resolve', lambda _: SimpleNamespace(service='test-service'))
     return TestClient(proxy.app), calls
 
 
@@ -204,3 +205,61 @@ def test_worker_rechecks_before_executor(monkeypatch, kind, intent):
         asyncio.run(getattr(proxy, f'_run_{kind}_media_job')('job'))
     assert failures
     executor.assert_not_called()
+
+
+@pytest.mark.parametrize('protocol', ['anthropic', 'ollama'])
+@pytest.mark.parametrize('stream', [False, True])
+def test_late_dispatch_refusal_keeps_protocol_decision(dispatch_env, monkeypatch, protocol, stream):
+    client, calls = dispatch_env
+    original = proxy._dispatch_admission_response
+    count = 0
+    def late(intent, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 1:
+            return None
+        return original(intent, **kwargs)
+    # Initial frontend gate allows; resolved inner dispatch observes a changed rule.
+    monkeypatch.setattr(proxy, '_dispatch_admission_response', late)
+    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['chat.generate']})
+    path = '/v1/messages' if protocol == 'anthropic' else '/api/chat'
+    response = client.post(path, json={'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 10, 'stream': stream})
+    assert response.status_code == 503
+    payload = response.json()
+    if protocol == 'anthropic':
+        assert payload['type'] == 'error'
+        assert payload['error']['decision']['reasons']
+    else:
+        assert isinstance(payload['error'], str)
+        assert payload['decision']['reasons']
+    assert not calls
+
+
+def test_worker_does_not_count_its_own_queue_and_restores_context(monkeypatch):
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'max_queue_depth': 1})
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
+    monkeypatch.setattr(proxy, '_media_job_queue_depth', lambda *a, **kw: 1)
+    args = dict(service_id='test-media', service_available=True, resource_class='image', queue_key=proxy._MEDIA_JOB_QUEUE_KEY)
+    assert proxy._dispatch_admission_response('image.generate', **args).status_code == 503
+    token = proxy._ADMISSION_WORKER.set(True)
+    try:
+        assert proxy._dispatch_admission_response('image.generate', **args) is None
+    finally:
+        proxy._ADMISSION_WORKER.reset(token)
+    assert not proxy._ADMISSION_WORKER.get()
+
+
+def test_unknown_service_is_not_a_known_available_service(monkeypatch):
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['unrelated']})
+    monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
+    response = proxy._dispatch_admission_response('chat.generate', resource_class='chat')
+    assert 'service_unknown' in json.loads(response.body)['admission']['reason_codes']
+    assert proxy._dispatch_admission_response('chat.generate', resource_class='chat', service_available=True) is None
+
+
+def test_app_concurrency_owner_input_validation():
+    from gateway.admin_api import _validate_media_job_admission_overrides, _RouteError
+    assert _validate_media_job_admission_overrides({'max_app_concurrency': {'mine': 2}})['max_app_concurrency'] == {'mine': 2}
+    for invalid in ([], {'mine': None}, {'mine': -1}, {'': 1}):
+        with pytest.raises(_RouteError):
+            _validate_media_job_admission_overrides({'max_app_concurrency': invalid})

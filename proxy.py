@@ -4857,6 +4857,13 @@ async def _dispatch_selected_stt_route(
         receipt.add_fallback_reason(note)
     try:
         while True:
+            admission = _dispatch_admission_response(
+                "speech.transcription" if operation == "transcriptions" else "speech.translation",
+                auth_context=auth_context, service_id=execution.service_id,
+                resource_class="audio", receipt=receipt,
+            )
+            if admission is not None:
+                return admission
             not_ready = None if model_unpeeked else await _ensure_speech_service_ready(execution.service_id, label="STT engine")
             if not_ready is None:
                 response = await proxy_stt_request(
@@ -8060,7 +8067,7 @@ async def proxy_comfy_request(
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
         'image.generate', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='image',
+        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -8491,7 +8498,7 @@ async def proxy_comfy_edit_request(
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
         'image.edit', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='image',
+        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -9124,7 +9131,7 @@ async def proxy_comfy_variations_request(
     """
     admission = _dispatch_admission_response(
         'image.variation', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='image',
+        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -10877,7 +10884,7 @@ async def proxy_comfy_video_create(
     """
     admission = _dispatch_admission_response(
         'video.generate', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='video',
+        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -11864,7 +11871,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
     """
     admission = _dispatch_admission_response(
         'video.extend', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='video',
+        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -12678,7 +12685,7 @@ async def proxy_comfy_video_remix(
     """
     admission = _dispatch_admission_response(
         'video.remix', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='video',
+        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -12736,7 +12743,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     """
     admission = _dispatch_admission_response(
         'video.edit', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='video',
+        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -14779,11 +14786,19 @@ async def _decision_ensure_ready(service: str) -> Response | None:
     return await _ensure_speech_service_ready(service, label="Decision engine")
 
 
+def _decision_dispatch_admission(auth: AuthContext, service_id: str) -> Response | None:
+    return _dispatch_admission_response(
+        "decision.systemone", auth_context=auth, service_id=service_id,
+        resource_class="decision",
+    )
+
+
 DECISION_RUNTIME = DecisionRuntime(
     lambda: config,
     _decision_authorized,
     _decision_ensure_ready,
     catalog_authorize=_decision_catalog_authorized,
+    admit=_decision_dispatch_admission,
 )
 
 
@@ -14796,19 +14811,29 @@ def _decision_provider_context() -> dict[str, Any]:
 
 
 async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str, Any], request_id: str) -> decisions_api.DecisionDispatchResult:
-    admission = _model_dispatch_admission_response(
-        auth, body.get("model"), intent="decision.systemone", resource_class="decision",
-    )
-    if admission is not None:
-        return decisions_api.DecisionDispatchResult(
-            body=json.loads(admission.body), status_code=admission.status_code,
-            headers=dict(admission.headers),
-        )
     try:
-        if decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), body.get("model")) is not None:
+        provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), body.get("model"))
+        if provider is not None:
+            admission = _dispatch_admission_response(
+                "decision.systemone", auth_context=auth, service_id=provider.id,
+                service_available=provider.configured, resource_class="decision",
+            )
+            if admission is not None:
+                return decisions_api.DecisionDispatchResult(
+                    body=json.loads(admission.body), status_code=admission.status_code,
+                    headers=dict(admission.headers),
+                )
             return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
     except decision_provider_execution.PaidDecisionError:
         return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
+    if _effective_media_job_admission_cfg() or _operator_service_availability_overrides():
+        resolved = DECISION_RUNTIME.resolve(str(body.get("model") or ""))
+        admission = _decision_dispatch_admission(auth, resolved.service)
+        if admission is not None:
+            return decisions_api.DecisionDispatchResult(
+                body=json.loads(admission.body), status_code=admission.status_code,
+                headers=dict(admission.headers),
+            )
     return await DECISION_RUNTIME.dispatch(auth, profile, body, request_id)
 
 
@@ -15200,11 +15225,21 @@ def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _identity_admission(auth: AuthContext, path: str) -> Response | None:
+    denied = _enforce_runtime_route_policy(auth, path, policy=_IDENTITY_ROUTE_POLICY)
+    if denied is not None:
+        return denied
+    return _dispatch_admission_response(
+        "image.edit", auth_context=auth, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+    )
+
+
 identity_api.register_identity_routes(
     app,
     identity_api.IdentityApiDeps(
         authenticate=lambda request, path: _gateway_auth_context(request, path),
-        enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=_IDENTITY_ROUTE_POLICY),
+        enforce_policy=_identity_admission,
         ensure_face_service=lambda: _identity_ensure_face_service(),
         face_client=lambda: _identity_face_client(),
         run_workflow=lambda auth, graph, uploads: _identity_run_workflow(auth, graph, uploads),
@@ -21894,6 +21929,7 @@ def _dispatch_admission_response(
     intent: str, *, auth_context: AuthContext | None = None,
     service_id: str | None = None, service_available: bool | None = None,
     resource_class: str, protocol: str = "openai", receipt: RouteReceipt | None = None,
+    queue_key: str | None = None,
 ) -> Response | None:
     """Apply configured admission before execution, without guessing runtime load.
 
@@ -21917,7 +21953,7 @@ def _dispatch_admission_response(
             service_available = service.get("enabled", True) is not False
     identity = auth_context.identity if auth_context is not None else None
     queue_limit = None if _ADMISSION_WORKER.get() else _optional_int_config(cfg, "max_queue_depth")
-    queue_key = _MEDIA_JOB_QUEUE_KEY if resource_class in {"image", "video", "audio"} and service_id == "comfyui" else intent
+    queue_key = queue_key or intent
     queue_depths = ({queue_key: _media_job_queue_depth(queue_limit, admission_cfg=cfg)}
                     if queue_limit is not None and queue_key == _MEDIA_JOB_QUEUE_KEY else {})
     decision = resource_admission_http.advise_route_admission(
@@ -21927,6 +21963,7 @@ def _dispatch_admission_response(
         service_reasons=_string_tuple_config(override, "reason"),
         app_id=identity.app_id if identity else (receipt.app_id if receipt else None),
         queue_key=queue_key, queue_depths=queue_depths,
+        observed_at=time.time(), load_quality="measured" if queue_depths else "unavailable",
         disabled_intents=_string_tuple_config(cfg, "disabled_intents"),
         disabled_resource_classes=_string_tuple_config(cfg, "disabled_resource_classes"),
         reserved_tokens=_string_tuple_config(cfg, "reserved_tokens"),
@@ -23629,6 +23666,12 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             content=json.dumps({"error": {"message": "Unknown video-edit workflow", "type": "invalid_request_error"}}),
             status_code=404, media_type="application/json",
         )
+    admission = _dispatch_admission_response(
+        "video.edit", auth_context=auth_context, service_id="comfyui",
+        service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+    )
+    if admission is not None:
+        return admission
     binding = (record.manifest.get("bindings") or {}).get("comfyui")
     artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
     if not isinstance(artifact, str):
@@ -24138,7 +24181,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     """
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id="comfyui",
-        service_available=COMFY_ENABLED, resource_class='audio',
+        service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
@@ -25948,6 +25991,10 @@ async def _drain_streaming_upstream_error(
         return text[:1000]
     if isinstance(payload, Mapping):
         error = payload.get("error")
+        if isinstance(error, Mapping) and error.get("code") == "resource_admission_denied":
+            upstream.extensions["resource_admission"] = dict(payload)
+    if isinstance(payload, Mapping):
+        error = payload.get("error")
         if isinstance(error, Mapping):
             message = error.get("message")
             if isinstance(message, str) and message:
@@ -26057,6 +26104,20 @@ def _apply_embedding_dimensions(response_json: dict[str, Any], dimensions: int) 
             )
         item["embedding"] = normalized
     return None
+
+
+def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Response | None:
+    """Keep a downstream dispatch refusal intact across protocol loopback hops."""
+    payload = upstream.extensions.get("resource_admission") or _response_json_payload(upstream)
+    error = payload.get("error")
+    if not isinstance(error, Mapping) or error.get("code") != "resource_admission_denied":
+        return None
+    if "decision" not in error:
+        return None
+    body = resource_admission_http.admission_protocol_body(payload, protocol)
+    headers = {"Retry-After": upstream.headers["retry-after"]} if "retry-after" in upstream.headers else {}
+    return Response(content=json.dumps(body), status_code=upstream.status_code,
+                    media_type="application/json", headers=headers)
 
 
 def _response_error_message(response: Any, fallback: str) -> str:
@@ -26325,12 +26386,16 @@ async def anthropic_messages(request: Request):
             stream=True,
         )
         if upstream.status_code >= 400:
-            return _anthropic_error_response(
-                await _drain_streaming_upstream_error(
+            message = await _drain_streaming_upstream_error(
                     client,
                     upstream,
                     fallback="Upstream chat-completions error.",
-                ),
+                )
+            refusal = _upstream_admission_response(upstream, 'anthropic')
+            if refusal is not None:
+                return refusal
+            return _anthropic_error_response(
+                message,
                 status_code=upstream.status_code,
             )
 
@@ -26376,6 +26441,9 @@ async def anthropic_messages(request: Request):
         stream=False,
     )
     if getattr(upstream, "status_code", 500) >= 400:
+        refusal = _upstream_admission_response(upstream, 'anthropic')
+        if refusal is not None:
+            return refusal
         return _anthropic_error_response(
             _response_error_message(upstream, "Upstream chat-completions error."),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
@@ -26471,6 +26539,9 @@ async def _ollama_forward_non_streaming(
         stream=False,
     )
     if getattr(upstream, "status_code", 500) >= 400:
+        refusal = _upstream_admission_response(upstream, 'ollama')
+        if refusal is not None:
+            return refusal
         return _ollama_error_response(
             _response_error_message(upstream, "upstream chat-completions error"),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
@@ -26513,12 +26584,16 @@ async def _ollama_forward_streaming(
         stream=True,
     )
     if upstream.status_code >= 400:
-        return _ollama_error_response(
-            await _drain_streaming_upstream_error(
+        message = await _drain_streaming_upstream_error(
                 client,
                 upstream,
                 fallback="upstream chat-completions error",
-            ),
+            )
+        refusal = _upstream_admission_response(upstream, 'ollama')
+        if refusal is not None:
+            return refusal
+        return _ollama_error_response(
+            message,
             status_code=upstream.status_code,
         )
 
@@ -26577,6 +26652,9 @@ async def _ollama_forward_embeddings(
     state.update_activity()
     upstream = await _forward_embeddings(request, auth_context, canonical)
     if getattr(upstream, "status_code", 500) >= 400:
+        refusal = _upstream_admission_response(upstream, 'ollama')
+        if refusal is not None:
+            return refusal
         return _ollama_error_response(
             _response_error_message(upstream, "upstream embeddings error"),
             status_code=int(getattr(upstream, "status_code", 502) or 502),

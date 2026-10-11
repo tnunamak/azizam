@@ -122,22 +122,14 @@ def admission_http_response(
 
     if decision.outcome is AdmissionOutcome.DENIED:
         body = {
-                "error": {
-                    "code": "resource_admission_denied",
-                    "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
-                    "decision": projected,
-                },
-                "admission": admission,
-            }
-        if protocol == "anthropic":
-            body["type"] = "error"
-            body["error"]["type"] = "overloaded_error"
-        elif protocol == "ollama":
-            body["decision"] = body["error"]["decision"]
-            body["code"] = body["error"]["code"]
-            body["error"] = body["error"]["message"]
-        elif protocol == "openai":
-            body["error"].update(type="service_unavailable", param=None)
+            "error": {
+                "code": "resource_admission_denied",
+                "message": (admission["reasons"][0] if admission["reasons"] else "resource admission denied"),
+                "decision": projected,
+            },
+            "admission": admission,
+        }
+        body = admission_protocol_body(body, protocol)
         return RouteAdmissionHTTP(status_code=denied_status, headers=headers, body=body)
 
     status_code = degraded_status if decision.degraded else allowed_status
@@ -146,3 +138,18 @@ def admission_http_response(
         headers=headers,
         body={"admission": admission, "decision": projected},
     )
+
+
+def admission_protocol_body(body: dict, protocol: str | None) -> dict:
+    """Translate a projected gateway refusal; no policy or private facts here."""
+    body = {**body, "error": dict(body["error"])}
+    if protocol == "anthropic":
+        body["type"] = "error"
+        body["error"]["type"] = "overloaded_error"
+    elif protocol == "ollama":
+        body["decision"] = body["error"]["decision"]
+        body["code"] = body["error"]["code"]
+        body["error"] = body["error"]["message"]
+    elif protocol == "openai":
+        body["error"].update(type="service_unavailable", param=None)
+    return body
