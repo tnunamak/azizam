@@ -162,10 +162,25 @@ start_job "$work" bash -c '
 '
 wait_job "$last_pid"
 
+# Browser lanes test the built export with the e2e venv and browser. Without
+# them every journey fails with misleading 401/404s, so skip the lanes and
+# let the failed prerequisite be the reported cause.
+lanes=$((shards + 2))  # browser shards, live-data and household
+browser_ready=1
+for prerequisite in web-npm-ci web-check e2e-venv e2e-browser; do
+  rc=$(cut -f2 "$receipts/steps/$prerequisite.tsv" 2>/dev/null || echo missing)
+  if [[ $rc != 0 ]]; then browser_ready=0; fi
+done
+if ((!browser_ready)); then
+  failed=1
+  echo "== browser lanes skipped: a web build prerequisite failed (see above)"
+  lanes=0
+fi
+
 # Copy the completed web tree, including dependencies and build output, only
 # after all writers stop. Reflinks save space where supported; ordinary copies
 # still isolate writable caches and legacy fixed screenshot/auth filenames.
-for ((i=1; i<=shards+2; i++)); do
+for ((i=1; i<=lanes; i++)); do
   lane_port=$((port + 10 * i))
   lane=$run/browser-$lane_port
   add_worktree "$lane"
@@ -176,7 +191,7 @@ for ((i=1; i<=shards+2; i++)); do
   done' _ "$work" "$lane"
   ln -s "$work/venv" "$lane/venv"
 done
-for ((i=1; i<=shards+2; i++)); do
+for ((i=1; i<=lanes; i++)); do
   lane_port=$((port + 10 * i))
   lane=$run/browser-$lane_port
   config=playwright.config.ts
@@ -217,13 +232,13 @@ for pid in "${pids[@]}"; do wait_job "$pid"; done
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * shards + 13))" '
+if ! awk -F '\t' -v expected="$((2 * lanes + 9))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
 if ((failed)); then
   # Keep each lane's complete evidence, including legacy fixed filenames.
-  for ((i=1; i<=shards+2; i++)); do
+  for ((i=1; i<=lanes; i++)); do
     lane_port=$((port + 10 * i))
     if [[ -d $run/browser-$lane_port/web/test-results ]]; then
       mkdir -p "$receipts/test-results/$lane_port"
