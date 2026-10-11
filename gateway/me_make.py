@@ -266,23 +266,23 @@ def run_job(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> Callable[[
     return run
 
 
-def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path) -> int:
+def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) -> int:
     """Restart unfinished make jobs after a gateway restart."""
     resumed = 0
-    for status in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
-        for job in media_jobs.recent(500, status=status, path=jobs_path):
-            if (job.get("metadata") or {}).get("mode") != JOB_MODE:
-                continue
-            job_id = str(job["job_id"])
-            if (job.get("metadata") or {}).get("cancel_requested_at"):
-                _settle_canceled(job_id, jobs_path)
-                continue
-            if runtime.load_payload(job_id) is None:
-                # A forgotten prompt lived only in memory; it cannot be resumed.
-                _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
-                continue
-            runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
-            resumed += 1
+    for job in media_jobs.unfinished(path=jobs_path):
+        if (job.get("metadata") or {}).get("mode") != JOB_MODE:
+            continue
+        job_id = str(job["job_id"])
+        if (job.get("metadata") or {}).get("cancel_requested_at"):
+            _fail(job_id, "The gateway restarted before cancellation could be confirmed", jobs_path)
+            runtime.drop_payload(job_id)
+            continue
+        if not enabled or runtime.load_payload(job_id) is None:
+            # A forgotten prompt lived only in memory; it cannot be resumed.
+            _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
+            continue
+        runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
+        resumed += 1
     return resumed
 
 

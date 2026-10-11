@@ -126,6 +126,38 @@ def create_me_media_router(
         runtime=make_runtime,
     )
 
+    @router.get("/jobs", include_in_schema=False)
+    def list_jobs(request: Request) -> JSONResponse:
+        try:
+            admin_path = _resolve_path(admin_db_path)
+            actor = _actor_from_request(request, session_provider, admin_path)
+            # Even owners receive only their own jobs. Scope before pagination.
+            scope = _member_media_scope(actor.user_id, admin_path)
+            rows = media_jobs.recent(
+                101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
+                before=_decode_cursor(request.query_params.get("cursor")),
+                path=_resolve_path(media_jobs_path),
+            )
+            page = rows[:100]
+            cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
+            return _json({"jobs": [media_jobs.for_audience(job, "client") for job in page],
+                          "next_cursor": cursor})
+        except (_ApiError, UserPortalError) as exc:
+            return _error_response(exc)
+
+    @router.get("/jobs/{job_id}", include_in_schema=False)
+    def job_detail(job_id: str, request: Request) -> JSONResponse:
+        try:
+            admin_path = _resolve_path(admin_db_path)
+            actor = _actor_from_request(request, session_provider, admin_path)
+            scope = _member_media_scope(actor.user_id, admin_path)
+            job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
+            if job is None or not _job_in_scope(job, scope):
+                raise _ApiError("job_not_found", "Job not found for this account", 404)
+            return _json({"job": media_jobs.for_audience(job, "client")})
+        except (_ApiError, UserPortalError) as exc:
+            return _error_response(exc)
+
     @router.get("/media", include_in_schema=False)
     def list_media(request: Request) -> JSONResponse:
         try:

@@ -269,12 +269,7 @@ def _build_media_job_providers(
     def store_canceler(
         job_id: str, *, audience: str, reason: str | None = None
     ) -> dict[str, Any] | None:
-        updated = _media_jobs.update_status(
-            job_id,
-            _media_jobs.STATUS_CANCELED,
-            error=reason,
-            path=store_path,
-        )
+        updated = _media_jobs.request_cancel(job_id, path=store_path)
         if updated is None:
             return None
         return _media_jobs.get(job_id, audience=audience, path=store_path)
@@ -893,6 +888,6 @@ def create_gateway_router(
                     f"media job {job_id!r} not found",
                 ),
             )
-        return JSONResponse(status_code=status.HTTP_200_OK, content=updated)
+        return JSONResponse(status_code=202 if updated.get("cancel_requested") else 200, content=updated)
 
     return router

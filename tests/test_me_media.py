@@ -97,6 +97,17 @@ class MeMediaRouterTests(unittest.TestCase):
         )
         self.client = TestClient(app)
 
+    def test_job_notifications_are_scoped_even_for_owner(self) -> None:
+        for app in (self.app_a, self.app_b):
+            media_jobs.create(media_jobs.MediaJob(intent="video.generate", app_id=app["id"]), path=self.jobs_db)
+        rows = self.client.get("/me/api/jobs?scope=everyone").json()["jobs"]
+        self.assertEqual(len(rows), 1)
+        foreign = next(job for job in media_jobs.recent(path=self.jobs_db) if job["app_id"] == self.app_b["id"])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{foreign['job_id']}").status_code, 404)
+        self.current_user = self.owner
+        self.assertEqual(self.client.get("/me/api/jobs").json()["jobs"], [])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{foreign['job_id']}").status_code, 404)
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
@@ -1592,14 +1603,14 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         finished = self.client.post(f"{url}/cancel", headers=self._make_headers("cancel-mine"))
         self.assertEqual(finished.status_code, 409, finished.text)
 
-    def test_make_restart_settles_a_pending_cancel_as_canceled(self) -> None:
+    def test_make_restart_reports_unconfirmed_cancel(self) -> None:
         self.runtime.release.clear()
         _, job = self._submit_make("cancel-then-restart")
         self.assertTrue(self.runtime.started.wait(5))
         self.client.post(f"{self.make_url}/{job['job_id']}/cancel", headers=self._make_headers("cancel-then-restart"))
         resumed = me_make.resume_jobs(runtime=self.runtime, jobs_path=self.jobs_db)
         self.assertEqual(resumed, 0)
-        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_CANCELED)
+        self.assertEqual(media_jobs.get(job["job_id"], path=self.jobs_db)["status"], media_jobs.STATUS_FAILED)
 
     def test_make_cancel_of_a_queued_job_is_immediate(self) -> None:
         import asyncio

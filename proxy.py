@@ -6915,8 +6915,8 @@ class _MakePublishGate:
     cancel take the same lock, so a job never does both.
 
     Cancel also stops the job's work on its event loop: it ends the wait for
-    a turn (``stop_waiting``), or cancels the route call once it runs. It never
-    cancels the job's task, so only shutdown does that.
+    a turn (``stop_waiting``). Running calls drain before cancellation settles;
+    closing an HTTP call would not prove that the backend released its resources.
     """
 
     def __init__(self) -> None:
@@ -6943,8 +6943,7 @@ class _MakePublishGate:
         # On the job's loop, which also clears ``stop_waiting`` when the wait ends.
         if self.stop_waiting is not None:
             self.stop_waiting.set()
-        elif self.call is not None:
-            self.call.cancel()
+
 
 
 _MAKE_PUBLISH_GATE: contextvars.ContextVar[_MakePublishGate | None] = contextvars.ContextVar(
@@ -13045,29 +13044,7 @@ async def lifespan(app: FastAPI):
             f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
             flush=True,
         )
-        if COMFY_ENABLED and IMAGE_MEDIA_JOB_RESUME_ON_START:
-            resumed = _resume_pending_image_media_jobs()
-            if resumed:
-                print(
-                    f"[proxy] Resumed {resumed} pending image media job(s)",
-                    flush=True,
-                )
-            resumed_audio = _resume_pending_audio_media_jobs()
-            if resumed_audio:
-                print(
-                    f"[proxy] Resumed {resumed_audio} pending audio media job(s)",
-                    flush=True,
-                )
-            resumed_video = _resume_pending_video_media_jobs()
-            if resumed_video:
-                print(
-                    f"[proxy] Resumed {resumed_video} pending video media job(s)",
-                    flush=True,
-                )
-        if IMAGE_MEDIA_JOB_RESUME_ON_START:
-            resumed_make = me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH)
-            if resumed_make:
-                print(f"[proxy] Resumed {resumed_make} pending make job(s)", flush=True)
+        _recover_media_jobs()
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
@@ -14551,28 +14528,14 @@ def _admission_refusal_message(response: Response) -> str:
 
 
 async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Response]) -> Response:
-    """Run a make job's route call so that ``gate.cancel`` stops it.
-
-    The backend may finish its own work, but the gate keeps the output from
-    being published. Shutdown cancels the whole task instead, and that still
-    raises ``CancelledError`` so the job can resume.
-    """
-    call = asyncio.ensure_future(work)
-    with gate.lock:
-        gate.loop, gate.call = asyncio.get_running_loop(), call
-        if gate.canceled:
-            call.cancel()
+    """Wait for backend completion; cancellation only prevents publication."""
     try:
-        return await call
-    except asyncio.CancelledError:
-        current = asyncio.current_task()
-        if gate.canceled and (current is None or not current.cancelling()):
-            raise me_make.MakeCanceled() from None
-        raise
-    except Exception:
-        if gate.canceled:
-            raise me_make.MakeCanceled() from None
-        raise
+        response = await work
+    except MediaPublishCanceled:
+        raise me_make.MakeCanceled() from None
+    if gate.canceled and 200 <= response.status_code < 300:
+        raise me_make.MakeCanceled()
+    return response
 
 
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
@@ -20654,7 +20617,9 @@ def _purge_prompt_payload_files(person_id: str | None = None, *, before: int | N
         if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
             for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"):
                 job_id = path.stem
-                payload = _load_image_media_job_payload(job_id)
+                if (job.get("metadata") or {}).get("cancel_requested_at"):
+            raise media_jobs.CancellationPending()
+        payload = _load_image_media_job_payload(job_id)
                 if person_id is not None and (payload or {}).get("auth", {}).get("person_id") != person_id:
                     continue
                 if spared(payload):
@@ -20925,11 +20890,11 @@ def _store_ephemeral_media_job_payload(job_id: str, payload: dict[str, Any]) -> 
 
 
 def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) -> dict[str, Any] | None:
-    result = media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED,
-                                     error="Canceled by requester", path=media_jobs.DB_PATH)
+    result = media_jobs.request_cancel(job_id, path=media_jobs.DB_PATH)
     if result is None:
         return None
-    _delete_image_media_job_payload(job_id)
+    if media_jobs.is_terminal(result["status"]):
+        _delete_image_media_job_payload(job_id)
     video_id = (result.get("metadata") or {}).get("upstream_video_id")
     prompt_id = _prompt_id_from_video_id(video_id) if isinstance(video_id, str) else None
     if prompt_id:
@@ -21398,6 +21363,33 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
     )
 
 
+def _recover_media_jobs() -> None:
+    """Run on every startup, even when the operator disables resuming."""
+    _resume_pending_image_media_jobs()
+    _resume_pending_audio_media_jobs()
+    _resume_pending_video_media_jobs()
+    me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH,
+                        enabled=IMAGE_MEDIA_JOB_RESUME_ON_START)
+    supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE}
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if (job.get("metadata") or {}).get("mode") not in supported:
+            media_jobs.update_status(job["job_id"], media_jobs.STATUS_FAILED,
+                                     error="The gateway restarted; this job cannot be resumed",
+                                     path=media_jobs.DB_PATH)
+
+
+def _settle_native_job(run):
+    async def settled(job_id: str) -> None:
+        try:
+            await run(job_id)
+        except media_jobs.CancellationPending:
+            # The executor has returned and its semaphore has been released.
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED,
+                                     error="Canceled by requester", path=media_jobs.DB_PATH)
+            _delete_image_media_job_payload(job_id)
+    return settled
+
+
 def _mark_image_media_job_failed(
     job_id: str,
     message: str,
@@ -21434,6 +21426,7 @@ def _mark_image_media_job_failed(
     _delete_image_media_job_payload(job_id)
 
 
+@_settle_native_job
 async def _run_image_media_job(job_id: str) -> None:
     async with _image_media_job_semaphore:
         job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
@@ -21543,6 +21536,9 @@ async def _run_image_media_job(job_id: str) -> None:
                 )
                 return
 
+            current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
+            if (current.get("metadata") or {}).get("cancel_requested_at") and 200 <= response.status_code < 300:
+                raise media_jobs.CancellationPending()
             status_code = int(getattr(response, "status_code", 0) or 0)
             if 200 <= status_code < 300:
                 assets = _assets_from_image_response(response)
@@ -21640,7 +21636,7 @@ def _schedule_image_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            print(f"[proxy] image media job task crashed for {job_id}: {exc}", flush=True)
+            _mark_image_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
 
     task.add_done_callback(_done)
     return True
@@ -21648,33 +21644,29 @@ def _schedule_image_media_job(job_id: str) -> bool:
 
 def _resume_pending_image_media_jobs() -> int:
     resumed = 0
-    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
-        try:
-            rows = media_jobs.recent(
-                limit=200,
-                audience="internal",
-                status=status_value,
-                path=media_jobs.DB_PATH,
-            )
-        except Exception:
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if job.get("intent") != "image.generate":
             continue
-        for job in rows:
-            if job.get("intent") != "image.generate":
-                continue
-            metadata = job.get("metadata") or {}
-            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_image_generation":
-                continue
-            job_id = str(job.get("job_id") or "")
-            if not job_id:
-                continue
-            if not _has_image_media_job_payload(job_id):
-                _mark_image_media_job_failed(
-                    job_id,
-                    "Image media job payload missing after proxy restart",
-                )
-                continue
-            if _schedule_image_media_job(job_id):
-                resumed += 1
+        metadata = job.get("metadata") or {}
+        if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_image_generation":
+            continue
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            continue
+        if not _has_image_media_job_payload(job_id):
+            _mark_image_media_job_failed(
+                job_id,
+                "Image media job payload missing after proxy restart",
+            )
+            continue
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+            _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
+            continue
+        if (metadata.get("cancel_requested_at")):
+            _mark_image_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if _schedule_image_media_job(job_id):
+            resumed += 1
     return resumed
 
 
@@ -21965,6 +21957,7 @@ def _mark_audio_media_job_failed(
     _delete_audio_media_job_payload(job_id)
 
 
+@_settle_native_job
 async def _run_audio_media_job(job_id: str) -> None:
     async with _audio_media_job_semaphore:
         job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
@@ -22071,7 +22064,7 @@ def _schedule_audio_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            print(f"[proxy] audio media job task crashed for {job_id}: {exc}", flush=True)
+            _mark_audio_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
 
     task.add_done_callback(_done)
     return True
@@ -22079,33 +22072,29 @@ def _schedule_audio_media_job(job_id: str) -> bool:
 
 def _resume_pending_audio_media_jobs() -> int:
     resumed = 0
-    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
-        try:
-            rows = media_jobs.recent(
-                limit=200,
-                audience="internal",
-                status=status_value,
-                path=media_jobs.DB_PATH,
-            )
-        except Exception:
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if job.get("intent") not in _AUDIO_MEDIA_JOB_INTENTS:
             continue
-        for job in rows:
-            if job.get("intent") not in _AUDIO_MEDIA_JOB_INTENTS:
-                continue
-            metadata = job.get("metadata") or {}
-            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_audio_generation":
-                continue
-            job_id = str(job.get("job_id") or "")
-            if not job_id:
-                continue
-            if not _has_image_media_job_payload(job_id):
-                _mark_audio_media_job_failed(
-                    job_id,
-                    "Audio media job payload missing after proxy restart",
-                )
-                continue
-            if _schedule_audio_media_job(job_id):
-                resumed += 1
+        metadata = job.get("metadata") or {}
+        if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_audio_generation":
+            continue
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            continue
+        if not _has_image_media_job_payload(job_id):
+            _mark_audio_media_job_failed(
+                job_id,
+                "Audio media job payload missing after proxy restart",
+            )
+            continue
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+            _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
+            continue
+        if (metadata.get("cancel_requested_at")):
+            _mark_audio_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if _schedule_audio_media_job(job_id):
+            resumed += 1
     return resumed
 
 
@@ -22117,64 +22106,64 @@ async def _submit_audio_media_job(
 ) -> Response:
     auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
     if isinstance(auth_context, Response):
-        return auth_context
+return auth_context
 
     policy_response = _enforce_runtime_route_policy(
-        auth_context,
-        "/gateway/v1/media/jobs",
-        policy=_audio_media_job_policy(),
+auth_context,
+"/gateway/v1/media/jobs",
+policy=_audio_media_job_policy(),
     )
     if policy_response is not None:
-        return policy_response
+return policy_response
 
     profile = _profile_for_auth_context(auth_context)
     request_id = f"audjob_{uuid.uuid4().hex}"
     workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
     if not workflow_name:
-        requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
-        return model_compatibility_error(
-            ModelCompatibilityError(
-                f"Model '{requested_model}' is not available for audio generation.",
-                code="model_not_found",
-            )
-        )
+requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
+return model_compatibility_error(
+    ModelCompatibilityError(
+        f"Model '{requested_model}' is not available for audio generation.",
+        code="model_not_found",
+    )
+)
     requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
     manifest = _load_audio_workflow_manifest(workflow_name)
     policy_decision = evaluate_and_apply(
-        auth_context.identity,
-        make_policy_request(
-            protocol="openai.audio",
-            intent=intent,
-            model=str(requested_model) if requested_model is not None else None,
-            workflow=f"audio.generate.{workflow_name}",
-            backend="comfyui",
-            capability_exposure="default",
-            capability_trust_tier="stable",
-            capability_resource_tier="batch",
-        ),
+auth_context.identity,
+make_policy_request(
+    protocol="openai.audio",
+    intent=intent,
+    model=str(requested_model) if requested_model is not None else None,
+    workflow=f"audio.generate.{workflow_name}",
+    backend="comfyui",
+    capability_exposure="default",
+    capability_trust_tier="stable",
+    capability_resource_tier="batch",
+),
     )
     if policy_decision.denied:
-        return _policy_denied_response(policy_decision)
+return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(intent, auth_context=auth_context)
     if admission_response is not None:
-        return admission_response
+return admission_response
     target_decision = _workflow_target_policy_decision(
-        auth_context,
-        requested=str(requested_model) if requested_model is not None else None,
-        resolved=workflow_name,
-        manifest=manifest,
-        extra_ids=(f"audio.generate.{workflow_name}",),
+auth_context,
+requested=str(requested_model) if requested_model is not None else None,
+resolved=workflow_name,
+manifest=manifest,
+extra_ids=(f"audio.generate.{workflow_name}",),
     )
     if target_decision is not None and target_decision.denied:
-        return _policy_denied_response(target_decision)
+return _policy_denied_response(target_decision)
     job = audio_media_jobs.audio_job_from_request(
-        body,
-        request_id=request_id,
-        workflow=f"audio.generate.{workflow_name}",
-        backend="comfyui",
-        app_profile=profile.id,
-        api_key_name=auth_context.identity.name if auth_context.identity else None,
-        parent_request_id=request_id,
+body,
+request_id=request_id,
+workflow=f"audio.generate.{workflow_name}",
+backend="comfyui",
+app_profile=profile.id,
+api_key_name=auth_context.identity.name if auth_context.identity else None,
+parent_request_id=request_id,
     )
     job.intent = intent
     metadata = dict(job.metadata or {})
@@ -22182,44 +22171,44 @@ async def _submit_audio_media_job(
     job.metadata = metadata
 
     try:
-        _persist_audio_media_job_payload(
-            job.job_id,
-            body=body,
-            request=request,
-            auth_context=auth_context,
-        )
-        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
-        job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
+_persist_audio_media_job_payload(
+    job.job_id,
+    body=body,
+    request=request,
+    auth_context=auth_context,
+)
+job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+job.app_id = auth_context.identity.app_id if auth_context.identity else None
+created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
-        _delete_audio_media_job_payload(job.job_id)
-        return _ephemeral_media_payload_busy_response()
+_delete_audio_media_job_payload(job.job_id)
+return _ephemeral_media_payload_busy_response()
     except Exception as exc:  # noqa: BLE001
-        _delete_audio_media_job_payload(job.job_id)
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"Could not create audio media job: {type(exc).__name__}",
-                    "type": "api_error",
-                }
-            }),
-            status_code=500,
-            media_type="application/json",
-        )
+_delete_audio_media_job_payload(job.job_id)
+return Response(
+    content=json.dumps({
+        "error": {
+            "message": f"Could not create audio media job: {type(exc).__name__}",
+            "type": "api_error",
+        }
+    }),
+    status_code=500,
+    media_type="application/json",
+)
 
     try:
-        media_jobs.append_event(
-            job.job_id,
-            "queued",
-            {
-                "phase": "queued",
-                "status": media_jobs.STATUS_QUEUED,
-                "progress": 0,
-            },
-            path=media_jobs.DB_PATH,
-        )
+media_jobs.append_event(
+    job.job_id,
+    "queued",
+    {
+        "phase": "queued",
+        "status": media_jobs.STATUS_QUEUED,
+        "progress": 0,
+    },
+    path=media_jobs.DB_PATH,
+)
     except Exception:
-        pass
+pass
     _schedule_audio_media_job(job.job_id)
     return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
@@ -22426,6 +22415,7 @@ def _video_filename_from_response(response: Response, *, default: str) -> str:
     return f"{default}{suffix}"
 
 
+@_settle_native_job
 async def _run_video_media_job(job_id: str) -> None:
     async with _video_media_job_semaphore:
         job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
@@ -22439,76 +22429,78 @@ async def _run_video_media_job(job_id: str) -> None:
             return
 
         auth_context = _auth_context_from_image_job_payload(payload)
-        try:
+        video_id = (job.get("metadata") or {}).get("upstream_video_id")
+        if not video_id:
+            try:
+                media_jobs.update_status(
+                    job_id,
+                    media_jobs.STATUS_RUNNING,
+                    progress=2,
+                    metadata_patch={"started_at": int(time.time())},
+                    path=media_jobs.DB_PATH,
+                )
+                media_jobs.append_event(
+                    job_id,
+                    "started",
+                    video_media_jobs.video_status_event(
+                        status=media_jobs.STATUS_RUNNING,
+                        progress=2,
+                        phase="submitting",
+                    ),
+                    path=media_jobs.DB_PATH,
+                )
+                submit_response = await proxy_comfy_video_create(request_shim, auth_context)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                _mark_video_media_job_failed(
+                    job_id,
+                    f"Video media job executor error: {type(exc).__name__}",
+                    http_status=502,
+                )
+                return
+
+            submit_status = int(getattr(submit_response, "status_code", 0) or 0)
+            if not 200 <= submit_status < 300:
+                message = _media_job_failure_message(submit_response)
+                _mark_video_media_job_failed(job_id, message, http_status=submit_status)
+                return
+
+            submit_payload = _image_response_json(submit_response)
+            video_id = submit_payload.get("id")
+            if not isinstance(video_id, str) or not video_id:
+                _mark_video_media_job_failed(
+                    job_id,
+                    "Video generation succeeded at submit but returned no video id",
+                    http_status=submit_status,
+                )
+                return
+
+            prompt_id = _prompt_id_from_video_id(video_id)
+            if prompt_id and prompt_id in _video_job_records:
+                _video_job_records[prompt_id]["media_job_id"] = job_id
+                _persist_video_record(prompt_id)
+
             media_jobs.update_status(
                 job_id,
                 media_jobs.STATUS_RUNNING,
-                progress=2,
-                metadata_patch={"started_at": int(time.time())},
+                progress=5,
+                metadata_patch={
+                    "upstream_video_id": video_id,
+                    "last_http_status": submit_status,
+                },
                 path=media_jobs.DB_PATH,
             )
             media_jobs.append_event(
                 job_id,
-                "started",
+                "submitted",
                 video_media_jobs.video_status_event(
                     status=media_jobs.STATUS_RUNNING,
-                    progress=2,
-                    phase="submitting",
+                    progress=5,
+                    phase="queued",
                 ),
                 path=media_jobs.DB_PATH,
             )
-            submit_response = await proxy_comfy_video_create(request_shim, auth_context)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            _mark_video_media_job_failed(
-                job_id,
-                f"Video media job executor error: {type(exc).__name__}",
-                http_status=502,
-            )
-            return
-
-        submit_status = int(getattr(submit_response, "status_code", 0) or 0)
-        if not 200 <= submit_status < 300:
-            message = _media_job_failure_message(submit_response)
-            _mark_video_media_job_failed(job_id, message, http_status=submit_status)
-            return
-
-        submit_payload = _image_response_json(submit_response)
-        video_id = submit_payload.get("id")
-        if not isinstance(video_id, str) or not video_id:
-            _mark_video_media_job_failed(
-                job_id,
-                "Video generation succeeded at submit but returned no video id",
-                http_status=submit_status,
-            )
-            return
-
-        prompt_id = _prompt_id_from_video_id(video_id)
-        if prompt_id and prompt_id in _video_job_records:
-            _video_job_records[prompt_id]["media_job_id"] = job_id
-            _persist_video_record(prompt_id)
-
-        media_jobs.update_status(
-            job_id,
-            media_jobs.STATUS_RUNNING,
-            progress=5,
-            metadata_patch={
-                "upstream_video_id": video_id,
-                "last_http_status": submit_status,
-            },
-            path=media_jobs.DB_PATH,
-        )
-        media_jobs.append_event(
-            job_id,
-            "submitted",
-            video_media_jobs.video_status_event(
-                status=media_jobs.STATUS_RUNNING,
-                progress=5,
-                phase="queued",
-            ),
-            path=media_jobs.DB_PATH,
-        )
 
         deadline = time.monotonic() + max(1, COMFY_VIDEO_TIMEOUT)
         last_progress = 5
@@ -22634,7 +22626,7 @@ def _schedule_video_media_job(job_id: str) -> bool:
         except asyncio.CancelledError:
             return
         if exc is not None:
-            print(f"[proxy] video media job task crashed for {job_id}: {exc}", flush=True)
+            _mark_video_media_job_failed(job_id, "The job stopped unexpectedly; please try again")
 
     task.add_done_callback(_done)
     return True
@@ -22642,33 +22634,29 @@ def _schedule_video_media_job(job_id: str) -> bool:
 
 def _resume_pending_video_media_jobs() -> int:
     resumed = 0
-    for status_value in (media_jobs.STATUS_RUNNING, media_jobs.STATUS_QUEUED):
-        try:
-            rows = media_jobs.recent(
-                limit=200,
-                audience="internal",
-                status=status_value,
-                path=media_jobs.DB_PATH,
-            )
-        except Exception:
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if job.get("intent") != INTENT_VIDEO_GENERATE:
             continue
-        for job in rows:
-            if job.get("intent") != INTENT_VIDEO_GENERATE:
-                continue
-            metadata = job.get("metadata") or {}
-            if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_video_generation":
-                continue
-            job_id = str(job.get("job_id") or "")
-            if not job_id:
-                continue
-            if not _has_image_media_job_payload(job_id):
-                _mark_video_media_job_failed(
-                    job_id,
-                    "Video media job payload missing after proxy restart",
-                )
-                continue
-            if _schedule_video_media_job(job_id):
-                resumed += 1
+        metadata = job.get("metadata") or {}
+        if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_video_generation":
+            continue
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            continue
+        if not _has_image_media_job_payload(job_id):
+            _mark_video_media_job_failed(
+                job_id,
+                "Video media job payload missing after proxy restart",
+            )
+            continue
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or not COMFY_ENABLED:
+            _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
+            continue
+        if (metadata.get("cancel_requested_at")):
+            _mark_video_media_job_failed(job_id, "The gateway restarted before cancellation could be confirmed")
+            continue
+        if _schedule_video_media_job(job_id):
+            resumed += 1
     return resumed
 
 
