@@ -72,7 +72,7 @@ def test_upgrade_preserves_unknown_legacy_and_explicit_creator(household, capsys
 
 
 @pytest.mark.parametrize('cache_state', ['missing', 'empty'])
-def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, cache_state, capsys):
+def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, cache_state):
     hh = household
     if cache_state == 'empty':
         proxy.IMAGE_CACHE_DIR.mkdir()
@@ -80,7 +80,6 @@ def test_maintenance_does_not_erase_prompts_without_cache_inventory(household, c
     assert prompt_memory.put(asset, hh.robin['id'], 'saved text', kept_until=None, admin_path=hh.admin)
     proxy._maintain_prompt_memory()
     assert prompt_memory.get(asset, hh.robin['id'])['prompt_text'] == 'saved text'
-    assert 'orphan prompt pruning skipped' in capsys.readouterr().out
 
 
 def test_request_policy_reads_do_not_wait_for_admin_writer(household):
@@ -213,12 +212,12 @@ def test_missing_preference_under_lock_degrades_to_dont_store(household):
         assert decision.reason == 'storage_unavailable'
 
 
-def test_empty_inventory_still_expires_prompts(household):
+def test_explicit_prompt_deadline_still_expires_prompts(household):
     hh = household
     expiry = int(time.time()) + 30
     assert prompt_memory.put('img_' + 'c' * 64, hh.robin['id'], 'expired',
         kept_until=expiry, admin_path=hh.admin)
-    assert prompt_memory.prune(available_asset_ids=set(), now=expiry + 1) == 1
+    assert prompt_memory.prune(now=expiry + 1) == 1
 
 
 def test_delete_scrubs_legacy_credential_scoped_video_job(household):

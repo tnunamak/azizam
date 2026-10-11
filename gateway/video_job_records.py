@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 from gateway import media_jobs
 from gateway.ownership import stored_owner_key
+from gateway.sqlite_startup import connect
 
 MIGRATION_NAME = "video_job_records_v1"
 
@@ -60,7 +61,7 @@ def migrate(conn: sqlite3.Connection) -> bool:
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path) if path else Path(media_jobs.DB_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=5.0)
+    conn = connect(target, timeout=5.0)
     media_jobs._apply_pragmas(conn)
     conn.execute("PRAGMA secure_delete=ON")
     migrate(conn)
@@ -98,31 +99,25 @@ def remove(prompt_id: str, *, path: Path | None = None) -> None:
         conn.close()
 
 
-def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dict[str, dict]:
-    """Return every stored record, oldest first. ``max_age_s`` skips old rows."""
+def load_all(*, path: Path | None = None) -> dict[str, dict]:
+    """Return every stored record, oldest first."""
     conn = _connect(path)
     try:
+        # Remove only the legacy prompt from the current JSON in one statement;
+        # rewriting a snapshot read earlier could undo a concurrent save.
+        conn.execute(
+            "UPDATE video_job_records SET record_json = json_remove(record_json, '$.prompt') "
+            "WHERE json_valid(record_json) AND json_type(record_json) = 'object' "
+            "AND json_type(record_json, '$.prompt') IS NOT NULL"
+        )
+        conn.commit()
         rows = conn.execute(
             "SELECT prompt_id, record_json, created_at FROM video_job_records ORDER BY created_at"
         ).fetchall()
-        for prompt_id, blob, _ in rows:
-            try:
-                data = json.loads(blob)
-            except ValueError:
-                continue
-            if isinstance(data, dict) and "prompt" in data:
-                data.pop("prompt", None)
-                conn.execute("UPDATE video_job_records SET record_json=? WHERE prompt_id=?", (
-                    json.dumps(data, ensure_ascii=False, sort_keys=True), prompt_id,
-                ))
-        conn.commit()
     finally:
         conn.close()
-    cutoff = time.time() - max_age_s if max_age_s else None
     out: dict[str, dict] = {}
     for prompt_id, blob, created_at in rows:
-        if cutoff is not None and created_at < cutoff:
-            continue
         try:
             data = json.loads(blob)
         except ValueError:
@@ -131,15 +126,3 @@ def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dic
             data.pop("prompt", None)
             out[prompt_id] = data
     return out
-
-
-def prune(older_than_s: float, *, path: Path | None = None) -> int:
-    conn = _connect(path)
-    try:
-        cur = conn.execute(
-            "DELETE FROM video_job_records WHERE created_at < ?", (int(time.time() - older_than_s),)
-        )
-        conn.commit()
-        return cur.rowcount
-    finally:
-        conn.close()

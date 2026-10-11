@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from gateway import admin_store, media_jobs, media_metadata
+from gateway.sqlite_startup import connect
 
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
 RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
-VIDEO_PROMPT_RETENTION_SECONDS = 14 * 86400
 RETENTION_LOCK_TIMEOUT_SECONDS = 0.25
 ERASURE_CUTOFF_TABLE = "prompt_memory_erasure_cutoffs"
 MEMBER_DEFAULTS = {"remember": True, "retention": "never"}
@@ -159,7 +159,7 @@ def retention_guard(admin_path: Path | None, person_id: str | None = None) -> It
     if admin_path is None:
         yield {**HOUSEHOLD_DEFAULTS, **MEMBER_DEFAULTS}
         return
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -303,7 +303,7 @@ def _effective_retention(member_retention: str, cap_retention: str) -> str:
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path or media_jobs.DB_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=5)
+    conn = connect(target, timeout=5)
     conn.row_factory = sqlite3.Row
     media_jobs._apply_pragmas(conn)
     conn.execute("PRAGMA secure_delete=ON")
@@ -453,7 +453,7 @@ def mark_person_erasure(
         raise ValueError("person_id is required")
     target = Path(admin_path or admin_store.DB_PATH)
     current = int(time.time()) if now is None else int(now)
-    conn = sqlite3.connect(str(target), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(target, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -495,7 +495,7 @@ def recorded_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -
     """Read durable erasure intent, including settings whose cleanup has not started."""
     if not person_id:
         raise ValueError("person_id is required")
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         conn.execute("BEGIN")
@@ -514,7 +514,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
     """
     if not person_id:
         raise ValueError("person_id is required")
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     conn.execute(f"PRAGMA busy_timeout={int(RETENTION_LOCK_TIMEOUT_SECONDS * 1000)}")
     try:
@@ -542,7 +542,7 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
 
 def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
     """The household fence survives turning memory back on."""
-    conn = sqlite3.connect(str(Path(admin_path or admin_store.DB_PATH)),
+    conn = connect(Path(admin_path or admin_store.DB_PATH),
                            timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         table_exists = conn.execute(
@@ -561,7 +561,7 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
 
 
 def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             return False
@@ -574,7 +574,7 @@ def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
 
 def complete_erasure(person_id: str, cutoff: int, *, admin_path: Path) -> None:
     """An old worker must not acknowledge a newer deletion."""
-    conn = sqlite3.connect(str(admin_path), timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=?",
@@ -633,7 +633,14 @@ def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
 
 def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str, str] | None = None,
          path: Path | None = None, admin_path: Path | None = None) -> bool:
-    """Move an in-flight video prompt to its finished asset in one transaction."""
+    """Move an in-flight video prompt to its finished asset in one transaction.
+
+    An existing destination prompt is never replaced. With the same text the
+    rows merge, keeping the earlier creation time and the stricter deadline.
+    With different text both rows stay and the move returns False.
+    """
+    if source_id == asset_id:
+        return False
     with retention_guard(admin_path, person_id) as policy:
         if policy["never_keep"] or not policy["remember"]:
             delete_asset_for_person(source_id, person_id, path=path)
@@ -653,17 +660,26 @@ def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str
                 conn.commit()
                 return False
             destination = conn.execute(
-                "SELECT metadata_json FROM asset_prompts WHERE asset_id=? AND person_id=?", (asset_id, person_id),
+                "SELECT prompt_text,metadata_json,created_at,kept_until FROM asset_prompts "
+                "WHERE asset_id=? AND person_id=? AND (kept_until IS NULL OR kept_until>?)",
+                (asset_id, person_id, int(time.time())),
             ).fetchone()
+            if destination and destination["prompt_text"] != row["prompt_text"]:
+                conn.rollback()
+                return False
             merged = json.loads(row["metadata_json"] or "{}")
+            created_at, kept_until = row["created_at"], row["kept_until"]
             if destination:
                 merged.update(json.loads(destination["metadata_json"] or "{}"))
+                created_at = min(created_at, destination["created_at"])
+                deadlines = [value for value in (kept_until, destination["kept_until"]) if value is not None]
+                kept_until = min(deadlines) if deadlines else None
             if metadata:
                 merged.update(dict(metadata))
             conn.execute(
                 "INSERT OR REPLACE INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
                 "VALUES(?,?,?,?,?,?)",
-                (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), row["created_at"], row["kept_until"]),
+                (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), created_at, kept_until),
             )
             conn.execute("DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (source_id, person_id))
             conn.commit()
@@ -672,24 +688,15 @@ def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str
             conn.close()
 
 
-def prune(*, path: Path | None = None, now: int | None = None,
-          available_asset_ids: set[str] | frozenset[str] | list[str] | tuple[str, ...] | None = None) -> int:
+def prune(*, path: Path | None = None, now: int | None = None) -> int:
+    """Apply explicit prompt privacy deadlines; missing media is not consent."""
     conn = _connect(path)
     try:
         current_time = int(time.time()) if now is None else now
-        predicates = [
-            "(kept_until IS NOT NULL AND kept_until<=?)",
-            "(asset_id LIKE 'video\\_%' ESCAPE '\\' AND created_at<=?)",
-        ]
-        args: list[Any] = [current_time, current_time - VIDEO_PROMPT_RETENTION_SECONDS]
-        if available_asset_ids:
-            ids = tuple(str(value) for value in available_asset_ids)
-            orphan_clause = "(asset_id NOT LIKE 'video\\_%' ESCAPE '\\'"
-            if ids:
-                orphan_clause += f" AND asset_id NOT IN ({','.join('?' for _ in ids)})"
-                args.extend(ids)
-            predicates.append(orphan_clause + ")")
-        count = conn.execute("DELETE FROM asset_prompts WHERE " + " OR ".join(predicates), args).rowcount
+        count = conn.execute(
+            "DELETE FROM asset_prompts WHERE kept_until IS NOT NULL AND kept_until<=?",
+            (current_time,),
+        ).rowcount
         conn.commit()
         return count
     finally:

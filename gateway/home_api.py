@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -19,7 +18,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, providers
+from gateway import admin_store, providers, sqlite_startup
 from gateway.admin_api import AdminAuthError
 from gateway.admin_runtime import person_for_app_credential
 from gateway.alias_policy import service_model_records
@@ -77,7 +76,7 @@ def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, An
 
 def _has_success(receipts_path: Path) -> bool:
     # An EXISTS query avoids mistaking a limited recent page for all history.
-    with sqlite3.connect(f"file:{receipts_path}?mode=ro", uri=True) as conn:
+    with sqlite_startup.connect_readonly(receipts_path) as conn:
         return conn.execute("SELECT EXISTS(SELECT 1 FROM receipts WHERE status = 'succeeded' "
                             "AND parent_request_id IS NULL)").fetchone()[0] == 1
 
@@ -89,7 +88,7 @@ def _external_client_evidence(receipts_path: Path) -> tuple[dict[str, Any], bool
     internal hops never qualify. Legacy receipts predate source attribution,
     so their origin is unknown and they cannot complete the step.
     """
-    with sqlite3.connect(f"file:{receipts_path}?mode=ro", uri=True) as conn:
+    with sqlite_startup.connect_readonly(receipts_path) as conn:
         observed, unattributed = conn.execute(
             "SELECT MAX(CASE WHEN json_extract(receipt_json, '$.source_kind') IN ('app', 'local-network') "
             "THEN created_at END), "
@@ -101,7 +100,7 @@ def _external_client_evidence(receipts_path: Path) -> tuple[dict[str, Any], bool
 
 def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
     """Persisted acknowledgements are distinct from observed gateway traffic."""
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+    with sqlite_startup.connect_readonly(path) as conn:
         rows = conn.execute("SELECT action, MAX(created_at) FROM audit_events "
                             "WHERE actor_id = ? AND action IN "
                             "('setup.settings_copied', 'setup.external_client_confirmed', 'setup.receipt_viewed', 'setup.checklist_dismissed') "
@@ -112,7 +111,7 @@ def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
 
 
 def _invitation_created(path: Path) -> bool:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+    with sqlite_startup.connect_readonly(path) as conn:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_links'").fetchone():
             return False
         return bool(conn.execute("SELECT EXISTS(SELECT 1 FROM account_links WHERE kind='invite')").fetchone()[0])

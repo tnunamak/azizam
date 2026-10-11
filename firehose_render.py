@@ -1283,8 +1283,6 @@ def _render_budgets(b: dict) -> str:
         ("Image max_batch_size", img.get("max_batch_size")),
         ("Image VRAM reserve", _bytes(img.get("vram_reserve_bytes"))),
         ("Image signed_url_ttl (s)", img.get("signed_url_ttl")),
-        ("Image cache TTL (s)", img.get("cache_ttl")),
-        ("Image cache eviction interval (s)", img.get("cache_eviction_interval")),
         ("Image cache dir", img.get("cache_dir")),
     ]))
     return "".join(parts)

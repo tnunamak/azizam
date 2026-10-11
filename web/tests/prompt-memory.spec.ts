@@ -142,7 +142,7 @@ describe("purgeStatus", () => {
 describe("keyPromptNote", () => {
   it("says a service or someone else's key is not remembered", () => {
     expect(keyPromptNote({ person_id: null })).toBe(
-      "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation for up to seven days.",
+      "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.",
     );
   });
 
@@ -159,9 +159,9 @@ it("shows the full backend key description", () => {
   expect(
     keyPromptNote({
       person_id: null,
-      description: "Chat requests may save a conversation for seven days.",
+      description: "Chat requests may save a conversation until it is deleted.",
     }),
-  ).toBe("Chat requests may save a conversation for seven days.");
+  ).toBe("Chat requests may save a conversation until it is deleted.");
 });
 it("names database erasure as pending", () => {
   expect(purgeStatus({ pending: true, database_pending: true })).toContain(

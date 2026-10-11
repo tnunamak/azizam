@@ -59,11 +59,48 @@ class TestReceiptStore(unittest.TestCase):
         receipt_store.init_db(self.db)
         self.assertEqual(receipt_store.schema_version(self.db), receipt_store.SCHEMA_VERSION)
 
-    def test_upgrade_from_v1_recreates_table(self) -> None:
-        # A pre-v2 receipts DB (no app_id column) is recreated, not migrated:
-        # old rows have no owning-App id, so they are discarded rather than
-        # unsafely attributed. The upgrade
-        # must succeed (not raise) and leave a clean v2 schema with app_id.
+    def test_concurrent_legacy_upgrades_both_succeed(self) -> None:
+        import sqlite3
+        import threading
+        from unittest.mock import patch
+
+        legacy = Path(self.tmp.name) / "legacy.db"
+        with sqlite3.connect(str(legacy)) as con:
+            con.executescript(
+                "CREATE TABLE receipts (request_id TEXT PRIMARY KEY, created_at "
+                "INTEGER NOT NULL, app_profile TEXT, receipt_json TEXT NOT NULL);"
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+                "INSERT INTO schema_version(version) VALUES (1);"
+                "INSERT INTO receipts VALUES ('req_old', 1, 'p', '{}');"
+            )
+        errors = []
+        def second_initializer():
+            try:
+                with sqlite3.connect(str(legacy), timeout=10) as conn:
+                    receipt_store._exec_schema(conn)
+            except Exception as error:  # noqa: BLE001
+                errors.append(error)
+        other = threading.Thread(target=second_initializer)
+
+        class StartOtherAfterInspection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                result = super().execute(sql, *args)
+                if sql.startswith("PRAGMA table_info(receipts)") and not other.is_alive() and other.ident is None:
+                    other.start()  # it inspects while this initializer is mid-upgrade
+                    other.join(timeout=0.3)
+                return result
+
+        with sqlite3.connect(str(legacy), factory=StartOtherAfterInspection) as conn:
+            receipt_store._exec_schema(conn)
+        other.join(timeout=15)
+        self.assertEqual(errors, [])
+        with sqlite3.connect(str(legacy)) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchall(),
+                             [(receipt_store.SCHEMA_VERSION,)])
+            self.assertEqual(conn.execute("SELECT request_id, receipt_json FROM receipts").fetchall(),
+                             [("req_old", "{}")])
+
+    def test_upgrade_keeps_unattributed_history_out_of_member_feeds(self) -> None:
         import sqlite3
 
         legacy = Path(self.tmp.name) / "legacy.db"
@@ -85,8 +122,11 @@ class TestReceiptStore(unittest.TestCase):
         try:
             cols = [r[1] for r in con.execute("PRAGMA table_info(receipts)")]
             self.assertIn("app_id", cols)
-            # Old un-attributable rows were dropped.
-            self.assertEqual(receipt_store.count(legacy), 0)
+            self.assertEqual(receipt_store.count(legacy), 1)
+            self.assertEqual(con.execute("SELECT request_id, created_at, app_profile, receipt_json, app_id FROM receipts").fetchone(),
+                             ("req_old", 1, "p", "{}", None))
+            self.assertEqual(receipt_store.recent(app_ids=["some-app"], path=legacy), [])
+            self.assertEqual(receipt_store.history_floor(legacy), 1)
         finally:
             con.close()
 
@@ -701,6 +741,31 @@ class TestReceiptStore(unittest.TestCase):
             {row["request_id"] for row in receipt_store.recent(path=self.db)}, {parent.request_id}
         )
         self.assertEqual(len(receipt_store.recent(path=self.db, outer_only=False)), 2)
+
+
+    def test_cost_update_racing_finalize_keeps_both_outcome_and_cost(self) -> None:
+        import threading
+        from unittest.mock import patch
+
+        receipt = _make_receipt()
+        receipt_store.begin(receipt, now_ms=1_000, path=self.db)
+        receipt.finish("succeeded", now_ms=2_000)
+        cost = {"usd": 0.25, "source": "owner-reported", "reconciliation_status": "settled"}
+        finished = []
+        terminal = threading.Thread(target=lambda: finished.append(receipt_store.finalize(receipt, path=self.db)))
+        real_loads = receipt_store._safe_loads
+        def finalize_after_cost_read(text):
+            if not terminal.is_alive() and not finished:
+                terminal.start()  # finalize arrives after update_cost read the row
+                terminal.join(timeout=0.3)
+            return real_loads(text)
+        with patch.object(receipt_store, "_safe_loads", finalize_after_cost_read):
+            self.assertTrue(receipt_store.update_cost(receipt.request_id, cost, path=self.db))
+        terminal.join(timeout=10)
+        self.assertEqual(finished, [True])
+        stored = receipt_store.get(receipt.request_id, path=self.db)
+        self.assertEqual(stored["status"], "succeeded")
+        self.assertEqual(stored["cost"]["usd"], 0.25)
 
 
 if __name__ == "__main__":

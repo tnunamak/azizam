@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import json
 import math
-import sqlite3
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -22,7 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
+from gateway import admin_store, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -403,17 +402,19 @@ def conservative_asset_deleter(
     prompt_memory_path: PathProvider | None = None,
 ) -> AssetDeleter:
     def delete(asset_id: str) -> bool:
-        metadata = metadata_reader(asset_id)
-        owners = {
-            str(owner)
-            for owner in metadata.get("owner_key_hashes") or []
-            if isinstance(owner, str)
-        }
-        if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
-            return False
         from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
         removed = False
+        # Asset storage records owners and makers under this lock. Check them
+        # under it too, so an owner added after a check cannot lose the file.
         with CACHE_MUTATION_LOCK:
+            metadata = metadata_reader(asset_id)
+            owners = {
+                str(owner)
+                for owner in metadata.get("owner_key_hashes") or []
+                if isinstance(owner, str)
+            }
+            if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
+                return False
             for path in (asset_path_resolver(asset_id), metadata_path_resolver(asset_id)):
                 if path is not None and path.exists():
                     path.unlink()
@@ -647,7 +648,7 @@ def _media_items(
         path=media_jobs_path,
     )
     receipts = _receipts_by_request_id(
-        [str(job.get("request_id") or "") for job in jobs],
+        [request_id for job in jobs for request_id in _job_receipt_ids(job)],
         path=receipts_path,
     )
     out: list[dict[str, Any]] = []
@@ -655,7 +656,7 @@ def _media_items(
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
     for job in jobs:
-        receipt = receipts.get(str(job.get("request_id") or ""))
+        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
         if receipt is not None and not _receipt_in_scope(receipt, scope):
             continue
         if receipt is None and not _job_in_scope(job, scope):
@@ -786,6 +787,17 @@ def _media_items(
                 "source": source,
             })
     return sorted(out, key=lambda item: (int(item.get("created_at") or 0), str(item.get("asset_id") or "")), reverse=True)
+
+
+def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
+    """Receipt keys for a job: its request ID, then the request that created it.
+
+    A finished job's request ID is cleared when a new job takes it over (replay
+    release) or by prompt erasure. Seeded and idempotent image jobs use a derived
+    request ID. ``parent_request_id`` still names the creating request's receipt.
+    """
+    ids = [str(job.get("request_id") or ""), str(job.get("parent_request_id") or "")]
+    return [value for index, value in enumerate(ids) if value and value not in ids[:index]]
 
 
 def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[str, Mapping[str, Any]]:
@@ -1251,7 +1263,7 @@ def _usage_summary(
             params.extend(sorted(owner_keys))
         clauses.append("(" + " OR ".join(ownership_clauses) + ")" if ownership_clauses else "0")
     # Aggregate every retained row in the period, rather than a recent-feed cap.
-    with sqlite3.connect(str(receipts_path)) as conn:
+    with sqlite_startup.connect_readonly(receipts_path) as conn:
         rows = conn.execute(
             "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
             + " ORDER BY created_at DESC, request_id DESC", params,
@@ -1321,12 +1333,15 @@ def _usage_summary(
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
     for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
                                  status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
-        request_id = str(job.get("request_id") or "")
-        job_receipt = receipts_by_id.get(request_id)
-        if job_receipt is None and request_id:
-            job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+        job_receipt = None
+        for request_id in _job_receipt_ids(job):
+            job_receipt = receipts_by_id.get(request_id)
+            if job_receipt is None:
+                job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+                if job_receipt is not None:
+                    _annotate_receipt_source(job_receipt, sources, admin_db_path)
             if job_receipt is not None:
-                _annotate_receipt_source(job_receipt, sources, admin_db_path)
+                break
         if job_receipt is not None:
             if (
                 int(job_receipt.get("_stored_at") or 0) >= start

@@ -30,10 +30,10 @@ the requested audience.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway.sqlite_startup import connect, store_startup
 
 import json
 import os
-import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -56,8 +56,8 @@ STALE_AFTER_MS = 5 * 60 * 1000
 # v2 adds the ``app_id`` column: the durable id of the owning App, so a user
 # can be shown ONLY their own receipts. ``app_profile`` (a shared permission
 # profile id) and ``api_key_name`` (a non-unique App name) are NOT safe owner
-# keys; ``app_id`` is. The v1→v2 upgrade discards unattributed rows because
-# they cannot be safely assigned to an owner — see ``_exec_schema``.
+# keys; ``app_id`` is. Existing unattributed rows keep a NULL app_id so
+# owner history survives without guessing a member identity.
 SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
@@ -105,42 +105,35 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
-    # Read the on-disk version BEFORE running the full schema. The schema's
-    # ``CREATE INDEX ... ON receipts(app_id)`` would fail against a pre-v2 table
-    # that lacks the column, so an older table must be dropped first.
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
-    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    db_version = int(row[0]) if row is not None else None
-
-    if db_version is not None and db_version != SCHEMA_VERSION:
-        if db_version > SCHEMA_VERSION:
-            # A newer on-disk version than the code understands: refuse rather
-            # than risk writing a shape we don't know how to read back.
+    # Add columns before creating their indexes. Existing history stays intact;
+    # a missing owning-App id remains NULL and is excluded from member feeds.
+    # Inspect and add columns under one write lock: a second initializer waits,
+    # then sees the columns instead of failing on a duplicate ALTER. The
+    # CREATE ... IF NOT EXISTS script after the commit is safe to repeat.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
+        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        db_version = int(row[0]) if row is not None else None
+        if db_version is not None and db_version > SCHEMA_VERSION:
             raise sqlite3.DatabaseError(
                 f"receipt_store schema version mismatch: db={db_version} "
                 f"code={SCHEMA_VERSION} (downgrade not supported)"
             )
-        # Pre-v2 rows have no owning-App id and cannot be safely attributed
-        # to a user. Recreate only this historical, unattributed schema.
-        # Backfilling from the non-unique ``api_key_name`` would risk
-        # attributing one user's calls to another, the exact leak ``app_id``
-        # exists to prevent. So old rows are discarded deliberately.
-        print(
-            f"[receipt_store] upgrading schema {db_version}->{SCHEMA_VERSION}; "
-            "recreating receipts table (unattributed rows discarded)",
-            flush=True,
-        )
-        conn.executescript("DROP TABLE IF EXISTS receipts;\nDELETE FROM schema_version;\n")
-        db_version = None
-
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}
+        if columns:
+            for column in ("protocol", "intent", "path", "app_profile", "app_id",
+                           "api_key_name", "status", "job_id", "parent_request_id"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE receipts ADD COLUMN {column} TEXT")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     conn.executescript(_SCHEMA)
-    if db_version is None:
-        # Fresh DB or just-recreated: stamp the current version (the schema's
-        # CREATE TABLE IF NOT EXISTS leaves schema_version empty).
-        if conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone() is None:
-            conn.execute(
-                "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
-            )
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM schema_version")  # one row, even after concurrent first runs
+    conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
     conn.commit()
 
     # This additive metadata survives retention changes without recreating v2
@@ -158,47 +151,22 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if path.exists():
+    """Check existing data safely, then initialize the schema."""
+    with store_startup(path):
+        conn = sqlite3.connect(str(path), timeout=5.0)
         try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[receipt_store] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[receipt_store] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
-
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        # Fresh databases can reclaim pages without a full rebuild. Existing
-        # files need the explicit offline compaction command to enable this.
-        conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+            # Fresh databases can reclaim pages without a full rebuild. Existing
+            # files need the explicit offline compaction command to enable this.
+            conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = connect(path, timeout=5.0)
     try:
         _apply_pragmas(conn)
         yield conn
@@ -352,6 +320,10 @@ def finalize(
             merged.update(dict.fromkeys((*PHASE_FIELDS, "attempt_number")))
         if merged.get("attempt_number") is not None and merged.get("finished_at_ms") is None:
             merged["finished_at_ms"] = data["updated_at_ms"]
+        cost = accepted.get("cost")
+        if isinstance(cost, Mapping) and cost.get("reconciliation_status") == "settled":
+            # A reconciled cost recorded before the terminal write outranks the caller's estimate.
+            merged = _with_cost(merged, cost)
         _assert_lifecycle_data(merged, terminal=True)
         cur = conn.execute(
             "UPDATE receipts SET protocol=?, intent=?, path=?, app_profile=?, app_id=?, api_key_name=?, "
@@ -472,27 +444,21 @@ def update_cost(
     if not path.exists():
         return False
     with _conn(path) as conn:
+        # Read under the write lock, as finalize and update_phases do, so a
+        # terminal write cannot land between this read and the update.
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT receipt_json FROM receipts WHERE request_id = ?",
             (request_id,),
         ).fetchone()
         if row is None:
+            conn.rollback()
             return False
         data = _safe_loads(row[0])
         if not isinstance(data, Mapping):
+            conn.rollback()
             raise ValueError("cannot update malformed stored receipt")
-        updated = dict(data)
-        updated["remote"] = True
-        updated["cost"] = dict(cost)
-        metadata = updated.get("metadata")
-        if isinstance(metadata, Mapping):
-            metadata = dict(metadata)
-            decisions = metadata.get("decisions")
-            if isinstance(decisions, Mapping):
-                decisions = dict(decisions)
-                decisions["cost_usd"] = cost.get("usd")
-                metadata["decisions"] = decisions
-                updated["metadata"] = metadata
+        updated = _with_cost(data, cost)
         _assert_safe(updated)
         conn.execute(
             "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
@@ -500,6 +466,23 @@ def update_cost(
         )
         conn.commit()
         return True
+
+
+def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy ``data`` with a reconciled cost block; only cost-owned fields change."""
+    updated = dict(data)
+    updated["remote"] = True
+    updated["cost"] = dict(cost)
+    metadata = updated.get("metadata")
+    if isinstance(metadata, Mapping):
+        metadata = dict(metadata)
+        decisions = metadata.get("decisions")
+        if isinstance(decisions, Mapping):
+            decisions = dict(decisions)
+            decisions["cost_usd"] = cost.get("usd")
+            metadata["decisions"] = decisions
+            updated["metadata"] = metadata
+    return updated
 
 
 def get(

@@ -4,9 +4,13 @@ Single tag-based samples table with two pre-aggregated rollups (1min, 1hour).
 Stdlib sqlite3 only. WAL mode for concurrent read while one writer appends.
 
 Layout:
-    samples         - raw 10s samples, retained 7 days
-    samples_1min    - per-minute rollup, retained 30 days
-    samples_1hour   - per-hour rollup, retained 365 days
+    samples         - raw 10s samples, kept 7 days once rolled into samples_1min
+    samples_1min    - per-minute rollup, kept 30 days once rolled into samples_1hour
+    samples_1hour   - per-hour rollup, no automatic expiry
+
+``rolled = 1`` marks a raw or minute row whose values a coarser rollup row
+holds. Rollups set it in the transaction that writes the summary, and pruning
+deletes only marked rows, so a missed or failed rollup never loses data.
 
 All public functions accept an optional connection. When omitted, a short-lived
 read connection is auto-opened. ``gateway.metrics_writer`` owns the long-lived writer on a dedicated thread.
@@ -17,6 +21,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
+from gateway.sqlite_startup import connect, connect_readonly, is_corruption, store_startup
 import shutil
 import sqlite3
 import time
@@ -28,19 +33,20 @@ from typing import Any, Iterable, Optional
 _default_db = Path(__file__).parent / "data" / "metrics.db"
 DB_PATH = Path(get_env("AZIZAM_METRICS_DB", _default_db))
 
-# Retention windows (seconds).
+# Retention windows (seconds). Only rows marked rolled expire; hourly rollups
+# are the history and have no window.
 RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
-HOUR_RETAIN_S = 365 * 24 * 3600
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
   ts INTEGER NOT NULL,
   metric TEXT NOT NULL,
   tags TEXT NOT NULL DEFAULT '',
-  value REAL NOT NULL
+  value REAL NOT NULL,
+  rolled INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS samples_metric_ts ON samples(metric, ts);
 CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
@@ -56,10 +62,13 @@ CREATE TABLE IF NOT EXISTS samples_1min (
   avg_value REAL NOT NULL,
   min_value REAL NOT NULL,
   max_value REAL NOT NULL,
-  count INTEGER NOT NULL
+  count INTEGER NOT NULL,
+  rolled INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS samples_1min_metric_ts ON samples_1min(metric, ts);
 CREATE INDEX IF NOT EXISTS samples_1min_ts ON samples_1min(ts);
+CREATE INDEX IF NOT EXISTS samples_unrolled_ts ON samples(ts) WHERE rolled = 0;
+CREATE INDEX IF NOT EXISTS samples_1min_unrolled_ts ON samples_1min(ts) WHERE rolled = 0;
 
 CREATE TABLE IF NOT EXISTS samples_1hour (
   ts INTEGER NOT NULL,
@@ -91,7 +100,35 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA busy_timeout=5000;")
 
 
+def _add_rollup_marks(conn: sqlite3.Connection) -> None:
+    """Add ``rolled`` to version-4 tables and mark rows an old rollup summarized.
+
+    Old rollups left no per-row record. Treat a row as summarized only when the
+    coarser table has a row for its own bucket, metric and tags; anything else
+    stays unmarked and is rolled up again. One transaction, so a crash leaves
+    the old schema to retry.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for table, coarse, width in (("samples", "samples_1min", 60), ("samples_1min", "samples_1hour", 3600)):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not columns or "rolled" in columns:
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN rolled INTEGER NOT NULL DEFAULT 0")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (coarse,)).fetchone():
+                conn.execute(
+                    f"UPDATE {table} SET rolled = 1 WHERE EXISTS (SELECT 1 FROM {coarse} c "
+                    f"WHERE c.metric = {table}.metric AND c.ts = {table}.ts - {table}.ts % {width} "
+                    f"AND c.tags = {table}.tags)"
+                )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 def _exec_schema(conn: sqlite3.Connection) -> None:
+    _add_rollup_marks(conn)
     conn.executescript(_SCHEMA)
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if row is None:
@@ -105,74 +142,36 @@ def _integrity_marker(path: Path) -> Path:
     return path.with_name(f"{path.name}.integrity-failed")
 
 
-def _move_broken_aside(path: Path, reason: object) -> None:
-    broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-    print(f"[metrics_store] DB corrupt ({reason}); moving aside to {broken}", flush=True)
-    try:
-        shutil.move(str(path), str(broken))
-    except Exception as mv_err:  # noqa: BLE001
-        print(f"[metrics_store] failed to move broken db: {mv_err}", flush=True)
-        try:
-            path.unlink()
-        except Exception:
-            pass
-    # A WAL left behind by the broken file must not be replayed into the new one.
-    for suffix in ("-wal", "-shm"):
-        try:
-            path.with_name(path.name + suffix).unlink()
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
-
-
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir and run the schema; replace the file if it is unusable.
+    """Create the data dir and run the schema; quarantine the file if it is corrupt.
 
     Startup checks only the header/schema; new indexes are built once during schema migration.
     Schema statements fail on a file whose header or schema pages are broken. The full scan
     (``PRAGMA integrity_check``, ~12 s on a 346 MB file) is ``verify_integrity``, which the caller
     runs in a background thread. When that scan finds damage it leaves a marker file; the next
-    ``init_db`` sees the marker and moves the broken file aside before opening it.
+    ``init_db`` sees the marker, rechecks it, and preserves confirmed damage before replacing it.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
     marker = _integrity_marker(path)
-    if marker.exists():
-        try:
-            reason = marker.read_text().strip() or "integrity_check failed on a previous run"
-        except OSError:
-            reason = "integrity_check failed on a previous run"
-        if path.exists():
-            _move_broken_aside(path, reason)
+    # Recheck a previous failure before acting on it; the marker can be stale.
+    with store_startup(path, full_check=marker.exists()):
         marker.unlink(missing_ok=True)
-
-    for attempt in (1, 2):
+        conn = sqlite3.connect(str(path), timeout=5.0)
         try:
-            conn = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(conn)
-                _exec_schema(conn)
-            finally:
-                conn.close()
-            return
-        except sqlite3.OperationalError:
-            raise  # locked, unreadable or out of space: not evidence that the file is damaged
-        except sqlite3.DatabaseError as e:
-            if attempt == 2 or not path.exists():
-                raise
-            _move_broken_aside(path, e)
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
     """Run the full ``PRAGMA integrity_check``. Slow: call it off the event loop.
 
     Returns None when the file is sound, else the first problem found. A failure also writes
-    ``<db>.integrity-failed`` so the next ``init_db`` replaces the file. The live file is never
+    ``<db>.integrity-failed`` so the next ``init_db`` rechecks it and quarantines it if still corrupt. The live file is never
     swapped here: the sampler holds a writer connection to it.
     """
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        conn = connect_readonly(path, timeout=5.0)
         try:
             row = conn.execute("PRAGMA integrity_check").fetchone()
         finally:
@@ -181,6 +180,8 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
     except sqlite3.OperationalError:
         return None  # a busy or missing file is not evidence of damage
     except sqlite3.DatabaseError as e:
+        if not is_corruption(e):
+            raise
         problem = str(e)
     if problem is not None:
         print(f"[metrics_store] {problem}; it will be moved aside at the next start", flush=True)
@@ -193,7 +194,7 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
 
 def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
     """Long-lived writer connection. Caller owns it; close on shutdown."""
-    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=5.0, isolation_level=None)
+    conn = connect(path if path is not None else DB_PATH, timeout=5.0, isolation_level=None)
     _apply_pragmas(conn)
     return conn
 
@@ -201,7 +202,7 @@ def open_writer(path: Optional[Path] = None) -> sqlite3.Connection:
 @contextmanager
 def reader(path: Optional[Path] = None):
     """Short-lived read connection. WAL makes this cheap."""
-    conn = sqlite3.connect(str(path if path is not None else DB_PATH), timeout=2.0)
+    conn = connect(path if path is not None else DB_PATH, timeout=2.0)
     try:
         _apply_pragmas(conn)
         yield conn
@@ -456,38 +457,38 @@ def query_series(
         return _run(c)
 
 
+def _roll_up(c: sqlite3.Connection, source: str, target: str, width: int, before: int) -> int:
+    """Summarize every unmarked ``source`` row before ``before`` and mark it, in one write.
+
+    This catches up any buckets missed while the gateway was down or a rollup
+    failed. A row that arrives late for a bucket already summarized becomes an
+    extra rollup row for that bucket; readers weight rows by count.
+    """
+    value = "AVG(value), MIN(value), MAX(value), COUNT(*)" if source == "samples" else (
+        "SUM(avg_value*count)*1.0/NULLIF(SUM(count),0), MIN(min_value), MAX(max_value), SUM(count)")
+    # The INSERT is the first statement, so it reads under the write lock and the
+    # UPDATE marks exactly the rows it summarized.
+    cur = c.execute(
+        f"INSERT INTO {target} (ts, metric, tags, avg_value, min_value, max_value, count) "
+        f"SELECT ts - ts % {width}, metric, tags, {value} FROM {source} "
+        f"WHERE rolled = 0 AND ts < ? GROUP BY ts - ts % {width}, metric, tags",
+        (before,),
+    )
+    written = cur.rowcount or 0
+    c.execute(f"UPDATE {source} SET rolled = 1 WHERE rolled = 0 AND ts < ?", (before,))
+    c.commit() if hasattr(c, "commit") else None
+    return written
+
+
 def downsample_minute(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> int:
-    """Aggregate raw samples from last fully-elapsed minute into samples_1min.
+    """Roll unrolled raw samples from every fully elapsed minute into samples_1min.
 
     Returns the number of rollup rows written.
     """
     now = int(time.time()) if now is None else int(now)
-    # Aggregate the minute that just finished, i.e. [now - now%60 - 60, now - now%60).
-    bucket_end = now - (now % 60)
-    bucket_start = bucket_end - 60
 
     def _run(c: sqlite3.Connection) -> int:
-        # Skip if we already rolled up this minute.
-        existing = c.execute(
-            "SELECT 1 FROM samples_1min WHERE ts = ? LIMIT 1",
-            (bucket_start,),
-        ).fetchone()
-        if existing:
-            return 0
-        rows = c.execute(
-            "SELECT metric, tags, AVG(value), MIN(value), MAX(value), COUNT(*) "
-            "FROM samples WHERE ts >= ? AND ts < ? GROUP BY metric, tags",
-            (bucket_start, bucket_end),
-        ).fetchall()
-        if not rows:
-            return 0
-        c.executemany(
-            "INSERT INTO samples_1min (ts, metric, tags, avg_value, min_value, max_value, count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [(bucket_start, r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows],
-        )
-        c.commit() if hasattr(c, "commit") else None
-        return len(rows)
+        return _roll_up(c, "samples", "samples_1min", 60, now - now % 60)
 
     if conn is not None:
         return _run(conn)
@@ -496,35 +497,11 @@ def downsample_minute(conn: Optional[sqlite3.Connection] = None, *, now: Optiona
 
 
 def downsample_hour(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> int:
-    """Aggregate samples_1min from last fully-elapsed hour into samples_1hour."""
+    """Roll unrolled minute rows from every fully elapsed hour into samples_1hour."""
     now = int(time.time()) if now is None else int(now)
-    bucket_end = now - (now % 3600)
-    bucket_start = bucket_end - 3600
 
     def _run(c: sqlite3.Connection) -> int:
-        existing = c.execute(
-            "SELECT 1 FROM samples_1hour WHERE ts = ? LIMIT 1",
-            (bucket_start,),
-        ).fetchone()
-        if existing:
-            return 0
-        # Weighted average: SUM(avg_value*count) / SUM(count).
-        rows = c.execute(
-            "SELECT metric, tags, "
-            "SUM(avg_value*count)*1.0/NULLIF(SUM(count),0), "
-            "MIN(min_value), MAX(max_value), SUM(count) "
-            "FROM samples_1min WHERE ts >= ? AND ts < ? GROUP BY metric, tags",
-            (bucket_start, bucket_end),
-        ).fetchall()
-        if not rows:
-            return 0
-        c.executemany(
-            "INSERT INTO samples_1hour (ts, metric, tags, avg_value, min_value, max_value, count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [(bucket_start, r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows],
-        )
-        c.commit() if hasattr(c, "commit") else None
-        return len(rows)
+        return _roll_up(c, "samples_1min", "samples_1hour", 3600, now - now % 3600)
 
     if conn is not None:
         return _run(conn)
@@ -533,20 +510,17 @@ def downsample_hour(conn: Optional[sqlite3.Connection] = None, *, now: Optional[
 
 
 def prune_old(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> dict:
-    """Delete rows older than each table's retention window. Returns counts."""
+    """Delete old raw and minute rows that a coarser rollup holds. Returns counts."""
     now = int(time.time()) if now is None else int(now)
     raw_cut = now - RAW_RETAIN_S
     min_cut = now - MINUTE_RETAIN_S
-    hr_cut = now - HOUR_RETAIN_S
 
     def _run(c: sqlite3.Connection) -> dict:
         out: dict[str, int] = {}
-        cur = c.execute("DELETE FROM samples WHERE ts < ?", (raw_cut,))
+        cur = c.execute("DELETE FROM samples WHERE ts < ? AND rolled = 1", (raw_cut,))
         out["raw"] = cur.rowcount or 0
-        cur = c.execute("DELETE FROM samples_1min WHERE ts < ?", (min_cut,))
+        cur = c.execute("DELETE FROM samples_1min WHERE ts < ? AND rolled = 1", (min_cut,))
         out["minute"] = cur.rowcount or 0
-        cur = c.execute("DELETE FROM samples_1hour WHERE ts < ?", (hr_cut,))
-        out["hour"] = cur.rowcount or 0
         if hasattr(c, "commit"):
             c.commit()
         return out

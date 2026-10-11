@@ -163,6 +163,58 @@ class TestStoreLifecycle(_StoreCase):
         loaded = media_jobs.get(first.job_id, path=self.db)
         self.assertEqual(loaded["workflow"], "ltx.video.basic")
 
+    def _age(self, job_id: str, seconds: int) -> None:
+        with media_jobs._conn(self.db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at = updated_at - ? WHERE job_id = ?",
+                         (seconds, job_id))
+            conn.commit()
+
+    def test_old_finished_request_id_starts_new_work_and_keeps_history(self) -> None:
+        # Kept jobs must not turn a 14-day replay window into a permanent one.
+        for status in (STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED):
+            request_id = f"req_old_{status}"
+            first = media_jobs.create(_make_job(request_id=request_id, status=status), path=self.db)
+            media_jobs.append_event(first.job_id, "x", {"progress": 1}, path=self.db)
+            self._age(first.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            self.assertIsNone(media_jobs.get_by_request_id(request_id, path=self.db))
+            second = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            self.assertNotEqual(first.job_id, second.job_id)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], second.job_id)
+            kept = media_jobs.get(first.job_id, audience="internal", path=self.db)
+            self.assertEqual(kept["status"], status)
+            self.assertEqual(kept["request_id"], "")
+            self.assertEqual(len(media_jobs.events(first.job_id, path=self.db)), 1)
+
+    def test_stale_write_of_released_job_keeps_the_new_owner_of_its_request_id(self) -> None:
+        import sqlite3
+        for with_events in (False, True):
+            request_id = f"req_stale_{with_events}"
+            old = media_jobs.create(_make_job(request_id=request_id, status=STATUS_SUCCEEDED), path=self.db)
+            self._age(old.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+            new = media_jobs.create(_make_job(request_id=request_id), path=self.db)
+            if with_events:
+                media_jobs.append_event(new.job_id, "x", {"progress": 1}, path=self.db)
+            old.progress = 100  # a worker still holds the object from before the release
+            media_jobs.upsert(old, path=self.db)
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+            self.assertIsNotNone(media_jobs.get(new.job_id, path=self.db))
+            kept = media_jobs.get(old.job_id, audience="internal", path=self.db)
+            self.assertEqual((kept["request_id"], kept["progress"]), ("", 100))
+            other = _make_job(request_id=request_id)  # a different job claiming the same ID
+            with self.assertRaises(sqlite3.IntegrityError):
+                media_jobs.upsert(other, path=self.db)
+            self.assertIsNone(media_jobs.get(other.job_id, path=self.db))
+            self.assertEqual(media_jobs.get_by_request_id(request_id, path=self.db)["job_id"], new.job_id)
+
+    def test_recent_or_active_request_id_still_replays(self) -> None:
+        recent = media_jobs.create(_make_job(request_id="req_recent", status=STATUS_FAILED), path=self.db)
+        self._age(recent.job_id, media_jobs.REPLAY_WINDOW_S - 60)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_recent"), path=self.db).job_id, recent.job_id)
+        active = media_jobs.create(_make_job(request_id="req_active", status=STATUS_RUNNING), path=self.db)
+        self._age(active.job_id, media_jobs.REPLAY_WINDOW_S + 1)
+        self.assertEqual(media_jobs.get_by_request_id("req_active", path=self.db)["job_id"], active.job_id)
+        self.assertEqual(media_jobs.create(_make_job(request_id="req_active"), path=self.db).job_id, active.job_id)
+
     def test_create_without_request_id_makes_separate_jobs(self) -> None:
         a = media_jobs.create(_make_job(request_id=""), path=self.db)
         b = media_jobs.create(_make_job(request_id=""), path=self.db)
@@ -404,22 +456,17 @@ class TestRecentAndPrune(_StoreCase):
         media_jobs.create(_make_job(request_id="rz"), path=self.db)
         self.assertEqual(media_jobs.recent(limit=0, path=self.db), [])
 
-    def test_prune_removes_old_jobs_and_events(self) -> None:
-        old = media_jobs.create(_make_job(request_id="r_old"), path=self.db)
-        media_jobs.append_event(old.job_id, "x", {"progress": 1}, path=self.db)
-        # Force the row to look old.
+    def test_restart_keeps_old_jobs_and_events_in_every_state(self) -> None:
+        for status in ALL_STATUSES:
+            job = media_jobs.create(_make_job(request_id=status, status=status), path=self.db)
+            media_jobs.append_event(job.job_id, "x", {"progress": 1}, path=self.db)
         with media_jobs._conn(self.db) as conn:
-            conn.execute(
-                "UPDATE media_jobs SET updated_at = ? WHERE job_id = ?",
-                (int(time.time()) - 999_999, old.job_id),
-            )
+            conn.execute("UPDATE media_jobs SET updated_at = 1, created_at = 1")
             conn.commit()
-        fresh = media_jobs.create(_make_job(request_id="r_new"), path=self.db)
-        result = media_jobs.prune(retain_s=60, path=self.db)
-        self.assertEqual(result["jobs"], 1)
-        self.assertGreaterEqual(result["events"], 1)
-        self.assertIsNone(media_jobs.get(old.job_id, path=self.db))
-        self.assertIsNotNone(media_jobs.get(fresh.job_id, path=self.db))
+        media_jobs.init_db(self.db)
+        self.assertEqual(media_jobs.count(self.db), len(ALL_STATUSES))
+        for job in media_jobs.recent(path=self.db, audience="internal"):
+            self.assertEqual(len(media_jobs.events(job["job_id"], path=self.db)), 1)
 
 
 class TestStoreSafety(_StoreCase):

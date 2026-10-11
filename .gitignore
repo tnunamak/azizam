@@ -13,7 +13,7 @@ data/metrics.db-shm
 data/metrics.db.broken-*
 
 # Responses API persistence: SQLite store for /v1/responses stateful
-# conversations. Ephemeral runtime state with 7-day retention.
+# conversations, kept until explicit deletion.
 data/responses.db
 data/responses.db-wal
 data/responses.db-shm
@@ -38,6 +38,9 @@ data/admin.db
 data/admin.db-wal
 data/admin.db-shm
 data/admin.db.broken-*
+
+# Store admission locks (gateway/sqlite_startup.py). Never delete while running.
+data/*.db.lock
 data/admin.db.bak.*
 data/admin_session_key
 data/admin_session_key.tmp

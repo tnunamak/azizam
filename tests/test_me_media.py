@@ -618,6 +618,22 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(owner_usage.status_code, 200, owner_usage.text)
         self.assertEqual(owner_usage.json()["media_count"], 1)
 
+    def test_job_with_released_request_id_keeps_its_receipt_link(self) -> None:
+        # After a replay release (or erasure of a seeded ID) only the creating request's ID remains.
+        self._receipt(self.app_a["id"], "req_parent")
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="", parent_request_id="req_parent", intent="image.generate",
+            status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
+        ), path=self.jobs_db)
+        assets = self.client.get("/me/api/media").json()["assets"]
+        self.assertEqual([item["asset_id"] for item in assets], ["img_" + "7" * 64])
+        self.assertEqual(assets[0]["model"], "local-image")
+        self.assertEqual(assets[0]["source"]["app_id"], self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["media_count"], 1)
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["media_count"], 0)
+
     def test_usage_job_fallback_excludes_previous_month_receipt_assets(self) -> None:
         now = datetime.now(timezone.utc)
         start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
@@ -2253,6 +2269,32 @@ class MemberFailureCopyTests(unittest.TestCase):
         self.assertNotIn("OSError", stored["error"])
         self.assertEqual(stored["error"], error["message"])
 
+
+class ConservativeAssetDeleterTests(unittest.TestCase):
+    def test_owner_added_while_delete_waits_keeps_the_shared_asset(self) -> None:
+        import threading
+        from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
+
+        with tempfile.TemporaryDirectory() as tmp:
+            asset = Path(tmp) / "asset.png"
+            asset.write_bytes(b"only copy")
+            metadata = {"owner_key_hashes": ["app:first"], "maker_person_ids": ["person-1"]}
+            deleter = me_media.conservative_asset_deleter(
+                metadata_reader=lambda asset_id: json.loads(json.dumps(metadata)),
+                asset_path_resolver=lambda asset_id: asset,
+                metadata_path_resolver=lambda asset_id: None,
+                prompt_memory_path=lambda: Path(tmp) / "jobs.db",
+            )
+            results = []
+            with CACHE_MUTATION_LOCK:  # asset storage is publishing a second maker
+                delete = threading.Thread(target=lambda: results.append(deleter("img_" + "0" * 64)))
+                delete.start()
+                delete.join(timeout=0.3)
+                metadata["owner_key_hashes"].append("app:second")
+                metadata["maker_person_ids"].append("person-2")
+            delete.join(timeout=10)
+            self.assertEqual(results, [False])
+            self.assertEqual(asset.read_bytes(), b"only copy")
 
 if __name__ == "__main__":
     unittest.main()

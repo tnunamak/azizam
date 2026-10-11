@@ -113,7 +113,7 @@ class TestMetricsStore(unittest.TestCase):
         for table in ("samples_1min", "samples_1hour"):
             with metrics_store.reader(self.db) as conn:
                 conn.executemany(
-                    f"INSERT INTO {table} VALUES (?,?,?,?,?,?,?)",
+                    f"INSERT INTO {table} (ts, metric, tags, avg_value, min_value, max_value, count) VALUES (?,?,?,?,?,?,?)",
                     [(1750, "rollup", '{"key":"alpha","extra":1}', 10, 8, 12, 2),
                      (1760, "rollup", '{"key":"alpha","extra":1}', 20, 16, 24, 3),
                      (1760, "rollup", '{"key":"beta"}', 99, 99, 99, 1),
@@ -144,7 +144,7 @@ class TestMetricsStore(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("DROP INDEX samples_latency_tags_ts")
             conn.execute("UPDATE schema_version SET version=1")
-            conn.execute("INSERT INTO samples VALUES (100,'service_latency_ms','{}',42)")
+            conn.execute("INSERT INTO samples (ts, metric, tags, value) VALUES (100,'service_latency_ms','{}',42)")
         metrics_store.init_db(self.db)
         metrics_store.init_db(self.db)
         with sqlite3.connect(self.db) as conn:
@@ -163,14 +163,16 @@ class TestMetricsStore(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             for table in ("samples_1min", "samples_1hour"):
                 conn.execute(f"DROP INDEX {table}_ts")
-                conn.execute(f"INSERT INTO {table} VALUES (60, 'x', '', 2, 1, 3, 2)")
+                conn.execute(f"INSERT INTO {table} (ts, metric, tags, avg_value, min_value, max_value, count) VALUES (60, 'x', '', 2, 1, 3, 2)")
             conn.execute("UPDATE schema_version SET version=2")
         metrics_store.init_db(self.db)
         metrics_store.init_db(self.db)
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], metrics_store.SCHEMA_VERSION)
             for table in ("samples_1min", "samples_1hour"):
-                self.assertEqual(conn.execute(f"SELECT * FROM {table}").fetchall(), [(60, 'x', '', 2, 1, 3, 2)])
+                self.assertEqual(conn.execute(
+                    f"SELECT ts, metric, tags, avg_value, min_value, max_value, count FROM {table}"
+                ).fetchall(), [(60, 'x', '', 2, 1, 3, 2)])
                 for sql, params in (
                     (f"SELECT 1 FROM {table} WHERE ts = ? LIMIT 1", (60,)),
                     (f"SELECT * FROM {table} WHERE ts >= ? AND ts < ?", (0, 120)),
@@ -185,11 +187,11 @@ class TestMetricsStore(unittest.TestCase):
 
         with sqlite3.connect(self.db) as conn:
             conn.execute("DROP TABLE sampler_state")
-            conn.execute("INSERT INTO samples VALUES (60, 'x', '', 2)")
+            conn.execute("INSERT INTO samples (ts, metric, tags, value) VALUES (60, 'x', '', 2)")
             conn.execute("UPDATE schema_version SET version=3")
         metrics_store.init_db(self.db)
         with sqlite3.connect(self.db) as conn:
-            self.assertEqual(conn.execute("SELECT * FROM samples").fetchall(), [(60, "x", "", 2.0)])
+            self.assertEqual(conn.execute("SELECT ts, metric, tags, value FROM samples").fetchall(), [(60, "x", "", 2.0)])
             metrics_store.write_sampler_state(conn, {"k": "v1"})
             metrics_store.write_sampler_state(conn, {"k": "v2"})
         self.assertEqual(metrics_store.read_sampler_state(self.db, "k"), "v2")
@@ -301,19 +303,54 @@ class TestMetricsStore(unittest.TestCase):
         conn = metrics_store.open_writer(self.db)
         try:
             now = int(time.time())
-            # Sample 8 days old should be pruned from raw.
+            # Sample 8 days old expires from raw once a minute rollup holds it.
             metrics_store.record_sample(conn, now - 8 * 86400, "p", 1.0)
             # Sample 1h old should survive.
             metrics_store.record_sample(conn, now - 3600, "p", 2.0)
+            self.assertEqual(metrics_store.prune_old(conn), {"raw": 0, "minute": 0})
+            metrics_store.downsample_minute(conn)
             counts = metrics_store.prune_old(conn)
             self.assertEqual(counts["raw"], 1)
             with metrics_store.reader(self.db) as c:
                 rows = c.execute(
                     "SELECT count(*) FROM samples WHERE metric='p'"
                 ).fetchone()
+                self.assertEqual(c.execute(
+                    "SELECT ts, avg_value, count FROM samples_1min WHERE metric='p' ORDER BY ts"
+                ).fetchall(), [((now - 8 * 86400) // 60 * 60, 1.0, 1), ((now - 3600) // 60 * 60, 2.0, 1)])
             self.assertEqual(rows[0], 1)
         finally:
             conn.close()
+
+    def test_version_4_rows_without_a_rollup_are_kept_and_rolled(self) -> None:
+        import sqlite3
+
+        old = int(time.time()) - 40 * 86400
+        self.db.unlink()
+        with sqlite3.connect(self.db) as conn:
+            conn.executescript("""
+                CREATE TABLE samples (ts INTEGER NOT NULL, metric TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '', value REAL NOT NULL);
+                CREATE TABLE samples_1min (ts INTEGER NOT NULL, metric TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '',
+                  avg_value REAL NOT NULL, min_value REAL NOT NULL, max_value REAL NOT NULL, count INTEGER NOT NULL);
+                CREATE TABLE samples_1hour (ts INTEGER NOT NULL, metric TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '',
+                  avg_value REAL NOT NULL, min_value REAL NOT NULL, max_value REAL NOT NULL, count INTEGER NOT NULL);
+                CREATE TABLE schema_version (version INTEGER NOT NULL);
+                INSERT INTO schema_version VALUES (4);
+            """)
+            minute = old - old % 60
+            # The old rollup covered metric "a" in this minute but missed "b".
+            conn.executemany("INSERT INTO samples VALUES (?, ?, '', ?)", [(minute, "a", 1.0), (minute, "b", 2.0)])
+            conn.execute("INSERT INTO samples_1min VALUES (?, 'a', '', 1, 1, 1, 1)", (minute,))
+        metrics_store.init_db(self.db)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT metric, rolled FROM samples ORDER BY metric").fetchall(),
+                             [("a", 1), ("b", 0)])
+            self.assertEqual(metrics_store.prune_old(conn), {"raw": 1, "minute": 0})
+            metrics_store.downsample_minute(conn)
+            metrics_store.downsample_hour(conn)
+            self.assertEqual(metrics_store.prune_old(conn), {"raw": 1, "minute": 2})
+            self.assertEqual(conn.execute(
+                "SELECT metric, count FROM samples_1hour ORDER BY metric").fetchall(), [("a", 1), ("b", 1)])
 
     def test_db_health(self) -> None:
         conn = metrics_store.open_writer(self.db)

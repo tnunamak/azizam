@@ -807,8 +807,6 @@ VRAM_ESTIMATES_FILE = Path(images_cfg.get(
 ))
 IMAGE_SIGNED_URL_TTL = int(images_cfg.get("signed_url_ttl", 3600))
 IMAGE_SIGNED_URL_SECRET_CFG = str(images_cfg.get("signed_url_secret", "") or "")
-IMAGE_CACHE_TTL = int(images_cfg.get("cache_ttl", 86400))
-IMAGE_CACHE_EVICT_INTERVAL = int(images_cfg.get("cache_eviction_interval", 3600))
 IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
 IMAGE_FREE_VRAM_ON_EXHAUSTION = bool_from_config(images_cfg.get("free_vram_on_exhaustion"), True)
 IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
@@ -7199,39 +7197,6 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
-def _evict_image_cache() -> None:
-    cutoff = time.time() - IMAGE_CACHE_TTL
-    if not IMAGE_CACHE_DIR.exists():
-        return
-    kinds = {suffix: kind for kind, suffixes in _ASSET_SUFFIXES_BY_KIND.items() for suffix in suffixes}
-    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
-        for entry in IMAGE_CACHE_DIR.iterdir():
-            if not entry.is_file() or entry.suffix not in kinds:
-                continue
-            try:
-                if entry.stat().st_mtime >= cutoff:
-                    continue
-                asset_id = f"{kinds[entry.suffix]}_{entry.stem}"
-                prompt_memory.delete_asset(asset_id)
-                entry.unlink(missing_ok=True)
-                sidecar = _asset_metadata_path(asset_id)
-                if sidecar is not None:
-                    sidecar.unlink(missing_ok=True)
-            except FileNotFoundError:
-                continue
-
-
-async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
-    while not stop_event.is_set():
-        try:
-            await asyncio.to_thread(_evict_image_cache)
-        except Exception as exc:
-            print(f"[proxy] image cache eviction failed: {type(exc).__name__}", flush=True)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=IMAGE_CACHE_EVICT_INTERVAL)
-        except asyncio.TimeoutError:
-            continue
-
 
 def has_vision_content(messages) -> bool:
     """Return True iff any chat message carries an image content block.
@@ -9432,7 +9397,6 @@ def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool
 
 # Persisted records are kept this long. ComfyUI's /history is the bytes' source
 # of truth; this only needs to outlive typical client use of a video id.
-_VIDEO_JOB_RECORD_RETAIN = 14 * 24 * 3600
 
 
 def _persist_video_record(prompt_id: str) -> None:
@@ -9457,7 +9421,6 @@ def _forget_video_record_row(prompt_id: str) -> None:
 def _hydrate_video_job_records() -> int:
     """Load persisted records into `_video_job_records` (startup)."""
     try:
-        video_job_records.prune(_VIDEO_JOB_RECORD_RETAIN, path=media_jobs.DB_PATH)
         loaded = video_job_records.load_all(path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] video record hydrate failed: {type(exc).__name__}: {exc}", flush=True)
@@ -9713,23 +9676,9 @@ _VIDEO_JOB_RECORD_DELETED_RETAIN = 5 * 60
 
 
 def _gc_video_job_records_locked(now: float) -> None:
-    """Reap `_video_job_records` on its OWN retention, independent of
-    `_video_progress`/`_video_workflows`'s sweep.
+    """Forget explicitly deleted video records after the polling grace period.
 
-    This used to piggyback on `_video_progress`'s own GC (reaping whenever
-    THAT dict's entries aged out), which is the root cause of a real bug:
-    `_video_progress`'s terminal-entry sweep runs on a much shorter window
-    (`_VIDEO_RECONCILE_RETAIN`, 5 minutes) than its own full-entry sweep
-    (`_VIDEO_PROGRESS_TTL`, 6 hours) -- so a completed job's list/delete-
-    facing record vanished 5 minutes after completion while status/content
-    (which read ComfyUI's own /history directly, on its own, much longer
-    retention) kept serving it. `_video_job_records` is the one place list,
-    delete, get, and content all agree on for "does this job exist" (see its
-    own docstring), so it needs one independent retention rule, not
-    borrowed side effects of a dict that happens to get cleaned up by
-    unrelated code.
-
-    Caller must hold `_video_progress_lock`.
+    Caller must hold `_video_progress_lock`. Other records have no expiry.
     """
     drop: list[str] = []
     for pid, rec in _video_job_records.items():
@@ -9738,9 +9687,6 @@ def _gc_video_job_records_locked(now: float) -> None:
             if now - deleted_at > _VIDEO_JOB_RECORD_DELETED_RETAIN:
                 drop.append(pid)
             continue
-        created_at = rec.get("created_at") or 0
-        if now - created_at > _VIDEO_JOB_RECORD_RETAIN:
-            drop.append(pid)
     for pid in drop:
         _video_job_records.pop(pid, None)
         _forget_video_record_row(pid)
@@ -13001,6 +12947,12 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    # Ownership and history stores must be ready before any worker can write.
+    # In particular, do not run cleanup beside an unfinished quarantine.
+    ADMIN_STORE.init_db()
+    responses_store.init_db()
+    receipt_store.init_db()
+    media_jobs.init_db()
     providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
@@ -13079,15 +13031,6 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
 
-    # Image cache eviction (Fix 2): periodically delete cache files past TTL.
-    image_cache_stop = asyncio.Event()
-    image_cache_task = asyncio.create_task(evict_image_cache_loop(image_cache_stop))
-    print(
-        f"[proxy] Image cache eviction started (dir={IMAGE_CACHE_DIR}, "
-        f"ttl={IMAGE_CACHE_TTL}s, interval={IMAGE_CACHE_EVICT_INTERVAL}s)",
-        flush=True,
-    )
-
     # Workflow drift cache: run scripts/check_workflow_drift.py every 6h and
     # write the structured outcome to cache/drift_status.json. The script
     # depends on Playwright + a live ComfyUI; failures are recorded into the
@@ -13110,23 +13053,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
 
-    # Responses API persistence: SQLite-backed store for stateful
-    # /v1/responses conversations. Pruned hourly; rows expire after 7 days.
-    responses_prune_stop = asyncio.Event()
-    responses_prune_task = None
-    try:
-        responses_store.init_db()
-        responses_prune_task = asyncio.create_task(
-            _responses_prune_loop(responses_prune_stop)
-        )
-        print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Responses store failed to start: {e}", flush=True)
+    # Saved /v1/responses conversations survive until explicit deletion.
+    print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
 
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = None
     try:
-        receipt_store.init_db()
         pruned = await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
         receipts_maintenance_task = asyncio.create_task(
             _receipts_maintenance_loop(receipts_maintenance_stop)
@@ -13139,13 +13071,10 @@ async def lifespan(app: FastAPI):
         print(f"[proxy] Receipt store failed to start: {e}", flush=True)
 
     try:
-        media_jobs.init_db()
-        pruned = media_jobs.prune()
         _fail_orphaned_identity_jobs()
         print(f"[proxy] Hydrated {_hydrate_video_job_records()} persisted video job record(s)", flush=True)
         print(
-            f"[proxy] Media job store initialized (db={media_jobs.DB_PATH}, "
-            f"pruned_jobs={pruned.get('jobs', 0)} pruned_events={pruned.get('events', 0)})",
+            f"[proxy] Media job store initialized (db={media_jobs.DB_PATH})",
             flush=True,
         )
         _recover_media_jobs()
@@ -13153,7 +13082,6 @@ async def lifespan(app: FastAPI):
         print(f"[proxy] Media job store failed to start: {e}", flush=True)
 
     try:
-        ADMIN_STORE.init_db()
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
         app_key_count = active_app_credential_count()
         print(
@@ -13235,14 +13163,6 @@ async def lifespan(app: FastAPI):
             pass
         except Exception:
             pass
-    image_cache_stop.set()
-    image_cache_task.cancel()
-    try:
-        await image_cache_task
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
     drift_stop.set()
     drift_task.cancel()
     try:
@@ -13263,15 +13183,6 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(metrics_sampler.close_writer)
     except Exception:
         pass
-    if responses_prune_task is not None:
-        responses_prune_stop.set()
-        responses_prune_task.cancel()
-        try:
-            await responses_prune_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
     if receipts_maintenance_task is not None:
         receipts_maintenance_stop.set()
         receipts_maintenance_task.cancel()
@@ -21018,13 +20929,7 @@ def _maintain_prompt_memory() -> None:
             operation()
         except Exception as exc:
             print(f"[proxy] prompt privacy cleanup pending: {type(exc).__name__}", flush=True)
-    try:
-        assets = set(me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)()) if IMAGE_CACHE_DIR.is_dir() else set()
-    except OSError:
-        assets = set()
-    if not assets:
-        print("[proxy] orphan prompt pruning skipped: cache inventory missing or empty", flush=True)
-    prompt_memory.prune(available_asset_ids=assets or None)
+    prompt_memory.prune()
     _prune_orphaned_media_job_payloads()
 
 
@@ -21201,17 +21106,13 @@ def _delete_image_media_job_payload(job_id: str) -> None:
                 pass
 
 
-def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
+def _prune_orphaned_media_job_payloads() -> int:
+    """Remove terminal-job spools; absent history may be in quarantine."""
     with _MEDIA_PAYLOAD_LOCK:
-        """Remove old or terminal request spools left by an interrupted worker."""
         removed = 0
-        cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            payload = _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
-            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
-                    or job.get("status") == "stale"
-                    or int(payload.get("created_at") or 0) < cutoff):
+            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
                 _release_ephemeral_media_job_payload(job_id)
                 removed += 1
         if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
@@ -21220,8 +21121,7 @@ def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
                      *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
             job_id = path.name.split(".json", 1)[0]
             job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
-                    or path.stat().st_mtime < cutoff):
+            if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
                 path.unlink(missing_ok=True)
                 removed += 1
         return removed
@@ -25880,22 +25780,6 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
                 await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
-
-
-async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
-    """Hourly prune of expired Responses rows. Bounded disk."""
-    interval_s = 3600
-    while not stop_event.is_set():
-        try:
-            deleted = await asyncio.to_thread(responses_store.prune)
-            if deleted:
-                print(f"[proxy] responses_store: pruned {deleted} expired row(s)", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"[proxy] responses_store: prune failed: {e}", flush=True)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
-        except asyncio.TimeoutError:
-            pass
 
 
 def _responses_error(

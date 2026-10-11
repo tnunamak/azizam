@@ -11,6 +11,8 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from gateway import sqlite_startup
+
 
 def principal_key(kind: str, subject_id: str | None) -> str | None:
     if kind not in {"app", "user", "service_account"} or not isinstance(subject_id, str) or not subject_id:
@@ -34,7 +36,7 @@ def _credentials(path: Path | None) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     # No store initialization, schema changes, last-used updates or secret reads.
-    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+    with closing(sqlite_startup.connect_readonly(path)) as conn:
         conn.row_factory = sqlite3.Row
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='credentials'").fetchone():
             return []

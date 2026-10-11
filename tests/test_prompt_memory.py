@@ -277,7 +277,7 @@ def test_prune_person_before_reconciles_erasure_cutoff(tmp_path):
     assert prompt_memory.get("img_new", "person-a", path=db)
 
 
-def test_prune_removes_old_video_and_unavailable_asset_prompts(tmp_path):
+def test_maintenance_keeps_old_video_and_missing_asset_prompts(tmp_path):
     db = tmp_path / "media_jobs.db"
     now = 2_000_000_000
     prompt_memory.put("video_old", "person-a", "old video", kept_until=None, created_at=now - 15 * 86400, path=db)
@@ -285,9 +285,9 @@ def test_prune_removes_old_video_and_unavailable_asset_prompts(tmp_path):
     prompt_memory.put("img_orphan", "person-a", "orphan", kept_until=None, created_at=now - 1, path=db)
     prompt_memory.put("img_present", "person-a", "present", kept_until=None, created_at=now - 1, path=db)
 
-    assert prompt_memory.prune(path=db, now=now, available_asset_ids={"img_present"}) == 2
-    assert prompt_memory.get("video_old", "person-a", path=db) is None
-    assert prompt_memory.get("img_orphan", "person-a", path=db) is None
+    assert prompt_memory.prune(path=db, now=now) == 0
+    assert prompt_memory.get("video_old", "person-a", path=db)
+    assert prompt_memory.get("img_orphan", "person-a", path=db)
     assert prompt_memory.get("video_new", "person-a", path=db)
     assert prompt_memory.get("img_present", "person-a", path=db)
 
@@ -299,6 +299,25 @@ def test_video_move_preserves_workflow_when_clean_cache_wrote_empty_destination(
     assert prompt_memory.move("video_source", "vid_cached", "maker", path=db)
     assert prompt_memory.get("vid_cached", "maker", path=db)["metadata"] == {"workflow": "full graph"}
     assert prompt_memory.get("video_source", "maker", path=db) is None
+
+
+def test_video_move_never_replaces_or_relaxes_destination_history(tmp_path):
+    db = tmp_path / "jobs.db"
+    deadline = int(time.time()) + 3600
+    prompt_memory.put("vid_same", "maker", "earlier words", kept_until=deadline, path=db)
+    prompt_memory.put("video_new", "maker", "later words", kept_until=None, path=db)
+    assert not prompt_memory.move("video_new", "vid_same", "maker", path=db)
+    kept = prompt_memory.get("vid_same", "maker", path=db)
+    assert (kept["prompt_text"], kept["kept_until"]) == ("earlier words", deadline)
+    assert prompt_memory.get("video_new", "maker", path=db)["prompt_text"] == "later words"
+
+    prompt_memory.put("video_repeat", "maker", "earlier words", kept_until=None, path=db)
+    assert prompt_memory.move("video_repeat", "vid_same", "maker", path=db)
+    assert prompt_memory.get("vid_same", "maker", path=db)["kept_until"] == deadline
+    assert prompt_memory.get("video_repeat", "maker", path=db) is None
+
+    assert not prompt_memory.move("video_new", "video_new", "maker", path=db)
+    assert prompt_memory.get("video_new", "maker", path=db)["prompt_text"] == "later words"
 
 
 def test_fresh_household_fence_read_does_not_request_a_second_write_lock(tmp_path):

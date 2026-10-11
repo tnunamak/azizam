@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from gateway import admin_store
+from gateway import admin_store, sqlite_startup
 from gateway.admin_runtime import generate_app_api_key, is_human_user_record
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
@@ -59,7 +59,7 @@ class AccountError(ValueError):
 
 @contextmanager
 def connection(path: Path):
-    conn = sqlite3.connect(str(path), timeout=10)
+    conn = sqlite_startup.connect(path, timeout=10)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")

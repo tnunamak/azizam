@@ -1,4 +1,4 @@
-"""Persistence ownership, overload, shutdown, and pre-queue SQL equivalence."""
+"""Persistence ownership, overload, shutdown, rollup coverage and retention."""
 
 from __future__ import annotations
 
@@ -19,25 +19,6 @@ import metrics_store
 from gateway import metrics_writer
 
 
-def legacy_rollups(conn, now):
-    """Frozen SQL from fd837b9, independent of the new maintenance dispatch."""
-    for source, dest, width, aggregates in (
-        ("samples", "samples_1min", 60, "AVG(value), MIN(value), MAX(value), COUNT(*)"),
-        ("samples_1min", "samples_1hour", 3600,
-         "SUM(avg_value*count)*1.0/NULLIF(SUM(count),0), MIN(min_value), MAX(max_value), SUM(count)"),
-    ):
-        end = now - now % width
-        start = end - width
-        if conn.execute(f"SELECT 1 FROM {dest} WHERE ts = ? LIMIT 1", (start,)).fetchone():
-            continue
-        rows = conn.execute(
-            f"SELECT metric, tags, {aggregates} FROM {source} "
-            "WHERE ts >= ? AND ts < ? GROUP BY metric, tags", (start, end),
-        ).fetchall()
-        conn.executemany(f"INSERT INTO {dest} VALUES (?, ?, ?, ?, ?, ?, ?)", [(start, *r) for r in rows])
-    conn.commit()
-
-
 class MetricsWriterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
@@ -52,42 +33,65 @@ class MetricsWriterTests(unittest.TestCase):
 
     def test_queue_preserves_legacy_rows_rollups_and_retention(self):
         now = 50_004_000  # hour-aligned; worker wall clock is deliberately unrelated
+        raw_old, minute_old = now - metrics_store.RAW_RETAIN_S - 1, now - metrics_store.MINUTE_RETAIN_S - 1
         tags = '{"gpu":0}'
         rows = [
             (now - 60, "x", "", 1.0), (now - 50, "x", "", 7.0),
             (now - 40, "x", tags, -2.0), (now - 30, "x", tags, 4.0),
             (now - 20, "x", tags, 10.0), (now, "x", "", 999.0),
-            (now - metrics_store.RAW_RETAIN_S - 1, "old", "", 5.0),
+            (raw_old, "old", "", 5.0),
         ]
-        golden_db = Path(self.tmp.name) / "golden.db"
-        metrics_store.init_db(golden_db)
         writer = self.writer()
-        for db in (golden_db, self.db):
-            with sqlite3.connect(db) as conn:
-                conn.execute("INSERT INTO samples_1min VALUES (?, 'x', '', 3, 2, 4, 7)", (now - 120,))
-                conn.execute("INSERT INTO samples_1min VALUES (?, 'old', '', 5, 5, 5, 1)",
-                             (now - metrics_store.MINUTE_RETAIN_S - 1,))
-                conn.execute("INSERT INTO samples_1hour VALUES (?, 'old', '', 5, 5, 5, 1)",
-                             (now - metrics_store.HOUR_RETAIN_S - 1,))
-        with sqlite3.connect(golden_db) as conn:
-            metrics_store.record_samples(conn, rows)  # original synchronous insert path
-            legacy_rollups(conn, now)
-            legacy_rollups(conn, now)  # duplicate buckets must stay unchanged
-            for table, retention in (("samples", metrics_store.RAW_RETAIN_S),
-                                     ("samples_1min", metrics_store.MINUTE_RETAIN_S),
-                                     ("samples_1hour", metrics_store.HOUR_RETAIN_S)):
-                conn.execute(f"DELETE FROM {table} WHERE ts < ?", (now - retention,))
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO samples_1min (ts, metric, tags, avg_value, min_value, max_value, count) "
+                         "VALUES (?, 'x', '', 3, 2, 4, 7)", (now - 120,))
+            conn.execute("INSERT INTO samples_1min (ts, metric, tags, avg_value, min_value, max_value, count) "
+                         "VALUES (?, 'old', '', 5, 5, 5, 1)", (minute_old,))
+            # Hourly rollups are the only long-term copy; prune must keep them.
+            conn.execute("INSERT INTO samples_1hour VALUES (?, 'old', '', 5, 5, 5, 1)", (now - 400 * 24 * 3600,))
         self.assertTrue(writer.record_samples(rows))
         for operation in ("minute", "hour", "minute", "hour", "prune"):
             self.assertTrue(writer.maintain(operation, now))
         writer.close()  # drains accepted commands even without an explicit flush
-        with sqlite3.connect(golden_db) as expected, sqlite3.connect(self.db) as actual:
-            for table in ("samples", "samples_1min", "samples_1hour"):
-                sql = f"SELECT * FROM {table} ORDER BY ts, metric, tags, 4"
-                self.assertEqual(actual.execute(sql).fetchall(), expected.execute(sql).fetchall(), table)
-            self.assertEqual(actual.execute(
-                "SELECT avg_value, count FROM samples_1hour WHERE metric='x' AND tags=''"
-            ).fetchone(), (29 / 9, 9))
+        with sqlite3.connect(self.db) as actual:
+            # Old rows that never had a rollup are summarized before they expire.
+            self.assertEqual(actual.execute("SELECT * FROM samples ORDER BY ts, tags").fetchall(), [
+                (now - 60, "x", "", 1.0, 1), (now - 50, "x", "", 7.0, 1),
+                (now - 40, "x", tags, -2.0, 1), (now - 30, "x", tags, 4.0, 1),
+                (now - 20, "x", tags, 10.0, 1), (now, "x", "", 999.0, 0),
+            ])
+            self.assertEqual(actual.execute("SELECT * FROM samples_1min ORDER BY ts, tags").fetchall(), [
+                (raw_old - raw_old % 60, "old", "", 5.0, 5.0, 5.0, 1, 1),
+                (now - 120, "x", "", 3.0, 2.0, 4.0, 7, 1),
+                (now - 60, "x", "", 4.0, 1.0, 7.0, 2, 1),
+                (now - 60, "x", tags, 4.0, -2.0, 10.0, 3, 1),
+            ])
+            self.assertEqual(actual.execute("SELECT * FROM samples_1hour ORDER BY ts, tags").fetchall(), [
+                (now - 400 * 24 * 3600, "old", "", 5.0, 5.0, 5.0, 1),
+                (minute_old - minute_old % 3600, "old", "", 5.0, 5.0, 5.0, 1),
+                (raw_old - raw_old % 3600, "old", "", 5.0, 5.0, 5.0, 1),
+                (now - 3600, "x", "", 29 / 9, 1.0, 7.0, 9),
+                (now - 3600, "x", tags, 4.0, -2.0, 10.0, 3),
+            ])
+
+    def test_missed_rollups_catch_up_before_prune(self):
+        now = 50_004_000
+        start = now - 10 * 24 * 3600  # gateway down for days: no rollup ran
+        samples = [(start + i * 600, "gpu", "", float(i)) for i in range(5)]
+        writer = self.writer()
+        self.assertTrue(writer.record_samples(samples))
+        self.assertTrue(writer.maintain("prune", now))  # before any rollup: keeps everything
+        writer.flush()
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM samples").fetchone(), (5,))
+        for operation in ("minute", "hour", "prune"):
+            self.assertTrue(writer.maintain(operation, now))
+        writer.close()
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM samples").fetchone(), (0,))
+            self.assertEqual(conn.execute(
+                "SELECT SUM(count), SUM(avg_value * count), MIN(min_value), MAX(max_value) FROM samples_1hour"
+            ).fetchone(), (5, 10.0, 0.0, 4.0))
 
     def test_overflow_drops_newest_and_counts_rows_without_blocking(self):
         entered = threading.Event()

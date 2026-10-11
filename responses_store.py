@@ -11,14 +11,14 @@ Layout mirrors metrics_store.py: stdlib sqlite3, WAL mode, integrity check
 on startup, short-lived reader connections, one long-lived writer is
 optional but not required (this store sees << 1 write/sec).
 
-Retention: 7 days. A background pruner deletes older rows.
+Saved conversations remain until explicit deletion or a privacy erasure request.
 """
 
 from __future__ import annotations
 
 import json
 from gateway.compat import get_env
-import shutil
+from gateway.sqlite_startup import connect, store_startup
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -27,9 +27,6 @@ from typing import Any, Iterable, Optional
 
 _default_db = Path(__file__).parent / "data" / "responses.db"
 DB_PATH = Path(get_env("AZIZAM_RESPONSES_DB", _default_db))
-
-# Retention window for stored responses (seconds).
-RETAIN_S = 7 * 24 * 3600
 
 SCHEMA_VERSION = 2
 
@@ -77,44 +74,19 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if path.exists():
+    """Check existing data safely, then initialize the schema."""
+    with store_startup(path):
+        conn = sqlite3.connect(str(path), timeout=5.0)
         try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[responses_store] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[responses_store] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
-
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = connect(path, timeout=5.0)
     try:
         _apply_pragmas(conn)
         yield conn
@@ -264,15 +236,6 @@ def walk_chain(
         cur_id = row.get("previous_response_id")
     chain.reverse()
     return chain
-
-
-def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> int:
-    """Delete rows older than the retention window. Returns deleted count."""
-    cutoff = int(time.time()) - int(retain_s)
-    with _conn(path) as conn:
-        cur = conn.execute("DELETE FROM responses WHERE created_at < ?", (cutoff,))
-        conn.commit()
-        return cur.rowcount
 
 
 def count(path: Path = DB_PATH) -> int:

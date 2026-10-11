@@ -49,6 +49,5 @@ requests that need this database may wait or fail with a busy error during the
 rebuild. Back up the database before maintenance. The command compacts retained
 rows and enables later incremental reclamation; it does not delete receipts.
 
-Media job coordination records retain their separate 14-day window. Their asset
-ownership is stored independently; Library assets and receipt cost history do
-not depend on keeping those coordination records forever.
+Jobs, job events and video records also remain until explicit deletion. See
+[Data retention](DATA_RETENTION.md) for the inventory of stored data and cleanup.

@@ -20,7 +20,8 @@ of the prompt in PNG and container metadata. The asset cache must store only
 metadata-stripped bytes. The prompt record is the sole retained media prompt copy;
 when kept, that record may include the original workflow metadata needed to
 construct a maker-only full download. Deleting or expiring the record removes
-both text and that workflow copy. The generated media itself remains.
+both text and that workflow copy. Generated media remains until explicitly
+deleted.
 
 OpenAI image URLs are bearer capabilities and are commonly fetched without the
 original API key. A transferable signed URL cannot prove who is reading it.
@@ -37,8 +38,9 @@ metadata about these calls, without prompt-derived content.
 Their direct API response follows the caller's metadata profile because it is
 the caller's own output; the gateway cache and later signed URLs remain clean.
 The OpenAI Responses store defaults to off for no-person requests. A caller
-with a stable authenticated App or credential can explicitly opt into seven-day
-conversation state with `store:true`. Keyless LAN requests have no private
+with a stable authenticated App or credential can explicitly opt into saved
+conversation state with `store:true`. Saved conversations remain until
+explicitly deleted. Keyless LAN requests have no private
 conversation scope and are not stored. Rows require matching person and App ID
 or the fallback credential hash; App display names do not grant access. The
 request-level forget control, `store:false`, and the owner kill switch disable
@@ -78,8 +80,8 @@ Privacy in the UI/API does not protect against that server authority.
 Both admin and self-service key-minting APIs return `prompt_memory.person_id` and
 `prompt_memory.description`. For service Apps or someone else's App the copy
 is: "Prompts sent with this key are not remembered. Generated items belong to
-the App. Chat requests can explicitly ask to save a conversation for up to
-seven days." For an own personal-App key it says prompts follow your settings
+the App. Chat requests can explicitly ask to save a conversation until it is
+explicitly deleted." For an own personal-App key it says prompts follow your settings
 and anyone holding the key can access your saved prompts. The web key form
 must show this description when its frontend work ships.
 
@@ -137,15 +139,15 @@ firehose carry no prompt snippets. Default signed URLs carry `md=none`.
 
 ## Retention and upgrade
 
-A dedicated maintenance loop removes expired prompts, missing-asset rows and
-unfetched video placeholders after 14 days. Library/video deletion, failure,
-cache eviction and member removal remove associated prompt rows. Disabling
-an account suspends access and retains prompts and chats until their normal
-expiry or explicit deletion; re-enabling restores access. Only permanent
-member removal creates an account erasure cutoff. Orphan pruning skips and
-logs missing, unreadable or empty cache inventories; expiry pruning still runs.
-Cancellation clears execution spools and the current video placeholder. An in-flight
-backend generation can still finish and store its result.
+A dedicated maintenance loop expires prompt records according to the member's
+chosen retention and retries pending erasure. Generated media and saved
+conversations remain until explicitly deleted. Library/video deletion, video
+failure and member removal remove associated prompt rows. Disabling an account
+suspends access but retains prompts until their chosen expiry or explicit
+deletion, and retains conversations until explicit deletion; re-enabling
+restores access. Only permanent member removal creates an account erasure
+cutoff. Cancellation clears execution spools and the current video placeholder.
+An in-flight backend generation can still finish and store its result.
 Database deletion uses SQLite secure_delete. Backups and earlier WAL snapshots
 can retain bytes; no forensic erasure guarantee is made.
 

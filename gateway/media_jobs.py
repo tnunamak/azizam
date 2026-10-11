@@ -28,11 +28,11 @@ see the workstream note for suggested integration points.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway.sqlite_startup import connect, store_startup
 
 import json
 import hashlib
 import os
-import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -50,9 +50,10 @@ from gateway.redaction import (
 _default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
 DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB") else _default_db
 
-# Job coordination records expire after 14 days, independently of receipts.
-# Durable assets carry their own ownership; receipts retain usage and spend.
-RETAIN_S = 14 * 24 * 3600
+# A request ID replays its job while the job is active or changed in the last
+# 14 days: the lifetime job records had before they were kept. A later repeat
+# starts new work, and the old job keeps its history without the request ID.
+REPLAY_WINDOW_S = 14 * 24 * 3600
 
 SCHEMA_VERSION = 2
 
@@ -81,6 +82,10 @@ TERMINAL_STATUSES = frozenset({STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELED}
 def is_terminal(status: str) -> bool:
     """Whether a job state is terminal; unknown states must keep waiting."""
     return status in TERMINAL_STATUSES
+
+
+def _replays(status: str, updated_at: int) -> bool:
+    return not is_terminal(status) or updated_at >= _now() - REPLAY_WINDOW_S
 
 
 def holds_resources(status: JobStatus) -> bool:
@@ -397,44 +402,19 @@ def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None)
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if path.exists():
+    """Check existing data safely, then initialize the schema."""
+    with store_startup(path):
+        conn = sqlite3.connect(str(path), timeout=5.0)
         try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[media_jobs] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[media_jobs] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
-
-    conn = sqlite3.connect(str(path), timeout=5.0)
-    try:
-        _apply_pragmas(conn)
-        _exec_schema(conn)
-    finally:
-        conn.close()
+            _apply_pragmas(conn)
+            _exec_schema(conn)
+        finally:
+            conn.close()
 
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = connect(path, timeout=5.0)
     try:
         _apply_pragmas(conn)
         yield conn
@@ -483,13 +463,13 @@ def upsert(
     *,
     path: Path = DB_PATH,
 ) -> MediaJob:
-    """Insert or replace a job row.
+    """Insert a job row or update the row with the same ``job_id``.
 
     Idempotent on ``job_id``: writing the same record twice is a no-op apart
-    from updating ``updated_at`` and ``job_json``. Idempotent on a non-empty
-    ``request_id``: a second call with the same ``request_id`` but a different
-    job_id will conflict (the unique index enforces this) — callers should
-    re-look-up by ``request_id`` first to get the existing job.
+    from updating ``updated_at`` and ``job_json``. A non-empty ``request_id``
+    held by a different job raises ``sqlite3.IntegrityError`` and changes
+    nothing; callers should look up by ``request_id`` first. An existing
+    row's request ID is never restored after it was cleared.
     """
     record = _coerce_to_job(job)
     with _conn(path) as conn:
@@ -543,6 +523,9 @@ def create(
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
 
+    A finished job older than ``REPLAY_WINDOW_S`` gives up its request ID to
+    the new job instead of replaying.
+
     This is the safe idempotent create primitive for handlers: clients may
     retry POST /v1/videos with the same Idempotency-Key/request_id and we
     must return the same job_id every time.
@@ -565,9 +548,15 @@ def create(
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
             existing = conn.execute(
-                "SELECT job_json FROM media_jobs WHERE request_id = ?",
+                "SELECT job_json, status, updated_at, job_id FROM media_jobs WHERE request_id = ?",
                 (record.request_id,),
             ).fetchone()
+            if existing and not _replays(existing[1], existing[2]):
+                conn.execute(
+                    "UPDATE media_jobs SET request_id = NULL, job_json = json_set(job_json, '$.request_id', '') "
+                    "WHERE job_id = ?", (existing[3],),
+                )
+                existing = None
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
@@ -615,8 +604,12 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     # object cannot put a forgotten prompt fingerprint back into the database.
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
-    previous = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
+    previous = conn.execute("SELECT job_json, request_id FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
     if previous:
+        # A stored request ID only changes by being cleared (replay release or
+        # erasure). A stale caller copy must not restore or re-point it.
+        if job.request_id and job.request_id != previous[1]:
+            job.request_id = previous[1] or ""
         data = json.loads(previous[0])
         preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
         stale_attempt = data.get("attempt_number") != job.attempt_number
@@ -629,11 +622,19 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     ).fetchone()[0]
     if cutoff is not None and job.created_at <= cutoff:
         _clear_prompt_derivatives(job)
+    # Update by job_id only. A request ID held by another job raises
+    # IntegrityError instead of deleting that job, as INSERT OR REPLACE did.
     conn.execute(
-        "INSERT OR REPLACE INTO media_jobs "
+        "INSERT INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "
         " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(job_id) DO UPDATE SET request_id=excluded.request_id, intent=excluded.intent, "
+        "workflow=excluded.workflow, backend=excluded.backend, status=excluded.status, "
+        "progress=excluded.progress, error=excluded.error, created_at=excluded.created_at, "
+        "updated_at=excluded.updated_at, app_profile=excluded.app_profile, "
+        "api_key_name=excluded.api_key_name, parent_request_id=excluded.parent_request_id, "
+        "job_json=excluded.job_json",
         (
             job.job_id,
             job.request_id or None,
@@ -755,16 +756,17 @@ def get_by_request_id(
     audience: str = "internal",
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
+    """Return the job this request ID still replays; see ``REPLAY_WINDOW_S``."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if not request_id:
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT job_json FROM media_jobs WHERE request_id = ?",
+            "SELECT job_json, status, updated_at FROM media_jobs WHERE request_id = ?",
             (request_id,),
         ).fetchone()
-    if not row:
+    if not row or not _replays(row[1], row[2]):
         return None
     data = _safe_loads(row[0])
     if not isinstance(data, Mapping):
@@ -1166,31 +1168,6 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
     return out
 
 
-def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> dict[str, int]:
-    """Delete jobs (and their events) older than ``retain_s`` seconds.
-
-    Returns the number of jobs and events removed.
-    """
-    cutoff = int(time.time()) - int(retain_s)
-    with _conn(path) as conn:
-        old = conn.execute(
-            "SELECT job_id FROM media_jobs WHERE updated_at < ?",
-            (cutoff,),
-        ).fetchall()
-        job_ids = [r[0] for r in old]
-        events_removed = 0
-        if job_ids:
-            placeholders = ",".join("?" for _ in job_ids)
-            cur = conn.execute(
-                f"DELETE FROM media_job_events WHERE job_id IN ({placeholders})",
-                job_ids,
-            )
-            events_removed = cur.rowcount or 0
-        cur = conn.execute("DELETE FROM media_jobs WHERE updated_at < ?", (cutoff,))
-        conn.commit()
-        return {"jobs": int(cur.rowcount or 0), "events": int(events_removed)}
-
-
 def count(path: Path = DB_PATH) -> int:
     with _conn(path) as conn:
         row = conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()
@@ -1214,7 +1191,7 @@ def _safe_loads(text: str) -> Any:
 
 __all__ = [
     "DB_PATH",
-    "RETAIN_S",
+    "REPLAY_WINDOW_S",
     "SCHEMA_VERSION",
     "STATUS_QUEUED",
     "STATUS_RUNNING",
@@ -1246,7 +1223,6 @@ __all__ = [
     "append_client_event",
     "validate_client_event",
     "events",
-    "prune",
     "count",
     "schema_version",
 ]

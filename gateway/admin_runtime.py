@@ -1624,7 +1624,7 @@ def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any])
             "Anyone holding it can access your saved prompts."
             if person_id else
             "Prompts sent with this key are not remembered. Generated items belong to the App. "
-            "Requests to /v1/responses can explicitly ask to save a conversation with store:true for up to seven days."
+            "Requests to /v1/responses can explicitly ask to save a conversation with store:true until it is explicitly deleted."
         ),
     }
 

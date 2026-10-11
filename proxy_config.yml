@@ -682,7 +682,7 @@ backends:
       - videos
     managed: false
 images:
-  # Cache for `response_format: "url"` and content-addressed image storage.
+  # Durable media storage for Library and `response_format: "url"`.
   cache_dir: cache/images
   # Persistent VRAM-per-(workflow,size) measurements used for adaptive batching.
   vram_estimates_file: cache/vram_estimates.json
@@ -691,10 +691,6 @@ images:
   # HMAC secret for signed URLs. If unset/empty, generated at first run and persisted
   # to <cache_dir>/.url_signing_secret with mode 0600.
   signed_url_secret: ""
-  # Background eviction TTL for cached image bytes (seconds).
-  cache_ttl: 86400
-  # How often the eviction task runs (seconds).
-  cache_eviction_interval: 3600
   # Reserve this many bytes of free VRAM as a safety margin when computing batch size.
   vram_reserve_bytes: 1073741824 # 1 GiB
   # Unload idle ComfyUI models once when admission or a CUDA OOM indicates
