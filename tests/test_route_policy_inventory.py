@@ -1179,7 +1179,8 @@ def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway
 
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
-def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatch):
+@pytest.mark.parametrize("path", ["/v1/models", "/api/tags"])
+def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatch, path):
     _activate_discovery_grants(gateway, {"encoder": ("text.embeddings", "models.list")})
     registry = {"services": {"vectors": {
         "id": "vectors", "enabled": True, "capabilities": ["embeddings"],
@@ -1196,7 +1197,9 @@ def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatc
 
     monkeypatch.setattr(proxy, "_litellm_models_payload", catalog)
     gateway.calls.clear()
-    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    response = gateway.client.get(path, headers=gateway.headers)
     assert response.status_code == 200
     assert not gateway.calls
-    assert {item["id"] for item in response.json()["data"]} == {"encoder"}
+    body = response.json()
+    entries = body.get("data", body.get("models"))
+    assert {item.get("id", item.get("model")) for item in entries} == {"encoder"}

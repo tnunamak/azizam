@@ -26176,7 +26176,7 @@ async def _ollama_model_catalog_summaries(
     if not delegated_litellm_api_key:
         entries.extend(_current_loaded_model_entries())
     filtered, _ = await _filter_model_list_for_profile(
-        entries, auth_context, category_intents=("chat.completions", "chat.generate"),
+        entries, auth_context, category_intents=("chat.completions", "chat.generate", "text.embeddings"),
     )
     await _annotate_model_context_windows(filtered)
     return filtered
