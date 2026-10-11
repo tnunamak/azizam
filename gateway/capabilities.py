@@ -543,6 +543,7 @@ def capability_with_policy_view(
     capability: Capability,
     profile: AppProfile,
     request: PolicyRequest | None = None,
+    identity: Any = None,
 ) -> Capability:
     """Return ``capability`` annotated with a policy view for ``profile``.
 
@@ -569,6 +570,9 @@ def capability_with_policy_view(
         capability_tags=frozenset(capability.tags),
     )
     decision = evaluate(profile, effective_request)
+    # Show what the runtime enforces: owner category rules for ``identity``.
+    from gateway import category_enforcement
+    decision = category_enforcement.apply(identity, effective_request, decision)
     return capability.with_policy_decision(decision)
 
 

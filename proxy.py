@@ -13776,6 +13776,7 @@ def _capability_for_profile(
             capability_tags=capability.tags,
             remote_provider=remote_provider_id,
         ),
+        identity=auth_context.identity,
     )
 
 

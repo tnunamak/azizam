@@ -139,3 +139,15 @@ def test_runtime_auth_applies_the_rules(gate):
     identity = RuntimeLike(runtime_auth.DEFAULT_PROFILE, "mia", "family-app")
     decision = runtime_auth.evaluate_and_apply(identity, _request())
     assert decision.decision == DENIED
+
+
+def test_discovery_shows_the_category_decision_for_a_governed_identity(gate):
+    from gateway.capabilities import Capability, capability_with_policy_view
+    from gateway.policy import DEFAULT_PROFILE
+    _activate(gate, _snapshot(value="adult"))
+    flux = Capability(intent="image.generate", backend="comfyui", workflow="flux")
+    governed = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("mia", "family-app"))
+    assert governed.policy_available is False
+    assert any("category rules: REQUIRE_MISMATCH" in reason for reason in governed.policy_reasons)
+    other = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("sam", "work-app"))
+    assert other.policy_available is True

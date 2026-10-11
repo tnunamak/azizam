@@ -143,7 +143,8 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             intent=cap.intent, model=model, backend=concrete.backend,
             workflow=concrete.workflow, capability_exposure=concrete.exposure,
             capability_trust_tier=concrete.trust_tier,
-            capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags))
+            capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags),
+            identity=identity)
     out = []
     for cap in raw:
         targets = [tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")]
