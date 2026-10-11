@@ -86,7 +86,9 @@ const mintedKey: MintedCredential = {
 };
 
 function openMenu(appName: string) {
-  const trigger = screen.getByRole("button", { name: `Actions for ${appName}` });
+  const trigger = screen.getByRole("button", {
+    name: `Actions for ${appName}`,
+  });
   trigger.focus();
   fireEvent.keyDown(trigger, { key: "Enter" });
 }
@@ -164,7 +166,9 @@ it("lets a member finish a failed rotation later and keeps a notice until old ke
   await screen.findByRole("heading", { name: "My laptop" });
   openMenu("My laptop");
   fireEvent.click(await screen.findByRole("menuitem", { name: "Rotate keys" }));
-  fireEvent.click(screen.getByRole("button", { name: "Create replacement key" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create replacement key" }),
+  );
   fireEvent.click(await screen.findByRole("button", { name: /saved/i }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Your new key is saved. Some old keys still work. The gateway did not answer.",
@@ -404,4 +408,106 @@ it("names an app's access plan on its row instead of showing a bare word", async
     (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
   );
   expect(row.getByText(/Plan: Old/)).toBeVisible();
+});
+
+const unfinishedKey = "azizam:unfinished-key-rotations";
+const twoKeys = {
+  ...app,
+  credentials: [
+    { id: "old-1", created_by: "member" } as Credential,
+    { id: "old-2", created_by: "member" } as Credential,
+  ],
+};
+
+async function startRotation() {
+  await screen.findByRole("heading", { name: "My laptop" });
+  openMenu("My laptop");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Rotate keys" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create replacement key" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /saved/i }));
+}
+
+it("keeps Finish later usable when the browser refuses to store the reminder", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [twoKeys],
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  vi.mocked(accountApi.revokeKey)
+    .mockReset()
+    .mockRejectedValue(new Error("The gateway did not answer."));
+  renderApps();
+  await startRotation();
+  await screen.findByRole("alert");
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("quota");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const row = within(
+    screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
+  );
+  expect(row.getByText(/Old keys still work/)).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    /could not save the reminder/,
+  );
+  vi.restoreAllMocks();
+});
+
+it("still revokes old keys when clearing the stored reminder fails", async () => {
+  localStorage.setItem(unfinishedKey, JSON.stringify({ [app.id]: ["old-1"] }));
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [{ id: "old-1" } as Credential] }],
+  });
+  vi.mocked(accountApi.revokeKey)
+    .mockReset()
+    .mockResolvedValue({} as never);
+  renderApps();
+  const row = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+    throw new Error("blocked");
+  });
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [] }],
+  });
+  fireEvent.click(row.getByRole("button", { name: "Revoke old keys" }));
+  await waitFor(() =>
+    expect(row.queryByText(/Old keys still work/)).toBeNull(),
+  );
+  expect(accountApi.revokeKey).toHaveBeenCalledWith("old-1");
+  vi.restoreAllMocks();
+});
+
+it("ignores malformed stored reminders instead of crashing the page", async () => {
+  localStorage.setItem(
+    unfinishedKey,
+    JSON.stringify({ [app.id]: [1, null, "old-1"], other: "old-2", more: 7 }),
+  );
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [
+      { ...app, credentials: [{ id: "old-1" } as Credential] },
+      {
+        ...app,
+        id: "other",
+        name: "Phone",
+        credentials: [{ id: "old-2" } as Credential],
+      },
+    ],
+  });
+  renderApps();
+  const laptop = within(
+    (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
+  );
+  expect(laptop.getByText(/Old keys still work/)).toBeVisible();
+  const phone = within(
+    screen.getByRole("heading", { name: "Phone" }).closest("li")!,
+  );
+  expect(phone.queryByText(/Old keys still work/)).toBeNull();
 });

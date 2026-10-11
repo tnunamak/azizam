@@ -97,22 +97,34 @@ function readUnfinishedRotations(): UnfinishedRotations {
     const value: unknown = JSON.parse(
       window.localStorage.getItem(unfinishedRotationsKey) ?? "{}",
     );
-    return value && typeof value === "object"
-      ? (value as UnfinishedRotations)
-      : {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    // Stored text is untrusted: keep only string ids under each app.
+    const clean: UnfinishedRotations = {};
+    for (const [appId, ids] of Object.entries(value)) {
+      if (!Array.isArray(ids)) continue;
+      const strings = ids.filter((id): id is string => typeof id === "string");
+      if (strings.length) clean[appId] = strings;
+    }
+    return clean;
   } catch {
     return {};
   }
 }
 
-function writeUnfinishedRotations(value: UnfinishedRotations) {
-  const entries = Object.entries(value).filter(([, ids]) => ids.length);
-  if (entries.length)
-    window.localStorage.setItem(
-      unfinishedRotationsKey,
-      JSON.stringify(Object.fromEntries(entries)),
-    );
-  else window.localStorage.removeItem(unfinishedRotationsKey);
+/** Returns false when the browser refused the write (blocked or full). */
+function writeUnfinishedRotations(value: UnfinishedRotations): boolean {
+  try {
+    const entries = Object.entries(value).filter(([, ids]) => ids.length);
+    if (entries.length)
+      window.localStorage.setItem(
+        unfinishedRotationsKey,
+        JSON.stringify(Object.fromEntries(entries)),
+      );
+    else window.localStorage.removeItem(unfinishedRotationsKey);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function AppsContents() {
@@ -143,6 +155,9 @@ function AppsContents() {
   const [appIsNew, setAppIsNew] = useState(false);
   const [mintingAppId, setMintingAppId] = useState<string | null>(null);
   const [unfinished, setUnfinished] = useState<UnfinishedRotations>({});
+  // Latest value, so updates stay pure and the write happens outside React.
+  const unfinishedRef = useRef<UnfinishedRotations>({});
+  const [unsavedReminder, setUnsavedReminder] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
@@ -166,16 +181,21 @@ function AppsContents() {
     }
   }, [createFromCommand, accountData?.authenticated]);
 
-  useEffect(() => setUnfinished(readUnfinishedRotations()), []);
+  useEffect(() => {
+    const stored = readUnfinishedRotations();
+    unfinishedRef.current = stored;
+    setUnfinished(stored);
+  }, []);
 
+  // The in-memory record always updates; a refused write only means the
+  // reminder will not survive a reload, which the page then says.
   function updateUnfinished(
     change: (current: UnfinishedRotations) => UnfinishedRotations,
   ) {
-    setUnfinished((current) => {
-      const next = change(current);
-      writeUnfinishedRotations(next);
-      return next;
-    });
+    const next = change(unfinishedRef.current);
+    unfinishedRef.current = next;
+    setUnfinished(next);
+    setUnsavedReminder(!writeUnfinishedRotations(next));
   }
 
   useEffect(() => {
@@ -433,6 +453,12 @@ function AppsContents() {
           </Button>
         }
       />
+      {unsavedReminder && (
+        <p role="status" className="text-destructive text-meta">
+          This browser could not save the reminder about old keys that still
+          work. It is lost if you reload, so revoke them before you leave.
+        </p>
+      )}
       {accountPending ? (
         <div
           role="status"
