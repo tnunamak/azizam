@@ -55,6 +55,12 @@ def main() -> int:
                       f"legacy={reasons} -> {outcome}:{reason}")
     print(f"total requests={sum(len(r.comparisons) for r in reports)} "
           f"1->2={sum(r.gate_changes for r in reports)} 1->3={sum(r.v3_changes for r in reports)}")
+    for subset, start, end in (("registry", 0, len(matrix)), ("fixtures", len(matrix), None)):
+        comparisons = [c for r in reports for c in r.comparisons[start:end]]
+        print(f"{subset} requests={len(comparisons)} "
+              f"1->2={sum(c.exact.allowed != c.gated.allowed for c in comparisons)} "
+              f"1->3={sum(c.exact.allowed != (c.v3.outcome == 'allow') for c in comparisons)}")
+    print(f"tag_restricted_plans={sum(p.allow.tags is not None for p in profiles)}")
     sites = scan_callsites(ROOT)
     blocked = [s for s in sites if s.metadata in {"omitted", "none", "empty"}]
     dynamic = [s for s in sites if s.metadata == "dynamic"]

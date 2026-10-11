@@ -14,6 +14,7 @@ from gateway.category_migration import (
     report_plan, scan_callsites,
 )
 from gateway.policy import AppProfile, CapabilitySelector, PolicyRequest, RemoteProviderPolicy
+from gateway import category_policy as category
 
 
 def case(**kwargs):
@@ -117,6 +118,42 @@ def test_example_limit_and_counts(restricted):
     assert report.gate_changes == 3  # matrix, missing and explicit None
     assert report.v3_changes == 18
     assert len(report.gate_examples) == len(report.v3_examples) == 1
+
+
+def test_all_allowed_multiple_assertions():
+    profile = AppProfile(id="p", allow=CapabilitySelector(tags=frozenset({"a", "b"})))
+    request = case(capability_tags=frozenset({"a", "b"}))
+    result = compare(profile, convert_plan(profile, [request]), request)
+    assert result.exact.allowed and result.gated.allowed and result.v3.outcome == "allow"
+
+
+def test_projection_matches_full_plan(restricted):
+    allowed = case(capability_tags=frozenset({"allowed"}))
+    other = replace(allowed, service_id="other@report", root_id="other-model@report")
+    converted = convert_plan(restricted, [allowed, other])
+    assert len(converted.plan.grants) == 2
+    assertion = category.Assertion("legacy-tags", "allowed", "owner", True,
+                                   "report", "report", "report-owner", "report-v1")
+    for request in (allowed, other, replace(other, service_id="ungranted@report")):
+        service = category.Service(request.service_id,
+            (category.Subject(request.root_id, "release", (assertion,)),))
+        full = category.evaluate(converted.categories, [converted.plan], [converted.plan], service, "chat")
+        assert compare(restricted, converted, request).v3 == full
+
+
+def test_registry_provider_and_alias_contexts():
+    registry = {"services": {"s": {"capabilities": ["chat"], "config": {
+        "provider_id": "paid", "models": [{"id": "m", "model_group": "alias"}]}}},
+        "protocol_frontends": {"f": {"protocol": "openai.chat", "intents": ["chat"]}}}
+    matrix = registry_matrix(registry)
+    assert len(matrix) == 2
+    assert {c.request.model for c in matrix} == {"m", "alias"}
+    assert {c.request.remote_provider for c in matrix} == {"paid"}
+    assert len({c.service_id for c in matrix}) == 2
+    denied = AppProfile(id="p")
+    assert all(not compare(denied, convert_plan(denied, matrix), c).exact.allowed for c in matrix)
+    permitted = replace(denied, remote=RemoteProviderPolicy(providers=frozenset({"paid"})))
+    assert all(compare(permitted, convert_plan(permitted, matrix), c).v3.outcome == "allow" for c in matrix)
 
 
 def test_scope_family_and_none_vs_empty_grants():

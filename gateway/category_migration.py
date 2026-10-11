@@ -85,7 +85,7 @@ def convert_plan(profile: AppProfile, matrix: list[Case]) -> Conversion:
             if observed is not None:
                 values.update(observed if selector == "tags" else (observed,))
         if selector == "tags":
-            values.update(("migration-allowed", "migration-disallowed"))
+            values.update(("migration-allowed", _disallowed_tag(profile)))
         category_id = "legacy-" + selector
         categories[category_id] = category.Category(category_id, category_id,
                                                     values=tuple(sorted(values)))
