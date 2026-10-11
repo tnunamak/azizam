@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
@@ -416,3 +417,46 @@ def test_oidc_login_explicit_default_https_port_matches_host_without_port(
         "https://gateway.example:443/admin/oidc/callback"
     ]
     assert len(proxy.ADMIN_OIDC_STATES) == 1
+
+
+def test_browser_provider_decline_returns_to_signin_without_a_session(oidc_gateway):
+    with closing(_client()) as client:
+        response = client.get("/login?return_to=/ui/usage/?receipt=one", follow_redirects=False)
+        state_value = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+        record = proxy.ADMIN_OIDC_STATES[state_value]
+        failure = client.get(
+            "/admin/oidc/callback", params={"state": state_value, "error": "access_denied", "error_description": "untrusted"},
+            headers={"accept": "text/html"}, follow_redirects=False,
+        )
+        assert failure.status_code == 303
+        target = urlsplit(failure.headers["location"])
+        assert target.path == "/ui/sign-in/"
+        assert parse_qs(target.query) == {"error": ["provider"], "return_to": ["/ui/usage/?receipt=one"]}
+        assert "untrusted" not in failure.headers["location"]
+        assert state_value not in proxy.ADMIN_OIDC_STATES
+        _assert_flow_cookie_deleted(failure, record.browser_cookie_name)
+        assert not client.cookies.get(_oidc_config().cookie.name)
+        assert failure.headers["cache-control"] == "no-store"
+        assert failure.headers["referrer-policy"] == "no-referrer"
+
+
+def test_browser_invalid_state_cannot_supply_a_return_target(oidc_gateway):
+    with closing(_client()) as client:
+        failure = client.get(
+            "/admin/oidc/callback?state=unknown&error=denied&return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False,
+        )
+        assert failure.status_code == 303
+        assert parse_qs(urlsplit(failure.headers["location"]).query) == {"error": ["provider"], "return_to": ["/ui/home/"]}
+        assert not client.cookies.get(_oidc_config().cookie.name)
+
+
+def test_browser_provider_start_failure_keeps_safe_return_target(oidc_gateway, monkeypatch):
+    async def unavailable():
+        raise ValueError("private provider detail")
+    monkeypatch.setattr(proxy, "_admin_oidc_config_with_discovery", unavailable)
+    with closing(_client()) as client:
+        failure = client.get("/login?return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False)
+        assert failure.status_code == 303
+        assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/ui/home/"]
+        assert "private" not in failure.text
+        assert not client.cookies.get(_oidc_config().cookie.name)

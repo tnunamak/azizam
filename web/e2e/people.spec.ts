@@ -168,7 +168,7 @@ async function open(page: Page, surface: Surface, state: State) {
     await expect(
       page
         .getByRole("alert")
-        .filter({ hasText: /Couldn’t load (this|sign-in options)/ }),
+        .filter({ hasText: /Couldn’t load (this|sign-in)/ }),
     ).toBeVisible();
   else if (surface === "people")
     await expect(
@@ -481,7 +481,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
 }) => {
   await open(page, "sign-in", "seeded");
   await expect(
-    page.getByText(/An App API key cannot sign you in/),
+    page.getByText(/Forgot your password\? Ask the person who invited you/),
   ).toBeVisible();
   let failed = true;
   await page.route("**/auth/api/login", (route) => {
@@ -493,7 +493,12 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
     return route.fulfill({
       status: failed ? 401 : 200,
       json: failed
-        ? { error: { message: "Email or password is incorrect." } }
+        ? {
+            error: {
+              code: "invalid_login",
+              message: "Email or password is incorrect.",
+            },
+          }
         : { next: "/ui/" },
     });
   });
@@ -527,7 +532,10 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
   await page.getByRole("button", { name: "Save password" }).click();
   await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
   await expect(
-    page.getByRole("heading", { name: "Sign in", exact: true }),
+    page.getByRole("heading", {
+      name: `Sign in to ${signIn.instance_name}`,
+      exact: true,
+    }),
   ).toBeVisible();
 });
 
