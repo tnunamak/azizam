@@ -18292,6 +18292,7 @@ async def admin_config_export(request: Request):
 _FIREHOSE_NO_RECORD_PREFIXES = (
     "/health",
     "/admin",
+    "/status",
     "/me/",
     "/v1/status",
     "/v1/audio/health",
@@ -29717,6 +29718,8 @@ def _gateway_openapi() -> dict[str, Any]:
         aliases=_gateway_aliases_provider(),
         video_limits=video_limits(config.get("videos")),
     )
+    from gateway.owner_openapi import augment_owner_openapi
+    augment_owner_openapi(schema, app.routes)
     app.openapi_schema = schema
     return schema
 
