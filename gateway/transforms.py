@@ -47,6 +47,15 @@ class TransformContext:
         return f"TransformContext({self._data!r})"
 
 
+class TransformRequestError(ValueError):
+    """An attached transform rejected a request before upstream dispatch."""
+
+    def __init__(self, message: str, *, param: str, code: str = "invalid_value") -> None:
+        super().__init__(message)
+        self.param = param
+        self.code = code
+
+
 # ---------------------------------------------------------------------------
 # Transform protocol
 # ---------------------------------------------------------------------------
@@ -511,11 +520,14 @@ def run_request_pipeline(
 
     Each spec is either a named built-in id or an inline declarative primitive
     mapping from a service/model record. The input body is modified in-place.
+    Built-ins declaring request_phase="final" run after ordinary policy steps,
+    in attachment order, so translation can consume model/alias defaults.
     """
     if ctx is None:
         ctx = TransformContext()
     if registry is None:
         registry = REGISTRY
+    final_transforms = []
     for spec in transform_specs:
         primitives = (
             registry.resolve(spec)
@@ -523,7 +535,12 @@ def run_request_pipeline(
             else [_build_primitive(dict(spec))]
         )
         for primitive in primitives:
-            body = primitive.on_request(body, ctx)
+            if getattr(primitive, "request_phase", "request") == "final":
+                final_transforms.append(primitive)
+            else:
+                body = primitive.on_request(body, ctx)
+    for primitive in final_transforms:
+        body = primitive.on_request(body, ctx)
     return body
 
 
@@ -584,17 +601,21 @@ class ReasoningEffortTransform:
 
     Registered as "reasoning-effort" in REGISTRY.
 
-    Handles request phase only (validated pop of reasoning_effort + body mutation).
-    Returns a string error message if reasoning_effort is invalid (the caller
-    must turn this into a 400 Response — the 400 plumbing stays in proxy.py).
+    Runs in the final request phase when attached. apply() returns an error
+    string; on_request() raises TransformRequestError for the proxy to render
+    as HTTP 400. Runtime context supplies the configured effort policy.
 
     Contract:
-      1. reasoning_effort absent → no-op.
+      1. Effort absent → preserve a valid concrete budget, else use the default
+         effort if configured, else no-op.
       2. Pop reasoning_effort. If None → no-op (treat as absent after pop).
       3. If not str or not in _REASONING_EFFORT_VALUES → return error string.
       4. Translate the configured effort to ``thinking_budget_tokens``.
       5. For zero budget, also set ``enable_thinking=False``.
     """
+
+    # Model and alias policies can supply effort defaults before translation.
+    request_phase = "final"
 
     # The valid set — matches _REASONING_EFFORT_VALUES in proxy.py:5235
     _VALID: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
@@ -659,8 +680,13 @@ class ReasoningEffortTransform:
     # Transform protocol shim — lets this live in the registry alongside
     # primitives even though it is not a _Primitive subclass.
     def on_request(self, body: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
-        # Error return is handled by the dispatch site; here we just mutate.
-        self.apply(body)
+        if ctx.get("request_path", "/v1/chat/completions") != "/v1/chat/completions":
+            return body
+        policy = ctx.get("reasoning")
+        transform = ReasoningEffortTransform(policy) if policy is not None else self
+        error = transform.apply(body)
+        if error:
+            raise TransformRequestError(error, param="reasoning_effort")
         return body
 
     def on_response(self, payload: dict[str, Any], ctx: "TransformContext") -> dict[str, Any]:
@@ -993,11 +1019,8 @@ REGISTRY.register(
     },
 )
 
-# ---- reasoning-effort (Step 2 built-in) ----------------------------------
-# Reproduces apply_chat_completions_reasoning_effort() from proxy.py:5242.
-# The body-mutation path runs through this registered instance; the 400 error
-# sentinel is handled at the dispatch site (proxy.py) which calls
-# ReasoningEffortTransform().apply() directly for the error return path.
+# ---- reasoning-effort (reviewed opt-in built-in) --------------------------
+# Attached through service config; TransformRequestError preserves the 400 path.
 REGISTRY.register_builtin("reasoning-effort", ReasoningEffortTransform())
 
 # ---- reasoning-field-normalize (Step 4a built-in) ------------------------

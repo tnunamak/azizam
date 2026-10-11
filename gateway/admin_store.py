@@ -46,7 +46,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -329,6 +329,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         "setting_key, operator_settings_generation) "
         "SELECT key, 1 FROM operator_settings"
     )
+    if row is not None and int(row[0]) < 5:
+        from gateway.reasoning_transform_migration import migrate_registry
+
+        migrate_registry(conn)
     conn.commit()
     _backfill_credential_creators(conn)
 

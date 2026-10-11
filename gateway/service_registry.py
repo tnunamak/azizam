@@ -440,6 +440,11 @@ def _backfill_service_metadata(
         seed_source = str(seed.get("source") or "").strip()
         if record_source and seed_source and record_source != seed_source:
             continue
+        # Attachments are operator-owned after first seed. In particular, a
+        # deleted attachment must not be restored by metadata backfill.
+        seed = copy.deepcopy(dict(seed))
+        if isinstance(seed.get("config"), dict):
+            seed["config"].pop("transforms", None)
         _merge_missing_fields(record, seed)
 
 

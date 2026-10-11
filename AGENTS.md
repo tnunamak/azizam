@@ -69,8 +69,8 @@ appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 literals (the kobold/tabby local-swap lifecycle set and similar properties) live
 as data in `gateway/engine_quarantine.py`, which is reviewed as a unit and not
 scanned. The former engine-named transform classes are now generic. D-2's engine
-framing is removed and D-3 is complete. D-1's generic reasoning transform still
-applies automatically to resolved local chat, once behind a resolved-target gate.
+framing is removed and D-3 is complete. D-1's reasoning transform is opt-in through service `config.transforms`;
+admin schema v5 preserves existing enabled local chat attachments once.
 **If your change trips this guard:
 the fix is to move the knowledge to data, not to add an allowlist entry.** Adding
 an allowlist entry requires an explicit, reviewed justification and is the

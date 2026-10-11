@@ -27,6 +27,7 @@ backends:
     role: required
     managed: false
   tabby:
+    transforms: [reasoning-effort]
     name: TabbyAPI (Qwen3-VL)
     native_passthrough: true
     protocol: openai-compatible
@@ -69,6 +70,7 @@ backends:
         verify_endpoint: /v1/model
         # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
+    transforms: [reasoning-effort]
     name: Local llama.cpp server (official; Bee rollback available)
     vram_budget_key: GPU1_LLM
     native_passthrough: true
