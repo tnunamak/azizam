@@ -301,6 +301,25 @@ def test_video_move_preserves_workflow_when_clean_cache_wrote_empty_destination(
     assert prompt_memory.get("video_source", "maker", path=db) is None
 
 
+def test_video_move_never_replaces_or_relaxes_destination_history(tmp_path):
+    db = tmp_path / "jobs.db"
+    deadline = int(time.time()) + 3600
+    prompt_memory.put("vid_same", "maker", "earlier words", kept_until=deadline, path=db)
+    prompt_memory.put("video_new", "maker", "later words", kept_until=None, path=db)
+    assert not prompt_memory.move("video_new", "vid_same", "maker", path=db)
+    kept = prompt_memory.get("vid_same", "maker", path=db)
+    assert (kept["prompt_text"], kept["kept_until"]) == ("earlier words", deadline)
+    assert prompt_memory.get("video_new", "maker", path=db)["prompt_text"] == "later words"
+
+    prompt_memory.put("video_repeat", "maker", "earlier words", kept_until=None, path=db)
+    assert prompt_memory.move("video_repeat", "vid_same", "maker", path=db)
+    assert prompt_memory.get("vid_same", "maker", path=db)["kept_until"] == deadline
+    assert prompt_memory.get("video_repeat", "maker", path=db) is None
+
+    assert not prompt_memory.move("video_new", "video_new", "maker", path=db)
+    assert prompt_memory.get("video_new", "maker", path=db)["prompt_text"] == "later words"
+
+
 def test_fresh_household_fence_read_does_not_request_a_second_write_lock(tmp_path):
     from gateway import admin_store
 

@@ -633,7 +633,14 @@ def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
 
 def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str, str] | None = None,
          path: Path | None = None, admin_path: Path | None = None) -> bool:
-    """Move an in-flight video prompt to its finished asset in one transaction."""
+    """Move an in-flight video prompt to its finished asset in one transaction.
+
+    An existing destination prompt is never replaced. With the same text the
+    rows merge, keeping the earlier creation time and the stricter deadline.
+    With different text both rows stay and the move returns False.
+    """
+    if source_id == asset_id:
+        return False
     with retention_guard(admin_path, person_id) as policy:
         if policy["never_keep"] or not policy["remember"]:
             delete_asset_for_person(source_id, person_id, path=path)
@@ -653,17 +660,26 @@ def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str
                 conn.commit()
                 return False
             destination = conn.execute(
-                "SELECT metadata_json FROM asset_prompts WHERE asset_id=? AND person_id=?", (asset_id, person_id),
+                "SELECT prompt_text,metadata_json,created_at,kept_until FROM asset_prompts "
+                "WHERE asset_id=? AND person_id=? AND (kept_until IS NULL OR kept_until>?)",
+                (asset_id, person_id, int(time.time())),
             ).fetchone()
+            if destination and destination["prompt_text"] != row["prompt_text"]:
+                conn.rollback()
+                return False
             merged = json.loads(row["metadata_json"] or "{}")
+            created_at, kept_until = row["created_at"], row["kept_until"]
             if destination:
                 merged.update(json.loads(destination["metadata_json"] or "{}"))
+                created_at = min(created_at, destination["created_at"])
+                deadlines = [value for value in (kept_until, destination["kept_until"]) if value is not None]
+                kept_until = min(deadlines) if deadlines else None
             if metadata:
                 merged.update(dict(metadata))
             conn.execute(
                 "INSERT OR REPLACE INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
                 "VALUES(?,?,?,?,?,?)",
-                (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), row["created_at"], row["kept_until"]),
+                (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), created_at, kept_until),
             )
             conn.execute("DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (source_id, person_id))
             conn.commit()
