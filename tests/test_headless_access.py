@@ -128,7 +128,7 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
         if not path.startswith("/admin/api/") and response.status_code == 302:
             # HTML entry points deny by redirecting members to their own portal.
             assert principal == "member"
-            assert response.headers["location"].startswith(("/me", "/ui/home", "/ui/sign-in", "/login"))
+            assert response.headers["location"] == "/"
         else:
             assert response.status_code in {401, 403}, (row["method"], row["path"], principal, response.status_code)
         assert _database_contents(gateway_test_state_dir) == before
