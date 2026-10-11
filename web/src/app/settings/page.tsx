@@ -914,7 +914,7 @@ function DefaultsForm({
         <Field
           id="default-plan"
           label="Default access plan"
-          help="Changes apply to new and existing people who use this default. Apps and keys with their own plan keep it."
+          help="Changes apply to new and existing people who use this default. Apps and keys with their own plan keep it. Household access rules still apply."
         >
           <Select
             value={plan}
@@ -969,13 +969,12 @@ function DefaultsForm({
             ? "A new person can use local models and workflows through the built-in local access plan. Remote providers are not included. Choosing none does not block AI access."
             : "A new person can use the models and capabilities allowed by this plan, within its limits. Remote providers are available only if the plan allows them."}
         </p>
-        <Button
-          variant="link"
-          className="h-auto min-h-11 px-0 whitespace-normal"
-          asChild
+        <Link
+          href="/people?tab=plans"
+          className="text-link inline-flex min-h-11 max-w-full items-center underline underline-offset-4"
         >
-          <Link href="/people?tab=plans">View and edit access plans</Link>
-        </Button>
+          View and edit access plans
+        </Link>
         <MutationError error={planSave.error} />
         <div className="flex flex-wrap items-center gap-3">
           <Save pending={planSave.isPending} label="Save default plan" />
@@ -1041,7 +1040,7 @@ function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
         <Toggle
           id="self-service"
           label="Let people create their own apps"
-          help="On: people can create apps and API keys themselves. Off: an owner or admin must provide them. Existing apps and keys are kept."
+          help="On: people can create apps and API keys themselves. Off: an owner or admin must provide them. Existing apps and keys are kept; apps without their own plan use built-in local access instead of the person’s plan."
           checked={access.self_service_apps}
           onChange={(value) => {
             setAccess({ ...access, self_service_apps: value });

@@ -223,6 +223,9 @@ it("explains dependent app options without silently changing their values", asyn
     region.getByRole("switch", { name: "Create a personal app automatically" }),
   ).toBeChecked();
   expect(region.getByText(/Automatic creation is inactive/)).toBeVisible();
+  expect(
+    region.getByText(/apps without their own plan use built-in local access/),
+  ).toBeVisible();
   await userEvent.click(
     region.getByRole("button", { name: "Save app defaults" }),
   );

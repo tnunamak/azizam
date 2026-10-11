@@ -1189,10 +1189,27 @@ for (const theme of ["light", "dark"] as const) {
           document.documentElement.style.fontSize = size;
         }, textSize);
         await expect(plan).toBeVisible();
+        const overflow = await page
+          .locator("body *")
+          .evaluateAll((elements) =>
+            elements
+              .filter(
+                (el) =>
+                  el.getBoundingClientRect().width > 0 &&
+                  el.getBoundingClientRect().right > innerWidth + 1,
+              )
+              .map((el) => ({
+                tag: el.tagName,
+                slot: el.getAttribute("data-slot"),
+                text: el.textContent?.slice(0, 70),
+                right: el.getBoundingClientRect().right,
+              })),
+          );
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,
           ),
+          JSON.stringify(overflow),
         ).toBe(true);
         for (const section of [defaults, apps]) {
           for (const control of await section
