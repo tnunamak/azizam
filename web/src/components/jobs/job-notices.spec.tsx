@@ -22,7 +22,7 @@ test("announces completion once, links a stable ID, and dismisses without steali
   const completed = { ...job, status: "succeeded", assets: [{ asset_id: "vid_finished" }] };
   act(() => client.setQueryData(["person-jobs", "alice"], [completed]));
   const link = await screen.findByRole("link", { name: "Open result" });
-  expect(link).toHaveAttribute("href", "/library/?asset=vid_finished");
+  expect(link).toHaveAttribute("href", "/library?asset=vid_finished");
   expect(screen.getByLabelText("Job updates")).toHaveAttribute("aria-live", "polite");
   expect(link).not.toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Dismiss video update" }));
@@ -36,7 +36,7 @@ test("old completed jobs stay quiet; a new failure gets a durable details link",
   await waitFor(() => expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined());
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
   act(() => client.setQueryData(["person-jobs", "alice"], [{ ...job, job_id: "new", created_at: Date.now() / 1000, status: "failed" }]));
-  expect(await screen.findByRole("link", { name: "See details" })).toHaveAttribute("href", "/library/?job=new");
+  expect(await screen.findByRole("link", { name: "See details" })).toHaveAttribute("href", "/library?job=new");
 });
 
 test.each(["image.generate", "audio.generate", "music.generate", "video.generate"])("%s has a usable notice", (intent) => {

@@ -217,7 +217,7 @@ def add_make_routes(
             jobs_path = _resolve(media_jobs_path)
             job = _own_make_job(job_id, str(user["id"]), admin_path=admin_path, jobs_path=jobs_path)
             finished = _MakeError("job_finished", "This job has already finished", 409)
-            if job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if media_jobs.is_terminal(job.get("status", "")):
                 raise finished
             try:  # A job that has not started stops here.
                 media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error=_CANCELED,
@@ -260,7 +260,7 @@ def run_job(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> Callable[[
         finally:
             # A job interrupted by shutdown keeps its payload so it can resume.
             job = media_jobs.get(job_id, path=jobs_path)
-            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+            if job is None or media_jobs.is_terminal(job.get("status", "")):
                 runtime.drop_payload(job_id)
 
     return run
@@ -280,6 +280,7 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
         if not enabled or runtime.load_payload(job_id) is None:
             # A forgotten prompt lived only in memory; it cannot be resumed.
             _fail(job_id, "The gateway restarted before this job could finish", jobs_path)
+            runtime.drop_payload(job_id)
             continue
         runtime.schedule(job_id, run_job(job_id, runtime=runtime, jobs_path=jobs_path))
         resumed += 1
@@ -462,7 +463,7 @@ def _owned_source(
 
 async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     job = media_jobs.get(job_id, path=jobs_path)
-    if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+    if job is None or media_jobs.is_terminal(job.get("status", "")):
         return
     payload = runtime.load_payload(job_id)
     if payload is None:
@@ -555,7 +556,7 @@ def _idempotent_request_id(app_id: str, key: str, *, forget: bool) -> str:
 
 
 def _replay_status(job: Mapping[str, Any]) -> int:
-    return 200 if job.get("status") in media_jobs.TERMINAL_STATUSES else 202
+    return 200 if media_jobs.is_terminal(job.get("status", "")) else 202
 
 
 def _client_job(job_id: str, jobs_path: Path) -> dict[str, Any]:
