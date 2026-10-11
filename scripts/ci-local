@@ -174,7 +174,11 @@ for ((i=1; i<=shards+2; i++)); do
   lane_port=$((port + 10 * i))
   lane=$run/browser-$lane_port
   add_worktree "$lane"
-  step "e2e-copy-$lane_port" cp -a --reflink=auto "$work/web/." "$lane/web/"
+  # node_modules is read-only during the journeys: hard-link it (no disk cost)
+  # and copy everything else so writable caches and results stay per lane.
+  step "e2e-copy-$lane_port" bash -c 'shopt -s dotglob; for entry in "$1"/web/*; do
+    if [[ $(basename "$entry") == node_modules ]]; then cp -al "$entry" "$2/web/"; else cp -a --reflink=auto "$entry" "$2/web/"; fi
+  done' _ "$work" "$lane"
   ln -s "$work/venv" "$lane/venv"
 done
 for ((i=1; i<=shards+2; i++)); do
