@@ -329,7 +329,8 @@ def _interrupt_between_callers(owner_a, owner_b, *, deny_b=False):
             key = request.headers.get("authorization")
             if key not in owners:
                 return JSONResponse({"error": {"message": "Invalid API key."}}, status_code=401)
-            return SimpleNamespace(owner=owners[key])
+            # Like the proxy's AuthContext: an identity carrying the credential hash.
+            return SimpleNamespace(owner=owners[key], identity=SimpleNamespace(key_hash=f"hash-{key[-1]}"))
 
         async def slow_call(request, method, path, **kwargs):
             key = request.headers["authorization"]

@@ -327,8 +327,12 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
             if isinstance(auth, Response):
                 return auth
             owner = deps.owner_of(auth)
-            # Callers that cannot be attributed get their own state per request:
-            # a shared "anonymous" state let one see and interrupt another's work.
+            if not owner:
+                # No owner: key the state by the caller's own credential. A shared
+                # "anonymous" state let one caller see and interrupt another's work.
+                key_hash = getattr(getattr(auth, "identity", None), "key_hash", None)
+                owner = f"credential:{key_hash}" if key_hash else None
+            # With no credential either, state lives for this request only.
             session = sessions.setdefault(str(owner), Session()) if owner else Session()
             try:
                 return await handler(request, auth, session)
