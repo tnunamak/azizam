@@ -5,7 +5,8 @@ import json
 import math
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -117,8 +118,8 @@ def _plan(value):
         _list(v.get("legacy_tags", []), _text))
 
 
-def snapshot_from_json(value: dict) -> policy.PolicyVersion:
-    """Decode only the declared schema; defaults match the kernel dataclasses."""
+def snapshot_from_json(value: dict, *, validate: bool = True) -> policy.PolicyVersion:
+    """Decode the schema; candidates validate after server provenance is applied."""
     v = _object(value, ("id", "categories", "people", "apps", "services"),
                 ("completeness_gate", "retained"))
     result = policy.PolicyVersion(
@@ -127,8 +128,40 @@ def snapshot_from_json(value: dict) -> policy.PolicyVersion:
         _map(v["apps"], lambda plans: _list(plans, _plan)),
         _map(v["services"], _service), _boolean(v.get("completeness_gate", True)),
         _map(v.get("retained", {}), _service))
-    policy.validate_snapshot(result)
+    if validate:
+        policy.validate_snapshot(result)
     return result
+
+
+def _stamp_acceptance(before, after, owner, accepted_at):
+    """Preserve base assertions; attribute edits to the authenticated owner."""
+    def key(subject, assertion):
+        # Acceptance of previously inert evidence is itself an owner action.
+        return (subject.id, subject.kind, assertion.category,
+                json.dumps(assertion.value, sort_keys=True, separators=(",", ":")),
+                assertion.source, assertion.accepted)
+
+    stored = {}
+    if before is not None:
+        for service in tuple(before.services.values()) + tuple(before.retained.values()):
+            for subject in policy.resolve(service):
+                for assertion in subject.assertions:
+                    stored.setdefault(key(subject, assertion), assertion)
+
+    def service_copy(service):
+        members = []
+        for subject in service.members:
+            assertions = tuple(
+                stored.get(key(subject, assertion)) or replace(
+                    assertion, accepting_owner=owner, accepted_at=accepted_at)
+                for assertion in subject.assertions)
+            members.append(replace(subject, assertions=assertions))
+        return replace(service, members=tuple(members),
+                       dependencies=tuple(service_copy(item) for item in service.dependencies))
+
+    return replace(after,
+                   services={key: service_copy(value) for key, value in after.services.items()},
+                   retained={key: service_copy(value) for key, value in after.retained.items()})
 
 
 def snapshot_to_json(snapshot: policy.PolicyVersion) -> dict:
@@ -241,8 +274,11 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
                     if not reason.strip():
                         raise ValueError("Reason required")
                     before = base(store, expected)
-                    after = (snapshot_from_json(body["snapshot"]) if operation == "create"
+                    after = (snapshot_from_json(body["snapshot"], validate=False) if operation == "create"
                              else decoded(store.get(revision)))
+                    if operation == "create":
+                        after = _stamp_acceptance(before, after, ctx.subject,
+                                                  datetime.now(timezone.utc).isoformat())
                     compatible(before, after, store if operation == "create" else None)
                     # Compute against the exact immutable base BEFORE insertion.
                     # Concurrent activation makes create_candidate fail its own CAS.

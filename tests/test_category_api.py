@@ -35,7 +35,8 @@ def categories(tmp_path):
         role = request.headers.get("test-role", "owner")
         if role == "anonymous":
             raise AdminAuthError("Sign in", status_code=401)
-        return AdminContext(subject="tester", roles=frozenset({role}))
+        return AdminContext(subject=request.headers.get("test-owner", "tester"),
+                            roles=frozenset({role}))
 
     app = FastAPI()
     app.include_router(create_category_router(auth=auth, store_path=path))
@@ -325,3 +326,134 @@ def test_a_historical_service_revision_id_cannot_be_reused_for_another_closure(c
         "snapshot": snapshot_to_json(reused)})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+def assertion_rows(body):
+    def visit(service):
+        for member in service["members"]:
+            yield from member["assertions"]
+        for dependency in service["dependencies"]:
+            yield from visit(dependency)
+
+    for group in (body["services"], body["retained"]):
+        for service in group.values():
+            yield from visit(service)
+
+
+def test_new_assertions_ignore_forged_accepting_owner_and_time(categories):
+    from datetime import datetime, timezone
+
+    client, path = categories
+    body = snapshot_to_json(snapshot())
+    for group in (body["services"], body["retained"]):
+        for service in group.values():
+            service["dependencies"][0]["members"][0]["assertions"] = deepcopy(
+                service["members"][0]["assertions"])
+    for assertion in assertion_rows(body):
+        assertion.update(accepting_owner="forged-owner", accepted_at="1900-01-01T00:00:00Z")
+    started = datetime.now(timezone.utc)
+    response = client.post(PREFIX + "/candidates", headers={"test-owner": "session-owner"}, json={
+        "base_revision": None, "reason": "owner edit", "snapshot": body})
+    finished = datetime.now(timezone.utc)
+    assert response.status_code == 200, response.text
+    candidate = response.json()
+    assert candidate["author"] == "session-owner"
+    assertions = list(assertion_rows(candidate["snapshot"]))
+    assert len(assertions) == 4
+    for assertion in assertions:
+        assert assertion["accepting_owner"] == "session-owner"
+        assert started <= datetime.fromisoformat(assertion["accepted_at"]) <= finished
+        assert assertion["observed_at"] == "observed"
+        assert assertion["mapping_version"] == "mapping@1"
+    assert len({assertion["accepted_at"] for assertion in assertions}) == 1
+    assert CategoryStore(path).get(candidate["revision"]).body == candidate["snapshot"]
+
+
+def test_unchanged_assertions_keep_all_stored_provenance(categories):
+    client, _ = categories
+    first = create(client)
+    assert activate(client, first["revision"]).status_code == 200
+    body = deepcopy(first["snapshot"])
+    for assertion in assertion_rows(body):
+        assertion.update(accepting_owner="forged-owner", accepted_at="forged-time",
+                         observed_at="rewritten-observation", mapping_version="rewritten-mapping")
+    response = client.post(PREFIX + "/candidates", headers={"test-owner": "second-owner"}, json={
+        "base_revision": first["revision"], "reason": "unchanged facts", "snapshot": body})
+    assert response.status_code == 200, response.text
+    candidate = response.json()
+    assert candidate["author"] == "second-owner"
+    assert candidate["snapshot"] == first["snapshot"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("category", "other-dimension"), ("value", "other-value"), ("source", "evidence@2"),
+    ("subject", "root@2"), ("accepted", True),
+])
+def test_changed_assertions_stamp_the_current_owner(categories, field, value):
+    client, path = categories
+    body = snapshot_to_json(snapshot())
+    if field == "accepted":
+        for assertion in assertion_rows(body):
+            assertion["accepted"] = False
+    # Seed trusted history independently of the candidate endpoint.
+    store = CategoryStore(path)
+    first = store.create_candidate(body, None, "original-owner", "original facts")
+    store.activate(first.revision, None)
+    body["categories"]["dimension"]["values"].append("other-value")
+    body["categories"]["other-dimension"] = {
+        "id": "other-dimension", "label": "Other", "values": ["accepted"]}
+    body["retained"] = {}
+    service = body["services"].pop("service@1")
+    service["id"] = "service@2"
+    body["services"]["service@2"] = service
+    for group in (body["people"], body["apps"]):
+        for plans in group.values():
+            plans[0]["grants"][0]["service"] = "service@2"
+    member = service["members"][0]
+    assertion = member["assertions"][0]
+    if field == "subject":
+        member["id"] = value
+    else:
+        assertion[field] = value
+    assertion.update(accepting_owner="forged-owner", accepted_at="forged-time")
+    response = client.post(PREFIX + "/candidates", headers={"test-owner": "accepting-owner"}, json={
+        "base_revision": first.revision, "reason": "changed fact", "snapshot": body})
+    assert response.status_code == 200, response.text
+    changed = response.json()["snapshot"]["services"]["service@2"]["members"][0]["assertions"][0]
+    assert changed["accepting_owner"] == "accepting-owner"
+    assert changed["accepted_at"] not in ("forged-time", "accepted")
+    assert changed["accepted"] is True
+
+
+def test_server_provenance_can_replace_empty_client_placeholders(categories):
+    client, _ = categories
+    body = snapshot_to_json(snapshot())
+    for assertion in assertion_rows(body):
+        assertion.update(accepting_owner="", accepted_at="")
+    response = client.post(PREFIX + "/candidates", json={
+        "base_revision": None, "reason": "owner edit", "snapshot": body})
+    assert response.status_code == 200, response.text
+    for assertion in assertion_rows(response.json()["snapshot"]):
+        assert assertion["accepting_owner"] == "tester"
+        assert assertion["accepted_at"]
+
+
+def test_restore_keeps_old_provenance_and_records_restoring_owner(categories):
+    client, path = categories
+    store = CategoryStore(path)
+    body = snapshot_to_json(snapshot())
+    first = store.create_candidate(body, None, "original-owner", "original acceptance")
+    store.activate(first.revision, None)
+    second = create(client, False, first.revision)
+    assert activate(client, second["revision"], first.revision).status_code == 200
+    response = client.post(PREFIX + f"/revisions/{first.revision}/restore",
+                           headers={"test-owner": "restoring-owner"},
+                           json={"base_revision": second["revision"], "reason": "restore original"})
+    assert response.status_code == 200, response.text
+    restored = response.json()
+    assert restored["snapshot"] == body
+    assert restored["author"] == "restoring-owner"
+    audit = client.get(PREFIX + "/history").json()["history"][-1]
+    assert audit["action"] == "restore"
+    assert audit["author"] == "restoring-owner"
+    assert audit["source_revision"] == first.revision
