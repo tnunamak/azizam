@@ -259,7 +259,7 @@ describe("People and Settings red-team regressions", () => {
     expect(
       screen.queryByRole("button", { name: "Save instance" }),
     ).not.toBeInTheDocument();
-    await edit("Defaults");
+    await screen.findByRole("region", { name: "Defaults" });
     expect(
       screen.queryByRole("button", { name: "Save default plan" }),
     ).not.toBeInTheDocument();
@@ -347,7 +347,9 @@ describe("People and Settings red-team regressions", () => {
         revision: "8",
       });
     });
-    await screen.findByText(/Identity provider enabled/);
+    expect(
+      screen.queryByText(/Identity provider enabled/),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Client ID")).toHaveValue("unsaved-client");
     expect(
       screen.getByRole("switch", { name: "Enable identity provider" }),
@@ -373,9 +375,11 @@ describe("People and Settings red-team regressions", () => {
   });
   it("preserves app-option and default-plan drafts across independent saves", async () => {
     mount(<SettingsPage />);
-    await edit("Defaults");
+    await screen.findByRole("region", { name: "Defaults" });
     await userEvent.click(
-      screen.getByRole("switch", { name: "Let people create their own apps" }),
+      await screen.findByRole("switch", {
+        name: "Let people create their own apps",
+      }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Save default plan" }),
@@ -384,11 +388,13 @@ describe("People and Settings red-team regressions", () => {
       await client.invalidateQueries({ queryKey: ["settings", "defaults"] });
     });
     expect(
-      screen.getByRole("switch", { name: "Let people create their own apps" }),
+      await screen.findByRole("switch", {
+        name: "Let people create their own apps",
+      }),
     ).not.toBeChecked();
     await userEvent.click(screen.getByLabelText("Default access plan"));
     await userEvent.click(
-      screen.getByRole("option", { name: "No default plan" }),
+      screen.getByRole("option", { name: "None — built-in local access" }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Save app defaults" }),
@@ -397,7 +403,7 @@ describe("People and Settings red-team regressions", () => {
       await client.invalidateQueries({ queryKey: ["settings", "defaults"] });
     });
     expect(screen.getByLabelText("Default access plan")).toHaveTextContent(
-      "No default plan",
+      "None — built-in local access",
     );
   });
   it("updates clean forms on refresh while preserving dirty instance drafts", async () => {
@@ -526,7 +532,10 @@ describe("People and Settings red-team regressions", () => {
     fireEvent.change(json, { target: { value: "{" } });
     expect(json).toHaveAttribute("aria-invalid", "true");
     expect(json).toHaveAttribute("aria-describedby", "policy-json-error");
-    expect(screen.getByRole("alert")).toHaveAttribute("id", "policy-json-error");
+    expect(screen.getByRole("alert")).toHaveAttribute(
+      "id",
+      "policy-json-error",
+    );
     expect(json).toHaveAccessibleDescription(
       "Enter a valid JSON object before saving.",
     );
@@ -687,14 +696,28 @@ describe("People and Settings red-team regressions", () => {
     expect(edit).toHaveClass("h-8");
     expect(within(instance).queryByLabelText("Instance name")).toBeNull();
     await userEvent.click(edit);
-    // The form opens inside the same card, under the row, which keeps Close.
-    expect(within(instance).getByLabelText("Instance name")).toBeInTheDocument();
+    // The editor replaces its summary; Close follows the fields.
     expect(
-      within(instance).getByRole("button", { name: "Close" }),
+      within(instance).getByLabelText("Instance name"),
+    ).toBeInTheDocument();
+    expect(
+      within(instance).getByRole("button", { name: "Close Instance" }),
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(7);
+    ).toHaveLength(8);
+    expect(instance.querySelector("[data-slot=setting-row]")).toBeNull();
+    await waitFor(() =>
+      expect(within(instance).getByLabelText("Instance name")).toHaveFocus(),
+    );
+    await userEvent.click(
+      within(instance).getByRole("button", { name: "Close Instance" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(instance).getByRole("button", { name: "Edit Instance" }),
+      ).toHaveFocus(),
+    );
   });
   it("wraps long instance names and URLs in the settings summary", async () => {
     responses["/admin/api/settings/instance"] = {
@@ -759,7 +782,8 @@ describe("People and Settings red-team regressions", () => {
       responses["/admin/api/invites"] = { invites: [], profiles: [] };
       vi.mocked(api.profiles.list).mockImplementation(list);
     };
-    const invite_ = () => screen.getByRole("button", { name: "Invite someone" });
+    const invite_ = () =>
+      screen.getByRole("button", { name: "Invite someone" });
 
     it("says plans are loading instead of leaving Invite silently disabled", async () => {
       withoutPlans(() => new Promise(() => {}));
@@ -795,7 +819,9 @@ describe("People and Settings red-team regressions", () => {
         throw new ApiError("unavailable", "Unavailable", 503);
       });
       mount(<PeoplePage />);
-      await userEvent.click(await screen.findByRole("tab", { name: "Invites" }));
+      await userEvent.click(
+        await screen.findByRole("tab", { name: "Invites" }),
+      );
       expect(
         await screen.findByText("Access plans couldn’t be loaded"),
       ).toBeInTheDocument();
@@ -818,7 +844,9 @@ describe("People and Settings red-team regressions", () => {
       mount(<PeoplePage />);
       await screen.findByText("Morgan");
       expect(
-        await screen.findByText("Create an access plan before inviting someone"),
+        await screen.findByText(
+          "Create an access plan before inviting someone",
+        ),
       ).toBeInTheDocument();
       expect(invite_()).toBeDisabled();
       await userEvent.click(
@@ -832,9 +860,13 @@ describe("People and Settings red-team regressions", () => {
     it("sends the owner to create a plan from the Invites empty state", async () => {
       withoutPlans(async () => []);
       mount(<PeoplePage />);
-      await userEvent.click(await screen.findByRole("tab", { name: "Invites" }));
+      await userEvent.click(
+        await screen.findByRole("tab", { name: "Invites" }),
+      );
       expect(
-        await screen.findByText("Create an access plan before inviting someone"),
+        await screen.findByText(
+          "Create an access plan before inviting someone",
+        ),
       ).toBeInTheDocument();
       expect(invite_()).toBeDisabled();
       await userEvent.click(

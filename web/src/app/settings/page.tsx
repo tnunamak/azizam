@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useViewer } from "@/components/shell/session";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -134,53 +135,71 @@ function SettingsError({
   );
 }
 
-/**
- * One settings section (DESIGN "Page templates", settings page): a heading
- * over one card. The card's row says what is set now in one line and one
- * line of detail, with Edit at 32 on the right; Edit opens the form under
- * the row, inside the same card, where the full detail is.
- */
+/** Collapsed sections show a summary; expanded sections show only the editor. */
 function Section({
   title,
   summary,
+  description,
   children,
 }: {
   title: string;
   summary?: { label: ReactNode; description?: ReactNode };
+  description?: string;
   children: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const id = title.toLowerCase().replaceAll(" ", "-");
   return (
-    <SettingsSection
-      id={title.toLowerCase().replaceAll(" ", "-")}
-      title={title}
-    >
-      {summary ? (
+    <SettingsSection id={id} title={title} description={description}>
+      {summary && !editing ? (
         <SettingRow
           label={summary.label}
           description={summary.description}
           control={
-            editing ? (
-              <Button variant="ghost" onClick={() => setEditing(false)}>
-                Close
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                aria-label={`Edit ${title}`}
-                onClick={() => setEditing(true)}
-              >
-                Edit
-              </Button>
-            )
+            <Button
+              ref={editButton}
+              variant="outline"
+              className="min-h-11"
+              aria-label={`Edit ${title}`}
+              onClick={() => {
+                setEditing(true);
+                requestAnimationFrame(() =>
+                  editor.current
+                    ?.querySelector<HTMLElement>(
+                      "input, [role=combobox], button, summary, a",
+                    )
+                    ?.focus(),
+                );
+              }}
+            >
+              Edit
+            </Button>
           }
         />
-      ) : null}
-      {!summary || editing ? (
-        <div className="min-w-0 space-y-5 p-4 [overflow-wrap:anywhere] sm:p-6">
+      ) : (
+        <div
+          ref={editor}
+          id={`${id}-editor`}
+          className="min-w-0 space-y-5 p-4 [overflow-wrap:anywhere] sm:p-6"
+        >
           {children}
+          {summary && (
+            <Button
+              variant="ghost"
+              className="min-h-11"
+              aria-label={`Close ${title}`}
+              onClick={() => {
+                setEditing(false);
+                requestAnimationFrame(() => editButton.current?.focus());
+              }}
+            >
+              Close
+            </Button>
+          )}
         </div>
-      ) : null}
+      )}
     </SettingsSection>
   );
 }
@@ -224,7 +243,11 @@ function Field({
 }
 function Save({ pending, label }: { pending: boolean; label: string }) {
   return (
-    <Button type="submit" disabled={pending}>
+    <Button
+      type="submit"
+      className="h-auto min-h-11 py-2 whitespace-normal"
+      disabled={pending}
+    >
       {pending && <Loader2 className="animate-spin" />}
       {pending ? "Saving…" : label}
     </Button>
@@ -250,11 +273,22 @@ function Toggle({
           {label}
         </label>
         {help && (
-          <p className="text-muted-foreground text-meta mt-0.5">{help}</p>
+          <p
+            id={`${id}-help`}
+            className="text-muted-foreground text-meta mt-0.5"
+          >
+            {help}
+          </p>
         )}
       </div>
       <div className="flex min-h-8 items-center max-sm:min-h-11">
-        <Switch id={id} checked={checked} onCheckedChange={onChange} />
+        <Switch
+          id={id}
+          className="min-h-11 min-w-11"
+          aria-describedby={help ? `${id}-help` : undefined}
+          checked={checked}
+          onCheckedChange={onChange}
+        />
       </div>
     </div>
   );
@@ -694,7 +728,7 @@ function OidcForm({
         />
       </Field>
       <details>
-        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
+        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
           Provider details and access rules
         </summary>
         <div className="space-y-5 pb-2">
@@ -783,51 +817,58 @@ function DefaultsSection() {
     queryFn: api.userAccessDefaults.get,
   });
   return (
-    <Section
-      title="Defaults"
-      summary={
-        data && accessData
-          ? {
-              label: data.defaults.profile_id
-                ? (data.profiles.find((p) => p.id === data.defaults.profile_id)
-                    ?.name ?? "Default access plan")
-                : "No default access plan",
-              description: `${
-                accessData.self_service_apps
-                  ? "People can create apps"
-                  : "Only owners create apps"
-              } · ${
-                accessData.auto_create_personal_app
-                  ? "Personal app created at sign-in"
-                  : "No automatic personal app"
-              }`,
-            }
-          : undefined
-      }
-    >
-      {isPending ? (
-        <Loading />
-      ) : isError ? (
-        <SettingsError
-          error={error}
-          message="Defaults could not be loaded."
-          onRetry={() => void refetch()}
-        />
-      ) : (
-        <DefaultsForm data={data} />
-      )}
-      {accessPending ? (
-        <Loading />
-      ) : accessError ? (
-        <SettingsError
-          error={accessErrorDetails}
-          message="Personal app defaults could not be loaded."
-          onRetry={() => void refetchAccess()}
-        />
-      ) : (
-        <AccessDefaultsForm initial={accessData} />
-      )}
-    </Section>
+    <>
+      <Section
+        title="Defaults"
+        description="Choose the access plan people use when no personal, email, group or role assignment applies."
+      >
+        {isPending ? (
+          <Loading />
+        ) : !data ? (
+          <SettingsError
+            error={error}
+            message="Default access could not be loaded."
+            onRetry={() => void refetch()}
+          />
+        ) : (
+          <>
+            {isError && (
+              <SettingsError
+                error={error}
+                message="Couldn’t refresh default access. The values below may be out of date; your edits are kept."
+                onRetry={() => void refetch()}
+              />
+            )}
+            <DefaultsForm data={data} />
+          </>
+        )}
+      </Section>
+      <Section
+        title="App creation"
+        description="An app holds the API keys a person uses to connect AI software to this gateway."
+      >
+        {accessPending ? (
+          <Loading />
+        ) : !accessData ? (
+          <SettingsError
+            error={accessErrorDetails}
+            message="App creation settings could not be loaded."
+            onRetry={() => void refetchAccess()}
+          />
+        ) : (
+          <>
+            {accessError && (
+              <SettingsError
+                error={accessErrorDetails}
+                message="Couldn’t refresh app creation settings. The values below may be out of date; your edits are kept."
+                onRetry={() => void refetchAccess()}
+              />
+            )}
+            <AccessDefaultsForm initial={accessData} />
+          </>
+        )}
+      </Section>
+    </>
   );
 }
 function DefaultsForm({
@@ -853,7 +894,6 @@ function DefaultsForm({
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.defaults });
       void client.invalidateQueries({ queryKey: keys.effective });
-      toast.success("Default access plan saved");
     },
   });
   if (!owner)
@@ -874,46 +914,83 @@ function DefaultsForm({
         <Field
           id="default-plan"
           label="Default access plan"
-          help="Applies to everyone without a more specific identity rule, including existing people. No default plan adds no universal grant."
+          help="Changes apply to new and existing people who use this default. Apps and keys with their own plan keep it."
         >
-          <Select value={plan} onValueChange={setPlan}>
-            <SelectTrigger id="default-plan" className="w-full">
+          <Select
+            value={plan}
+            disabled={planSave.isPending}
+            onValueChange={(value) => {
+              setPlan(value);
+              planSave.reset();
+            }}
+          >
+            <SelectTrigger
+              id="default-plan"
+              aria-describedby="default-plan-help default-plan-consequence"
+              className="min-h-11 w-full whitespace-normal *:data-[slot=select-value]:line-clamp-none sm:h-auto"
+            >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">No default plan</SelectItem>
-              {!data.profiles.some((p) => p.id === "default-local") && (
-                <SelectItem value="default-local">
-                  Default local (built-in)
+            <SelectContent className="[&_[role=option]]:min-h-11 [&_[role=option]]:whitespace-normal">
+              <SelectGroup>
+                <SelectItem value="none">
+                  None — built-in local access
                 </SelectItem>
-              )}
-              {!data.profiles.some((p) => p.id === "default") && (
-                <SelectItem value="default">Default (built-in)</SelectItem>
-              )}
-              {plan !== "none" &&
-                !["default", "default-local"].includes(plan) &&
-                (selectedPlanIsLegacy || !selectedPlan) && (
-                  <SelectItem value={plan}>Current plan</SelectItem>
-                )}
-              {data.profiles
-                .filter((p) => !isLegacyAccessPlan(p.name))
-                .map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
+                {!data.profiles.some((p) => p.id === "default-local") && (
+                  <SelectItem value="default-local">
+                    Default local (built-in)
                   </SelectItem>
-                ))}
+                )}
+                {!data.profiles.some((p) => p.id === "default") && (
+                  <SelectItem value="default">Default (built-in)</SelectItem>
+                )}
+                {plan !== "none" &&
+                  !["default", "default-local"].includes(plan) &&
+                  (selectedPlanIsLegacy || !selectedPlan) && (
+                    <SelectItem value={plan}>Current plan</SelectItem>
+                  )}
+                {data.profiles
+                  .filter((p) => !isLegacyAccessPlan(p.name))
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
         </Field>
-        <MutationError error={planSave.error} />
-        <Save pending={planSave.isPending} label="Save default plan" />
-        <Button variant="link" asChild>
-          <Link href="/people">Manage access plans</Link>
+        <p
+          id="default-plan-consequence"
+          className="text-body"
+          aria-live="polite"
+        >
+          {plan === "none"
+            ? "A new person can use local models and workflows through the built-in local access plan. Remote providers are not included. Choosing none does not block AI access."
+            : "A new person can use the models and capabilities allowed by this plan, within its limits. Remote providers are available only if the plan allows them."}
+        </p>
+        <Button
+          variant="link"
+          className="h-auto min-h-11 px-0 whitespace-normal"
+          asChild
+        >
+          <Link href="/people?tab=plans">View and edit access plans</Link>
         </Button>
+        <MutationError error={planSave.error} />
+        <div className="flex flex-wrap items-center gap-3">
+          <Save pending={planSave.isPending} label="Save default plan" />
+          <p role="status" className="text-muted-foreground text-meta">
+            {planSave.isPending
+              ? "Saving default access…"
+              : planSave.isSuccess
+                ? "Default access plan saved"
+                : null}
+          </p>
+        </div>
       </form>
 
       <details>
-        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
+        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
           Default model aliases
         </summary>
         <p className="text-muted-foreground text-meta mb-3">
@@ -946,7 +1023,6 @@ function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.accessDefaults });
       void client.invalidateQueries({ queryKey: keys.effective });
-      toast.success("Personal app defaults saved");
     },
   });
   return (
@@ -957,22 +1033,49 @@ function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
         accessSave.mutate();
       }}
     >
-      <Toggle
-        id="self-service"
-        label="Let people create their own apps"
-        checked={access.self_service_apps}
-        onChange={(value) => setAccess({ ...access, self_service_apps: value })}
-      />
-      <Toggle
-        id="personal-app"
-        label="Create a personal app at sign-in"
-        checked={access.auto_create_personal_app}
-        onChange={(value) =>
-          setAccess({ ...access, auto_create_personal_app: value })
-        }
-      />
+      <fieldset
+        disabled={accessSave.isPending}
+        className="flex min-w-0 flex-col gap-5"
+      >
+        <legend className="sr-only">App creation options</legend>
+        <Toggle
+          id="self-service"
+          label="Let people create their own apps"
+          help="On: people can create apps and API keys themselves. Off: an owner or admin must provide them. Existing apps and keys are kept."
+          checked={access.self_service_apps}
+          onChange={(value) => {
+            setAccess({ ...access, self_service_apps: value });
+            accessSave.reset();
+          }}
+        />
+        <Toggle
+          id="personal-app"
+          label="Create a personal app automatically"
+          help="On: create a personal app for people who do not have one when they sign in or open their account. Off: they create an app themselves. Requires people to be allowed to create apps."
+          checked={access.auto_create_personal_app}
+          onChange={(value) => {
+            setAccess({ ...access, auto_create_personal_app: value });
+            accessSave.reset();
+          }}
+        />
+      </fieldset>
+      {!access.self_service_apps && (
+        <p className="text-muted-foreground text-meta">
+          Automatic creation is inactive while people cannot create apps, even
+          if its switch is on.
+        </p>
+      )}
       <MutationError error={accessSave.error} />
-      <Save pending={accessSave.isPending} label="Save app defaults" />
+      <div className="flex flex-wrap items-center gap-3">
+        <Save pending={accessSave.isPending} label="Save app defaults" />
+        <p role="status" className="text-muted-foreground text-meta">
+          {accessSave.isPending
+            ? "Saving app creation…"
+            : accessSave.isSuccess
+              ? "Personal app defaults saved"
+              : null}
+        </p>
+      </div>
     </form>
   );
 }
@@ -1132,7 +1235,7 @@ function MediaForm({
         </Field>
       </div>
       <details>
-        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
+        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
           Admission rules
         </summary>
         <div className="space-y-5 py-3">
@@ -1437,7 +1540,7 @@ function AdvancedSection() {
       }}
     >
       <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
+        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
           Effective configuration and export
         </summary>
         <div className="space-y-4 pt-3">
