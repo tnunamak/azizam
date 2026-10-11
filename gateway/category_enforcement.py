@@ -8,7 +8,10 @@ app appears in the active snapshot's plans. Requests from people and apps the
 owner has not listed keep the existing access plans alone until the owner
 adds them. A governed request needs a plan for BOTH its person and its app
 (A10) and a service in the snapshot whose ID stem is the requested workflow
-or model; anything else is denied with the kernel's stable reason.
+or model; anything else is denied with the kernel's stable reason. A check
+that names no workflow or model (an early route check before resolution)
+passes only if some service is allowed for the capability; every dispatch
+path checks again with the resolved target.
 
 Services are named by their runtime target: a snapshot service ``stem@rev``
 governs requests whose workflow (or, without one, model) is ``stem``.
@@ -93,18 +96,33 @@ class CategoryGate:
         app = getattr(identity, "app_id", None) or ""
         if person not in version.people and app not in version.apps:
             return None  # Not governed yet: the existing access plans decide.
+        capability = request.intent or ""
         target = request.workflow or request.model or ""
-        service = next((key for key in version.services if _stem(key) == target), "")
-        if not service:
-            return PolicyDecision(
-                decision=DENIED, sources=(SOURCE,),
-                reasons=(f"category rules: NO_GRANT (no service for {target or 'this request'})",))
-        decision = kernel.decision_for(version, {
-            "person": person, "app": app, "service": service,
-            "capability": request.intent or "",
-        })
-        if decision.outcome == "allow":
-            return None
+        if not target:
+            # Early route check, before the request names a service: pass only if
+            # some service is allowed for this capability. The check after
+            # resolution decides the exact service.
+            decisions = [kernel.decision_for(version, {
+                "person": person, "app": app, "service": key, "capability": capability,
+            }) for key in version.services]
+            if any(decision.outcome == "allow" for decision in decisions):
+                return None
+            if not decisions:
+                return PolicyDecision(
+                    decision=DENIED, sources=(SOURCE,),
+                    reasons=(f"category rules: NO_GRANT (no service grants {capability or 'this request'})",))
+            decision = decisions[0]
+        else:
+            service = next((key for key in version.services if _stem(key) == target), "")
+            if not service:
+                return PolicyDecision(
+                    decision=DENIED, sources=(SOURCE,),
+                    reasons=(f"category rules: NO_GRANT (no service for {target})",))
+            decision = kernel.decision_for(version, {
+                "person": person, "app": app, "service": service, "capability": capability,
+            })
+            if decision.outcome == "allow":
+                return None
         detail = " ".join(part for part in (decision.rule, decision.category, decision.member) if part)
         return PolicyDecision(decision=DENIED, sources=(SOURCE,),
                               reasons=(f"category rules: {decision.reason} {detail}".strip(),))

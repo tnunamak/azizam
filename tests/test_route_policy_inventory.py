@@ -215,6 +215,8 @@ def gateway(monkeypatch, tmp_path, request):
         yield SimpleNamespace(
             client=client, member_client=member_client, calls=calls, paths=paths,
             headers=headers, session_headers=session_headers, category_mode=category_mode,
+            person_id=user["id"], app_id=app["id"],
+            category_path=paths["admin"].parent / "categories.db",
         )
     finally:
         category_enforcement.configure(None)
@@ -314,6 +316,13 @@ def _sample(schema, definitions=None, depth=0):
     return "inventory-placeholder"
 
 
+# A valid 1x1 PNG, so image routes get past decoding to policy.
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010802000000"
+    "907753de0000000c49444154789c63606060000000040001f61738550000000049454e44ae426082"
+)
+
+
 def _request_kwargs(route, path, method):
     dependant = getattr(route, "dependant", None)
     params = {}
@@ -334,6 +343,9 @@ def _request_kwargs(route, path, method):
         return kwargs
 
     body = {"model": "inventory-placeholder"}
+    if path.endswith("/images/generations"):
+        # A real workflow, so the request reaches the check after resolution.
+        body["model"] = "flux2-klein-4b"
     if path.endswith(("/chat/completions", "/chat", "/messages")):
         body.update(messages=[{"role": "user", "content": "hi"}], max_tokens=1)
     elif path.endswith(("/embeddings", "/embed", "/responses", "/audio/speech")):
@@ -379,10 +391,11 @@ def _request_kwargs(route, path, method):
             files={"file": ("inventory.wav", b"RIFF\x00\x00\x00\x00WAVE", "audio/wav")},
         )
     elif path.endswith(("/images/edits", "/images/variations")):
-        kwargs.update(
-            data={"model": "inventory-placeholder", "prompt": "hi"},
-            files={"image": ("inventory.png", b"inventory", "image/png")},
-        )
+        # Real workflows, so the request reaches the check after resolution.
+        # Variations take no prompt.
+        data = ({"model": "flux2-klein-4b", "prompt": "hi"} if path.endswith("/edits")
+                else {"model": "flux2-klein-4b"})
+        kwargs.update(data=data, files={"image": ("inventory.png", _PNG, "image/png")})
     else:
         kwargs["json"] = body
     return kwargs
@@ -612,6 +625,37 @@ def _metadata_contract(method, template, response, row):
     row["detail"] = ""
 
 
+def _probe_request(headers):
+    return Request({
+        "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("203.0.113.9", 1), "server": ("testserver", 80), "scheme": "http",
+    })
+
+
+# Running-model status: the member holds grants, so reading engine state is allowed.
+_STATUS_PROBES = {("GET", "/api/ps"), ("GET", "/ollama/api/ps")}
+
+
+def _decoy_oracle(method, template, row, gateway):
+    """Classify the decoy pass, where the member holds grants on a decoy service.
+
+    Discovery is allowed and is not proof. Anything that runs a model must still
+    be refused, and a backend call from any other route stays a violation.
+    """
+    status = row["status"]
+    if (method, template) in _STATUS_PROBES and status == 200 and gateway.calls:
+        row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
+        row["detail"] = ""
+    elif method == "GET" and status == 200 and not gateway.calls:
+        row["outcome"], row["rule"] = "metadata (contract)", "discovery for a member who holds grants"
+        row["detail"] = ""
+    elif (method, template) == ("POST", "/me/api/make/jobs") and status == 200 and not gateway.calls:
+        # Queued only; test_http_category_resolved_check_inventory checks the job never ran.
+        row["outcome"], row["rule"] = "metadata (contract)", "queued; the worker checks the resolved service"
+        row["detail"] = ""
+
+
 def _report(rows, title):
     gaps = [row for row in rows if row["outcome"] == "coverage gap"]
     not_exercised = [row for row in rows if row["outcome"] == "not exercised"]
@@ -623,7 +667,7 @@ def _report(rows, title):
     assert not violations, f"{title}: {len(violations)} violation(s)\n{_table(violations)}"
 
 
-def _http_inventory(gateway):
+def _http_inventory(gateway, title=None, report=True):
     rows = []
     for route, template, converters in _routes(proxy.app.routes):
         if isinstance(route, WebSocketRoute):
@@ -688,6 +732,8 @@ def _http_inventory(gateway):
                 row["outcome"] = "VIOLATION"
                 row["rule"] = "backend call overrides response classification"
                 row["detail"] += f" backend calls={gateway.calls!r}"
+            if getattr(gateway, "decoy", False):
+                _decoy_oracle(method, template, row, gateway)
             _category_oracle(gateway, row)
             rows.append(row)
     assert rows, "No model-facing HTTP routes discovered; inventory would be vacuous"
@@ -699,7 +745,9 @@ def _http_inventory(gateway):
                 "rule": "covered by owner unit tests",
                 "detail": "Owner-reported coverage in 10a24fc1; outside this base and fixture.",
             })
-    prefix = "Category enforcement" if gateway.category_mode else "Ordinary access plan"
+    if not report:
+        return rows
+    prefix = title or ("Category enforcement" if gateway.category_mode else "Ordinary access plan")
     _report(rows, f"{prefix}: model-facing HTTP route inventory")
     if gateway.category_mode:
         assert any(row.get("rule") == "category-rules refusal with no backend call" for row in rows), (
@@ -714,6 +762,62 @@ def test_http_route_policy_inventory(gateway):
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
 def test_http_category_enforcement_inventory(gateway):
     _http_inventory(gateway)
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_http_category_resolved_check_inventory(gateway, monkeypatch):
+    """Every dispatch path checks the resolved service, not only the early route check.
+
+    An early check runs before the request names a workflow or model, so the
+    category gate passes it when any service is allowed for the capability.
+    The first pass records every capability the gateway asks about. The second
+    pass grants all of them on a decoy service that no request targets: every
+    early check now passes, so only a check after resolution can refuse, and a
+    path without one reaches the backend tripwire as a violation.
+    """
+    capabilities = set()
+    real_check = category_enforcement.CategoryGate.check
+
+    def recording_check(self, identity, request):
+        capabilities.add(request.intent or "")
+        return real_check(self, identity, request)
+
+    monkeypatch.setattr(category_enforcement.CategoryGate, "check", recording_check)
+    _http_inventory(gateway, report=False)  # test_http_category_enforcement_inventory judges this pass
+    capabilities.discard("")
+    assert capabilities, "the first pass reached no category check"
+
+    fact = category_policy.Assertion(
+        "audience", "general", "owner", True, "2026-01-01", "2026-01-01", "owner-1", "decoy-edit",
+    )
+    decoy = category_policy.Service(
+        "decoy-service@r1", (category_policy.Subject("decoy-service@1", "workflow", (fact,)),),
+    )
+    plan = category_policy.Plan(
+        "decoy-grants",
+        tuple(category_policy.Grant(capability, decoy.id) for capability in sorted(capabilities)),
+        (category_policy.Row("aud", "audience", "in", ("general",)),),
+    )
+    snapshot = category_policy.PolicyVersion(
+        "inventory-decoy-rules",
+        {"audience": category_policy.Category("audience", "Audience", values=("general",))},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, {decoy.id: decoy},
+    )
+    store = CategoryStore(gateway.category_path)
+    active = store.get_active()
+    candidate = store.create_candidate(snapshot_to_json(snapshot), active.revision, "owner-1", "decoy")
+    store.activate(candidate.revision, active.revision)
+
+    identity = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models").identity
+    early = PolicyRequest(protocol="openai.images", intent="image.generate")
+    assert runtime_auth.evaluate_and_apply(identity, early).decision == ALLOWED
+    resolved = PolicyRequest(protocol="openai.images", intent="image.generate", workflow="flux")
+    assert runtime_auth.evaluate_and_apply(identity, resolved).decision == POLICY_DENIED
+
+    gateway.decoy = True
+    _http_inventory(gateway, title="Category resolved-service check")
+    jobs = gateway.member_client.get("/me/api/make/jobs", headers=gateway.session_headers).json()["jobs"]
+    assert all(job["status"] != "succeeded" and not job.get("assets") for job in jobs), jobs
 
 
 @pytest.mark.parametrize("gateway", ["ordinary", "categories"], indirect=True)

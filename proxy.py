@@ -8724,6 +8724,30 @@ async def proxy_comfy_edit_request(
             param="mask", code="missing_required_parameter",
         )
 
+    # Authorize the resolved workflow before anything is sent to the backend.
+    if receipt is not None:
+        decision = _apply_image_route_policy(
+            receipt,
+            auth_context,
+            model=str(model) if model is not None else None,
+            workflow=_policy_workflow_for_receipt(receipt),
+            manifest=manifest,
+        )
+        if decision.denied:
+            return _policy_denied_response(decision)
+    target_decision = _workflow_target_policy_decision(
+        auth_context,
+        requested=str(model) if model is not None else None,
+        resolved=workflow_name,
+        manifest=manifest,
+        extra_ids=(
+            [_policy_workflow_for_receipt(receipt)]
+            if _policy_workflow_for_receipt(receipt)
+            else ()
+        ),
+    )
+    if target_decision is not None and target_decision.denied:
+        return _policy_denied_response(target_decision)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             image_content = await image_file.read()
@@ -8777,29 +8801,6 @@ async def proxy_comfy_edit_request(
                 img_width, img_height = requested_dimensions
             effective_size = f"{img_width}x{img_height}"
 
-            if receipt is not None:
-                decision = _apply_image_route_policy(
-                    receipt,
-                    auth_context,
-                    model=str(model) if model is not None else None,
-                    workflow=_policy_workflow_for_receipt(receipt),
-                    manifest=manifest,
-                )
-                if decision.denied:
-                    return _policy_denied_response(decision)
-            target_decision = _workflow_target_policy_decision(
-                auth_context,
-                requested=str(model) if model is not None else None,
-                resolved=workflow_name,
-                manifest=manifest,
-                extra_ids=(
-                    [_policy_workflow_for_receipt(receipt)]
-                    if _policy_workflow_for_receipt(receipt)
-                    else ()
-                ),
-            )
-            if target_decision is not None and target_decision.denied:
-                return _policy_denied_response(target_decision)
             extension_asset_fields, asset_error_response = _allowed_image_extension_asset_fields(
                 request_body=form_dict,
                 manifest=manifest,
