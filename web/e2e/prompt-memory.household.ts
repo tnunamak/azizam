@@ -276,16 +276,26 @@ test.describe("Try: Don't keep this prompt", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.member_email, baseURL!);
+    // Read every page: the fixture clock is frozen, so new clips tie on
+    // created_at with older ones and need not land on the first page.
+    type AudioItem = { asset_id: string; prompt: string | null };
+    type AudioPage = { assets: AudioItem[]; next_cursor: string | null };
+    const allAudio = async (): Promise<AudioItem[]> => {
+      const assets: AudioItem[] = [];
+      let cursor: string | null = null;
+      do {
+        const query: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+        const response = await page.request.get(
+          `/me/api/media?scope=me&kind=audio&limit=100${query}`,
+        );
+        const body: AudioPage = await response.json();
+        assets.push(...body.assets);
+        cursor = body.next_cursor;
+      } while (cursor);
+      return assets;
+    };
     const audioIds = async () =>
-      new Set<string>(
-        (
-          await (
-            await page.request.get(
-              "/me/api/media?scope=me&kind=audio&limit=100",
-            )
-          ).json()
-        ).assets.map((a: { asset_id: string }) => a.asset_id),
-      );
+      new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
     await page.goto("/ui/try/?capability=speech");
     const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
@@ -330,9 +340,7 @@ test.describe("Try: Don't keep this prompt", () => {
 
     // The maker finds the kept words in Library; the forgotten words are
     // nowhere in what the gateway returns, though both clips are there.
-    const mine = await (
-      await page.request.get("/me/api/media?scope=me&kind=audio&limit=50")
-    ).json();
+    const mine = { assets: await allAudio() };
     const keptItem = mine.assets.find(
       (a: { prompt: string | null }) => a.prompt === kept,
     );
@@ -344,10 +352,11 @@ test.describe("Try: Don't keep this prompt", () => {
     );
     expect(added).toHaveLength(2);
     const newest = added.find(
-      (a: { asset_id: string }) => a.asset_id !== keptItem.asset_id,
+      (a: { asset_id: string }) => a.asset_id !== keptItem!.asset_id,
     );
-    expect(newest.prompt).toBeNull();
-    const dialog = await openViewer(page, newest.asset_id);
+    expect(newest).toBeTruthy();
+    expect(newest!.prompt).toBeNull();
+    const dialog = await openViewer(page, newest!.asset_id);
     await expect(dialog.getByText("No saved prompt")).toBeVisible();
     await ctx.close();
 
