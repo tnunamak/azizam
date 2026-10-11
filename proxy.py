@@ -15375,7 +15375,14 @@ def _category_service_catalog() -> list[dict[str, Any]]:
             add(record.id, record.manifest.get("display_name"), "workflow", record.intent)
 
     backends = service_registry.runtime_backends(registry)
-    capabilities = registered_model_capabilities(registry)
+    # Use the execution catalog's public names, including provider prefixes,
+    # and its enabled-model filtering before deriving protocol capabilities.
+    capabilities = []
+    for model, (service, record) in litellm_public_model_records(registry).items():
+        routed = {**service, "config": {**service["config"], "models": [{"id": model}]}}
+        for capability in registered_model_capabilities({"services": {service["id"]: routed}}):
+            label = record.get("display_name") or record.get("title") or model
+            add(model, label, "model", capability.intent)
     capabilities.extend(build_local_capabilities(
         config, backends=backends,
         enabled_flags={"images": False, "videos": False, "audio": False},

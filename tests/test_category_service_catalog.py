@@ -83,3 +83,30 @@ def test_catalog_stems_match_real_image_and_aliased_chat_requests(gateway, monke
     assert catalog["image.generate.flux2-klein-4b"]["kind"] == "workflow"
     assert "friendly-chat" not in catalog
     assert gateway.calls == []
+
+
+def test_catalog_uses_public_routes_and_omits_disabled_models(monkeypatch):
+    registry = {"services": {
+        "route": {"id": "route", "enabled": True, "capabilities": ["chat"], "config": {
+            "protocol": "openai-compatible", "base_url": "http://example.invalid/v1",
+            "models": [{"id": "enabled-model", "display_name": "Reviewed chat"},
+                       {"id": "disabled-model", "enabled": False}],
+        }},
+        "cloud-route": {"id": "cloud-route", "enabled": True, "config": {
+            "remote_provider": True, "provider_id": "example-provider",
+            "protocol": "openai-compatible", "base_url": "https://example.invalid/v1",
+            "models": [{"id": "cloud-model"}],
+        }},
+        "disabled-service": {"id": "disabled-service", "enabled": False, "capabilities": ["chat"],
+                             "config": {"models": [{"id": "offline-model"}]}},
+    }}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    monkeypatch.setattr(proxy, "_gateway_aliases_provider", lambda: {})
+    monkeypatch.setattr(proxy, "config", {})
+    entries = {row["stem"]: row for row in proxy._category_service_catalog()}
+    assert entries["enabled-model"] == {"stem": "enabled-model", "label": "Reviewed chat",
+                                         "kind": "model", "capabilities": ["chat.completions"]}
+    assert "example-provider/cloud-model" in entries
+    assert "cloud-model" not in entries
+    assert "disabled-model" not in entries
+    assert "offline-model" not in entries
