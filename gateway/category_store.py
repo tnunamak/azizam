@@ -311,6 +311,12 @@ class CategoryStore:
             conn.execute("BEGIN")
             return self._state(conn)[1]
 
+    def revisions(self) -> list[int]:
+        """Every stored snapshot revision, oldest first (candidates included)."""
+        with self._connection() as conn:
+            return [row[0] for row in conn.execute(
+                "SELECT revision FROM policy_snapshots ORDER BY revision")]
+
     def history(self, limit=100) -> list[dict]:
         if type(limit) is not int or limit < 0:
             raise ValueError("limit must be a nonnegative integer")

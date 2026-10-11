@@ -188,12 +188,19 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
             raise StaleBaseError()
         return decoded(active)
 
-    def compatible(before, after):
+    def compatible(before, after, store=None):
         policy.validate_snapshot(after)
         old = policy.service_catalog(before) if before is not None else {}
         new = policy.service_catalog(after)
         if any(old[key] != new[key] for key in old.keys() & new.keys()):
             raise ValueError("A changed closure requires a new service revision")
+        if store is not None:
+            # Service revision IDs are never recycled: an ID seen in any stored
+            # snapshot keeps the closure it had there (design v3, A5/R2).
+            for revision in store.revisions():
+                seen = policy.service_catalog(decoded(store.get(revision)))
+                if any(seen[key] != new[key] for key in seen.keys() & new.keys()):
+                    raise ValueError("A service revision ID cannot be reused for a different closure")
 
     def install(path, method, operation):
         async def endpoint(request: Request):
@@ -236,7 +243,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
                     before = base(store, expected)
                     after = (snapshot_from_json(body["snapshot"]) if operation == "create"
                              else decoded(store.get(revision)))
-                    compatible(before, after)
+                    compatible(before, after, store if operation == "create" else None)
                     # Compute against the exact immutable base BEFORE insertion.
                     # Concurrent activation makes create_candidate fail its own CAS.
                     preview = _json(policy.change_preview(before, after))

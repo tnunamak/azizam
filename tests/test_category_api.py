@@ -296,3 +296,32 @@ def test_revision_outside_sqlite_integer_range_is_invalid(categories):
     client, _ = categories
     response = client.get(PREFIX + "/revisions/9223372036854775808")
     assert response.status_code == 400
+
+
+def _with_service(base, service_id, helper_id):
+    """A copy of ``base`` whose only service is ``service_id`` with a given helper."""
+    root = base.services["service@1"].members[0]
+    helper = policy.Service(helper_id, (policy.Subject("helper-root@1", "workflow"),))
+    service = policy.Service(service_id, (root,), (helper,))
+    plan = policy.Plan("plan", (policy.Grant("run", service_id),))
+    return policy.PolicyVersion(base.id, base.categories, {"person": (plan,)}, {"app": (plan,)},
+                                {service_id: service})
+
+
+def test_a_historical_service_revision_id_cannot_be_reused_for_another_closure(categories):
+    client, _ = categories
+    first = create(client)
+    assert activate(client, first["revision"]).status_code == 200
+    moved = _with_service(snapshot(), "service@2", "helper@1")
+    second = client.post(PREFIX + "/candidates", json={
+        "base_revision": first["revision"], "reason": "new revision",
+        "snapshot": snapshot_to_json(moved)})
+    assert second.status_code == 200, second.text
+    assert activate(client, second.json()["revision"], first["revision"]).status_code == 200
+    # service@1 is no longer active, but history still holds its closure.
+    reused = _with_service(snapshot(), "service@1", "helper@2")
+    response = client.post(PREFIX + "/candidates", json={
+        "base_revision": second.json()["revision"], "reason": "recycle id",
+        "snapshot": snapshot_to_json(reused)})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
