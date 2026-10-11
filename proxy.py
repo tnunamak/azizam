@@ -13048,12 +13048,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
 
-    # Responses API persistence: SQLite-backed store for stateful
     # Saved /v1/responses conversations survive until explicit deletion.
-    try:
-        print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Responses store failed to start: {e}", flush=True)
+    print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
 
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = None

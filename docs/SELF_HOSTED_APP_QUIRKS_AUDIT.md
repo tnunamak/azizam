@@ -273,7 +273,7 @@ Open question:
 
 ### 15. Current Activity Persistence Assumes One Worker
 
-`firehose_metrics` explicitly assumes a single proxy process. It keeps counters in memory and replays a 24h append-only `cache/key_activity.jsonl` tail on startup. Responses use SQLite with WAL and 7-day retention, but request activity and recent events are not a general durable event log.
+`firehose_metrics` explicitly assumes a single proxy process. It keeps counters in memory and replays a 24h append-only `cache/key_activity.jsonl` tail on startup. Responses use SQLite with WAL and keep saved conversations until explicit deletion, but request activity and recent events are not a general durable event log.
 
 Architecture requirement:
 

@@ -13,7 +13,7 @@ data/metrics.db-shm
 data/metrics.db.broken-*
 
 # Responses API persistence: SQLite store for /v1/responses stateful
-# conversations. Ephemeral runtime state with 7-day retention.
+# conversations, kept until explicit deletion.
 data/responses.db
 data/responses.db-wal
 data/responses.db-shm

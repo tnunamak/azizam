@@ -6,7 +6,7 @@ Stdlib sqlite3 only. WAL mode for concurrent read while one writer appends.
 Layout:
     samples         - raw 10s samples, retained 7 days
     samples_1min    - per-minute rollup, retained 30 days
-    samples_1hour   - per-hour rollup, kept until the owner deletes it
+    samples_1hour   - per-hour rollup, no automatic expiry
 
 All public functions accept an optional connection. When omitted, a short-lived
 read connection is auto-opened. ``gateway.metrics_writer`` owns the long-lived writer on a dedicated thread.
@@ -107,7 +107,7 @@ def _integrity_marker(path: Path) -> Path:
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir and run the schema; replace the file if it is unusable.
+    """Create the data dir and run the schema; quarantine the file if it is corrupt.
 
     Startup checks only the header/schema; new indexes are built once during schema migration.
     Schema statements fail on a file whose header or schema pages are broken. The full scan
@@ -133,7 +133,7 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
     """Run the full ``PRAGMA integrity_check``. Slow: call it off the event loop.
 
     Returns None when the file is sound, else the first problem found. A failure also writes
-    ``<db>.integrity-failed`` so the next ``init_db`` replaces the file. The live file is never
+    ``<db>.integrity-failed`` so the next ``init_db`` rechecks it and quarantines it if still corrupt. The live file is never
     swapped here: the sampler holds a writer connection to it.
     """
     try:
