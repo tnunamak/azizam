@@ -96,7 +96,8 @@ def principals():
 
 
 def _request(row):
-    path = re.sub(r"\{[^}]+\}", "missing-fixture-id", row["path"])
+    path = re.sub(r"\{(?:reservation_id|event_id)\}", "1", row["path"])
+    path = re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
     # Supply valid typed bodies so the request reaches auth instead of 422.
     body = {"profile_id": "default-local"} if path == "/admin/api/invites" else {}
     if path == "/admin/api/operator/sign-in":
