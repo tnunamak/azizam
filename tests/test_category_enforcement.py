@@ -151,3 +151,22 @@ def test_discovery_shows_the_category_decision_for_a_governed_identity(gate):
     assert any("category rules: REQUIRE_MISMATCH" in reason for reason in governed.policy_reasons)
     other = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("sam", "work-app"))
     assert other.policy_available is True
+
+
+def test_repeated_checks_do_not_reread_an_unchanged_store(gate, monkeypatch):
+    _activate(gate, _snapshot())
+    reads = []
+    real = CategoryStore.active_revision_counter.fget
+    monkeypatch.setattr(CategoryStore, "active_revision_counter",
+                        property(lambda self: reads.append(1) or real(self)))
+    for _ in range(64):
+        assert category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW) is ALLOW
+    assert len(reads) == 1
+    store = CategoryStore(gate)
+    active = store.get_active()
+    row = store.create_candidate(snapshot_to_json(_snapshot(value="adult")), active.revision,
+                                 "owner-1", "tighten")
+    store.activate(row.revision, active.revision)
+    assert category_enforcement.apply(
+        Identity("mia", "family-app"), _request(), ALLOW).decision == DENIED
+    assert len(reads) == 2

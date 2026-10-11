@@ -24,6 +24,7 @@ does nothing.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -44,45 +45,57 @@ def _stem(service_id: str) -> str:
 
 
 class CategoryGate:
-    """Caches the active snapshot by the store's activation counter."""
+    """Caches the active snapshot until the store changes.
+
+    A persistent read connection asks SQLite for ``PRAGMA data_version``,
+    which changes when another connection commits. Only then does the gate
+    reload the activation counter and snapshot, so a check costs one cheap
+    query and an activation applies on the next check.
+    """
 
     def __init__(self, store_path: Path):
         self._path = Path(store_path)
         self._lock = threading.Lock()
+        self._store: CategoryStore | None = None
+        self._watch: sqlite3.Connection | None = None
+        self._data_version: int | None = None
         self._counter: int | None = None
         self._version: kernel.PolicyVersion | None = None
         self._failed = False
 
     def _active(self) -> tuple[kernel.PolicyVersion | None, bool]:
         """Return (snapshot or None, unavailable)."""
-        if not self._path.exists():
+        if self._store is None and not self._path.exists():
             return None, False
         from gateway.category_api import snapshot_from_json  # codec lives with the API
-        try:
-            store = CategoryStore(self._path)
-            counter = store.active_revision_counter
-            with self._lock:
-                if counter == self._counter and not self._failed:
-                    return self._version, False
+        with self._lock:
             try:
-                row = store.get_active()
-            except NoActiveSnapshotError:
-                version = None
-            else:
-                version = snapshot_from_json(row.body)
-            with self._lock:
-                self._counter, self._version, self._failed = counter, version, False
-            return version, False
-        except (CorruptSnapshotError, kernel.PolicyError, ValueError, OSError) as exc:
-            log.error("category rules unavailable: %s", exc)
-            with self._lock:
+                if self._store is None:
+                    self._store = CategoryStore(self._path)
+                    self._watch = sqlite3.connect(str(self._path), timeout=5.0,
+                                                  check_same_thread=False)
+                data_version = self._watch.execute("PRAGMA data_version").fetchone()[0]
+                if data_version == self._data_version and not self._failed:
+                    return self._version, False
+                counter = self._store.active_revision_counter
+                if counter != self._counter or self._failed:
+                    try:
+                        row = self._store.get_active()
+                    except NoActiveSnapshotError:
+                        self._version = None
+                    else:
+                        self._version = snapshot_from_json(row.body)
+                    self._counter = counter
+                self._data_version, self._failed = data_version, False
+                return self._version, False
+            except (CorruptSnapshotError, kernel.PolicyError, ValueError, OSError, sqlite3.Error) as exc:
+                log.error("category rules unavailable: %s", exc)
                 self._failed = True
-            return None, True
-        except Exception as exc:  # noqa: BLE001 - fail closed on any store error
-            log.exception("category rules unavailable: %s", exc)
-            with self._lock:
+                return None, True
+            except Exception as exc:  # noqa: BLE001 - fail closed on any store error
+                log.exception("category rules unavailable: %s", exc)
                 self._failed = True
-            return None, True
+                return None, True
 
     def check(self, identity: Any, request: PolicyRequest) -> PolicyDecision | None:
         """Return a denial when the active rules refuse this request, else None."""
