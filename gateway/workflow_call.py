@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from gateway.public_failure import describe
 from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
 
 ASSET_ID_RE = re.compile(r"\b((?:img|aud|vid)_[0-9a-f]{64})\b")
@@ -31,6 +32,11 @@ class CallError(Exception):
         super().__init__(message)
         self.details = details
 
+    @classmethod
+    def public(cls, key: str, **details: Any) -> "CallError":
+        """A failure told with the shared copy: its layer and one next action."""
+        layer, message = describe(key, **details)
+        return cls(message, layer=layer, **details)
 
 
 
@@ -141,7 +147,8 @@ async def asset_bytes(read_asset: ReadAsset, request: Any, auth: Any, name: str,
         )
     content = await asyncio.to_thread(read_asset, request, auth, asset_id)
     if content is None:
-        raise CallError(f"input {name!r}: asset {asset_id} was not found for this key (it may have expired)")
+        raise CallError.public("input_file_unavailable", input=name, asset_id=asset_id,
+                               reason="not found for this key")
     return content, ""
 
 
@@ -185,10 +192,11 @@ async def build_request(
     for name, value in inputs.items():
         m = mapping.get(name)
         if m is None:
-            raise CallError(f"input {name!r} is not available on the {route.get('method', 'POST')} {route.get('path')} route")
+            raise CallError.public("input_not_accepted", input=name,
+                                   route=f"{route.get('method', 'POST')} {route.get('path')}")
         where = m.get("in")
         if where == "none":
-            raise CallError(f"input {name!r} is managed by the gateway on this route and cannot be set")
+            raise CallError.public("input_set_by_gateway", input=name)
         if m.get("combine"):
             consumed.add(name)
             continue
@@ -206,7 +214,7 @@ async def build_request(
                 value = asset_id_in(value) or value
             body[m["field"]] = value
         else:
-            raise CallError(f"input {name!r} has an unsupported field mapping: {where!r}")
+            raise CallError.public("input_mapping_invalid", input=name, mapping=where)
     _combine_size(inputs, mapping, body)
     model = route.get("model")
     if model:
@@ -231,13 +239,16 @@ def error_from(resp: Any) -> CallError:
         payload = {}
     err = payload.get("error") if isinstance(payload, Mapping) else None
     if isinstance(err, Mapping):
-        message = str(err.get("message") or err.get("code") or "request failed")
         details = {"http_status": resp.status_code, "code": err.get("code"), "type": err.get("type")}
         if isinstance(err.get("decision"), Mapping):
             # The core route already projected this for the caller's credential.
             details["decision"] = dict(err["decision"])
-        return CallError(message, **details)
+        if not err.get("message"):  # A code is not a sentence; the cause is unknown.
+            return CallError.public("unknown", **details)
+        return CallError(str(err["message"]), **details)
     detail = payload.get("detail") if isinstance(payload, Mapping) else None
-    return CallError(str(detail or f"gateway returned HTTP {resp.status_code}"), http_status=resp.status_code)
+    if detail:
+        return CallError(str(detail), http_status=resp.status_code)
+    return CallError.public("unknown", http_status=resp.status_code)
 
 

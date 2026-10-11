@@ -45,6 +45,7 @@ EXECUTION_MODES = ("sync", "async", "job")
 LIFECYCLE_STATES = ("unknown", "cold", "warming", "warm", "stopping", "stopped")
 HEALTH_STATES = ("unknown", "healthy", "degraded", "unhealthy")
 EXPOSURE_CLASSES = ("default", "opt_in", "admin", "disabled")
+UNREVIEWED_WORKFLOW_CAVEAT = "This workflow isn't marked as reviewed. Test it before you rely on it."
 TRUST_TIERS = ("stable", "experimental", "private", "admin")
 RESOURCE_TIERS = ("interactive", "batch", "expensive")
 
@@ -506,7 +507,8 @@ def capability_from_workflow_record(
 
     caveats: list[str] = list(extra_caveats)
     if not record.identity.trusted:
-        caveats.append("workflow manifest is untrusted")
+        # ``trusted`` is the manifest's own flag; no one is named as its reviewer.
+        caveats.append(UNREVIEWED_WORKFLOW_CAVEAT)
 
     return Capability(
         intent=record.intent,

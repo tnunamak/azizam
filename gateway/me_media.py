@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
+from gateway.public_failure import PublicFailure
 from gateway.user_runtime import UserPortalError
 
 SessionProvider = Callable[[Request], AdminSession | None]
@@ -75,13 +76,6 @@ class _Actor:
     @property
     def owner(self) -> bool:
         return self.role in {"owner", "superadmin"}
-
-
-class _ApiError(Exception):
-    def __init__(self, code: str, message: str, status_code: int) -> None:
-        self.code = code
-        self.message = message
-        self.status_code = status_code
 
 
 def create_me_media_router(
@@ -137,7 +131,7 @@ def create_me_media_router(
             watch = request.query_params.get("watch") == "1"
             since = request.query_params.get("since")
             if since is not None and (not since.isdecimal() or len(since) > 12):
-                raise _ApiError("invalid_since", "since must be a non-negative Unix timestamp", 400)
+                raise PublicFailure("invalid_since", 400, param="since", expected="Unix timestamp")
             # Inclusive seconds replay ties; capture the watermark before reading.
             updated_since = (int(since) if since is not None else polled_at) if watch else None
             rows = media_jobs.recent(
@@ -150,7 +144,7 @@ def create_me_media_router(
             cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
             return _json({"jobs": [media_jobs.for_audience(job, "client") for job in page],
                           "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/jobs/{job_id}", include_in_schema=False)
@@ -161,9 +155,9 @@ def create_me_media_router(
             scope = _member_media_scope(actor.user_id, admin_path)
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
             if job is None or not _job_in_scope(job, scope):
-                raise _ApiError("job_not_found", "Job not found for this account", 404)
+                raise PublicFailure("job_not_found", 404, job_id=job_id)
             return _json({"job": media_jobs.for_audience(job, "client")})
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/media", include_in_schema=False)
@@ -191,7 +185,7 @@ def create_me_media_router(
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
             return _json(result)
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/media/{asset_id}", include_in_schema=False)
@@ -218,11 +212,11 @@ def create_me_media_router(
                 prompt_memory_path=prompt_path,
             )
             if item is None:
-                raise _ApiError("asset_not_found", "Asset not found for this account", 404)
+                raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.detail.everyone", admin_path)
             return _json({"asset": item})
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.delete("/media/{asset_id}", include_in_schema=False)
@@ -254,7 +248,7 @@ def create_me_media_router(
                 prompt_memory_path=prompt_path,
             )
             if item is None:
-                raise _ApiError("asset_not_found", "Asset not found for this account", 404)
+                raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
             physical_removed = asset_deleter(asset_id)
             prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
             admin_store.record_audit(
@@ -272,7 +266,7 @@ def create_me_media_router(
                 "deleted": True,
                 "physical_removed": bool(physical_removed),
             })
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/media/{asset_id}/download", include_in_schema=False)
@@ -299,18 +293,18 @@ def create_me_media_router(
                 prompt_memory_path=prompt_path,
             )
             if item is None:
-                raise _ApiError("asset_not_found", "Asset not found for this account", 404)
+                raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
             if item.get("available") is False:
-                raise _ApiError("asset_unavailable", "Asset file is missing or expired", 404)
+                raise PublicFailure("asset_unavailable", 404, asset_id=asset_id, reason="file missing")
             mode = request.query_params.get("metadata", "none")
             if mode not in {"none", "full"}:
-                raise _ApiError("invalid_metadata", "Metadata must be full or none", 400)
+                raise PublicFailure("invalid_metadata", 400, param="metadata", accepted=["none", "full"])
             if mode == "full" and not item.get("workflow_download_url"):
-                raise _ApiError("prompt_not_accessible", "Full metadata is only available to the maker while the prompt is kept", 403)
+                raise PublicFailure("prompt_not_accessible", 403, asset_id=asset_id)
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.download.everyone", admin_path)
             return _json({"asset_id": asset_id, "download_url": signed_url_builder(request, asset_id, mode)})
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/usage/summary", include_in_schema=False)
@@ -331,7 +325,7 @@ def create_me_media_router(
                 asset_path_resolver=asset_path_resolver,
             )
             return _json(summary)
-        except (_ApiError, UserPortalError) as exc:
+        except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
     return router
@@ -349,7 +343,6 @@ class _MediaScope:
     user_ids: list[str] | None = None
     owner_keys: frozenset[str] | None = None
     audit_everyone: bool = False
-    owner_default: bool = False
 
 
 def _actor_from_request(
@@ -359,16 +352,16 @@ def _actor_from_request(
 ) -> _Actor:
     session = session_provider(request)
     if session is None:
-        raise _ApiError("not_authenticated", "Sign in to view this resource", 401)
+        raise PublicFailure("not_authenticated", 401)
     return _actor_from_session(session, admin_db_path)
 
 
 def _actor_from_session(session: AdminSession | None, admin_db_path: Path) -> _Actor:
     if session is None:
-        raise _ApiError("not_authenticated", "Sign in to view this resource", 401)
+        raise PublicFailure("not_authenticated", 401)
     user = admin_store.get_user(session.subject, path=admin_db_path)
     if user is None:
-        raise _ApiError("session_user_not_found", "Signed-in user was not found", 401)
+        raise PublicFailure("session_user_not_found", 401)
     role = _live_role_for_user(str(user["id"]), admin_db_path)
     return _Actor(user=user, role=role)
 
@@ -469,7 +462,7 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
     person = request.query_params.get("person")
     if person:
         if not actor.owner:
-            raise _ApiError("owner_required", "Only owners can filter by person", 403)
+            raise PublicFailure("owner_required", 403, param="person")
         if person == "all":
             return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         if person == "self":
@@ -477,14 +470,17 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if person == "local-network":
             return _MediaScope(app_ids=None, person_id="local-network", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
-    if raw_scope is None and actor.owner:
-        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True, owner_default=True)
+    # Everyone starts with their own work; "everyone" is an explicit owner choice.
     scope = str(raw_scope or "me")
     if scope == "everyone":
         if not actor.owner:
-            raise _ApiError("owner_required", "Only owners can view everyone's media", 403)
+            raise PublicFailure("owner_required", 403, param="scope")
         return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
     return _member_media_scope(actor.user_id, admin_db_path)
+
+
+def _scope_requested(request: Request) -> bool:
+    return any(request.query_params.get(name) for name in ("scope", "owner", "person"))
 
 
 def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None, viewer_person_id: str | None = None) -> _MediaScope:
@@ -552,7 +548,7 @@ def _list_media(
         "schema_version": 1,
         "authenticated": True,
         "scope": "everyone" if scope.app_ids is None else "me",
-        "default_scope": "owner_instance" if scope.owner_default else "explicit",
+        "default_scope": "explicit" if _scope_requested(request) else "self",
         "source": source_filter,
         "sources": sources,
         "assets": page,
@@ -702,7 +698,8 @@ def _media_items(
                 "media_type": media_type,
                 "size_bytes": int(path.stat().st_size) if path and path.exists() else None,
                 "created_at": created_at,
-                "updated_at": int(job.get("updated_at") or created_at),
+                "file_modified_at": _file_modified_at(path) if created_at is None else None,
+                "updated_at": job.get("updated_at") or created_at,
                 "job_id": job.get("job_id"),
                 "request_id": job.get("request_id"),
                 "status": job.get("status"),
@@ -754,6 +751,7 @@ def _media_items(
                 "media_type": asset_media_type_resolver(asset_id, path),
                 "size_bytes": int(path.stat().st_size),
                 "created_at": created_at,
+                "file_modified_at": _file_modified_at(path) if created_at is None else None,
                 "updated_at": int(metadata.get("updated_at") or path.stat().st_mtime),
                 "job_id": None,
                 "request_id": (receipt or embedded).get("request_id"),
@@ -932,6 +930,10 @@ def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
     return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
 
 
+# Nothing recorded where the request came from.
+_UNKNOWN_SOURCE = {"kind": "unknown", "label": "Source unknown", "profile": None, "client_hint": None}
+
+
 def _source_projection(
     receipt: Mapping[str, Any] | None,
     admin_db_path: Path,
@@ -988,12 +990,9 @@ def _source_projection(
                 "client_hint": None,
                 "recovered_from": "asset_owner_key",
             }
-        return {
-            "kind": "local-network",
-            "label": "Local network · no key",
-            "profile": profile,
-            "client_hint": None,
-        }
+        return dict(_UNKNOWN_SOURCE, profile=profile or None)
+    if not receipt.get("source_kind"):  # Older receipts did not record where a request came from.
+        return dict(_UNKNOWN_SOURCE, profile=profile or None)
     hint = _client_hint(receipt)
     base_label = str((receipt or {}).get("source_label") or "Local network · no key")
     return {
@@ -1062,32 +1061,25 @@ def _media_source_filter(request: Request, scope: _MediaScope) -> str | None:
         return None
     if source == "local-network":
         if scope.app_ids is not None:
-            raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+            raise PublicFailure("source_not_allowed", 403, source=source)
         return source
     if source.startswith("app:"):
         app_id = source.removeprefix("app:")
         if scope.app_ids is not None and app_id not in set(scope.app_ids):
-            raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+            raise PublicFailure("source_not_allowed", 403, source=source)
         return source
-    raise _ApiError("invalid_source", "Source filter must be local-network, app:<id>, or all", 400)
+    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "local-network", "app:<id>"])
 
 
 def _client_hint(receipt: Mapping[str, Any] | None) -> str | None:
-    for value in (
-        (receipt or {}).get("client_hint"),
-        _nested(receipt, "metadata", "client_hint"),
-        _nested(receipt, "metadata", "user_agent_hint"),
-        _nested(receipt, "metadata", "user_agent"),
-        (receipt or {}).get("api_key_name"),
-    ):
+    """The client name recorded with the request, if any.
+
+    Key names and raw user agents are not evidence of a client, so nothing is
+    guessed from them here.
+    """
+    for value in ((receipt or {}).get("client_hint"), _nested(receipt, "metadata", "client_hint")):
         if isinstance(value, str) and value.strip():
-            lower = value.lower()
-            if "sillytavern" in lower:
-                return "SillyTavern"
-            if "open webui" in lower or "open-webui" in lower:
-                return "Open WebUI"
-            if "daisy" in lower or "raspberry" in lower or " pi" in lower:
-                return "Daisy/pi"
+            return value.strip()
     return None
 
 
@@ -1110,7 +1102,7 @@ def _asset_kind(asset_id: str, asset: Mapping[str, Any]) -> str:
 def _asset_created_at(
     path: Path | None, job: Mapping[str, Any], receipt: Mapping[str, Any] | None,
     embedded: Mapping[str, Any] | None = None,
-) -> int:
+) -> int | None:
     recorded = (embedded or {}).get("created_at")
     if isinstance(recorded, str):
         try:
@@ -1122,7 +1114,11 @@ def _asset_created_at(
     accepted_ms = receipt.get("accepted_at_ms") if receipt else None
     if isinstance(accepted_ms, int):
         return accepted_ms // 1000
-    return int(path.stat().st_mtime) if path and path.exists() else 0
+    return None
+
+
+def _file_modified_at(path: Path | None) -> int | None:
+    return int(path.stat().st_mtime) if path is not None and path.exists() else None
 
 
 def _model_for_asset(asset: Mapping[str, Any], job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> str | None:
@@ -1151,7 +1147,7 @@ def _provenance(
     receipt: Mapping[str, Any] | None,
     embedded: Mapping[str, Any] | None = None,
     *,
-    created_at: int,
+    created_at: int | None,
     prompt: str | None = None,
 ) -> dict[str, Any]:
     embedded = embedded or {}
@@ -1185,12 +1181,14 @@ def _prompt_title(prompt: str | None) -> str | None:
     return first_line[:120] or None
 
 
-def _media_title(prompt: str | None, kind: str, created_at: int, source: Mapping[str, Any]) -> str:
+def _media_title(prompt: str | None, kind: str, created_at: int | None, source: Mapping[str, Any]) -> str:
     private = _prompt_title(prompt)
     if private:
         return private
     noun = {"image": "Picture", "audio": "Audio", "video": "Video"}.get(kind, "Item")
     maker = str(source.get("label") or "unknown maker")
+    if created_at is None:
+        return f"{noun} by {maker}"
     date = datetime.fromtimestamp(created_at).strftime("%b %-d at %-I:%M %p")
     return f"{noun} by {maker} · {date}"
 
@@ -1225,7 +1223,7 @@ def _usage_summary(
     asset_path_resolver: AssetPathResolver,
 ) -> dict[str, Any]:
     if request.query_params.get("period", "month") != "month":
-        raise _ApiError("unsupported_period", "Only period=month is supported", 400)
+        raise PublicFailure("unsupported_period", 400, param="period", accepted=["month"])
     app_ids, scope_label, scoped_users = _usage_app_scope(request, actor, admin_db_path)
     source_filter = "local-network" if request.query_params.get("person") == "local-network" else _source_filter(request)
     _reject_forbidden_source_filter(source_filter, app_ids)
@@ -1354,10 +1352,9 @@ def _usage_summary(
                 if receipt is not None and not _receipt_in_scope(receipt, media_scope):
                     continue
                 source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids)
-                if (
-                    _asset_created_at(path, {}, receipt, embedded) >= start
-                    and _source_matches_filter(source, source_filter)
-                ):
+                # A file without a recorded creation time counts by its file time.
+                made_at = _asset_created_at(path, {}, receipt, embedded) or _file_modified_at(path) or 0
+                if made_at >= start and _source_matches_filter(source, source_filter):
                     made.add(asset_id)
     receipt_list = []
     for internal in receipts[:USAGE_RECEIPT_LIMIT]:
@@ -1375,9 +1372,11 @@ def _usage_summary(
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
     retention_days = receipt_store.retention_days(admin_db_path)
     coverage_start = max(start, receipt_store.history_floor(receipts_path))
-    coverage_note = "Requests cover retained receipts; media totals also include retained assets."
-    if coverage_start > start:
-        coverage_note = "Partial receipt history for this month. " + coverage_note
+    aggregate_complete = coverage_start <= start
+    coverage_note = ("Request totals include saved activity only. "
+                     "Creation totals also include files still in your Library.")
+    if not aggregate_complete:
+        coverage_note = "This month is partial; earlier activity isn't included. " + coverage_note
     return {
         "schema_version": 1, "period": "month", "scope": scope_label,
         "source": source_filter, "sources": sources,
@@ -1385,13 +1384,15 @@ def _usage_summary(
         "failed_requests": failed_requests if outcomes_known else None,
         "remote_spend": round(spend, 6), "remote_spend_available": measured > 0,
         "remote_spend_source": "receipt costs" if measured else "not_available",
-        "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
+        "remote_spend_coverage": "This total includes recorded request costs only; other charges may be missing.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
         "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": coverage_note,
         "truncated": False, "receipts_limit": USAGE_RECEIPT_LIMIT,
+        "aggregate_complete": aggregate_complete,
+        "receipt_list_has_more": len(receipts) > USAGE_RECEIPT_LIMIT,
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
@@ -1401,12 +1402,10 @@ def _usage_summary(
 
 def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tuple[list[str] | None, str, list[str] | None]:
     person = request.query_params.get("person")
-    if not person:
-        if actor.owner:
-            return None, "everyone", None
+    if not person:  # Owners too: "Everyone" is an explicit choice.
         return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if not actor.owner:
-        raise _ApiError("owner_required", "Only owners can filter usage by person", 403)
+        raise PublicFailure("owner_required", 403, param="person")
     if person == "all":
         return None, "everyone", None
     if person in {"self", actor.user_id}:
@@ -1419,7 +1418,7 @@ def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tu
 def _usage_people(actor: _Actor, admin_db_path: Path) -> list[dict[str, str]]:
     people = [
         {"id": "all", "label": "Everyone"},
-        {"id": "self", "label": "Your apps"},
+        {"id": "self", "label": "You"},
         {"id": "local-network", "label": "Local network · no key"},
     ]
     for user in admin_store.list_users(path=admin_db_path):
@@ -1458,16 +1457,16 @@ def _source_filter(request: Request) -> str | None:
         return None
     if source == "local-network" or source.startswith("app:"):
         return source
-    raise _ApiError("invalid_source", "Source filter must be local-network, app:<id>, or all", 400)
+    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "local-network", "app:<id>"])
 
 
 def _reject_forbidden_source_filter(source: str | None, app_ids: list[str] | None) -> None:
     if source is None or app_ids is None:
         return
     if source == "local-network":
-        raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+        raise PublicFailure("source_not_allowed", 403, source=source)
     if source.startswith("app:") and source.removeprefix("app:") not in set(app_ids):
-        raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+        raise PublicFailure("source_not_allowed", 403, source=source)
 
 
 def _source_matches_filter(source: Any, source_filter: str | None) -> bool:
@@ -1590,7 +1589,7 @@ def _decode_cursor(raw: str | None) -> tuple[int, str] | None:
         data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
         return int(data["created_at"]), str(data["asset_id"])
     except Exception:
-        raise _ApiError("invalid_cursor", "Cursor is invalid", 400)
+        raise PublicFailure("invalid_cursor", 400, param="cursor")
 
 
 def _date_to_epoch(raw: str | None, *, end: bool = False) -> int | None:
@@ -1599,7 +1598,7 @@ def _date_to_epoch(raw: str | None, *, end: bool = False) -> int | None:
     try:
         parsed = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
-        raise _ApiError("invalid_date", "Dates must use YYYY-MM-DD", 400)
+        raise PublicFailure("invalid_date", 400, expected="YYYY-MM-DD")
     offset = 86399 if end else 0
     return int(parsed.timestamp()) + offset
 
@@ -1635,8 +1634,7 @@ def _json(content: Mapping[str, Any], status_code: int = 200) -> JSONResponse:
     )
 
 
-def _error_response(exc: _ApiError | UserPortalError) -> JSONResponse:
-    status_code = getattr(exc, "status_code", 500)
-    code = getattr(exc, "code", "internal_error")
-    message = getattr(exc, "message", "Request failed")
-    return _json({"error": {"code": code, "message": message}}, status_code=status_code)
+def _error_response(exc: PublicFailure | UserPortalError) -> JSONResponse:
+    if isinstance(exc, PublicFailure):
+        return _json(exc.body(), status_code=exc.status_code)
+    return _json({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status_code)

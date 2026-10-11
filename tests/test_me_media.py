@@ -251,6 +251,94 @@ class MeMediaRouterTests(unittest.TestCase):
             path=self.jobs_db,
         )
 
+    def test_item_without_recorded_origin_or_time_stays_unknown(self) -> None:
+        # No receipt, no job, no provenance and an owner key no App holds:
+        # nothing shows where it came from or when it was made.
+        asset_id = "img_" + "f" * 64
+        self._asset_path(asset_id).write_bytes(PNG_1X1)
+        self._meta_path(asset_id).write_text(json.dumps({"asset_id": asset_id, "owner_key_hashes": ["sha256:nobody"]}))
+        self.current_user = self.owner
+        item = next(asset for asset in self.client.get("/me/api/media?scope=everyone").json()["assets"]
+                    if asset["asset_id"] == asset_id)
+        self.assertEqual((item["source"]["kind"], item["source"]["label"]), ("unknown", "Source unknown"))
+        self.assertIsNone(item["created_at"], "file time is not creation time")
+        self.assertIsNone(item["provenance"]["created_at"])
+        self.assertEqual(item["file_modified_at"], int(self._asset_path(asset_id).stat().st_mtime))
+        self.assertEqual(item["title"], "Picture by Source unknown")
+        self.assertNotIn("1970", item["title"])
+
+    def test_legacy_receipt_without_source_kind_is_not_called_local_network(self) -> None:
+        receipt_store.record({"request_id": "req_legacy", "status": "succeeded", "intent": "image.generate"},
+                             path=self.receipts_db)
+        source = me_media._source_projection(receipt_store.get("req_legacy", audience="internal",
+                                                               path=self.receipts_db) | {"source_kind": None},
+                                             self.admin_db)
+        self.assertEqual(source["kind"], "unknown")
+        recorded = me_media._source_projection({"request_id": "r", "source_kind": "local-network",
+                                                "source_label": "Local network · no key"}, self.admin_db)
+        self.assertEqual(recorded["kind"], "local-network")
+
+    def test_client_hint_is_only_a_recorded_hint_never_guessed_from_key_names(self) -> None:
+        self.assertIsNone(me_media._client_hint({"api_key_name": "daisy kitchen"}))
+        self.assertIsNone(me_media._client_hint({"metadata": {"user_agent": "curl on a raspberry pi"}}))
+        self.assertEqual(me_media._client_hint({"client_hint": "SillyTavern"}), "SillyTavern")
+
+    def test_usage_defaults_to_your_own_work_for_every_role(self) -> None:
+        self._receipt(self.app_a["id"], "req_alice")
+        self._receipt(self.app_b["id"], "req_bob")
+        self.current_user = self.owner
+        default = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((default["scope"], default["requests"]), ("me", 0))
+        everyone = self.client.get("/me/api/usage/summary", params={"person": "all"}).json()
+        self.assertEqual((everyone["scope"], everyone["requests"]), ("everyone", 2))
+        people = {row["id"]: row["label"] for row in everyone["people"]}
+        self.assertEqual(people["self"], "You")
+
+    def test_media_defaults_to_your_own_work_for_every_role(self) -> None:
+        self._write_asset("img_" + "1" * 64, ["sha256:bob"])
+        self.current_user = self.owner
+        default = self.client.get("/me/api/media").json()
+        self.assertEqual((default["scope"], default["assets"]), ("me", []))
+        self.assertEqual(default["default_scope"], "self")
+        everyone = self.client.get("/me/api/media", params={"scope": "everyone"}).json()
+        self.assertEqual(len(everyone["assets"]), 1)
+        self.assertEqual(everyone["default_scope"], "explicit")
+
+    def _complete_history(self) -> None:
+        with sqlite3.connect(self.receipts_db) as conn:
+            conn.execute("UPDATE receipt_history SET floor = 0")
+
+    def test_usage_notes_name_what_is_counted_without_implementation_nouns(self) -> None:
+        self._complete_history()
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["remote_spend_coverage"],
+                         "This total includes recorded request costs only; other charges may be missing.")
+        self.assertNotIn("ledger", usage["remote_spend_coverage"])
+        self.assertEqual(usage["coverage_note"], "Request totals include saved activity only. "
+                                                 "Creation totals also include files still in your Library.")
+
+    def test_usage_separates_aggregate_completeness_from_the_short_receipt_list(self) -> None:
+        self._complete_history()
+        for index in range(me_media.USAGE_RECEIPT_LIMIT + 1):
+            self._receipt(self.app_a["id"], f"req_many_{index}")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], me_media.USAGE_RECEIPT_LIMIT + 1)
+        self.assertEqual(len(usage["receipts"]), me_media.USAGE_RECEIPT_LIMIT)
+        self.assertTrue(usage["receipt_list_has_more"])
+        self.assertTrue(usage["aggregate_complete"])
+        self.assertFalse(usage["truncated"])
+
+    def test_usage_counts_a_job_whose_receipt_is_a_child_request_this_month(self) -> None:
+        asset_id = "img_" + "2" * 64
+        child = RouteReceipt(protocol="openai.images", intent="image.generate", path="/v1/images/generations",
+                             request_id="req_child", app_id=self.app_a["id"], parent_request_id="req_parent",
+                             status="succeeded")
+        receipt_store.record(child, path=self.receipts_db)
+        self._job("req_child", asset_id)
+        usage = self.client.get("/me/api/usage/summary").json()
+        # receipt_store.get carries the stored time, so the item is counted.
+        self.assertEqual(usage["media_count"], 1)
+
     def test_recent_order_indexes_preserve_results_and_avoid_sort(self) -> None:
         for index in range(12):
             media_jobs.create(media_jobs.MediaJob(
@@ -445,21 +533,21 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").status_code, 403)
 
         self.current_user = self.owner
-        all_media = self.client.get("/me/api/media")
+        all_media = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(all_media.status_code, 200, all_media.text)
         source_ids = {source["id"] for source in all_media.json()["sources"]}
         self.assertIn("local-network", source_ids)
         self.assertIn(f"app:{self.service_app['id']}", source_ids)
-        service = self.client.get(f"/me/api/media?source=app:{self.service_app['id']}")
+        service = self.client.get(f"/me/api/media?scope=everyone&source=app:{self.service_app['id']}")
         self.assertEqual([item["asset_id"] for item in service.json()["assets"]], [service_asset])
-        local = self.client.get("/me/api/media?source=local-network")
+        local = self.client.get("/me/api/media?scope=everyone&source=local-network")
         self.assertEqual([item["asset_id"] for item in local.json()["assets"]], [local_asset])
         person_local = self.client.get("/me/api/media?person=local-network")
         self.assertEqual([item["asset_id"] for item in person_local.json()["assets"]], [local_asset])
-        service_usage = self.client.get(f"/me/api/usage/summary?source=app:{self.service_app['id']}")
+        service_usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}")
         self.assertEqual(service_usage.status_code, 200, service_usage.text)
         self.assertEqual(service_usage.json()["media_count"], 1)
-        local_usage = self.client.get("/me/api/usage/summary?source=local-network")
+        local_usage = self.client.get("/me/api/usage/summary?person=all&source=local-network")
         self.assertEqual(local_usage.status_code, 200, local_usage.text)
         self.assertEqual(local_usage.json()["media_count"], 1)
 
@@ -526,7 +614,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage.json()["media_count"], 0)
 
         self.current_user = self.owner
-        owner_usage = self.client.get("/me/api/usage/summary")
+        owner_usage = self.client.get("/me/api/usage/summary?person=all")
         self.assertEqual(owner_usage.status_code, 200, owner_usage.text)
         self.assertEqual(owner_usage.json()["media_count"], 1)
 
@@ -553,6 +641,7 @@ class MeMediaRouterTests(unittest.TestCase):
         source = me_media._source_projection(
             {
                 "app_id": None,
+                "source_kind": "local-network",
                 "source_label": "Local network · no key",
                 "client_hint": "Open WebUI",
             },
@@ -596,14 +685,14 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual([item["asset_id"] for item in member_media.json()["assets"]], [keyed_asset])
 
         self.current_user = self.owner
-        owner_media = self.client.get("/me/api/media")
+        owner_media = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(owner_media.status_code, 200, owner_media.text)
         sources = {item["asset_id"]: item["source"] for item in owner_media.json()["assets"]}
         self.assertEqual(sources[keyed_asset]["label"], "Alice")
         self.assertEqual(sources[keyed_asset]["recovered_from"], "asset_owner_key")
         self.assertEqual(sources[service_asset]["label"], "Daisy")
         self.assertEqual(sources[service_asset]["recovered_from"], "media_job")
-        usage = self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}")
+        usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_a['id']}")
         self.assertEqual(usage.status_code, 200, usage.text)
         self.assertEqual(usage.json()["media_count"], 1)
 
@@ -715,12 +804,12 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/usage/summary").json()["failed_requests"], 2)
         self.assertEqual(self.client.get(f"/me/api/usage/summary?person={self.bob['id']}").status_code, 403)
         self.current_user = self.owner
-        self.assertEqual(self.client.get("/me/api/usage/summary").json()["failed_requests"], 5)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=all").json()["failed_requests"], 5)
         self.assertEqual(self.client.get("/me/api/usage/summary?person=all").json()["failed_requests"], 5)
         self.assertEqual(self.client.get("/me/api/usage/summary?person=self").json()["failed_requests"], 0)
         self.assertEqual(self.client.get(f"/me/api/usage/summary?person={self.alice['id']}").json()["failed_requests"], 2)
-        self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").json()["failed_requests"], 2)
-        self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").json()["failed_requests"], 1)
+        self.assertEqual(self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_b['id']}").json()["failed_requests"], 2)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=all&source=local-network").json()["failed_requests"], 1)
 
     def test_usage_failed_requests_is_null_when_outcomes_are_not_computable(self) -> None:
         self._receipt(self.app_a["id"], "req_known_failure", status="failed")
@@ -768,17 +857,18 @@ class MeMediaRouterTests(unittest.TestCase):
             403,
         )
         self.current_user = self.owner
-        owner_default = self.client.get("/me/api/usage/summary")
-        self.assertEqual(owner_default.status_code, 200, owner_default.text)
-        self.assertEqual(owner_default.json()["requests"], 4)
-        self.assertEqual(owner_default.json()["remote_spend"], 4.0)
-        self.assertIn("local-network", {source["id"] for source in owner_default.json()["sources"]})
-        self.assertIn(f"app:{self.service_app['id']}", {source["id"] for source in owner_default.json()["sources"]})
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["scope"], "me")
+        instance_usage = self.client.get("/me/api/usage/summary?person=all")
+        self.assertEqual(instance_usage.status_code, 200, instance_usage.text)
+        self.assertEqual(instance_usage.json()["requests"], 4)
+        self.assertEqual(instance_usage.json()["remote_spend"], 4.0)
+        self.assertIn("local-network", {source["id"] for source in instance_usage.json()["sources"]})
+        self.assertIn(f"app:{self.service_app['id']}", {source["id"] for source in instance_usage.json()["sources"]})
         self.assertEqual(
-            self.client.get("/me/api/usage/summary?source=local-network").json()["requests"], 1
+            self.client.get("/me/api/usage/summary?person=all&source=local-network").json()["requests"], 1
         )
         self.assertEqual(
-            self.client.get(f"/me/api/usage/summary?source=app:{self.service_app['id']}").json()["requests"], 1
+            self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}").json()["requests"], 1
         )
         everyone = self.client.get("/me/api/usage/summary?person=all")
         self.assertEqual(everyone.status_code, 200, everyone.text)
@@ -934,11 +1024,11 @@ class MeMediaRouterTests(unittest.TestCase):
         asset_id = "img_" + "6" * 64
         self._write_asset(asset_id, ["sha256:alice"])
         self.current_user = self.owner
-        detail = self.client.get(f"/me/api/media/{asset_id}")
+        detail = self.client.get(f"/me/api/media/{asset_id}?scope=everyone")
         self.assertEqual(detail.status_code, 200)
         self.assertIsNone(detail.json()["asset"]["prompt"])
         self.assertIsNone(detail.json()["asset"]["workflow_download_url"])
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 403)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?scope=everyone&metadata=full").status_code, 403)
         self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
@@ -1225,7 +1315,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self._receipt(self.app_a["id"], "req_src_1")
         self._receipt(self.app_a["id"], "req_src_2")
         self.current_user = self.owner
-        usage = self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}")
+        usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_b['id']}")
         self.assertEqual(usage.status_code, 200, usage.text)
         sources = {row["id"]: row for row in usage.json()["sources"]}
         # Counts cover the whole scope, not just the selected source.
@@ -2014,6 +2104,154 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
+
+
+
+class MemberFailureCopyTests(unittest.TestCase):
+    """Every member API failure names its layer and one next action.
+
+    Codes and statuses stay stable for API clients; ids, parameter names and
+    exception classes move to ``details`` (principles P3 and P15).
+    """
+
+    _session = MeMediaRouterTests._session
+    _mutation_validator = MeMediaRouterTests._mutation_validator
+    _asset_path = MeMediaRouterTests._asset_path
+    _meta_path = MeMediaRouterTests._meta_path
+    _asset_metadata = MeMediaRouterTests._asset_metadata
+    _catalog = MeMediaRouterTests._catalog
+    _delete_unshared = MeMediaRouterTests._delete_unshared
+    _write_asset = MeMediaRouterTests._write_asset
+    _receipt = MeMediaRouterTests._receipt
+    _job = MeMediaRouterTests._job
+    _make_headers = MeMakeApiAcceptanceTests._make_headers
+    _picture = MeMakeApiAcceptanceTests._picture
+    _submit_make = MeMakeApiAcceptanceTests._submit_make
+    _finished = MeMakeApiAcceptanceTests._finished
+    make_url = MeMakeApiAcceptanceTests.make_url
+    setUp = MeMakeApiAcceptanceTests.setUp
+    tearDown = MeMakeApiAcceptanceTests.tearDown
+
+    def _error(self, response, status: int, code: str, layer: str) -> dict:
+        self.assertEqual(response.status_code, status, response.text)
+        error = response.json()["error"]
+        self.assertEqual(error["code"], code)
+        self.assertEqual(error["details"]["layer"], layer)
+        return error
+
+    def test_library_errors_give_the_layer_and_one_action(self) -> None:
+        missing = self._error(self.client.get("/me/api/media/img_" + "c" * 64), 404, "asset_not_found", "library")
+        self.assertEqual(missing["message"], "This item isn't in your Library. "
+                                             "Return to the Library and choose another item.")
+        self._error(self.client.get("/me/api/media", params={"cursor": "%%%"}), 400, "invalid_cursor", "request")
+        self._write_asset("img_" + "e" * 64, ["sha256:alice"])  # Dates are checked against items.
+        bad_date = self._error(self.client.get("/me/api/media", params={"start": "May 1"}), 400,
+                               "invalid_date", "request")
+        self.assertNotIn("YYYY", bad_date["message"])
+        period = self._error(self.client.get("/me/api/usage/summary", params={"period": "week"}), 400,
+                             "unsupported_period", "request")
+        self.assertNotIn("period=", period["message"])
+        source = self._error(self.client.get("/me/api/media", params={"source": "x"}), 400, "invalid_source", "request")
+        self.assertNotIn("app:<id>", source["message"])
+        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 403, "owner_required", "account")
+        self.assertIn("Choose your own work", owner["message"])
+
+    def test_missing_file_is_not_called_expired(self) -> None:
+        asset_id = "aud_" + "d" * 64
+        self._receipt(self.app_a["id"], "req_gone")
+        self._job("req_gone", asset_id, media_type="audio/mpeg")
+        error = self._error(self.client.get(f"/me/api/media/{asset_id}/download"), 404, "asset_unavailable", "library")
+        self.assertNotIn("expired", error["message"])
+        self.assertIn("make it again", error["message"])
+
+    def test_signed_out_and_unknown_person_say_sign_in_again(self) -> None:
+        ghost = {"id": "usr_gone", "email": "gone@example.com"}
+        self.current_user = ghost
+        for response in (self.client.get("/me/api/media"),
+                         self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("g"))):
+            error = self._error(response, 401, "session_user_not_found", "account")
+            self.assertEqual(error["message"], "Your sign-in no longer matches an account. Sign in again.")
+
+    def test_make_request_errors_keep_parameter_names_in_details(self) -> None:
+        unknown = self._error(self.client.post(self.make_url, json=self._picture(steps=4), headers=self._make_headers("f")),
+                              400, "unsupported_field", "request")
+        self.assertNotIn("steps", unknown["message"])
+        self.assertEqual(unknown["details"]["field"], "steps")
+        intent = self._error(self.client.post(self.make_url, json=self._picture(intent="video.generate"),
+                                              headers=self._make_headers("i")), 400, "unsupported_intent", "request")
+        self.assertNotIn("intent", intent["message"])
+        self.assertNotIn("image.generate", intent["message"])
+        both = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit", source_asset_id="img_x",
+                                                                           source_job_id="mj_x"),
+                                            headers=self._make_headers("b")), 400, "invalid_source", "request")
+        self.assertNotIn("source_asset_id", both["message"])
+        edit = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit"),
+                                            headers=self._make_headers("e")), 400, "invalid_source", "request")
+        self.assertEqual(edit["message"], "Editing needs a source picture. Choose a picture to edit.")
+        self.runtime.limits = me_make.MakeLimits(max_images=4, max_prompt_chars=1000)
+        count = self._error(self.client.post(self.make_url, json=self._picture(n=9), headers=self._make_headers("n")),
+                            400, "invalid_n", "request")
+        self.assertEqual(count["message"], "That number of pictures isn't allowed. Choose from 1 to 4.")
+        long = self._error(self.client.post(self.make_url, json=self._picture(prompt="x" * 1001),
+                                            headers=self._make_headers("l")), 400, "prompt_too_long", "request")
+        self.assertIn("1,000 characters", long["message"])
+
+    def test_idempotency_conflict_names_the_action_not_the_policy(self) -> None:
+        self._submit_make("same-key")
+        error = self._error(self.client.post(self.make_url, json=self._picture(prompt="another"),
+                                             headers=self._make_headers("same-key")),
+                            409, "idempotency_conflict", "request")
+        self.assertNotIn("owner, operation", error["message"])
+        self.assertIn("Refresh the page", error["message"])
+
+    def test_source_job_that_is_running_or_failed_is_told_apart(self) -> None:
+        self.runtime.release.clear()
+        _, running = self._submit_make("still-running")
+        self.assertTrue(self.runtime.started.wait(5))
+        pending = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit",
+                                                                              source_job_id=running["job_id"]),
+                                               headers=self._make_headers("edit-running")),
+                              409, "source_not_ready", "library")
+        self.assertEqual(pending["message"], "That picture isn't ready. Wait for it to finish.")
+        self.runtime.fail_with = RuntimeError("boom")
+        self.runtime.release.set()
+        self._finished(running["job_id"])
+        failed = self._error(self.client.post(self.make_url, json=self._picture(intent="image.edit",
+                                                                             source_job_id=running["job_id"]),
+                                              headers=self._make_headers("edit-failed")),
+                             409, "source_not_ready", "library")
+        self.assertEqual(failed["message"], "That task didn't produce a picture. Choose another source picture.")
+        self.assertNotIn("yet", failed["message"])
+
+    def test_stored_job_failures_never_carry_an_exception_class(self) -> None:
+        self.runtime.fail_with = KeyError("secret-prompt")
+        _, job = self._submit_make("crash")
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["status"], media_jobs.STATUS_FAILED)
+        self.assertNotIn("KeyError", stored["error"])
+        self.assertEqual(stored["error"],
+                         "The picture couldn't be made, and we couldn't tell where it stopped. Try again.")
+
+    def test_backend_without_picture_names_the_model(self) -> None:
+        async def nothing(payload):
+            return []
+
+        self.runtime.execute = nothing
+        _, job = self._submit_make("empty")
+        stored = self._finished(job["job_id"])
+        self.assertEqual(stored["error"], "The model finished without a picture. Try again.")
+
+    def test_queue_failure_is_stored_without_an_exception_class(self) -> None:
+        def broken(job_id, payload):
+            raise OSError("disk full")
+
+        self.runtime.keep_payload = broken
+        error = self._error(self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("q")),
+                            500, "make_queue_failed", "gateway")
+        self.assertEqual(error["message"], "The gateway couldn't save this task to the queue. Try again.")
+        stored = media_jobs.recent(5, path=self.jobs_db)[0]
+        self.assertNotIn("OSError", stored["error"])
+        self.assertEqual(stored["error"], error["message"])
 
 
 if __name__ == "__main__":

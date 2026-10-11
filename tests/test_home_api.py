@@ -270,6 +270,21 @@ def test_setup_internal_try_requires_separate_external_confirmation(home_case):
     assert c.http.get("/admin/api/setup-progress").json()["complete"]
 
 
+def test_setup_legacy_receipt_without_source_is_not_observed_app_use(home_case):
+    c = home_case
+    receipt_store.record({"request_id": "legacy", "status": "succeeded", "intent": "chat.completions"}, path=c.receipts)
+    data = c.http.get("/admin/api/setup-progress").json()
+    step = next(step for step in data["steps"] if step["id"] == "connect_app")
+    assert not step["done"]
+    assert step["reason"] == "An older request may have come from another app. Confirm that your app works."
+    assert not data["evidence"]["observed_external_client"]["recorded"]
+    receipt_store.record({"request_id": "lan", "status": "succeeded", "intent": "chat.completions",
+                          "source_kind": "local-network"}, path=c.receipts)
+    data = c.http.get("/admin/api/setup-progress").json()
+    assert next(step for step in data["steps"] if step["id"] == "connect_app")["done"]
+    assert data["evidence"]["observed_external_client"]["recorded"]
+
+
 def test_setup_default_app_used_does_not_complete_app_step(home_case):
     c = home_case
     cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db)
@@ -798,7 +813,8 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
             assert [row["id"] for row in data["aliases"]] == (["voice"] if expected else [])
 
 
-@pytest.mark.parametrize("source,app", [("app", True), ("local-network", False), (None, False)])
+# A receipt without a recorded source is not proof (see the legacy test above).
+@pytest.mark.parametrize("source,app", [("app", True), ("local-network", False)])
 def test_setup_successful_external_traffic_completes_app_step(home_case, source, app):
     c = home_case
     receipt_store.record({"request_id": "external", "status": "succeeded", "app_id": c.client_app["id"] if app else None,

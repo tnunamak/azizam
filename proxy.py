@@ -2911,9 +2911,10 @@ OPENAI_PUBLIC_MODEL_OWNERS = {"openai", "openai-internal", "system"}
 
 
 class ModelCompatibilityError(Exception):
-    def __init__(self, message: str = "", *, code: str | None = None):
+    def __init__(self, message: str = "", *, code: str | None = None, details: Mapping[str, Any] | None = None):
         super().__init__(message)
         self.code = code
+        self.details = dict(details or {})
 
 
 @dataclass(frozen=True)
@@ -3085,7 +3086,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
     try:
         alias = resolve_stable_alias(operation, requested_model)
     except stable_aliases.AliasUnavailableError as exc:
-        raise ModelCompatibilityError(str(exc), code=exc.code) from exc
+        raise ModelCompatibilityError(str(exc), code=exc.code, details=exc.details) from exc
     if alias is not None:
         return ModelResolution(
             requested_model=requested_model,
@@ -3149,6 +3150,9 @@ def model_compatibility_error(error: "str | Exception") -> Response:
     if code:
         body["param"] = "model"
         body["code"] = code
+    details = getattr(error, "details", None)
+    if details:
+        body["details"] = details
     return Response(
         content=json.dumps({"error": body}),
         status_code=status_code,

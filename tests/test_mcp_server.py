@@ -355,7 +355,9 @@ def test_run_range_violation_is_reported(env):
 
 def test_run_refuses_a_gateway_managed_input_instead_of_ignoring_it(env):
     result = call(env, "run", {"target": "krea", "inputs": {"prompt": "x", "seed": 1}})
-    assert result["isError"] and "managed by the gateway" in result["structuredContent"]["error"]
+    out = result["structuredContent"]
+    assert result["isError"] and out["error"] == "The gateway sets input 'seed' itself. Remove it and try again."
+    assert out["layer"] == "request" and out["input"] == "seed"
 
 
 def test_run_needs_both_width_and_height(env):
@@ -405,8 +407,18 @@ def test_run_accepts_a_data_uri_and_refuses_external_urls(env):
 
 
 def test_run_missing_or_foreign_asset_is_an_error(env):
-    result = call(env, "run", {"target": "qwen-edit", "inputs": {"prompt": "x", "source_image": f"img_{'e' * 64}"}})
-    assert result["isError"] and "not found" in result["structuredContent"]["error"]
+    asset = f"img_{'e' * 64}"
+    result = call(env, "run", {"target": "qwen-edit", "inputs": {"prompt": "x", "source_image": asset}})
+    out = result["structuredContent"]
+    assert result["isError"] and out["error"].startswith("The file for input 'source_image' isn't available.")
+    assert "expired" not in out["error"] and asset not in out["error"] and out["asset_id"] == asset
+
+
+def test_core_error_without_a_message_is_unknown_not_a_code(env):
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(500, json={"error": {"code": "boom_code"}})
+    out = call(env, "run", {"target": "krea", "inputs": {"prompt": "x"}})["structuredContent"]
+    assert out["error"] == "We couldn't tell where this request stopped. Try again."
+    assert out["code"] == "boom_code" and out["layer"] == "unknown" and out["http_status"] == 500
 
 
 def test_run_speech_returns_a_stored_audio_link(env):

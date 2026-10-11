@@ -218,6 +218,9 @@ test("USAGE-03 anonymous people have distinct safe labels and retain filter IDs"
   expect(new Set(anonymous).size).toBe(3);
   expect(labels.join(" ")).not.toContain("@example.com");
   expect(labels).toContain("Mira");
+  // "self" is the person, not their apps (PF-183).
+  expect(labels).toContain("You");
+  expect(labels).not.toContain("Your apps");
   await user.click(
     options.find((option) => option.textContent === anonymous[1])!,
   );

@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 import yaml  # noqa: E402
 
 from gateway.capabilities import (  # noqa: E402
+    UNREVIEWED_WORKFLOW_CAVEAT,
     Capability,
     ResourceEstimate,
     capability_from_workflow_record,
@@ -215,7 +216,7 @@ class SummarizeCapabilityTests(unittest.TestCase):
             resources=ResourceEstimate(
                 gpu_required=True, vram_gb_estimate=12, duration_class="medium"
             ),
-            caveats=("workflow manifest is untrusted",),
+            caveats=(UNREVIEWED_WORKFLOW_CAVEAT,),
             policy_sources=("profile:image-agent", "policy:local-only"),
             policy_reasons=("workflow permitted", "no cloud fallback"),
         )
@@ -233,7 +234,7 @@ class SummarizeCapabilityTests(unittest.TestCase):
         self.assertEqual(client["resource_tier"], "batch")
         self.assertEqual(client["tags"], ["controlnet"])
         self.assertEqual(client["available"], True)
-        self.assertEqual(client["caveats"], ["workflow manifest is untrusted"])
+        self.assertEqual(client["caveats"], [UNREVIEWED_WORKFLOW_CAVEAT])
 
         for forbidden in (
             "backend",
@@ -343,7 +344,11 @@ class WorkflowDerivedCapabilityTests(unittest.TestCase):
         cap = capability_from_workflow_record(record, backend="a1111")
 
         self.assertEqual(cap.backend, "a1111")
-        self.assertIn("workflow manifest is untrusted", cap.caveats)
+        self.assertIn(UNREVIEWED_WORKFLOW_CAVEAT, cap.caveats)
+        # The flag is the manifest's own claim, so the caveat names no reviewer
+        # and no implementation noun, and gives one action.
+        self.assertEqual(UNREVIEWED_WORKFLOW_CAVEAT,
+                         "This workflow isn't marked as reviewed. Test it before you rely on it.")
 
     def test_backend_must_be_in_bindings(self) -> None:
         record = _record(CHAT_WORKFLOW_YAML)
