@@ -9,7 +9,7 @@ from test_browser_signin_cutover import browser_gateway, config
 from test_settings_revisions import client_store
 
 
-@pytest.mark.parametrize("name", ["Household accounts", "Google", "Vivid Fish", "", "é" * 80])
+@pytest.mark.parametrize("name", ["Household accounts", "Google", "River Library", "", "é" * 80])
 def test_config_loads_public_display_name(name):
     assert load_oidc_config({"display_name": name}).display_name == name
 
@@ -62,7 +62,7 @@ def test_env_name_and_database_override_reach_public_api(browser_gateway, monkey
     assert load_oidc_config(bootstrap, env={}).display_name == "Google"
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", replace(config(), display_name="Google"))
     assert client.get("/auth/api/options").json()["oidc_label"] == "Google"
-    admin_store.put_operator_setting("oidc_provider_config", {"display_name": "Vivid Fish"}, path=path)
-    assert client.get("/auth/api/options").json()["oidc_label"] == "Vivid Fish"
+    admin_store.put_operator_setting("oidc_provider_config", {"display_name": "River Library"}, path=path)
+    assert client.get("/auth/api/options").json()["oidc_label"] == "River Library"
     admin_store.put_operator_setting("oidc_provider_config", {"display_name": ""}, path=path)
     assert client.get("/auth/api/options").json()["oidc_label"] == "single sign-on"

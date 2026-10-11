@@ -65,7 +65,7 @@ it("shows one heading and a quiet loading state before options arrive", () => {
 it.each([
   "Household accounts",
   "Google",
-  "Vivid Fish",
+  "River Library",
   "single sign-on",
   "your identity provider",
   "",
