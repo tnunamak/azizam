@@ -22,8 +22,9 @@ export async function copyText(value: string): Promise<boolean> {
   } catch {
     // fall through to the legacy path
   }
-  const textarea = document.createElement("textarea");
+  let textarea: HTMLTextAreaElement | undefined;
   try {
+    textarea = document.createElement("textarea");
     textarea.value = value;
     textarea.setAttribute("readonly", "");
     textarea.className = "sr-only";
@@ -33,7 +34,7 @@ export async function copyText(value: string): Promise<boolean> {
   } catch {
     return false;
   } finally {
-    textarea.remove();
+    textarea?.remove();
   }
 }
 

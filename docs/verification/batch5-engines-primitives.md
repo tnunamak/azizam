@@ -69,3 +69,38 @@ alongside unknown fields and model mappings, and requires exact-name removal.
 Existing `engines-detect-apply.spec.ts` verifies routing through a strict
 fixture engine at desktop/phone widths and in light/dark themes.
 All browser work uses the fixture server at port 18640, never live state.
+
+## Check results (2026-10-10)
+
+- `npm --prefix web run lint`: passed, no warnings or errors.
+- `npx --prefix web tsc --noEmit -p web`: passed after the build completed.
+- `npm --prefix web run build`: passed, 26 static pages generated.
+- `npm --prefix web run test:components -- --maxWorkers=2`: 1,215 passed
+  across 92 files. The first unrestricted run timed out in two unrelated
+  Categories tests; the two-worker run kept their original timeouts/assertions.
+- The five focused component files (engine checks, service dialog, confirmation,
+  phone targets and clipboard cleanup): 24 passed after adding a second
+  clipboard-failure regression test.
+- Fixture Playwright: nine strict-engine detect/apply/routing checks passed;
+  all six focused primitive and real-registry journey checks passed on rerun.
+  The first combined run reached the real journey's last registry read and
+  timed out at 60 seconds; the unchanged journey passed in 49.3 seconds alone
+  with the focused tests. No timeout or assertion was weakened.
+- `scripts/run-hermetic-pytest.sh -q tests/test_service_registry.py
+  tests/test_web_ui_static_mount.py tests/test_browser_route_cutover.py`:
+  198 passed after commit `8c0d825e`.
+
+Browser command, from `web/`:
+
+```
+UI_E2E_PORT=18640 UI_E2E_PYTHON=/home/tnunamak/applications/azizam/venv/bin/python npx playwright test --config playwright.config.ts engines-primitives.spec.ts engines-real.spec.ts engines-detect-apply.spec.ts
+```
+
+Before screenshots are under `web/test-results/batch5-first-run/screens/`:
+`batch5-before-{engines,add}-{1440,390}.png`.
+After screenshots are under `web/test-results/screens/`:
+`batch5-after-{engines,add}-{1440,390}.png`.
+The final focused run uses the same fresh fixture seed as the before captures.
+
+Not checked: live backends, operator data, the complete Python suite, or
+Gallery/Showcase/server-rendered browser journeys. Those surfaces are unchanged.

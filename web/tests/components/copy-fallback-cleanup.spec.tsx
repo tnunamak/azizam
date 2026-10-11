@@ -3,6 +3,14 @@ import { copyText } from "@/components/ui/copy-button";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("reports failure if the fallback element cannot be created", async () => {
+  vi.stubGlobal("navigator", { clipboard: undefined });
+  vi.spyOn(document, "createElement").mockImplementationOnce(() => {
+    throw new Error("Document unavailable");
+  });
+  expect(await copyText("fixture-copy-text")).toBe(false);
+});
+
 it("removes the fallback textarea even when the browser throws", async () => {
   vi.stubGlobal("navigator", { clipboard: undefined });
   const original = Object.getOwnPropertyDescriptor(document, "execCommand");
