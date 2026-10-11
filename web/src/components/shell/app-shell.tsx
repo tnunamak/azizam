@@ -26,6 +26,7 @@ import {
   Moon,
   Play,
   ReceiptText,
+  Tags,
   CornerDownRight,
   Settings,
   Sun,
@@ -115,6 +116,7 @@ const icons: Record<string, LucideIcon> = {
   Engines: Cpu,
   Providers: Cloud,
   People: Users,
+  Categories: Tags,
   Activity: ReceiptText,
   Settings,
 };

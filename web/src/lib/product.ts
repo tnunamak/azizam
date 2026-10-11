@@ -78,6 +78,12 @@ export const destinations = [
     group: "Gateway",
   },
   {
+    title: "Categories",
+    href: "/categories",
+    answer: "Which category rules apply to people and apps?",
+    group: "Gateway",
+  },
+  {
     title: "Activity",
     href: "/activity",
     answer: "Who changed what, and when?",
