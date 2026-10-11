@@ -329,7 +329,7 @@ describe("integrated UI coherence", () => {
     renderWithQuery(<HomePage />);
     expect(
       await screen.findByText(
-        "Recent creations could not be loaded. Try again.",
+        "We couldn't tell why your recent creations didn't load. Try again.",
       ),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();

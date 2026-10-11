@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { chatAlias } from "../src/app/home/recipes";
 
 const homePath = "/ui/home/";
 const homeApi = "**/me/api/home";
@@ -278,8 +279,13 @@ for (const theme of ["light", "dark"] as const) {
             name: "Model",
             exact: true,
           });
-          if (aliases.some((alias: { id: string }) => alias.id === "default")) {
-            await expect(model).toHaveValue("default");
+          const recommended = snapshot.capabilities.find(
+            (row: { icon_key?: string; capability: string }) =>
+              (row.icon_key ?? row.capability) === "chat",
+          );
+          const expectedModel = chatAlias(aliases, recommended?.use_name ?? recommended?.model);
+          if (expectedModel) {
+            await expect(model).toHaveValue(expectedModel);
           } else {
             await expect(model).toHaveCount(0);
           }
@@ -301,8 +307,8 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
-            // D1.1: the shared verdict says nothing is set up; there is no
-            // task list to fake an empty "Make something".
+            await expect(page.getByText("Nothing is available yet.", { exact: true })).toBeVisible();
+            await expect(page.getByText("Your creations will appear here.")).toBeVisible();
             await expect(
               page
                 .locator("main")
@@ -314,7 +320,7 @@ for (const theme of ["light", "dark"] as const) {
                 name: "Make something",
                 exact: true,
               }),
-            ).toHaveCount(0);
+            ).toBeVisible();
             await expect(
               page.getByRole("heading", {
                 name: "Finish setting up",
@@ -334,7 +340,7 @@ for (const theme of ["light", "dark"] as const) {
           } else {
             await expect(
               page.getByRole("heading", { name: "Recent", exact: true }),
-            ).toHaveCount(0);
+            ).toBeVisible();
           }
           if (state === "seeded") {
             // D1.1: Recent tiles carry the prompt in the tile's name and
@@ -527,7 +533,7 @@ test("superadmin Home does not request the owner-only setup API", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Recent", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Finish setting up", exact: true }),
   ).toHaveCount(0);
@@ -563,7 +569,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Recent", exact: true }),
-      ).toHaveCount(0);
+      ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Finish setting up", exact: true }),
       ).toHaveCount(0);
@@ -849,7 +855,12 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     await expect(selector).toContainText("New key for Open WebUI");
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     await chooseRecipeKey(page, /Browser test app/);
-    await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
+    const allowedChat = chatAlias(snapshot.credential_aliases[broader.id]);
+    if (allowedChat) {
+      await expect(page.getByRole("textbox", { name: "Model" })).toHaveValue(allowedChat);
+    } else {
+      await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
+    }
 
     const mintedResponse = page.waitForResponse(
       (response) =>

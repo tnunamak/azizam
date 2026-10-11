@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -379,26 +380,13 @@ describe("Home audio Library navigation", () => {
 
 describe("Home connection check errors", () => {
   it.each([
-    {
-      failure: 401,
-      message:
-        "The gateway check could not finish. Check your key and try again.",
-    },
-    {
-      failure: 403,
-      message:
-        "The gateway check could not finish. Check your key and try again.",
-    },
-    {
-      failure: 500,
-      message: "The gateway check failed (HTTP 500). Try again.",
-    },
-    {
-      failure: "network",
-      // No HTTP answer: the cause is unknown, so no layer is named.
-      message: "Check failed. Try again.",
-    },
-  ])("HA-05 classifies $failure connection failures", async ({ failure, message }) => {
+    // The check runs through the session and the key, so an HTTP answer
+    // alone does not prove which layer stopped it.
+    { failure: 401, details: "HTTP 401" },
+    { failure: 403, details: "HTTP 403" },
+    { failure: 500, details: "HTTP 500" },
+    { failure: "network", details: null },
+  ])("HA-05 classifies $failure connection failures", async ({ failure, details }) => {
     const connectionTest = vi.fn(() => {
       if (typeof failure !== "number") {
         return Promise.reject(new TypeError("Failed to fetch"));
@@ -453,7 +441,16 @@ describe("Home connection check errors", () => {
       screen.getByRole("button", { name: "Check connection" }),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "We couldn't tell where the connection check stopped. Try again.",
+    );
+    if (details) {
+      expect(within(alert).getByText("Technical details")).toBeInTheDocument();
+      expect(alert).toHaveTextContent(details);
+    } else {
+      expect(alert).not.toHaveTextContent("HTTP");
+    }
     expect(connectionTest).toHaveBeenCalledOnce();
     const request = vi.mocked(fetch).mock.calls.find(
       ([input]) => String(input) === "/me/api/connection-test",

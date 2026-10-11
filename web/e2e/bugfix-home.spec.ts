@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const homeApi = "**/me/api/home";
 const setupApi = "**/admin/api/setup-progress";
-const mediaApi = "**/me/api/media?limit=4";
+const mediaApi = "**/me/api/media?limit=*";
 
 async function routeFocusedHome(page: Page) {
   await page.route(homeApi, (route) =>
@@ -15,7 +15,7 @@ async function routeFocusedHome(page: Page) {
         apps: [],
         aliases: [
           {
-            id: "default",
+            id: "renamed-paid-chat",
             operation: "chat.completions",
             available: true,
             status: "ready",
@@ -50,7 +50,7 @@ async function routeFocusedHome(page: Page) {
         credential_aliases: {},
         new_app_aliases: [
           {
-            id: "default",
+            id: "renamed-paid-chat",
             operation: "chat.completions",
             available: true,
             status: "ready",
@@ -140,3 +140,27 @@ function catalogRow(id: string, intent: string) {
     status: "ready",
   };
 }
+
+test("Home connects a renamed paid chat model without a default-model warning", async ({ page }) => {
+  await routeFocusedHome(page);
+  await page.goto("/ui/home/");
+  await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("renamed-paid-chat");
+  await expect(page.getByText(/This key has no chat models|default model/)).toHaveCount(0);
+  await expect(page.getByText("Your creations will appear here.")).toBeVisible();
+});
+
+test("Home explains a failed recent fetch and retries it", async ({ page }) => {
+  await routeFocusedHome(page);
+  let failed = true;
+  await page.route(mediaApi, (route) => route.fulfill(
+    failed ? { status: 503, json: {} } : { json: { assets: [], next_cursor: null } },
+  ));
+  await page.goto("/ui/home/");
+  const recent = page.getByRole("region", { name: "Recent", exact: true });
+  await expect(recent).toContainText("We couldn't tell why your recent creations didn't load. Try again.");
+  await expect(recent).not.toContainText("503");
+  failed = false;
+  await recent.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(recent).toContainText("Your creations will appear here.");
+});

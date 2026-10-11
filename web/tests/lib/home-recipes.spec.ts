@@ -18,37 +18,14 @@ describe("Home client recipes", () => {
     }
   });
 
-  it("uses only the recommended default chat alias for recipes", () => {
+  it("uses the gateway's recommended chat alias for recipes", () => {
+    const chat = { operation: "chat", available: true, status: "ready" as const, reason_code: "ready" };
     expect(chatAlias([])).toBeNull();
     expect(
-      chatAlias([
-        {
-          id: "utility-check",
-          operation: "chat",
-          available: true,
-          status: "ready",
-          reason_code: "ready",
-        },
-        {
-          id: "default",
-          operation: "chat",
-          available: true,
-          status: "ready",
-          reason_code: "ready",
-        },
-      ]),
-    ).toBe("default");
-    expect(
-      chatAlias([
-        {
-          id: "utility-check",
-          operation: "chat",
-          available: true,
-          status: "ready",
-          reason_code: "ready",
-        },
-      ]),
-    ).toBeNull();
+      chatAlias([{ ...chat, id: "utility-check" }, { ...chat, id: "house-chat" }], "house-chat"),
+    ).toBe("house-chat");
+    // No name is special: "default" is an ordinary alias.
+    expect(chatAlias([{ ...chat, id: "utility-check" }, { ...chat, id: "default" }])).toBe("utility-check");
   });
 });
 
@@ -95,14 +72,14 @@ describe.skipIf(process.platform === "win32")("Shell recipe escaping", () => {
 
 describe("Home local recipe fallback", () => {
   const alias = { operation: "chat", available: true, status: "ready" as const, reason_code: "ready" };
-  it("uses a permitted local chat alias when default is absent", () => {
+  it("prefers a permitted local chat alias when nothing is recommended", () => {
     expect(chatAlias([{ ...alias, id: "paid", local: false }, { ...alias, id: "local-chat", local: true }])).toBe("local-chat");
   });
-  it("never substitutes a paid or unclassified alias", () => {
-    expect(chatAlias([{ ...alias, id: "paid", local: false }, { ...alias, id: "unknown" }])).toBeNull();
+  it("uses an allowed paid or unclassified alias when no local one is allowed", () => {
+    expect(chatAlias([{ ...alias, id: "paid", local: false }, { ...alias, id: "unknown" }])).toBe("paid");
   });
-  it("retains the default preference and ignores non-chat aliases", () => {
-    expect(chatAlias([{ ...alias, id: "local-chat", local: true }, { ...alias, id: "default" }])).toBe("default");
+  it("skips unavailable aliases and ignores non-chat aliases", () => {
+    expect(chatAlias([{ ...alias, id: "off", local: true, available: false }, { ...alias, id: "on" }])).toBe("on");
     expect(chatAlias([{ ...alias, id: "images", operation: "images", local: true }])).toBeNull();
   });
 });

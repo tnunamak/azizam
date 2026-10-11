@@ -19,15 +19,20 @@ function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\"'\"'") + "'";
 }
 
-export function chatAlias(aliases: HomeAlias[]): string | null {
+export function chatAlias(
+  aliases: HomeAlias[],
+  recommended?: string | null,
+): string | null {
   const chat = aliases.filter((alias) =>
+    alias.available === true &&
     ["chat.generate", "chat", "chat.completions"].includes(alias.operation),
   );
+  // The gateway's recommendation first; otherwise prefer a local model so a
+  // recipe does not quietly spend on a provider when a free one is allowed.
   return (
-    chat.find((alias) => alias.id === "default" && alias.available)?.id ??
-    chat.find((alias) => alias.id === "default")?.id ??
-    chat.find((alias) => alias.local === true && alias.available)?.id ??
+    chat.find((alias) => alias.id === recommended)?.id ??
     chat.find((alias) => alias.local === true)?.id ??
+    chat[0]?.id ??
     null
   );
 }

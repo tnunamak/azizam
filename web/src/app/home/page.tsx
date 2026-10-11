@@ -79,6 +79,7 @@ import {
   hasHomeCreationContent,
 } from "./home-api";
 import { chatAlias, recipeFor, type Client } from "./recipes";
+import { capabilityTiles } from "./presentation";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -299,14 +300,36 @@ function Tasks({
   views,
   models,
   receipts,
+  owner,
+  statusExplains,
 }: {
   views: CapabilityView[];
   models: Record<string, string | undefined>;
   receipts: HomeReceipt[];
+  owner: boolean;
+  /** The status line already gives the next step for "nothing is on". */
+  statusExplains: boolean;
 }) {
   const byKey = new Map(views.map((view) => [view.key, view]));
   const tasks = TASKS.filter((task) => byKey.has(task.key));
-  if (!tasks.length) return null;
+  if (!tasks.length) return (
+    <section aria-labelledby="tasks-heading">
+      <SectionHeading id="tasks-heading" title="Make something" />
+      <p className="text-muted-foreground text-meta">
+        Nothing is available yet.
+        {statusExplains ? null : owner ? (
+          <>
+            {" "}
+            <Link href="/engines/" className="text-link font-medium underline-offset-4 hover:underline">
+              Add an engine
+            </Link>
+          </>
+        ) : (
+          " Ask the gateway owner for access."
+        )}
+      </p>
+    </section>
+  );
   const uses = taskUse(receipts);
   const usable = (task: Task) => USABLE.has(byKey.get(task.key)!.state);
   // Most-used first, then the fixed order; only usable tasks are favourites.
@@ -441,6 +464,7 @@ function Connect({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [testHttpStatus, setTestHttpStatus] = useState<number | null>(null);
   const keys = home.apps
     .flatMap((app) =>
       app.credentials.map((key) => ({
@@ -457,7 +481,16 @@ function Connect({
     selectedCredentialId === "new"
       ? (home.new_app_aliases ?? [])
       : (home.credential_aliases?.[selectedCredentialId] ?? []);
-  const model = chatAlias(scopedAliases);
+  const recommendedChat = capabilityTiles(home.capabilities, home.aliases).find(
+    (row) => (row.icon_key ?? row.capability) === "chat",
+  );
+  const model = chatAlias(
+    scopedAliases,
+    recommendedChat?.use_name ?? recommendedChat?.model,
+  );
+  const hasChatAccess = scopedAliases.some((alias) =>
+    ["chat.generate", "chat", "chat.completions"].includes(alias.operation),
+  );
   const loadingKeyAccess =
     creating &&
     selectedCredentialId !== "new" &&
@@ -498,7 +531,7 @@ function Connect({
       await queryClient.invalidateQueries({ queryKey: ["account", "session"] });
     } catch {
       setKeyError(
-        "Your key could not be created. Try again to finish connecting this app.",
+        "We couldn't tell where key creation stopped. Try again.",
       );
     } finally {
       setCreating(false);
@@ -510,6 +543,7 @@ function Connect({
     if (!secret || testing || selectedCredentialId === "new") return;
     setTesting(true);
     setTestError(null);
+    setTestHttpStatus(null);
     setTestResult(null);
     try {
       setTestResult(await homeApi.test(secret, selectedCredentialId));
@@ -518,13 +552,8 @@ function Connect({
         queryClient.invalidateQueries({ queryKey: setupKey }),
       ]);
     } catch (error) {
-      setTestError(
-        error instanceof ApiError
-          ? error.status === 401 || error.status === 403
-            ? "The gateway check could not finish. Check your key and try again."
-            : `The gateway check failed (HTTP ${error.status}). Try again.`
-          : "Check failed. Try again.",
-      );
+      setTestError("We couldn't tell where the connection check stopped. Try again.");
+      setTestHttpStatus(error instanceof ApiError ? error.status : null);
     } finally {
       setTesting(false);
     }
@@ -773,12 +802,9 @@ function Connect({
           ) : !model ? (
             <div className="bg-muted rounded-control text-meta p-4">
               <p className="font-medium">
-                This key does not include the default model
-              </p>
-              <p className="text-muted-foreground mt-1">
-                Choose another key, or ask{" "}
-                {home.gateway?.owner_name?.trim() || "the owner"} to update this
-                app’s access.
+                {hasChatAccess
+                  ? "Chat is unavailable right now. Try again later."
+                  : "This key has no chat models. Choose another key or ask the owner to update its access."}
               </p>
             </div>
           ) : null}
@@ -820,9 +846,15 @@ function Connect({
             </div>
           )}
           {testError && (
-            <p role="alert" className="text-destructive text-meta">
-              {testError}
-            </p>
+            <div role="alert" className="text-destructive text-meta">
+              <p>{testError}</p>
+              {testHttpStatus !== null && (
+                <details className="mt-2">
+                  <summary>Technical details</summary>
+                  <p>HTTP {testHttpStatus}</p>
+                </details>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -901,11 +933,13 @@ function CreationMedia({
     posterQueryPending &&
     !posterFailed;
   const [videoFailed, setVideoFailed] = useState(false);
-  const [audioError, setAudioError] = useState<"media" | "playback" | null>(
+  const [audioError, setAudioError] = useState<"media" | "playback" | "unavailable" | null>(
     null,
   );
   const [audioSrc, setAudioSrc] = useState(creation.download_url ?? undefined);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const audioLoadLock = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const resetKey = `${creation.asset_id}:${creation.download_url ?? ""}:${posterUrl ?? ""}`;
@@ -992,11 +1026,15 @@ function CreationMedia({
         src={audioSrc}
         visible={visible}
         status={
-          audioError ? (
+          audioLoading ? (
+            <span role="status">Loading audio…</span>
+          ) : audioError ? (
             <span role="status" className="text-destructive">
-              {audioError === "media"
-                ? "Audio preview unavailable. Play to retry."
-                : "Playback didn't start. Try again."}
+              {audioError === "unavailable"
+                ? "Audio isn't available. Open it in Library."
+                : audioError === "media"
+                  ? "Audio preview unavailable. Play to retry."
+                  : "Playback didn't start. Try again."}
             </span>
           ) : null
         }
@@ -1022,21 +1060,26 @@ function CreationMedia({
               type="button"
               // On a phone the tile opens the clip in Library instead.
               className={cn(playDiscButton, "max-sm:hidden")}
-              aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
+              disabled={audioLoading || audioError === "unavailable"}
+              aria-label={audioLoading ? "Loading audio…" : `${isPlaying ? "Pause" : "Play"} ${title}`}
               onClick={async () => {
                 const audio = audioRef.current;
-                if (!audio) return;
+                if (!audio || audioLoadLock.current || audioError === "unavailable") return;
                 if (isPlaying) audio.pause();
                 else {
+                  audioLoadLock.current = true;
+                  setAudioLoading(true);
                   try {
                     if (audioError === "media") {
                       const renewed = await homeApi.mediaDownload(
                         creation.asset_id,
                       );
-                      if (renewed.download_url) {
-                        setAudioSrc(renewed.download_url);
-                        audio.src = renewed.download_url;
+                      if (!renewed.download_url?.trim()) {
+                        setAudioError("unavailable");
+                        return;
                       }
+                      setAudioSrc(renewed.download_url);
+                      audio.src = renewed.download_url;
                       audio.load();
                     }
                     await audio.play();
@@ -1048,6 +1091,9 @@ function CreationMedia({
                         ? "media"
                         : "playback",
                     );
+                  } finally {
+                    audioLoadLock.current = false;
+                    setAudioLoading(false);
                   }
                 }
               }}
@@ -1072,6 +1118,7 @@ function CreationMedia({
     >
       <Icon aria-hidden="true" className="size-6" />
       <p className="text-badge">Preview unavailable</p>
+      <p className="text-badge underline">Open in Library</p>
     </div>
   );
 }
@@ -1184,14 +1231,6 @@ function Recent({
     .filter(hasHomeCreationContent)
     .filter((creation) => creation.available !== false)
     .slice(0, 4);
-  if (
-    !creationsPending &&
-    !creationsError &&
-    recentCreations.length === 0 &&
-    !making.length
-  ) {
-    return null;
-  }
   return (
     <section aria-labelledby="recent-heading">
       <SectionHeading
@@ -1223,12 +1262,15 @@ function Recent({
         </div>
       ) : creationsError ? (
         <ErrorState
-          message="Recent creations could not be loaded. Try again."
+          message="We couldn't tell why your recent creations didn't load. Try again."
           onRetry={() => void refetchCreations()}
           retrying={creationsFetching}
         />
       ) : (
         <>
+          {!recentCreations.length && !making.length && !creations?.partial ? (
+            <p className="text-muted-foreground text-meta">Your creations will appear here.</p>
+          ) : null}
           {creations?.partial ? (
             <p role="status" className="text-muted-foreground text-meta mb-2">
               Recent results may be incomplete.
@@ -1322,7 +1364,7 @@ export default function HomePage() {
   );
   const models: Record<string, string | undefined> = {};
   if (home && home.authenticated)
-    for (const row of home.capabilities)
+    for (const row of capabilityTiles(home.capabilities, home.aliases))
       models[row.icon_key ?? row.capability] ??=
         row.use_name ?? row.model ?? undefined;
   return (
@@ -1437,6 +1479,8 @@ export default function HomePage() {
                 views={views}
                 models={models}
                 receipts={home.receipts ?? []}
+                owner={isOwner}
+                statusExplains={verdict.tone === "off"}
               />
             </div>
             {/* Top aligned with the first list, under its section heading. */}

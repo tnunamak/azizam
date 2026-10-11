@@ -63,6 +63,12 @@ function jsxSelection(node: ts.JsxAttribute): boolean {
   );
 }
 
+function selectionComparison(target: ts.PropertyAccessExpression): boolean {
+  const owner = target.expression.getText();
+  return (target.name.text === "id" && /(?:alias|model|voice)$/i.test(owner)) ||
+    /^(?:use_name|model|voice|default_voice)$/.test(target.name.text);
+}
+
 function hardcodedSelections(source: string, file: string): string[] {
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -157,6 +163,18 @@ function hardcodedSelections(source: string, file: string): string[] {
       if (name && selectionProperty.test(name))
         for (const value of values(node.right)) report(node, `${name}=${JSON.stringify(value)}`);
     }
+    // A branch on an alias, model or voice name gives that name product meaning.
+    if (ts.isBinaryExpression(node) && [
+      ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+      ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken,
+    ].includes(node.operatorToken.kind)) {
+      for (const [side, other] of [[node.left, node.right], [node.right, node.left]]) {
+        const value = literal(other);
+        if (value && !FILTER_SENTINELS.has(value) &&
+            ts.isPropertyAccessExpression(side) && selectionComparison(side))
+          report(node, `${side.getText(parsed)}===${JSON.stringify(value)}`);
+      }
+    }
     if (ts.isJsxAttribute(node) && jsxSelection(node)) {
       for (const value of values(node.initializer))
         report(node, `${node.name.getText()}=${JSON.stringify(value)}`);
@@ -183,6 +201,14 @@ it("catches new model and voice literals without an ID denylist", () => {
     const other = <ModelPicker value={"fourth-model"} />;
   `, "mutation.tsx");
   expect(findings).toHaveLength(6);
+});
+
+it.each([
+  'const chosen = chat.find((alias) => alias.id === "default");',
+  'if ("tts" !== row.use_name) skip();',
+  'const local = selectedModel.id == "fast";',
+])("rejects a branch on a literal alias, model or voice name: %s", (source) => {
+  expect(hardcodedSelections(source, "mutation.tsx")).toHaveLength(1);
 });
 
 it.each([

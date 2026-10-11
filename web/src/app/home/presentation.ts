@@ -35,44 +35,6 @@ const operations: Record<string, string[]> = {
   rerank: ["rerank", "text.rerank"],
   audio: ["audio_generate", "audio", "audio.generate"],
 };
-const representativeUseNames: Record<string, string[]> = {
-  chat: ["default"],
-  image: ["image"],
-  video: ["video"],
-  voice: ["speech", "tts"],
-  speech: ["speech", "tts"],
-  music: ["music"],
-  sfx: ["sfx"],
-  transcribe: ["transcribe", "stt"],
-  decide: ["decide"],
-  embed: ["embed"],
-  rerank: ["rerank"],
-  audio: ["audio"],
-};
-
-function representativeRank(capability: string, row: HomeCapability): number {
-  const names = representativeUseNames[capability] ?? [];
-  const useNames = [row.use_name, row.model, ...(row.use_names ?? [])].filter(
-    Boolean,
-  );
-  const index = useNames.reduce((best, name) => {
-    const current = names.indexOf(String(name));
-    return current < 0 ? best : Math.min(best, current);
-  }, Number.POSITIVE_INFINITY);
-  return index;
-}
-
-function representativeAlias(capability: string, aliases: HomeAlias[]) {
-  const names = representativeUseNames[capability] ?? [];
-  for (const name of names) {
-    const alias = aliases.find(
-      (item) =>
-        item.id === name && operations[capability]?.includes(item.operation),
-    );
-    if (alias) return alias;
-  }
-  return null;
-}
 
 /** A capability tile describes a generation alias, never an incidental workflow. */
 export function capabilityTiles(
@@ -101,17 +63,14 @@ export function capabilityTiles(
     ].toSorted((a, b) => order.indexOf(a) - order.indexOf(b));
     return kinds.flatMap((kind) => {
       const rows = capabilities.filter((row) => row.capability === kind);
-      const row = rows.toSorted(
-        (a, b) => representativeRank(kind, a) - representativeRank(kind, b),
-      )[0];
-      return Number.isFinite(representativeRank(kind, row))
-        ? [{ ...row, model: row.use_name ?? row.model }]
-        : [];
+      // Home rows are advertised in recommendation order; names are opaque.
+      const row = rows[0];
+      return row ? [{ ...row, model: row.use_name ?? row.model }] : [];
     });
   }
   return Object.entries(operations).flatMap<HomeCapability>(
     ([capability, intents]) => {
-      const alias = representativeAlias(capability, aliases);
+      const alias = aliases.find((item) => intents.includes(item.operation));
       if (alias)
         return [
           {
