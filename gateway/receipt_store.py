@@ -107,25 +107,33 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def _exec_schema(conn: sqlite3.Connection) -> None:
     # Add columns before creating their indexes. Existing history stays intact;
     # a missing owning-App id remains NULL and is excluded from member feeds.
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
-    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    db_version = int(row[0]) if row is not None else None
-    if db_version is not None and db_version > SCHEMA_VERSION:
-        raise sqlite3.DatabaseError(
-            f"receipt_store schema version mismatch: db={db_version} "
-            f"code={SCHEMA_VERSION} (downgrade not supported)"
-        )
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}
-    if columns:
-        for column in ("protocol", "intent", "path", "app_profile", "app_id",
-                       "api_key_name", "status", "job_id", "parent_request_id"):
-            if column not in columns:
-                conn.execute(f"ALTER TABLE receipts ADD COLUMN {column} TEXT")
+    # Inspect and add columns under one write lock: a second initializer waits,
+    # then sees the columns instead of failing on a duplicate ALTER. The
+    # CREATE ... IF NOT EXISTS script after the commit is safe to repeat.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
+        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        db_version = int(row[0]) if row is not None else None
+        if db_version is not None and db_version > SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"receipt_store schema version mismatch: db={db_version} "
+                f"code={SCHEMA_VERSION} (downgrade not supported)"
+            )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}
+        if columns:
+            for column in ("protocol", "intent", "path", "app_profile", "app_id",
+                           "api_key_name", "status", "job_id", "parent_request_id"):
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE receipts ADD COLUMN {column} TEXT")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     conn.executescript(_SCHEMA)
-    if db_version is None:
-        conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
-    else:
-        conn.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM schema_version")  # one row, even after concurrent first runs
+    conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
     conn.commit()
 
     # This additive metadata survives retention changes without recreating v2

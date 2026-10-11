@@ -59,6 +59,47 @@ class TestReceiptStore(unittest.TestCase):
         receipt_store.init_db(self.db)
         self.assertEqual(receipt_store.schema_version(self.db), receipt_store.SCHEMA_VERSION)
 
+    def test_concurrent_legacy_upgrades_both_succeed(self) -> None:
+        import sqlite3
+        import threading
+        from unittest.mock import patch
+
+        legacy = Path(self.tmp.name) / "legacy.db"
+        with sqlite3.connect(str(legacy)) as con:
+            con.executescript(
+                "CREATE TABLE receipts (request_id TEXT PRIMARY KEY, created_at "
+                "INTEGER NOT NULL, app_profile TEXT, receipt_json TEXT NOT NULL);"
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);"
+                "INSERT INTO schema_version(version) VALUES (1);"
+                "INSERT INTO receipts VALUES ('req_old', 1, 'p', '{}');"
+            )
+        errors = []
+        def second_initializer():
+            try:
+                with sqlite3.connect(str(legacy), timeout=10) as conn:
+                    receipt_store._exec_schema(conn)
+            except Exception as error:  # noqa: BLE001
+                errors.append(error)
+        other = threading.Thread(target=second_initializer)
+
+        class StartOtherAfterInspection(sqlite3.Connection):
+            def execute(self, sql, *args):
+                result = super().execute(sql, *args)
+                if sql.startswith("PRAGMA table_info(receipts)") and not other.is_alive() and other.ident is None:
+                    other.start()  # it inspects while this initializer is mid-upgrade
+                    other.join(timeout=0.3)
+                return result
+
+        with sqlite3.connect(str(legacy), factory=StartOtherAfterInspection) as conn:
+            receipt_store._exec_schema(conn)
+        other.join(timeout=15)
+        self.assertEqual(errors, [])
+        with sqlite3.connect(str(legacy)) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchall(),
+                             [(receipt_store.SCHEMA_VERSION,)])
+            self.assertEqual(conn.execute("SELECT request_id, receipt_json FROM receipts").fetchall(),
+                             [("req_old", "{}")])
+
     def test_upgrade_keeps_unattributed_history_out_of_member_feeds(self) -> None:
         import sqlite3
 
