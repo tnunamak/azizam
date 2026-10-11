@@ -22106,64 +22106,64 @@ async def _submit_audio_media_job(
 ) -> Response:
     auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
     if isinstance(auth_context, Response):
-return auth_context
+        return auth_context
 
     policy_response = _enforce_runtime_route_policy(
-auth_context,
-"/gateway/v1/media/jobs",
-policy=_audio_media_job_policy(),
+        auth_context,
+        "/gateway/v1/media/jobs",
+        policy=_audio_media_job_policy(),
     )
     if policy_response is not None:
-return policy_response
+        return policy_response
 
     profile = _profile_for_auth_context(auth_context)
     request_id = f"audjob_{uuid.uuid4().hex}"
     workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
     if not workflow_name:
-requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
-return model_compatibility_error(
-    ModelCompatibilityError(
-        f"Model '{requested_model}' is not available for audio generation.",
-        code="model_not_found",
-    )
-)
+        requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{requested_model}' is not available for audio generation.",
+                code="model_not_found",
+            )
+        )
     requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
     manifest = _load_audio_workflow_manifest(workflow_name)
     policy_decision = evaluate_and_apply(
-auth_context.identity,
-make_policy_request(
-    protocol="openai.audio",
-    intent=intent,
-    model=str(requested_model) if requested_model is not None else None,
-    workflow=f"audio.generate.{workflow_name}",
-    backend="comfyui",
-    capability_exposure="default",
-    capability_trust_tier="stable",
-    capability_resource_tier="batch",
-),
+        auth_context.identity,
+        make_policy_request(
+            protocol="openai.audio",
+            intent=intent,
+            model=str(requested_model) if requested_model is not None else None,
+            workflow=f"audio.generate.{workflow_name}",
+            backend="comfyui",
+            capability_exposure="default",
+            capability_trust_tier="stable",
+            capability_resource_tier="batch",
+        ),
     )
     if policy_decision.denied:
-return _policy_denied_response(policy_decision)
+        return _policy_denied_response(policy_decision)
     admission_response = _media_job_admission_response(intent, auth_context=auth_context)
     if admission_response is not None:
-return admission_response
+        return admission_response
     target_decision = _workflow_target_policy_decision(
-auth_context,
-requested=str(requested_model) if requested_model is not None else None,
-resolved=workflow_name,
-manifest=manifest,
-extra_ids=(f"audio.generate.{workflow_name}",),
+        auth_context,
+        requested=str(requested_model) if requested_model is not None else None,
+        resolved=workflow_name,
+        manifest=manifest,
+        extra_ids=(f"audio.generate.{workflow_name}",),
     )
     if target_decision is not None and target_decision.denied:
-return _policy_denied_response(target_decision)
+        return _policy_denied_response(target_decision)
     job = audio_media_jobs.audio_job_from_request(
-body,
-request_id=request_id,
-workflow=f"audio.generate.{workflow_name}",
-backend="comfyui",
-app_profile=profile.id,
-api_key_name=auth_context.identity.name if auth_context.identity else None,
-parent_request_id=request_id,
+        body,
+        request_id=request_id,
+        workflow=f"audio.generate.{workflow_name}",
+        backend="comfyui",
+        app_profile=profile.id,
+        api_key_name=auth_context.identity.name if auth_context.identity else None,
+        parent_request_id=request_id,
     )
     job.intent = intent
     metadata = dict(job.metadata or {})
@@ -22171,44 +22171,44 @@ parent_request_id=request_id,
     job.metadata = metadata
 
     try:
-_persist_audio_media_job_payload(
-    job.job_id,
-    body=body,
-    request=request,
-    auth_context=auth_context,
-)
-job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
-job.app_id = auth_context.identity.app_id if auth_context.identity else None
-created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
+        _persist_audio_media_job_payload(
+            job.job_id,
+            body=body,
+            request=request,
+            auth_context=auth_context,
+        )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
+        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH)
     except EphemeralMediaPayloadCapacityError:
-_delete_audio_media_job_payload(job.job_id)
-return _ephemeral_media_payload_busy_response()
+        _delete_audio_media_job_payload(job.job_id)
+        return _ephemeral_media_payload_busy_response()
     except Exception as exc:  # noqa: BLE001
-_delete_audio_media_job_payload(job.job_id)
-return Response(
-    content=json.dumps({
-        "error": {
-            "message": f"Could not create audio media job: {type(exc).__name__}",
-            "type": "api_error",
-        }
-    }),
-    status_code=500,
-    media_type="application/json",
-)
+        _delete_audio_media_job_payload(job.job_id)
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": f"Could not create audio media job: {type(exc).__name__}",
+                    "type": "api_error",
+                }
+            }),
+            status_code=500,
+            media_type="application/json",
+        )
 
     try:
-media_jobs.append_event(
-    job.job_id,
-    "queued",
-    {
-        "phase": "queued",
-        "status": media_jobs.STATUS_QUEUED,
-        "progress": 0,
-    },
-    path=media_jobs.DB_PATH,
-)
+        media_jobs.append_event(
+            job.job_id,
+            "queued",
+            {
+                "phase": "queued",
+                "status": media_jobs.STATUS_QUEUED,
+                "progress": 0,
+            },
+            path=media_jobs.DB_PATH,
+        )
     except Exception:
-pass
+        pass
     _schedule_audio_media_job(job.job_id)
     return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
