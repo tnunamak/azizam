@@ -16,7 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { EmptyOperationalState, IncidentBanner } from "@/components/ui/operational";
+import { EmptyState } from "@/components/product/empty-state";
+import { Callout } from "@/components/product/status-ui";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -169,7 +170,7 @@ export function AddServiceDialogContent({
   if (loading) {
     return (
       <DialogContent
-        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocus.current?.focus();
@@ -183,7 +184,7 @@ export function AddServiceDialogContent({
         </DialogHeader>
         <div
           data-slot="dialog-body"
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+          className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
         >
           <div className="flex flex-col gap-3" aria-busy="true">
             <Skeleton aria-hidden="true" className="h-10 w-full" />
@@ -197,7 +198,7 @@ export function AddServiceDialogContent({
   if (error) {
     return (
       <DialogContent
-        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocus.current?.focus();
@@ -211,12 +212,13 @@ export function AddServiceDialogContent({
         </DialogHeader>
         <div
           data-slot="dialog-body"
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+          className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
         >
-          <IncidentBanner
-            tone="bad"
+          <Callout
+            as="div"
+            severity="critical"
             title="Could not load engine presets"
-            detail={errorMessage(error)}
+            meta={errorMessage(error)}
             actions={
               <Button
                 variant="outline"
@@ -235,7 +237,7 @@ export function AddServiceDialogContent({
   if (!presets.length) {
     return (
       <DialogContent
-        className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+        className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocus.current?.focus();
@@ -249,11 +251,11 @@ export function AddServiceDialogContent({
         </DialogHeader>
         <div
           data-slot="dialog-body"
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+          className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
         >
-          <EmptyOperationalState
+          <EmptyState
             title="No engine presets available"
-            detail="Add or restore a preset through the gateway configuration, then try again."
+            description="Add or restore a preset through the gateway configuration, then try again."
           />
         </div>
       </DialogContent>
@@ -261,7 +263,7 @@ export function AddServiceDialogContent({
   }
   return (
     <DialogContent
-      className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden"
+      className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden"
       onCloseAutoFocus={(event) => {
         event.preventDefault();
         returnFocus.current?.focus();
@@ -270,23 +272,23 @@ export function AddServiceDialogContent({
       <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
         <DialogHeader className="shrink-0 gap-1.5 pr-8 text-left">
           <DialogTitle>Add engine</DialogTitle>
+        </DialogHeader>
+        <div
+          data-slot="dialog-body"
+          className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
+        >
           <DialogDescription>
             Register an upstream engine. Select one API-supplied preset before
             entering its connection details. Changes apply live — no restart
             needed.
           </DialogDescription>
-        </DialogHeader>
-        <div
-          data-slot="dialog-body"
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
-        >
           <div className="flex flex-col gap-4">
             {formError && (
               <p
                 ref={errorSummaryRef}
                 role="alert"
                 tabIndex={-1}
-                className="text-[length:var(--text-sm)] text-danger"
+                className="text-danger text-[length:var(--text-sm)]"
               >
                 {formError}
               </p>
@@ -305,7 +307,7 @@ export function AddServiceDialogContent({
                 disabled={save.isPending}
                 required
               >
-                <SelectTrigger aria-label="Preset">
+                <SelectTrigger className="w-full min-w-0" aria-label="Preset">
                   <SelectValue placeholder="Select a preset" />
                 </SelectTrigger>
                 <SelectContent>
@@ -362,7 +364,7 @@ export function AddServiceDialogContent({
               Test connection
             </Button>
             {probe && (
-              <div className="rounded-[var(--radius)] flex items-center gap-2 border px-3 py-2 text-sm">
+              <div className="flex items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-sm">
                 <span>
                   {probe.ok
                     ? `Connected (HTTP ${probe.status ?? "ok"}) — ${probe.url}`

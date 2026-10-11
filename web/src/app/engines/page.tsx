@@ -29,7 +29,8 @@ import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
-import { EmptyOperationalState, IncidentBanner } from "@/components/ui/operational";
+import { EmptyState } from "@/components/product/empty-state";
+import { Callout } from "@/components/product/status-ui";
 import { Input } from "@/components/ui/input";
 import {
   OverflowMenu,
@@ -277,7 +278,7 @@ function EditEngineDialog({
         <div ref={formRef} className="space-y-6 px-4 pb-4">
           <label
             htmlFor={`engine-enabled-${service.id}`}
-            className="flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta"
+            className="text-meta flex min-h-8 items-center gap-3 max-sm:min-h-11"
           >
             <Switch
               id={`engine-enabled-${service.id}`}
@@ -313,12 +314,16 @@ function EditEngineDialog({
               }
             />
           </fieldset>
-          <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col space-y-4">
+          <form
+            onSubmit={submit}
+            className="flex min-h-0 flex-1 flex-col space-y-4"
+          >
             {error && (
-              <IncidentBanner
-                tone="bad"
+              <Callout
+                as="div"
+                severity="critical"
                 title="Engine could not be saved"
-                detail={error}
+                meta={error}
               />
             )}
             <Field label="Name" required>
@@ -346,7 +351,7 @@ function EditEngineDialog({
               />
             </Field>
             <details>
-              <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
+              <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
                 Connection and models
               </summary>
               <dl className="grid gap-3 py-2">
@@ -357,7 +362,9 @@ function EditEngineDialog({
                   <dd className="text-meta">{modelNames(service)}</dd>
                 </div>
                 <div>
-                  <dt className="text-meta text-muted-foreground">Capabilities</dt>
+                  <dt className="text-meta text-muted-foreground">
+                    Capabilities
+                  </dt>
                   <dd className="text-meta">
                     {service.capabilities.map(humanCapability).join(", ")}
                   </dd>
@@ -365,11 +372,11 @@ function EditEngineDialog({
               </dl>
             </details>
             <details>
-              <summary className="flex min-h-8 max-sm:min-h-11 cursor-pointer items-center text-meta font-medium">
+              <summary className="text-meta flex min-h-8 cursor-pointer items-center font-medium max-sm:min-h-11">
                 Advanced fields
               </summary>
               {service.editable === false ? (
-                <pre className="text-meta rounded-control mt-3 max-h-72 overflow-auto bg-muted p-3 font-mono">
+                <pre className="text-meta rounded-control bg-muted mt-3 max-h-72 overflow-auto p-3 font-mono">
                   {JSON.stringify(service.config, null, 2)}
                 </pre>
               ) : (
@@ -387,12 +394,7 @@ function EditEngineDialog({
               )}
             </details>
             <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                size="md"
-                type="button"
-                variant="ghost"
-                onClick={onClose}
-              >
+              <Button size="md" type="button" variant="ghost" onClick={onClose}>
                 Cancel
               </Button>
               <Button
@@ -424,6 +426,7 @@ function EnginesContents() {
   const [editTarget, setEditTarget] = useState<Service | null>(null);
   const editInvoker = useRef<HTMLElement | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
+  const removeInvoker = useRef<HTMLElement | null>(null);
 
   function openEditor(service: Service) {
     const row = document.querySelector<HTMLElement>(
@@ -540,17 +543,27 @@ function EnginesContents() {
     ).join(", ");
     const title = displayName(service);
     const stateKey =
-      !service.enabled || serviceState.label === "Disabled" ? "off"
-        : ["Ready", "Ready to start", "Standby, stopped"].includes(serviceState.label) ? "ready"
-        : ["Busy", "Starting"].includes(serviceState.label) ? "busy"
-        : serviceState.tone === "bad" ? "down"
-        : serviceState.tone === "warn" ? "degraded"
-        : "unknown";
+      !service.enabled || serviceState.label === "Disabled"
+        ? "off"
+        : ["Ready", "Ready to start", "Standby, stopped"].includes(
+              serviceState.label,
+            )
+          ? "ready"
+          : ["Busy", "Starting"].includes(serviceState.label)
+            ? "busy"
+            : serviceState.tone === "bad"
+              ? "down"
+              : serviceState.tone === "warn"
+                ? "degraded"
+                : "unknown";
     // Use the poller's record time, never the payload generation time.
-    const observedAt = (backend as { observed_at_s?: number | null } | undefined)
-      ?.observed_at_s;
+    const observedAt = (
+      backend as { observed_at_s?: number | null } | undefined
+    )?.observed_at_s;
     const checkedAt =
-      typeof observedAt === "number" && Number.isFinite(observedAt) && observedAt > 0
+      typeof observedAt === "number" &&
+      Number.isFinite(observedAt) &&
+      observedAt > 0
         ? observedAt
         : null;
     return (
@@ -564,7 +577,7 @@ function EnginesContents() {
         <TableCell className="w-full max-w-0 py-1!">
           <button
             type="button"
-            className="flex min-h-8 max-sm:min-h-11 w-full min-w-0 flex-col justify-center text-left"
+            className="flex min-h-8 w-full min-w-0 flex-col justify-center text-left max-sm:min-h-11"
             onClick={() => openEditor(service)}
           >
             <div className="flex min-w-0 items-center gap-2">
@@ -577,7 +590,11 @@ function EnginesContents() {
                 ) : (
                   <StateBadge
                     state={stateKey}
-                    word={stateKey === "off" ? undefined : serviceState.label || undefined}
+                    word={
+                      stateKey === "off"
+                        ? undefined
+                        : serviceState.label || undefined
+                    }
                   />
                 )}
               </span>
@@ -611,7 +628,12 @@ function EnginesContents() {
                 <OverflowMenuSeparator />
                 <OverflowMenuItem
                   danger
-                  onSelect={() => setRemoveTarget(service)}
+                  onSelect={() => {
+                    removeInvoker.current = document.querySelector<HTMLElement>(
+                      `[data-engine-id="${CSS.escape(service.id)}"] button[aria-haspopup='menu']`,
+                    );
+                    setRemoveTarget(service);
+                  }}
                 >
                   Remove engine
                 </OverflowMenuItem>
@@ -637,10 +659,11 @@ function EnginesContents() {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title="Engines" />
-        <IncidentBanner
-          tone="bad"
+        <Callout
+          as="div"
+          severity="critical"
           title="Engine list could not be loaded"
-          detail={`Each engine's state is unknown. ${errorMessage(registryError)}`}
+          meta={`Each engine's state is unknown. ${errorMessage(registryError)}`}
           actions={
             <Button
               variant="outline"
@@ -676,7 +699,7 @@ function EnginesContents() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <label
             htmlFor="show-not-in-use-engines"
-            className="flex min-h-8 max-sm:min-h-11 items-center gap-3 text-meta"
+            className="text-meta flex min-h-8 items-center gap-3 max-sm:min-h-11"
           >
             <Switch
               id="show-not-in-use-engines"
@@ -689,39 +712,45 @@ function EnginesContents() {
         </div>
 
         {statusIsError && (
-          <IncidentBanner
-            tone="warn"
-            title="Live status unavailable"
-            detail={errorMessage(statusError)}
-            actions={
-              <Button
-                variant="outline"
-                type="button"
-                size="sm"
-                onClick={() => void refetchStatus()}
-              >
-                Retry
-              </Button>
-            }
-          />
+          <div role="status">
+            <Callout
+              as="div"
+              severity="attention"
+              title="Live status unavailable"
+              meta={errorMessage(statusError)}
+              actions={
+                <Button
+                  variant="outline"
+                  type="button"
+                  size="sm"
+                  onClick={() => void refetchStatus()}
+                >
+                  Retry
+                </Button>
+              }
+            />
+          </div>
         )}
 
         <section className="flex flex-col gap-3">
           {selectedServiceId && !selectedService && (
-            <IncidentBanner
-              tone="warn"
-              title="Selected engine not found"
-              detail={`No service record has id ${selectedServiceId}.`}
-            />
+            <div role="status">
+              <Callout
+                as="div"
+                severity="attention"
+                title="Selected engine not found"
+                meta={`No service record has id ${selectedServiceId}.`}
+              />
+            </div>
           )}
           {visibleCount === 0 && infrastructure.length === 0 ? (
-            <EmptyOperationalState
+            <EmptyState
               title={
                 services.length === 0
                   ? "No engines configured"
                   : "No engines in use"
               }
-              detail={
+              description={
                 services.length === 0
                   ? "Add an engine from a preset, then test its connection and detect served models."
                   : "Turn on Show not in use to review engines that are disabled or not configured."
@@ -741,33 +770,49 @@ function EnginesContents() {
             <div className="bg-card rounded-panel overflow-hidden border">
               <Table aria-label="Engines">
                 {groups.map((group) => (
-                  <TableBody key={group.capability} aria-label={`${group.capability} engines`}>
+                  <TableBody
+                    key={group.capability}
+                    aria-label={`${group.capability} engines`}
+                  >
                     <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableCell colSpan={2} className="h-9 max-sm:h-(--row-phone-1)!">
+                      <TableCell
+                        colSpan={2}
+                        className="h-9 max-sm:h-(--row-phone-1)!"
+                      >
                         <h2 className="text-label text-subtle-foreground font-medium">
                           {group.capability}
                         </h2>
                       </TableCell>
                     </TableRow>
                     {group.entries.map(({ service, alternatives }) => {
-                      const open = expanded[service.id] ??
-                        alternatives.some((engine) => engine.id === selectedServiceId);
+                      const open =
+                        expanded[service.id] ??
+                        alternatives.some(
+                          (engine) => engine.id === selectedServiceId,
+                        );
                       return (
                         <Fragment key={service.id}>
                           {renderEngine(service)}
                           {alternatives.length > 0 && (
                             <TableRow>
-                              <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
+                              <TableCell
+                                colSpan={2}
+                                className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!"
+                              >
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
                                   aria-expanded={open}
-                                  onClick={() => setExpanded((current) => ({
-                                    ...current, [service.id]: !open,
-                                    }))}
+                                  onClick={() =>
+                                    setExpanded((current) => ({
+                                      ...current,
+                                      [service.id]: !open,
+                                    }))
+                                  }
                                 >
-                                  Standby and fallback engines ({alternatives.length})
+                                  Standby and fallback engines (
+                                  {alternatives.length})
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -781,29 +826,40 @@ function EnginesContents() {
                 {infrastructure.length > 0 && (
                   <TableBody aria-label="Infrastructure engines">
                     <TableRow>
-                      <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
+                      <TableCell
+                        colSpan={2}
+                        className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!"
+                      >
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          aria-expanded={showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")}
-                          onClick={() => setShowInfrastructure(
-                            !(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")),
-                            )}
+                          aria-expanded={
+                            showInfrastructure ??
+                            infrastructureIds.has(selectedServiceId ?? "")
+                          }
+                          onClick={() =>
+                            setShowInfrastructure(
+                              !(
+                                showInfrastructure ??
+                                infrastructureIds.has(selectedServiceId ?? "")
+                              ),
+                            )
+                          }
                         >
                           Show infrastructure
                         </Button>
                       </TableCell>
                     </TableRow>
-                    {(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")) &&
+                    {(showInfrastructure ??
+                      infrastructureIds.has(selectedServiceId ?? "")) &&
                       infrastructure.map(renderEngine)}
                   </TableBody>
-              )}
+                )}
               </Table>
             </div>
           )}
         </section>
-
       </div>
       <AddServiceDialog
         open={addOpen}
@@ -840,6 +896,7 @@ function EnginesContents() {
         confirmLabel="Remove engine"
         danger
         typedName={removeTarget?.name}
+        returnFocus={removeInvoker.current}
         onOpenChange={(open) => !open && setRemoveTarget(null)}
         onConfirm={() => {
           if (!removeTarget) return;

@@ -110,7 +110,7 @@ it("keeps the body scrollable and the form footer outside it", async () => {
   const dialog = screen.getByRole("dialog", { name: "Add engine" });
   const body = dialog.querySelector<HTMLElement>('[data-slot="dialog-body"]');
   const footer = dialog.querySelector<HTMLElement>('[data-slot="dialog-footer"]');
-  expect(dialog).toHaveClass("flex", "max-h-[85dvh]", "overflow-hidden");
+  expect(dialog).toHaveClass("flex!", "max-h-[85dvh]", "overflow-hidden");
   expect(body).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
   expect(footer).toHaveClass("shrink-0");
   expect(footer).toContainElement(submit);

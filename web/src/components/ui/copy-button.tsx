@@ -22,18 +22,18 @@ export async function copyText(value: string): Promise<boolean> {
   } catch {
     // fall through to the legacy path
   }
+  const textarea = document.createElement("textarea");
   try {
-    const textarea = document.createElement("textarea");
     textarea.value = value;
     textarea.setAttribute("readonly", "");
     textarea.className = "sr-only";
     document.body.appendChild(textarea);
     textarea.select();
-    const ok = document.execCommand("copy");
-    textarea.remove();
-    return ok;
+    return document.execCommand("copy");
   } catch {
     return false;
+  } finally {
+    textarea.remove();
   }
 }
 
@@ -86,7 +86,15 @@ export function CopyButton({
     <Button
       type="button"
       size={size}
-      variant={variant === "primary" ? "default" : variant === "danger" ? "destructive" : variant === "secondary" ? "outline" : "ghost"}
+      variant={
+        variant === "primary"
+          ? "default"
+          : variant === "danger"
+            ? "destructive"
+            : variant === "secondary"
+              ? "outline"
+              : "ghost"
+      }
       className={cn(children ? undefined : "px-2", className)}
       aria-label={ariaLabel ?? (children ? undefined : "Copy")}
       onClick={() => void copy(value)}

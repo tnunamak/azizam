@@ -29,6 +29,8 @@ export interface ConfirmDialogProps {
   /** Typed-name mode for high-impact deletes (presentation law #5): the
    * confirm button stays disabled until the user types this exact name. */
   typedName?: string;
+  /** Stable invoker when opened from a menu whose items unmount. */
+  returnFocus?: HTMLElement | null;
   /** Runs on confirm; the dialog shows a loading state while a returned
    * promise is pending and closes only on success. The caller owns error
    * presentation; rejected mutations leave the dialog open. */
@@ -58,6 +60,7 @@ function ConfirmDialogContent({
   cancelLabel = "Cancel",
   danger = true,
   typedName,
+  returnFocus: invoker,
   onConfirm,
 }: Omit<ConfirmDialogProps, "open">) {
   const returnFocus = useRef<HTMLElement | null>(
@@ -92,10 +95,10 @@ function ConfirmDialogContent({
   return (
     <DialogContent
       showCloseButton={false}
-      className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden sm:max-w-md"
+      className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden sm:max-w-md"
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        returnFocus.current?.focus();
+        (invoker ?? returnFocus.current)?.focus();
       }}
       onEscapeKeyDown={blockWhilePending}
       onPointerDownOutside={blockWhilePending}
@@ -108,13 +111,13 @@ function ConfirmDialogContent({
       {typedName !== undefined && (
         <div
           data-slot="dialog-body"
-          className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto -mx-6 px-6 [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)]"
+          className="-mx-6 mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto [mask-image:linear-gradient(to_bottom,transparent_0,black_8px,black_calc(100%-8px),transparent_100%)] px-6"
         >
           <Field
             label={
               <>
                 Type{" "}
-                <span className="text-xs text-foreground font-mono">
+                <span className="text-foreground font-mono text-xs">
                   {typedName}
                 </span>{" "}
                 to confirm
