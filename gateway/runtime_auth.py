@@ -291,6 +291,9 @@ def evaluate_and_apply(
     """
     profile = identity.profile if identity is not None else DEFAULT_PROFILE
     decision = evaluate(profile, request)
+    # Owner category rules can only tighten an allowed decision.
+    from gateway import category_enforcement
+    decision = category_enforcement.apply(identity, request, decision)
     if receipt is not None:
         apply_to_receipt(decision, receipt)
     return decision

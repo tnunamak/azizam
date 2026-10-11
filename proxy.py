@@ -15348,10 +15348,12 @@ app.include_router(create_settings_router(
     purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
-# Owner-defined categories and plans (design v3). Editing and preview only;
-# request enforcement is wired separately.
+# Owner-defined categories and plans (design v3). Active rules tighten the
+# runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
 app.include_router(create_category_router(
     auth=ADMIN_AUTH, store_path=ADMIN_DB_PATH.parent / "categories.db"))
+from gateway import category_enforcement  # noqa: E402
+category_enforcement.configure(ADMIN_DB_PATH.parent / "categories.db")
 app.include_router(build_setup_api_router(lambda request: {
     "owner_exists": _owner_or_admin_exists(),
     "oidc_enabled": _effective_admin_oidc_config().enabled,
