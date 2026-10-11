@@ -170,3 +170,21 @@ def test_repeated_checks_do_not_reread_an_unchanged_store(gate, monkeypatch):
     assert category_enforcement.apply(
         Identity("mia", "family-app"), _request(), ALLOW).decision == DENIED
     assert len(reads) == 2
+
+
+def test_losing_an_enforced_store_denies_everyone(gate, tmp_path):
+    _activate(gate, _snapshot())
+    assert category_enforcement.apply(Identity("mia", "family-app"), _request(), ALLOW) is ALLOW
+    gate.rename(tmp_path / "moved.db")
+    decision = category_enforcement.apply(Identity("sam", "work-app"), _request(), ALLOW)
+    assert decision.decision == DENIED
+    assert "POLICY_UNAVAILABLE" in decision.reasons[-1]
+
+
+def test_two_active_revisions_of_one_service_are_rejected():
+    base = _snapshot()
+    second = policy.Service("flux@r2", base.services["flux@r1"].members)
+    ambiguous = policy.PolicyVersion(base.id, base.categories, base.people, base.apps,
+                                     {**base.services, "flux@r2": second})
+    with pytest.raises(policy.PolicyError, match="one active revision per service"):
+        policy.validate_snapshot(ambiguous)

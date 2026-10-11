@@ -97,7 +97,7 @@ def gateway(monkeypatch, tmp_path, request):
     backend_send = tripwire("HTTP backend", RuntimeError("backend reached"))
 
     async def send(self, *args, **kwargs):
-        if isinstance(self._transport, httpx.ASGITransport):
+        if isinstance(self._transport, httpx.ASGITransport) and self._transport.app is proxy.app:
             return await real_send(self, *args, **kwargs)
         return await backend_send(self, *args, **kwargs)
 
@@ -634,8 +634,11 @@ def _metadata_contract(method, template, response, row):
     if reason is None or response.status_code != 200:
         return
     if template == "/gateway/v1/capabilities":
-        available = [item.get("id") or item.get("intent") for item in response.json()["capabilities"]
-                     if item.get("policy_available")]
+        # The client audience reports "available"; other audiences "policy_available".
+        items = response.json()["capabilities"]
+        assert all("policy_available" in item or "available" in item for item in items), items[:1]
+        available = [item.get("id") or item.get("intent") for item in items
+                     if item.get("policy_available", item.get("available"))]
         if available:
             row["detail"] = f"capabilities shown as available to a caller who may use none: {available}"
             return
@@ -663,7 +666,10 @@ def _decoy_oracle(method, template, row, gateway):
     be refused, and a backend call from any other route stays a violation.
     """
     status = row["status"]
-    if (method, template) in _STATUS_PROBES and status == 200 and gateway.calls:
+    if row.get("dispatched") == "yes":
+        return  # A dispatched receipt stays a violation.
+    if ((method, template) in _STATUS_PROBES and status == 200 and gateway.calls
+            and set(gateway.calls) <= {"health", "model-state", "HTTP backend"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
     elif method == "GET" and status == 200 and not gateway.calls:

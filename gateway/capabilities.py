@@ -561,7 +561,7 @@ def capability_with_policy_view(
 
     effective_request = request or PolicyRequest(
         intent=capability.intent,
-        workflow=capability.workflow,
+        workflow=capability.resolved_workflow or capability.workflow,
         model=capability.model,
         backend=capability.backend,
         capability_exposure=capability.exposure,

@@ -10,6 +10,7 @@ import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from dataclasses import replace
 from typing import Any
 
@@ -532,7 +533,8 @@ async def execute_paid_litellm(
             })
             policy_request = PolicyRequest(protocol=protocol, intent=intent, model=model)
             decision = category_enforcement.apply(
-                identity, policy_request, evaluate(profile, policy_request))
+                identity if identity is not None else SimpleNamespace(person_id=None, app_id=app_id),
+                policy_request, evaluate(profile, policy_request))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:

@@ -575,6 +575,10 @@ def validate_snapshot(snapshot: PolicyVersion) -> None:
     plans = tuple(p for group in (snapshot.people, snapshot.apps)
                   for attached in group.values() for p in attached)
     subjects = []
+    stems = [key.rsplit("@", 1)[0] for key in snapshot.services]
+    if len(stems) != len(set(stems)):
+        # The runtime names a service by its stem; two active revisions would be ambiguous.
+        raise PolicyError("one active revision per service; keep older revisions in retained")
     for key, service in snapshot.services.items():
         if key != service.id:
             raise PolicyError("service key mismatch")

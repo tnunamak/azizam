@@ -244,6 +244,22 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
         send.assert_not_called()
 
+    async def test_owner_category_rules_govern_an_app_id_without_identity(self) -> None:
+        from gateway import category_enforcement
+        from tests.test_category_enforcement import _activate, _snapshot
+
+        path = Path(self.tmp.name) / "categories.db"
+        _activate(path, _snapshot())  # governs family-app
+        category_enforcement.configure(path)
+        self.addCleanup(category_enforcement.configure, None)
+        send = AsyncMock()
+
+        response, send = await self._execute(send=send, app_id="family-app")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("category rules:", (await _body(response)).decode())
+        send.assert_not_called()
+
     async def test_delegated_litellm_request_is_denied_before_provider_call(self) -> None:
         send = AsyncMock()
 

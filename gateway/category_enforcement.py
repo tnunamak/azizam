@@ -65,8 +65,12 @@ class CategoryGate:
 
     def _active(self) -> tuple[kernel.PolicyVersion | None, bool]:
         """Return (snapshot or None, unavailable)."""
-        if self._store is None and not self._path.exists():
-            return None, False
+        if not self._path.exists():
+            if self._store is None:
+                return None, False
+            # The store this process has been enforcing is gone: fail closed.
+            log.error("category rules unavailable: %s is missing", self._path)
+            return None, True
         from gateway.category_api import snapshot_from_json  # codec lives with the API
         with self._lock:
             try:
@@ -84,7 +88,9 @@ class CategoryGate:
                     except NoActiveSnapshotError:
                         self._version = None
                     else:
-                        self._version = snapshot_from_json(row.body)
+                        version = snapshot_from_json(row.body)
+                        kernel.validate_snapshot(version)
+                        self._version, counter = version, row.active_counter
                     self._counter = counter
                 self._data_version, self._failed = data_version, False
                 return self._version, False
