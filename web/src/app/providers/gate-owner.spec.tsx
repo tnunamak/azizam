@@ -576,3 +576,51 @@ it("PF-111 stops a save when the same field changed on the gateway, until the ow
     }),
   ]);
 });
+
+// A pending add-provider save belongs to the dialog session that sent it.
+
+function deferAddPost() {
+  const posts: Array<(value: unknown) => void> = [];
+  adminFetchMock.mockImplementation((async (path: string, init?: { method?: string }) => {
+    if (path === "/admin/api/providers" && init?.method === "POST")
+      return new Promise((resolve) => posts.push(resolve));
+    return { ok: true, models: [{ id: "m", price_input: "1", price_output: "2" }] };
+  }) as never);
+  return posts;
+}
+async function openSaveStep(name: RegExp) {
+  const dialog = await checkAddProvider(name);
+  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
+  return dialog;
+}
+
+it("PF-112 a late save from a cancelled dialog does not close or reset the next one", async () => {
+  const posts = deferAddPost();
+  renderProviders([savedProvider], { catalog: twoPresets });
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  let dialog = await openSaveStep(/First preset/);
+  fireEvent.click(dialog.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  dialog = await checkAddProvider(/Second preset/);
+  await act(async () => posts[0]({}));
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(dialog.getByText("Connection worked.")).toBeVisible();
+});
+
+it("PF-112 editing a cap while a save is pending does not allow a second POST", async () => {
+  const posts = deferAddPost();
+  renderProviders([savedProvider], { catalog: twoPresets });
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  const dialog = await openSaveStep(/First preset/);
+  fireEvent.click(dialog.getByRole("button", { name: "Save provider" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  fireEvent.change(dialog.getByLabelText("Daily cap (USD)"), {
+    target: { value: "6" },
+  });
+  expect(dialog.getByRole("button", { name: "Save provider" })).toBeDisabled();
+  fireEvent.click(dialog.getByRole("button", { name: "Save provider" }));
+  expect(posts).toHaveLength(1);
+});

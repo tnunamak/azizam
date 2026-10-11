@@ -1688,6 +1688,13 @@ function AddProviderDialog({
   const [allowedPlans, setAllowedPlans] = useState<string[]>([]);
   const checkGeneration = useRef(0);
   const credentialOrigin = useRef("\u0000");
+  // Each open of the dialog is a session. A save belongs to the session that
+  // started it: a late answer must not close or reset a newer session, and
+  // resetting the mutation's observer is not cancelling its request.
+  const [session, setSession] = useState(0);
+  const sessionRef = useRef(0);
+  const [savingSessions, setSavingSessions] = useState<number[]>([]);
+  const saving = savingSessions.includes(session);
 
   function resetCheck() {
     checkGeneration.current += 1;
@@ -1734,6 +1741,8 @@ function AddProviderDialog({
   // earlier failure survives a cancel.
   function closeDialog(nextOpen: boolean) {
     if (!nextOpen) {
+      sessionRef.current += 1;
+      setSession(sessionRef.current);
       setSearch("");
       setSelected(null);
       setMode("key");
@@ -1809,7 +1818,7 @@ function AddProviderDialog({
   });
 
   const saveProvider = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (_sessionId: number) => {
       if (!selected) throw new Error("Choose a provider first.");
       if (models.some((model) => model.enabled && !pricesValid(model)))
         throw new Error(`${priceError} Each enabled model needs both prices.`);
@@ -1833,11 +1842,20 @@ function AddProviderDialog({
         },
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, sessionId) => {
       await queryClient.invalidateQueries({ queryKey: ["providers"] });
-      closeDialog(false);
+      if (sessionRef.current === sessionId) closeDialog(false);
     },
+    onSettled: (_data, _error, sessionId) =>
+      setSavingSessions((ids) => ids.filter((id) => id !== sessionId)),
   });
+
+  function submitSave() {
+    const sessionId = sessionRef.current;
+    if (savingSessions.includes(sessionId)) return;
+    setSavingSessions((ids) => [...ids, sessionId]);
+    saveProvider.mutate(sessionId);
+  }
 
   function toggleModel(id: string, enabled: boolean) {
     saveProvider.reset();
@@ -2221,7 +2239,7 @@ function AddProviderDialog({
                 </label>
               ))}
             </div>
-            {saveProvider.error && (
+            {saveProvider.error && saveProvider.variables === session && (
               <div role="alert" className="text-danger text-meta">
                 {saveProvider.error instanceof Error
                   ? saveProvider.error.message
@@ -2273,12 +2291,10 @@ function AddProviderDialog({
             </Button>
           ) : (
             <Button
-              onClick={() => saveProvider.mutate()}
-              disabled={
-                metadataUnavailable || !canSave || saveProvider.isPending
-              }
+              onClick={submitSave}
+              disabled={metadataUnavailable || !canSave || saving}
             >
-              {saveProvider.isPending ? (
+              {saving ? (
                 <Loader2 className="animate-spin" />
               ) : (
                 <Plus />
