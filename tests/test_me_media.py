@@ -1502,6 +1502,27 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(media_jobs.count(path=self.jobs_db), jobs_before, "nothing is stored")
         return error
 
+    def test_structured_refusal_records_evidence_without_creating_an_app(self) -> None:
+        from fastapi import Response
+        from gateway.resource_admission_http import advise_route_admission, admission_http_response
+        decision = advise_route_admission(intent="image.generate", service_available=False,
+                                         service_reasons=("private other-person quantity 98765",))
+        advice = admission_http_response(decision, wait_deadline=456)
+        self.runtime.refusal = Response(content=json.dumps(advice.body), status_code=503,
+                                        media_type="application/json")
+        self.runtime.refusal.resource_decision = decision.details.as_dict(decision.outcome.value)
+        apps_before = admin_store.list_apps(path=self.admin_db)
+        response = self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("refused"))
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("other-person", response.text)
+        self.assertEqual(admin_store.list_apps(path=self.admin_db), apps_before)
+        self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
+        rows = receipt_store.recent(path=self.receipts_db, audience="internal")
+        refused = [row for row in rows if row.get("resource_decision")]
+        self.assertEqual(len(refused), 1)
+        self.assertTrue(refused[0]["owner_key_hash"].startswith("user:"))
+        self.assertIn("other-person", json.dumps(refused[0]["resource_decision"]))
+
     def test_make_meets_operator_admission_before_storing_anything(self) -> None:
         from fastapi import Response
 
