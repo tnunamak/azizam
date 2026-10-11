@@ -1,9 +1,10 @@
 "use client";
 
 import { useContext, useState } from "react";
+import { CategoriesEditor } from "./editor";
 import { useQuery } from "@tanstack/react-query";
 import { Layers, Lock } from "lucide-react";
-import { adminFetch, ApiError, api } from "@/lib/api";
+import { adminFetch, ApiError, api, fetchSession } from "@/lib/api";
 import { ViewerContext } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -205,6 +206,8 @@ function PreviewAs({ active, personName, appName }: { active: Revision; personNa
 }
 
 function OwnerCategories() {
+  const [editing, setEditing] = useState(false);
+  const { data: ownerSession, isFetching: ownerSessionFetching, isError: ownerSessionError, refetch: ownerSessionRefetch } = useQuery({ queryKey: ["categories", "owner-session"], queryFn: () => fetchSession(), enabled: editing, retry: false, refetchOnWindowFocus: false });
   const { data: activeData, isError: activeIsError, isFetching: activeIsFetching, isPending: activeIsPending, refetch: activeRefetch } = useQuery({ queryKey: ["categories", "active"], queryFn: loadActive, retry: false, refetchOnWindowFocus: false });
   const { data: historyData, isError: historyIsError, isFetching: historyIsFetching, isPending: historyIsPending, refetch: historyRefetch } = useQuery({ queryKey: ["categories", "history"], queryFn: () => adminFetch<{ history: HistoryEntry[] }>(root + "/history"), retry: false, refetchOnWindowFocus: false });
   const { data: peopleData, isError: peopleIsError } = useQuery({ queryKey: ["users"], queryFn: api.users.list });
@@ -268,18 +271,21 @@ function OwnerCategories() {
     <PageHeader title="Categories" subtitle="Review category rules before they apply to requests" />
     <p className="text-meta text-muted-foreground">Nothing is enforced by this page yet. Request enforcement comes later; existing access plans still apply.</p>
     <Button variant="outline" disabled={busy || activeIsFetching || historyIsFetching} onClick={() => { setCandidate(null); void refresh(); }}>Refresh</Button>
+    {!editing && <Button disabled={busy || !knownBase || activeIsFetching} onClick={() => { setCandidate(null); setEditing(true); }}>Edit rules</Button>}
+    {editing && <CategoriesEditor active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
+    {editing && ownerSessionError && <Button variant="outline" onClick={() => void ownerSessionRefetch()}>Refresh owner identity</Button>}
     {message && (message.error ? <Callout as="div" severity="critical" title={message.text} /> : <p role="status" className="text-meta">{message.text}</p>)}
     {activeIsPending && <div aria-busy="true" aria-label="Loading category rules"><StatusLine tone="unknown" text="Loading category rules" compact /></div>}
     {activeIsError && <Callout as="div" severity="critical" title={activeData ? "Couldn't refresh category rules" : "Couldn't load category rules"} headerAction={<Button variant="outline" onClick={() => void activeRefetch()}>Try again</Button>}>
       {activeData && <p>The rules already loaded are still shown. Changes are paused until they can be refreshed.</p>}
     </Callout>}
     {activeData === null && !activeIsError && <EmptyState icon={Layers} title="No category rules are active" description="There are no rules to preview yet. A previous revision can be restored from History." />}
-    {activeData && <>
+    {activeData && !editing && <>
       <CurrentRules active={activeData} personName={personName} appName={appName} />
       <PreviewAs key={activeData.revision} active={activeData} personName={personName} appName={appName} />
     </>}
     {(peopleIsError || appsIsError) && <p className="text-meta text-muted-foreground">Some names couldn&rsquo;t be loaded. Their saved IDs are shown instead.</p>}
-    <section aria-labelledby="category-history" className="space-y-3">
+    {!editing && <section aria-labelledby="category-history" className="space-y-3">
       <h2 id="category-history" className="text-heading">History</h2>
       {historyIsPending && <div aria-busy="true" aria-label="Loading category history"><StatusLine tone="unknown" text="Loading category history" compact /></div>}
       {historyIsError && <Callout as="div" severity="critical" title="Couldn't load category history" headerAction={<Button variant="outline" onClick={() => void historyRefetch()}>Try again</Button>} />}
@@ -301,8 +307,8 @@ function OwnerCategories() {
           {!historyData.history.length && <EmptyState inCard icon={Layers} title="No category history yet" description="Restores and revisions turned on will appear here." />}
         </div>
       </>}
-    </section>
-    {candidate && <section aria-labelledby="change-preview" className="space-y-3">
+    </section>}
+    {candidate && !editing && <section aria-labelledby="change-preview" className="space-y-3">
       <h2 id="change-preview" className="text-heading">Change preview</h2>
       <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
         <p className="text-body font-medium">Restore revision {candidate.restored_from_revision} as revision {candidate.revision}</p>
@@ -321,7 +327,7 @@ function OwnerCategories() {
             <p className="text-meta">After: {plain(item.after.outcome)}</p><DecisionDetails decision={item.after} />
           </div>)}
         </div>
-        <details className="text-meta"><summary>Compared requests</summary><ul className="mt-3 space-y-2">{candidate.preview.scope.map((request, index) => <li key={index}>{requestName(request)}</li>)}</ul></details>
+        <details className="text-meta"><summary className="flex min-h-8 max-sm:min-h-11 items-center">Compared requests</summary><ul className="mt-3 space-y-2">{candidate.preview.scope.map((request, index) => <li key={index}>{requestName(request)}</li>)}</ul></details>
         {!candidateMatches && <p role="alert" className="text-meta">The active rules changed. Restore again to review a new preview.</p>}
         <div className="flex flex-wrap gap-3">
           <Button disabled={busy || !knownBase || activeIsFetching || !candidateMatches} onClick={() => void change("activate", candidate.revision)}>Turn on</Button>
