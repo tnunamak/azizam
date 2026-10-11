@@ -1093,6 +1093,9 @@ def _filter_event_for_audience(event: Mapping[str, Any], audience: str) -> dict[
         # Admin sees that an event happened but not the freeform breadcrumb
         # bag. Operators who need the full payload bump to internal.
         return base
+    # The global id is a household-wide counter: gaps between one caller's
+    # ids reveal other people's activity, so callers page by per-job sequence.
+    base.pop("id")
     payload = event.get("payload") or {}
     if not isinstance(payload, Mapping):
         return base
