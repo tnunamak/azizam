@@ -514,23 +514,46 @@ function mountCatalog(snapshot: Snapshot | null = null, extra = {}) {
   const view = render(<CategoriesEditor {...props} />);
   return { ...view, props, user: userEvent.setup() };
 }
-it("adds catalog services with pinned workflow and route roots and next revisions across retained dependencies", async () => {
+it("adds catalog services after retained revisions and refuses a second active revision", async () => {
   const snapshot = rules();
   snapshot.retained["output-1"].id = "retained-service@r1";
   snapshot.retained["output-1"].dependencies.push({ id: "workflow:paint@r3", checkable: true, members: [], dependencies: [] });
-  snapshot.services["workflow:paint@r1"] = { id: "workflow:paint@r1", checkable: true, members: [], dependencies: [] };
+  snapshot.retained["workflow:paint@r1"] = { id: "workflow:paint@r1", checkable: true, members: [], dependencies: [] };
   const { user } = mountCatalog(snapshot);
   await pick(user, "Service to add", "Paint workflow");
   await user.click(screen.getByRole("button", { name: "Add service" }));
   await user.click(screen.getByRole("button", { name: "Add service" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Paint workflow is already in these rules. Edit the existing service instead.");
   await pick(user, "Service to add", "Vectors model");
   await user.click(screen.getByRole("button", { name: "Add service" }));
   await showPreview(user);
   const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
-  for (const id of ["workflow:paint@r4", "workflow:paint@r5"]) expect(saved.services[id]).toEqual({ id, members: [{ id, kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
+  const id = "workflow:paint@r4";
+  expect(saved.services[id]).toEqual({ id, members: [{ id, kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
+  expect(Object.keys(saved.services)).toEqual(["studio@1", id, "model:vectors@r1"]);
   expect(saved.services["model:vectors@r1"]).toEqual({ id: "model:vectors@r1", members: [{ id: "model:vectors@r1", kind: "route", assertions: [] }], dependencies: [], checkable: true });
   expect(saved.people).toEqual(snapshot.people);
   expect(saved.retained).toEqual(snapshot.retained);
+});
+it("refuses adding an already saved stem without replacing its reviewed members or grants", async () => {
+  const snapshot = rules();
+  const original = snapshot.services["studio@1"];
+  const { user } = mountCatalog(snapshot, { catalog: [{ stem: "studio", label: "Studio", kind: "model", capabilities: ["image.generate"] }] });
+  await pick(user, "Service to add", "Studio");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Studio is already in these rules. Edit the existing service instead.");
+  await showPreview(user);
+  const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
+  expect(saved).toEqual(snapshot);
+  expect(saved.services["studio@1"]).toEqual(original);
+});
+it("rejects duplicate active service stems but allows previous revisions in retained", () => {
+  const snapshot = rules();
+  snapshot.services["studio@r2"] = { ...copy(snapshot.services["studio@1"]), id: "studio@r2" };
+  expect(validateSnapshot(snapshot)).toContain("Keep only one active revision of each service. Older revisions belong in retained services.");
+  snapshot.retained["studio@1"] = snapshot.services["studio@1"];
+  delete snapshot.services["studio@1"];
+  expect(validateSnapshot(snapshot)).toEqual([]);
 });
 it("offers exact service capabilities and clears incompatible capability when switching services", async () => {
   const snapshot = rules(); snapshot.people = {}; snapshot.apps = {};

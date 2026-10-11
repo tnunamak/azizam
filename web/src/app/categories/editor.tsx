@@ -42,7 +42,8 @@ function servicesIn(snapshot: Snapshot) {
   [...Object.values(snapshot.services), ...Object.values(snapshot.retained)].forEach(visit);
   return result;
 }
-const catalogService = (catalog: CatalogService[], id: string) => catalog.find((item) => item.stem === id.slice(0, id.lastIndexOf("@")));
+const serviceStem = (id: string) => id.includes("@") ? id.slice(0, id.lastIndexOf("@")) : id;
+const catalogService = (catalog: CatalogService[], id: string) => catalog.find((item) => item.stem === serviceStem(id));
 function addedService(snapshot: Snapshot, entry: CatalogService): Service {
   let revision = BigInt(1);
   for (const service of servicesIn(snapshot)) {
@@ -111,6 +112,8 @@ export function validateSnapshot(snapshot: Snapshot): string[] {
       if (grant.workflow !== undefined && !isPinned(grant.workflow)) errors.push("Use a pinned workflow revision for every grant.");
     }
   }
+  const activeStems = Object.keys(snapshot.services).map(serviceStem);
+  if (new Set(activeStems).size !== activeStems.length) errors.push("Keep only one active revision of each service. Older revisions belong in retained services.");
   for (const [key, service] of Object.entries(snapshot.services)) {
     if (key !== service.id) errors.push("A service ID does not match its saved name.");
   }
@@ -368,7 +371,7 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
   const [editToken] = useState(() => Date.now().toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0"));
   const [base, setBase] = useState(() => ({ revision: active?.revision ?? null, snapshot: clone(active?.snapshot ?? emptySnapshot()) }));
   const [draft, setDraft] = useState(() => clone(base.snapshot));
-  const [serviceStem, setServiceStem] = useState("");
+  const [selectedStem, setSelectedStem] = useState("");
   const [label, setLabel] = useState("");
   const [reason, setReason] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
@@ -453,10 +456,11 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
           : catalogError ? <div className="space-y-3"><p role="alert" className="text-meta">Available services could not be loaded. Saved services can still be edited.</p><Button type="button" variant="outline" onClick={onCatalogRetry}>Retry available services</Button></div>
           : !catalog.length ? <p className="text-meta">No available services. Add a model or workflow first.</p>
           : <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
-            <Pick label="Service to add" value={serviceStem} choices={catalog.map((entry) => ({ id: entry.stem, label: entry.label }))} onChange={setServiceStem} />
-            <Button type="button" variant="outline" disabled={!catalog.some((entry) => entry.stem === serviceStem)} onClick={() => {
-              const entry = catalog.find((item) => item.stem === serviceStem);
+            <Pick label="Service to add" value={selectedStem} choices={catalog.map((entry) => ({ id: entry.stem, label: entry.label }))} onChange={setSelectedStem} />
+            <Button type="button" variant="outline" disabled={!catalog.some((entry) => entry.stem === selectedStem)} onClick={() => {
+              const entry = catalog.find((item) => item.stem === selectedStem);
               if (!entry) return;
+              if (Object.keys(draft.services).some((id) => serviceStem(id) === entry.stem)) return report(entry.label + " is already in these rules. Edit the existing service instead.");
               const service = addedService(draft, entry);
               edit({ ...draft, services: { ...draft.services, [service.id]: service } });
             }}>Add service</Button>

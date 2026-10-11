@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import type { Snapshot } from "../src/app/categories/editor";
+import type { CatalogService, Snapshot } from "../src/app/categories/editor";
 
 const root = "/admin/api/categories";
 const widths = [1440, 390] as const;
@@ -219,9 +219,88 @@ async function closeAndRead(page: Page, revision: number) {
   return current;
 }
 
-// The fixture is shared by files and may already contain active rules. Only
-// the empty rendering/client-validation test stubs GET active; every write
-// journey uses the real API, current CAS base and fresh pinned revision IDs.
+test("empty rules reach an activated person and app grant through the real fixture catalog", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  await surface(page, 390);
+  const post = await writer(request);
+  let base = await active(request);
+  if (base) {
+    const empty = await post("/candidates", {
+      base_revision: base.revision, reason: "Start the catalog journey with empty rules",
+      snapshot: { id: "empty-catalog-browser", categories: {}, people: {}, apps: {}, services: {}, retained: {} },
+    });
+    await post(`/candidates/${empty.revision}/activate`, { expected_active_revision: base.revision });
+    base = await active(request);
+  }
+  expect(base?.snapshot.services ?? {}).toEqual({});
+  expect(base?.snapshot.people ?? {}).toEqual({});
+  expect(base?.snapshot.apps ?? {}).toEqual({});
+  const catalogResponse = await request.get(root + "/services");
+  expect(catalogResponse.status()).toBe(200);
+  const catalog: CatalogService[] = (await catalogResponse.json()).services;
+  const service = catalog.find((entry) => entry.stem === "demo-chat")!;
+  expect(service.kind).toBe("model");
+  expect(service.capabilities).toContain("chat.completions");
+  const { users } = await (await request.get("/admin/api/users")).json();
+  const { apps } = await (await request.get("/admin/api/apps")).json();
+  const app = apps.find((item: { name: string }) => item.name === "Browser test app");
+  const person = users.find((item: { id: string }) => item.id === app.owner_user_id);
+  const personName = person.display_name || person.name || person.email || person.id;
+  const serviceId = service.stem + "@r1";
+  const sent = writes(page);
+  await page.goto("/ui/categories/");
+  await openEditor(page);
+  const form = editor(page);
+  await expect(form.getByText("No services are saved in these rules yet.", { exact: true })).toBeVisible();
+  await pick(page, form, "Service to add", service.label);
+  await form.getByRole("button", { name: "Add service", exact: true }).click();
+  await expect(form.getByRole("group", { name: "Route: " + serviceId, exact: true })).toBeVisible();
+  await form.getByRole("button", { name: "Add service", exact: true }).click();
+  await expect(form.getByRole("alert")).toHaveText(service.label + " is already in these rules. Edit the existing service instead.");
+  await addCategory(page, "Audience", ["general"]);
+  await form.getByRole("group", { name: "Accepted Audience for " + serviceId, exact: true })
+    .getByRole("checkbox", { name: "General", exact: true }).check();
+  for (const kind of ["Person", "App"] as const) {
+    const plans = form.getByRole("region", { name: kind + " access plans", exact: true });
+    await pick(page, plans, kind + " for new access plan", kind === "Person" ? personName : app.name);
+    await plans.getByRole("button", { name: "Add " + kind.toLowerCase() + " access plan", exact: true }).click();
+    await plans.getByRole("button", { name: "Add grant", exact: true }).click();
+    await pick(page, plans, "Service", serviceId);
+    await pick(page, plans, "Capability", "Chat");
+    await plans.getByRole("button", { name: "Add requirement", exact: true }).click();
+    await pick(page, plans, "Category", "Audience");
+    await plans.getByRole("group", { name: "Allowed values", exact: true })
+      .getByRole("checkbox", { name: "General", exact: true }).check();
+  }
+  await form.getByLabel("Reason for changes", { exact: true }).fill("Grant reviewed chat to this person and app");
+  const candidate = await preview(page, base?.revision ?? null);
+  expect(Object.keys(candidate.snapshot.services)).toEqual([serviceId]);
+  expect(candidate.snapshot.services[serviceId].members).toEqual([expect.objectContaining({
+    id: serviceId, kind: "route", assertions: [expect.objectContaining({ category: "audience", value: "general", accepted: true })],
+  })]);
+  for (const plans of [candidate.snapshot.people[person.id], candidate.snapshot.apps[app.id]]) {
+    expect(plans[0].grants).toEqual([{ capability: "chat.completions", service: serviceId }]);
+  }
+  expect(candidate.preview.gains).toContainEqual(expect.objectContaining({
+    person: person.id, app: app.id, capability: "chat.completions", service: serviceId,
+  }));
+  await accessible(page, 390);
+  await turnOn(page, request, candidate);
+  expect(sent.map(({ path }) => path)).toEqual([root + "/candidates", root + `/candidates/${candidate.revision}/activate`]);
+  expect((await active(request))?.snapshot).toEqual(candidate.snapshot);
+  await closeAndRead(page, candidate.revision);
+  const check = page.getByRole("region", { name: "Preview as", exact: true });
+  await pick(page, check, "Person", personName);
+  await pick(page, check, "App", app.name);
+  await pick(page, check, "Capability", "Chat");
+  await pick(page, check, "Service", serviceId);
+  await check.getByRole("button", { name: "Check access", exact: true }).click();
+  await expect(check.getByRole("status")).toContainText("Allow · Revision " + candidate.revision);
+  await accessible(page, 390);
+});
+
+// The fixture is shared by files and may already contain active rules. This
+// group stubs only the empty rendering test; its writes use the real API.
 test.describe("Categories editor real fixture journeys", () => {
   test.describe.configure({ mode: "default" });
 
