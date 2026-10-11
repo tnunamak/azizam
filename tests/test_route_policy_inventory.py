@@ -1057,6 +1057,14 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         responses[path] = response.content.decode()
     expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
     assert responses == expected
+    # An active snapshot governing other identities must preserve the same bytes.
+    from tests.test_category_enforcement import _activate, _snapshot
+    _activate(gateway.category_path, _snapshot())
+    category_enforcement.configure(gateway.category_path)
+    for path, body in expected.items():
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200, path
+        assert response.content.decode() == body, path
 
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)

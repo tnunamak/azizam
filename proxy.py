@@ -13666,7 +13666,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
     """Resolve catalog handles to the target and intent used for execution."""
     model = str(entry.get("id") or "")
     operations = entry.get("azizam_resolves_to")
-    if isinstance(operations, Mapping):
+    if isinstance(operations, Mapping) and operations:
         return any(_category_entry_visible(auth_context, {"id": model, "operation": op})
                    for op in operations)
     operation = str(entry.get("operation") or "")
@@ -13677,7 +13677,10 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
         workflow = model  # Gateway workflow summaries use the manifest ID.
     target = model
     if not operation and not workflow:
-        matching_alias = resolve_stable_alias("chat", model)
+        try:
+            matching_alias = resolve_stable_alias("chat", model)
+        except stable_aliases.AliasUnavailableError:
+            matching_alias = None
         if matching_alias is not None:
             target = matching_alias.target
     if operation:
@@ -25069,7 +25072,9 @@ async def list_models(request: Request):
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
 
-    data = [item for item in data if _category_entry_visible(auth_context, item)]
+    data = [item for item in data if _category_entry_visible(
+        auth_context, {**item, "azizam_intent": "decision.systemone"} if item["id"] in decision_ids else item,
+    )]
 
     # Preserve only upstream observations ahead of loaded-record inheritance;
     # values added by the annotation pass may be static alias configuration.
