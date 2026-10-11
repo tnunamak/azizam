@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, type Service, type ServiceRegistry } from "@/lib/api";
@@ -179,5 +185,119 @@ it("submits the edit form by Enter with accessible field names", async () => {
   expect(screen.getByRole("textbox", { name: "Endpoint" })).toBeVisible();
   await user.clear(name);
   await user.type(name, "renamed{Enter}");
-  expect(edit).toHaveBeenCalledWith("primary", expect.objectContaining({ name: "renamed" }));
+  expect(edit).toHaveBeenCalledWith(
+    "primary",
+    expect.objectContaining({ name: "renamed" }),
+  );
+});
+
+describe("engine dialog focus restoration", () => {
+  const engines: ServiceRegistry = {
+    schema_version: 1,
+    services: {
+      alpha: service("alpha"),
+      bravo: service("bravo"),
+      charlie: service("charlie"),
+    },
+  };
+
+  async function openRemoval(
+    user: ReturnType<typeof userEvent.setup>,
+    id: string,
+  ) {
+    const actions = await screen.findByRole("button", {
+      name: `Actions for ${id}`,
+    });
+    await user.click(actions);
+    await user.click(screen.getByRole("menuitem", { name: "Remove engine" }));
+    return actions;
+  }
+
+  it("returns focus to the row actions when removal is cancelled", async () => {
+    vi.spyOn(api.services, "registry").mockResolvedValue(engines);
+    vi.spyOn(api, "status").mockResolvedValue({});
+    const remove = vi.spyOn(api.services, "remove");
+    const user = userEvent.setup();
+    mount();
+    const actions = await openRemoval(user, "bravo");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(actions).toHaveFocus());
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["bravo", ["alpha", "bravo", "charlie"], "Actions for charlie"],
+    ["charlie", ["alpha", "bravo", "charlie"], "Actions for bravo"],
+    ["alpha", ["alpha"], "Add engine"],
+  ])(
+    "focuses %s's surviving neighbour or Add engine after removal",
+    async (id, ids, target) => {
+      const initial = {
+        ...engines,
+        services: Object.fromEntries(ids.map((key) => [key, service(key)])),
+      };
+      const remaining = {
+        ...initial,
+        services: Object.fromEntries(
+          Object.entries(initial.services).filter(([key]) => key !== id),
+        ),
+      };
+      vi.spyOn(api.services, "registry").mockResolvedValue(initial);
+      vi.spyOn(api, "status").mockResolvedValue({});
+      const remove = vi
+        .spyOn(api.services, "remove")
+        .mockResolvedValue(remaining);
+      const user = userEvent.setup();
+      mount();
+      const actions = await openRemoval(user, id);
+      await user.type(screen.getByRole("textbox"), id);
+      await user.click(screen.getByRole("button", { name: "Remove engine" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(remove).toHaveBeenCalledWith(id);
+      expect(actions.isConnected).toBe(false);
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole("button", { name: target })[0],
+        ).toHaveFocus(),
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "restores surviving focus after disabling an engine (last=%s)",
+    async (last) => {
+      const initial = last
+        ? { ...engines, services: { bravo: service("bravo") } }
+        : engines;
+      const disabled = {
+        ...initial,
+        services: {
+          ...initial.services,
+          bravo: service("bravo", "primary", false),
+        },
+      };
+      vi.spyOn(api.services, "registry").mockResolvedValue(initial);
+      vi.spyOn(api, "status").mockResolvedValue({});
+      const edit = vi.spyOn(api.services, "edit").mockResolvedValue(disabled);
+      const user = userEvent.setup();
+      mount();
+      const invoker = await screen.findByRole("button", { name: /^bravo\b/ });
+      await user.click(invoker);
+      await user.click(screen.getByRole("switch", { name: "Toggle bravo" }));
+      await user.click(screen.getByRole("button", { name: "Save engine" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(edit).toHaveBeenCalledWith(
+        "bravo",
+        expect.objectContaining({ enabled: false }),
+      );
+      expect(invoker.isConnected).toBe(false);
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole("button", {
+            name: last ? "Add engine" : "Actions for charlie",
+          })[0],
+        ).toHaveFocus(),
+      );
+    },
+  );
 });

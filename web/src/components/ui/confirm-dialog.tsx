@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { restoreFocus } from "@/lib/restore-focus";
 
 import { Button } from "./button";
 import {
@@ -31,6 +32,8 @@ export interface ConfirmDialogProps {
   typedName?: string;
   /** Stable invoker when opened from a menu whose items unmount. */
   returnFocus?: HTMLElement | null;
+  /** Resolved on close when the opener no longer receives focus. */
+  fallbackFocus?: () => readonly (HTMLElement | null)[];
   /** Runs on confirm; the dialog shows a loading state while a returned
    * promise is pending and closes only on success. The caller owns error
    * presentation; rejected mutations leave the dialog open. */
@@ -61,6 +64,7 @@ function ConfirmDialogContent({
   danger = true,
   typedName,
   returnFocus: invoker,
+  fallbackFocus,
   onConfirm,
 }: Omit<ConfirmDialogProps, "open">) {
   const returnFocus = useRef<HTMLElement | null>(
@@ -98,7 +102,7 @@ function ConfirmDialogContent({
       className="flex! max-h-[85dvh] flex-col gap-0! overflow-hidden sm:max-w-md"
       onCloseAutoFocus={(event) => {
         event.preventDefault();
-        (invoker ?? returnFocus.current)?.focus();
+        restoreFocus(invoker ?? returnFocus.current, fallbackFocus);
       }}
       onEscapeKeyDown={blockWhilePending}
       onPointerDownOutside={blockWhilePending}
