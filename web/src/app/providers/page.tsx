@@ -880,6 +880,12 @@ function DetailCard({
       const edits: FieldEdits = { ...all[id] };
       for (const field of modelFields) {
         if (!(field in patch)) continue;
+        // Typing the saved value back is no edit: the field follows the
+        // saved row again, so a later server change is not a conflict.
+        if (sameModelField(field, patch[field] as ProviderModel[ModelField], server[field])) {
+          delete edits[field];
+          continue;
+        }
         // The first edit of a field remembers the saved value it started from.
         Object.assign(edits, {
           [field]: { value: patch[field], base: edits[field]?.base ?? server[field] },

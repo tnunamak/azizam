@@ -5,7 +5,7 @@ import TryPage from "@/app/try/page";
 
 const account = vi.hoisted(() => ({
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
   params: new URLSearchParams(),
 }));
@@ -50,7 +50,7 @@ beforeEach(() => {
     authenticated: true,
     apps: [{ id: "try", name: "Try" }],
   });
-  account.mintKey.mockResolvedValue({ id: "try-key", api_key: "test-key" });
+  account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   routes = {
     [SUBMIT]: () =>
       json({ object: "media.job", id: "job_1", status: "queued" }, 202),
@@ -229,7 +229,17 @@ describe("a dropped connection on any tab", () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (init?.method === "POST") throw dropped();
-      return json(url.includes("workflows") ? { workflows: [] } : models);
+      // Try picks only catalog models, so the default Chat tab needs one.
+      return json(url.includes("workflows") ? { workflows: [] } : {
+        ...models,
+        models: [...models.models, {
+          id: "chat-model",
+          name: "Chat model",
+          capabilities: [{ intent: "chat.completions", input_modalities: ["text"] }],
+          capability: "chat",
+          locality: "local",
+        }],
+      });
     });
     render(<TryPage />);
     await waitFor(() =>

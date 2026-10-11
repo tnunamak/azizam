@@ -114,7 +114,7 @@ describe("media prop changes before passive effects", () => {
 // is typed "string", lives in the request body and writes input_reference.
 const account = vi.hoisted(() => ({
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
   params: new URLSearchParams(),
 }));
@@ -171,7 +171,7 @@ beforeEach(() => {
     authenticated: true,
     apps: [{ id: "try", name: "Try" }],
   });
-  account.mintKey.mockResolvedValue({ id: "try-key", api_key: "test-key" });
+  account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   videoResponse = () => json({ id: "video_1", object: "video", status: "queued" });
   fetchMock
     .mockReset()
@@ -245,7 +245,7 @@ describe("an image-to-video workflow on Try", () => {
     expect(screen.getByText("Describe the video first")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
     expect(posts()).toHaveLength(0);
-    expect(account.mintKey).not.toHaveBeenCalled();
+    expect(account.tryKey).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: /Describe the video/ })).toHaveFocus(),
     );
@@ -365,7 +365,7 @@ describe("an image-to-video workflow on Try", () => {
       await user.click(screen.getByRole("button", { name: "Edit and run again" }));
       expect(fetchMock.mock.calls.length).toBe(calls);
       expect(posts()).toHaveLength(1);
-      expect(account.mintKey).toHaveBeenCalledTimes(1);
+      expect(account.tryKey).toHaveBeenCalledTimes(1);
       const prompt = screen.getByRole("textbox", { name: /Describe the video/ });
       expect(prompt).toHaveFocus();
       expect(prompt).toHaveValue("A boat drifts");

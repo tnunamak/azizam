@@ -18,7 +18,7 @@ import catalog from "./fixtures/workflows-image-edit.json";
 // "mask". Each picture gets one picker; nothing shows a made-up path.
 const account = vi.hoisted(() => ({
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn(),
   params: new URLSearchParams(),
@@ -70,7 +70,7 @@ beforeEach(() => {
     authenticated: true,
     apps: [{ id: "try", name: "Try" }],
   });
-  account.mintKey.mockResolvedValue({ id: "try-key", api_key: "test-key" });
+  account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   account.promptMemory.mockResolvedValue(promptMemory(true));
   fetchMock.mockReset().mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return json({ data: [] });

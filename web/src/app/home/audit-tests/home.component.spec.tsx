@@ -639,7 +639,9 @@ describe("Home audit component behavior", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Open WebUI" }),
     );
-    await screen.findByText("This key does not include the default model");
+    await screen.findByText(
+      "This key has no chat models. Choose another key or ask the owner to update its access.",
+    );
     expect(screen.queryByRole("textbox", { name: "Model" })).toBeNull();
     expect(
       screen.queryByText("No chat model is available to this key yet"),

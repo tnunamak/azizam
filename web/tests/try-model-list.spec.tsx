@@ -5,7 +5,7 @@ import TryPage from "@/app/try/page";
 
 const account = vi.hoisted(() => ({
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
   params: new URLSearchParams(),
 }));
@@ -218,7 +218,7 @@ describe("fallback capabilities and catalog envelopes", () => {
     account.session.mockResolvedValue({
       authenticated: true, apps: [{ id: "try-app", name: "Try" }],
     });
-    account.mintKey.mockResolvedValue({ id: "test-key", api_key: "fixture-only" });
+    account.tryKey.mockResolvedValue({ id: "test-key", api_key: "fixture-only", reused: false, app_name: "Try", expires_at: 0 });
   }
 
   it.each([

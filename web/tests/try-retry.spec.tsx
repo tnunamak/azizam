@@ -5,7 +5,7 @@ import TryPage from "@/app/try/page";
 
 const account = vi.hoisted(() => ({
   session: vi.fn(),
-  mintKey: vi.fn(),
+  tryKey: vi.fn(),
   revokeKey: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
@@ -41,7 +41,7 @@ beforeEach(() => {
     authenticated: true,
     apps: [{ id: "try", name: "Try" }],
   });
-  account.mintKey.mockResolvedValue({ id: "try-key", api_key: "test-key" });
+  account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   fetchMock
     .mockReset()
     .mockImplementation(async (url: string, init?: RequestInit) => {
@@ -76,7 +76,7 @@ it("a failed result offers Edit and run again, which repeats nothing", async () 
   ).toHaveLength(1);
   expect(screen.getByRole("textbox", { name: "Prompt" })).toHaveFocus();
   expect(screen.getByText("Request failed")).toBeVisible();
-  expect(account.mintKey).toHaveBeenCalledTimes(1);
+  expect(account.tryKey).toHaveBeenCalledTimes(1);
   expect(account.revokeKey).not.toHaveBeenCalled();
 });
 
@@ -109,7 +109,7 @@ it.each(["model", "workflow"])(
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1]?.method).not.toBe("POST");
-    expect(account.mintKey).not.toHaveBeenCalled();
+    expect(account.tryKey).not.toHaveBeenCalled();
   },
 );
 
@@ -194,7 +194,7 @@ it.each([false, true, undefined])("honors workflow availability %s in the picker
     expect(run.nextElementSibling).toHaveTextContent(reason);
     expect(screen.getByText(reason)).toBeVisible();
     await user.click(run);
-    expect(account.mintKey).not.toHaveBeenCalled();
+    expect(account.tryKey).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   } else {
     expect(screen.getByRole("combobox")).not.toHaveTextContent("Unavailable");

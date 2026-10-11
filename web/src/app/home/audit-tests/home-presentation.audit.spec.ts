@@ -132,10 +132,10 @@ describe("Home audit presentation contract", () => {
     expect(capabilitySummary(tiles)).toBe("Chat is ready to start");
   });
 
-  it("projects scoped chat aliases into Home tiles", () => {
+  it("projects scoped chat aliases into Home tiles without special names", () => {
     const aliases: HomeAlias[] = [
       {
-        id: "utility-check",
+        id: "house-chat",
         operation: "chat.completions",
         available: true,
         status: "ready",
@@ -149,39 +149,41 @@ describe("Home audit presentation contract", () => {
         reason_code: "ready",
       },
     ];
-    const tiles = capabilityTiles([], aliases);
-    expect(tiles).toMatchObject([
-      { capability: "chat", model: "default", status: "ready" },
+    // The gateway lists aliases in its order; "default" is an ordinary name.
+    expect(capabilityTiles([], aliases)).toMatchObject([
+      { capability: "chat", model: "house-chat", status: "ready" },
     ]);
-    expect(capabilityTiles([], [aliases[0]])).toEqual([]);
+    expect(capabilityTiles([], [aliases[1]])).toMatchObject([
+      { capability: "chat", model: "default" },
+    ]);
   });
 
-  it("uses representative rows instead of first available titled rows", () => {
+  it("uses the first advertised titled row for each capability", () => {
     const tiles = capabilityTiles(
       [
         {
           capability: "chat",
-          title: "Utility check",
-          use_name: "utility-check",
-          intent: "chat.completions",
-          model: "utility-check",
-          available: true,
-          status: "ready",
-          reason_code: "ready",
-        },
-        {
-          capability: "chat",
           title: "Recommended chat",
-          use_name: "default",
+          use_name: "renamed-chat",
           intent: "chat.completions",
-          model: "default",
+          model: "renamed-chat",
           available: false,
           status: "idle",
           reason_code: "ready_on_request",
         },
+        {
+          capability: "chat",
+          title: "Other chat",
+          use_name: "default",
+          intent: "chat.completions",
+          model: "default",
+          available: true,
+          status: "ready",
+          reason_code: "ready",
+        },
       ],
       [],
     );
-    expect(tiles).toMatchObject([{ capability: "chat", model: "default" }]);
+    expect(tiles).toMatchObject([{ capability: "chat", model: "renamed-chat" }]);
   });
 });
