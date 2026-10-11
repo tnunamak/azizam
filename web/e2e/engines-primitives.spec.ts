@@ -11,6 +11,7 @@ for (const width of [1440, 390]) {
     const phase = process.env.BATCH5_SCREENSHOT_PHASE ?? "after";
     await page.screenshot({
       path: `test-results/screens/batch5-${phase}-engines-${width}.png`,
+      animations: "disabled",
       fullPage: true,
     });
     await trigger.click();
@@ -21,6 +22,7 @@ for (const width of [1440, 390]) {
     await expect(dialog.getByLabel(/^Name/)).toBeVisible();
     await page.screenshot({
       path: `test-results/screens/batch5-${phase}-add-${width}.png`,
+      animations: "disabled",
       fullPage: true,
     });
     await page.keyboard.press("Escape");
