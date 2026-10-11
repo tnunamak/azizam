@@ -87,6 +87,7 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "AZIZAM_IMAGE_CACHE_DIR": str(state / "images"),
+        "UI_E2E_MEDIA_ROOT": str(state / "images"),
         "UI_E2E_PORT": str(port),
         "UI_E2E_ALLOWED_PORTS": "",
     }
