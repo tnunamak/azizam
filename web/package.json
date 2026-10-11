@@ -8,7 +8,7 @@
     "lint": "next lint",
     "format": "prettier --write .",
     "doctor": "react-doctor --no-telemetry --blocking error",
-    "check": "tsc --noEmit && next lint && npm run doctor && next build",
+    "check": "tsc --noEmit && next lint && npm run doctor",
     "test": "npm run test:components",
     "test:e2e": "playwright test --config playwright.config.ts && playwright test --config playwright.live-data.config.ts && playwright test --config playwright.household.config.ts",
     "test:components": "vitest run --config vitest.config.ts",

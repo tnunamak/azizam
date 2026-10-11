@@ -14,7 +14,7 @@ export type LongJob = {
   created_at: number;
   updated_at: number;
   error?: string;
-  assets: { asset_id?: string }[];
+  assets: { asset_id?: string; id?: string }[];
 };
 
 export const terminalJob = (job: LongJob) =>
@@ -35,8 +35,12 @@ export function jobLabel(job: LongJob) {
   );
 }
 
+export function jobAssetId(job: LongJob) {
+  return job.assets.map((asset) => asset.asset_id || asset.id).find(Boolean);
+}
+
 export function jobLink(job: LongJob) {
-  const assetId = job.status === "succeeded" && job.assets[0]?.asset_id;
+  const assetId = job.status === "succeeded" && jobAssetId(job);
   return assetId
     ? `/library/?asset=${encodeURIComponent(assetId)}`
     : `/library/?job=${encodeURIComponent(job.job_id)}`;
@@ -77,6 +81,8 @@ export function JobNotices() {
 function PersonJobNotices({ personId }: { personId: string }) {
   const [startedAt] = useState(() => Math.floor(Date.now() / 1000));
   const seen = useRef(new Map<string, string>());
+  const activeJobs = useRef(new Map<string, LongJob>());
+  const since = useRef<number | null>(null);
   const unchanged = useRef(0);
   const failures = useRef(0);
   const [notices, setNotices] = useState<LongJob[]>([]);
@@ -103,12 +109,14 @@ function PersonJobNotices({ personId }: { personId: string }) {
         terminalJob(job) &&
         job.status !== "canceled" &&
         previous !== job.status &&
-        (previous !== undefined || job.created_at >= startedAt) &&
+        (previous !== undefined || job.created_at >= startedAt || job.updated_at >= startedAt) &&
         !dismissed.current.has(job.job_id)
       ) {
         completed.push(job);
       }
       seen.current.set(job.job_id, job.status);
+      if (terminalJob(job)) activeJobs.current.delete(job.job_id);
+      else activeJobs.current.set(job.job_id, job);
     }
     unchanged.current = changed ? 0 : unchanged.current + 1;
     if (completed.length)
@@ -125,18 +133,25 @@ function PersonJobNotices({ personId }: { personId: string }) {
       try {
         const jobs: LongJob[] = [];
         let cursor: string | null = null;
+        let watermark: number | null = null;
         do {
-          const page: { jobs: LongJob[]; next_cursor?: string | null } =
+          const params = new URLSearchParams({ watch: "1" });
+          if (since.current !== null) params.set("since", String(since.current));
+          if (cursor) params.set("cursor", cursor);
+          const page: { jobs: LongJob[]; next_cursor?: string | null; polled_at?: number } =
             await jobRequest(
-              `/me/api/jobs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+              `/me/api/jobs?${params}`,
               signal,
             );
+          watermark ??= page.polled_at ?? null;
           jobs.push(...page.jobs);
           cursor = page.next_cursor ?? null;
         } while (cursor);
         failures.current = 0;
         recordPoll(jobs);
-        return jobs;
+        // Advance only after all pages succeed. Inclusive seconds replay ties.
+        since.current = watermark;
+        return [...activeJobs.current.values()];
       } catch (error) {
         failures.current += 1;
         throw error;
@@ -270,7 +285,7 @@ export function JobResult({ jobId }: { jobId: string }) {
             )[job.status]}
       </h2>
       {job.error ? <p>{job.error}</p> : null}
-      {job.assets[0]?.asset_id ? (
+      {job.status === "succeeded" && jobAssetId(job) ? (
         <Link
           className="text-link inline-flex min-h-11 items-center underline"
           href={jobLink(job)}

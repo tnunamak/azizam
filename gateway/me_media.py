@@ -133,15 +133,23 @@ def create_me_media_router(
             actor = _actor_from_request(request, session_provider, admin_path)
             # Even owners receive only their own jobs. Scope before pagination.
             scope = _member_media_scope(actor.user_id, admin_path)
+            polled_at = int(time.time())
+            watch = request.query_params.get("watch") == "1"
+            since = request.query_params.get("since")
+            if since is not None and (not since.isdecimal() or len(since) > 12):
+                raise _ApiError("invalid_since", "since must be a non-negative Unix timestamp", 400)
+            # Inclusive seconds replay ties; capture the watermark before reading.
+            updated_since = (int(since) if since is not None else polled_at) if watch else None
             rows = media_jobs.recent(
                 101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
                 before=_decode_cursor(request.query_params.get("cursor")),
+                updated_since=updated_since, include_active=watch and since is None,
                 path=_resolve_path(media_jobs_path),
             )
             page = rows[:100]
             cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
             return _json({"jobs": [media_jobs.for_audience(job, "client") for job in page],
-                          "next_cursor": cursor})
+                          "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
         except (_ApiError, UserPortalError) as exc:
             return _error_response(exc)
 

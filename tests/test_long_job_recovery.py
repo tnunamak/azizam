@@ -130,6 +130,7 @@ def test_make_restart_does_not_duplicate_unconfirmed_work(store, status, enabled
     job = media_jobs.MediaJob(intent="image.generate", status=status, metadata={"mode": me_make.JOB_MODE})
     media_jobs.create(job, path=store)
     runtime = Mock()
+    runtime.owns_job.return_value = False
     runtime.load_payload.return_value = {"body": {"prompt": "a picture"}}
     me_make.resume_jobs(runtime=runtime, jobs_path=store, enabled=enabled)
     if enabled and status == "queued":

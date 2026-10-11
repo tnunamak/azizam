@@ -781,6 +781,8 @@ def recent(
     owner_key_hashes: list[str] | None = None,
     status: str | None = None,
     since_s: int | None = None,
+    updated_since: int | None = None,
+    include_active: bool = False,
     before: tuple[int, str] | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
@@ -812,6 +814,13 @@ def recent(
     if since_s is not None:
         clauses.append("updated_at >= ?")
         params.append(int(time.time()) - int(since_s))
+    if updated_since is not None:
+        if include_active:
+            clauses.append("(updated_at >= ? OR status IN (?, ?))")
+            params.extend((updated_since, STATUS_QUEUED, STATUS_RUNNING))
+        else:
+            clauses.append("updated_at >= ?")
+            params.append(updated_since)
     if before is not None:
         clauses.append("(updated_at, job_id) < (?, ?)")
         params.extend(before)
@@ -943,6 +952,18 @@ def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PA
     except ValueError:
         return update_status(job_id, STATUS_RUNNING, expected_status=STATUS_RUNNING,
                              metadata_patch={"cancel_requested_at": _now()}, path=path)
+
+
+def active_count(*, app_id: str, intents: Iterable[str], path: Path = DB_PATH) -> int:
+    """Count this app's queued/running work without a history scan limit."""
+    intents = tuple(intents)
+    with _conn(path) as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM media_jobs WHERE status IN (?, ?) "
+            "AND json_extract(job_json, '$.app_id') = ? "
+            f"AND intent IN ({','.join('?' for _ in intents)})",
+            (STATUS_QUEUED, STATUS_RUNNING, app_id, *intents),
+        ).fetchone()[0]
 
 
 def unfinished(*, path: Path = DB_PATH) -> list[dict[str, Any]]:

@@ -123,3 +123,28 @@ test("polling backs off for unchanged work, idle sessions, and failures", () => 
   expect(jobPollInterval(false, 0, 0)).toBe(60000);
   expect(jobPollInterval(true, 0, 3)).toBe(120000);
 });
+
+test("notices find legacy IDs after empty assets", () => {
+  render(<JobNotice job={{ ...job, status: "succeeded", assets: [{}, { id: "img_legacy" }] }} onDismiss={() => {}} />);
+  expect(screen.getByRole("link", { name: "Open result" })).toHaveAttribute("href", "/library?asset=img_legacy");
+});
+
+test("polls deltas and retains old active jobs through unchanged polls", async () => {
+  const requests: string[] = [];
+  let round = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    requests.push(url);
+    const jobs = round === 0 ? [job] : round === 2 ? [{ ...job, status: "succeeded", assets: [{ id: "vid_finished" }] }] : [];
+    return new Response(JSON.stringify({ jobs, polled_at: 100 + round }));
+  }));
+  const { client } = mount();
+  await waitFor(() => expect(client.getQueryData(["person-jobs", "alice"])).toBeDefined());
+  expect(requests[0]).toContain("watch=1");
+  round = 1;
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  expect(requests[1]).toContain("since=100");
+  expect(client.getQueryData<LongJob[]>(["person-jobs", "alice"])?.some((item) => item.job_id === job.job_id)).toBe(true);
+  round = 2;
+  await act(() => client.refetchQueries({ queryKey: ["person-jobs", "alice"] }));
+  expect(await screen.findByRole("link", { name: "Open result" })).toHaveAttribute("href", "/library?asset=vid_finished");
+});
