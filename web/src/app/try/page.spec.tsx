@@ -213,6 +213,44 @@ test.each(["unknown", "speech"])(
   },
 );
 
+test("a missing catalog leaves no invented model selected", async () => {
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? workflows : {}, !url.includes("/me/api/models/catalog")),
+  );
+  render(<TryPage />);
+  await screen.findByText("Model catalog could not be loaded.");
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.queryByText(/Unverified model/)).toBeNull();
+});
+
+test("speech refresh uses the replacement model and its discovered voice", async () => {
+  mocks.params = new URLSearchParams("capability=speech");
+  let catalogReads = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") {
+      const next = ++catalogReads > 1;
+      return response({ aliases: [], models: [{
+        id: next ? "new-speech-b" : "new-speech-a",
+        name: next ? "Second voice model" : "First voice model",
+        capability: "speech",
+        speech_voices: {
+          voices: [{ id: next ? "novel-b" : "novel-a", name: next ? "Voice B" : "Voice A" }],
+          default_voice: next ? "novel-b" : "novel-a",
+          allow_other: false,
+        },
+      }] });
+    }
+    return response({});
+  });
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("First voice model"));
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Voice" }).value).toBe("novel-a");
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/audio/speech")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => url === "/openai/v1/audio/speech");
+  expect(JSON.parse((call?.[1] as RequestInit).body as string)).toMatchObject({ model: "new-speech-b", voice: "novel-b" });
+});
 test.each(["http", "transport"])(
   "workflow %s failure offers retry while model options survive",
   async (kind) => {
