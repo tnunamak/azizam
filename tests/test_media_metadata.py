@@ -490,3 +490,28 @@ class FfmpegTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnonymousBufferTests(unittest.TestCase):
+    """Media bytes stay in anonymous RAM files even on Python builds without os.memfd_create."""
+
+    def _assert_anonymous(self):
+        import os
+        from gateway.media_metadata import _media_buffers
+        with _media_buffers(b"prompt-bearing bytes") as (src, dst):
+            for handle in (src, dst):
+                target = os.readlink(f"/proc/self/fd/{handle.fileno()}")
+                self.assertTrue(target.startswith("/memfd:"), target)
+            self.assertEqual(src.read(), b"prompt-bearing bytes")
+
+    def test_buffers_are_memfd_backed(self):
+        self._assert_anonymous()
+
+    def test_buffers_fall_back_to_libc_when_python_omits_memfd_create(self):
+        from unittest import mock
+        import os
+        with mock.patch.object(os, "memfd_create", create=True) as patched:
+            del os.memfd_create
+            self.assertFalse(hasattr(os, "memfd_create"))
+            self._assert_anonymous()
+        patched.assert_not_called()

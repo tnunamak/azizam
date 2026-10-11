@@ -390,6 +390,30 @@ def _strip_mp3(content: bytes) -> bytes | None:
 
 # ------------------------------------------------------------- ffmpeg side
 
+_MFD_CLOEXEC = 0x0001  # linux/memfd.h
+
+
+def _memfd(name: str) -> int:
+    """An anonymous RAM file descriptor.
+
+    Some Python builds omit ``os.memfd_create`` although the kernel has the
+    system call, so fall back to calling libc directly.
+    """
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, os.MFD_CLOEXEC)
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    create = getattr(libc, "memfd_create", None)
+    if create is None:
+        raise MediaMetadataError("anonymous media buffers unavailable")
+    create.argtypes = (ctypes.c_char_p, ctypes.c_uint)
+    create.restype = ctypes.c_int
+    fd = create(name.encode(), _MFD_CLOEXEC)
+    if fd < 0:
+        raise MediaMetadataError("anonymous media buffers unavailable")
+    return fd
+
+
 @contextmanager
 def _media_buffers(content: bytes):
     """Anonymous RAM files: no prompt-bearing pathname, even after SIGKILL.
@@ -397,12 +421,10 @@ def _media_buffers(content: bytes):
     The gateway runs on Linux. Fail closed if memfd is unavailable; a disk
     fallback would violate the forgotten-request storage contract.
     """
-    if not hasattr(os, "memfd_create"):
-        raise MediaMetadataError("anonymous media buffers unavailable")
     with ExitStack() as stack:
-        src = os.fdopen(os.memfd_create("azizam-media-input", os.MFD_CLOEXEC), "w+b")
+        src = os.fdopen(_memfd("azizam-media-input"), "w+b")
         stack.enter_context(src)
-        dst = os.fdopen(os.memfd_create("azizam-media-output", os.MFD_CLOEXEC), "w+b")
+        dst = os.fdopen(_memfd("azizam-media-output"), "w+b")
         stack.enter_context(dst)
         src.write(content)
         src.flush()
