@@ -1,162 +1,139 @@
-# Headless surfaces and resource visibility (design v1)
+# Headless surfaces and resource visibility (design v2)
 
 Status: proposed design, not implemented. 2026-10-11.
 
-Evidence (copies in divan `local-ai-gateway/`, filed with this version):
-- Resource observability survey: Ollama, vLLM, SGLang, TGI, llama.cpp,
-  LM Studio, LocalAI, ComfyUI, LiteLLM, OpenRouter, NVML/DCGM, Kubernetes,
-  Kueue, Slurm, Ray, Modal, RunPod, Replicate, Cloudflare, Home Assistant,
-  Plex, Jellyfin.
-- Headless surfaces survey: Stripe, GitHub, Tailscale, Supabase, Vercel,
-  Cloudflare, Linear, Home Assistant, Kubernetes, Ollama, MCP specification.
-- Two commit-pinned audits at `9b515251`: UI/API/MCP parity, and resource
-  facts the code already has.
-- Earlier divan entries on GPU contention on a shared desktop GPU.
+v2 applies an independent red-team of v1 (`590dbdaa`): it cuts the
+operation registry, the broad plan and the parity ritual, corrects what v1
+assumed the code already does, and adds first-order household needs.
+
+Evidence (divan `local-ai-gateway/`, 2026-10-11): a resource-observability
+survey with a commit-pinned resource-facts audit; a headless-surfaces survey
+with a commit-pinned parity audit; the v1 red-team; earlier GPU-contention
+entries in `llm-serving/`.
 
 ## Problem
 
-Two owner requests share one root cause:
+People cannot tell why work is slow or refused, whether a long job will
+survive a closed tab, or when it is done. The owner cannot see what holds
+the GPU. Many owner actions exist only in the browser. Agents and scripts
+need the same lifecycle without a browser.
 
-1. People cannot tell why a request is slow or refused, what is using the
-   GPU, or what fits now. The owner cannot see who occupies a scarce lane.
-2. Many actions exist only in the browser UI. Agents and scripts cannot do
-   them, and some rules are implemented twice (profile selection in Home and
-   in runtime identity; the 50/200 page size in two routers).
-
-The audits show the gap is mostly exposure, not missing logic. Admission
-already computes reasons, free capacity and conflicting locks, then discards
-them. The admin API already accepts owner and admin bearer keys. There is no
-CLI, and the MCP server has only the three data-plane tools.
+The gap is not only exposure. Today:
+- Admission decisions keep reasons and codes but no structured capacity
+  facts; free capacity appears only in failure prose, conflicting locks
+  become a count, and rejections hide simultaneous delays.
+- Missing load defaults to zero and missing availability to available, so
+  "unknown" and "measured empty" look the same.
+- Receipts and jobs have no phase timestamps; `updated_at` is overwritten.
+- Job events use a global sequence, and clients can append arbitrary event
+  types.
+- Job idempotency deduplicates by request id globally, without checking the
+  principal, operation or input.
+- The admin API already accepts owner and admin bearer keys; there is no
+  CLI; MCP has three data-plane tools.
 
 ## Principles
 
-1. One core, thin adapters. Authentication, validation, authorization,
-   admission, budgets, durable jobs, engine lifecycle and receipts live in
-   the core. REST, CLI, MCP and UI translate; none decides policy.
-2. The contract is the OpenAPI document the server already emits, plus a
-   small operation registry for facts OpenAPI cannot carry. No second
-   hand-maintained specification.
-3. Truth before estimates. Show observed phases and reasons. Show an ETA
-   only after calibration data exists, as a range with its age.
-4. Separate quantities. Device memory, engine KV-cache use, busy fraction,
-   reserved capacity, request timings and billed cost are different numbers.
-   No single "GPU usage" figure.
-5. Privacy by audience. Members see their own work and an anonymous
-   capacity class. Owners see attribution, never prompt content.
-6. Unknown is not zero. A missing or stale sensor is a reason for
-   conservative admission, never evidence of free memory.
+1. One authoritative server path for authentication, ownership, admission
+   and dispatch. Adapters translate; they never decide policy.
+2. Truth before estimates; unknown is never zero. Every fact carries
+   `observed_at` and a quality (measured, declared, estimated, unavailable).
+3. Separate quantities: device memory, engine KV-cache use, busy fraction,
+   reserved capacity, request timings and billed cost.
+4. Privacy by audience: members see their own work precisely and shared
+   capacity only coarsely; owners see attribution, never prompt content.
+5. Build for demonstrated needs. No framework, registry or ETA ahead of
+   evidence.
 
-## Decisions
+## Release A: truthful outcomes, safe primitives
 
-### D1. Operation registry beside the routes
+1. **Structured decisions.** Admission returns all reasons (rejections and
+   delays together), the blocking resource class, and the capacity facts it
+   used, each with `observed_at` and quality. Unknown inputs stay unknown
+   and make admission conservative.
+2. **Phase timestamps.** Record `accepted_at`, `queued_at`, `started_at`,
+   `first_output_at`, `finished_at` prospectively on receipts and jobs, one
+   timestamp per event with attempt numbers; legacy records show
+   "unavailable". Lifecycle phases come only from trusted writers (the
+   gateway and engine adapters), stored apart from client progress events.
+3. **Safe reasons and next actions** on refusals and waits: wait (with a
+   deadline), cancel my own work, use a permitted smaller or warm option, or
+   opt into an already-authorized paid route. Never spend money or unload
+   another person's engine without explicit consent. No invented queue
+   position or ETA.
+4. **Fixes found by the red-team:** per-job event sequence numbers (or
+   opaque scoped cursors) in client responses; event appends limited to
+   trusted writers; idempotency scoped to principal and operation, with a
+   changed input under the same key rejected; ownership required, never
+   optional, wherever private records are listed, applied before
+   pagination.
+5. **Tests:** inference, member and app credentials cannot reach owner
+   mutations through REST or MCP (mint key, raise budget, enable paid
+   fallback, unload engine), with no side effects; no cross-principal
+   leakage through lists, events, cursors or status.
 
-Each operation gets a declaration next to its handler: stable ID, required
-permission and resource resolver, effect class (read, inference, lifecycle,
-destructive, external transmission, billing or security), job behaviour,
-retry and idempotency policy, plan support, audience visibility and
-redaction rules. Adapters read the registry; it never contains business
-logic. Parity tests iterate it.
+## Release B: long jobs that survive
 
-### D2. Three API areas, one authorization system
+1. One canonical job state vocabulary with typed `is_terminal` and
+   `holds_resources` predicates; MCP waits and outstanding-job limits use
+   them.
+2. Restart recovery and cancel semantics: "cancel requested" versus
+   "stopped and released".
+3. "Tell me when it's done": in-app notification first; output links that
+   outlive the notice (renew signed URLs, show expiry).
+4. A minimal hand-written CLI over the existing HTTP API: `auth`,
+   `capabilities`, `run`, `jobs list|get|wait|cancel|output`, `receipts`,
+   `status`, and `api` (raw call with the selected identity only, never an
+   ambient owner key). JSON on stdout, NDJSON for events, progress on
+   stderr, stable error codes, no prompts when not interactive.
+5. MCP keeps `capabilities`, `run`, `job`; their results gain the phase and
+   reason fields. No new tools yet.
 
-| Area | Examples | Credentials |
-|---|---|---|
-| Compatibility data plane | OpenAI, Anthropic, Ollama routes | App and person inference keys |
-| Native work plane | capabilities, plan, submit, job, receipts, status | Sessions, developer keys, MCP |
-| Owner control plane | people, keys, plans, categories, engines, providers, settings | Owner and admin keys only |
+## Release C: live capacity
 
-A path prefix is organization, not authorization. An inference key can never
-mint a stronger key, raise its own budget, enable paid fallback or unload
-another person's engine, through any adapter.
+1. Current snapshots per device (memory used, free and reserved for
+   Azizam, the display reserve, host pressure, external use where the
+   driver reports it) and per engine (residency, running and waiting
+   counts), each dated. Driver probes are optional data sources. Short
+   bounded history for diagnosis only.
+2. Owner "Now": devices, active engines and jobs with person and app
+   attribution, recent refusals and why, and "can I run X now" as ready /
+   must load / can queue / incompatible / not allowed.
+3. Member status: own work precisely; shared capacity as a coarse,
+   rate-limited class with no other job ids, counts or timelines. Residual
+   timing side channels in a small household are acknowledged, not denied.
+4. A simple display reserve and per-person concurrency cap before any
+   fair-share scheduler.
 
-### D3. Durable jobs and a side-effect-free plan
+## Later, only on demonstrated need
 
-Native jobs (the existing media jobs, extended) have an opaque ID and the
-states `queued`, `preparing`, `running`, `cancelling`, `succeeded`,
-`failed`, `cancelled`. A refusal is a result, not a fake job. Submission is
-persisted before expensive work, with an idempotency key scoped per
-principal and operation; the same key with different input fails.
+- A narrow "explain availability" read using the same pure evaluation as
+  dispatch, labelled "not reserved"; a fuller plan only if a client needs
+  it. Dispatch always re-checks.
+- Owner MCP tools on an explicit owner connection, default deny, passing
+  the real owner credential to the same server authorization.
+- A generated client once hand-written maintenance costs more.
+- ETA ranges after phase data exists, with recorded estimate error.
 
-`plan` turns the admission explanation into a read-only operation: route,
-warm or cold, admission decision, permitted alternatives, cost ceiling,
-policy revision, and estimate ranges only when calibrated. A plan never
-loads an engine or buys cloud work, and it reserves nothing.
+## Support matrix, not a parity ritual
 
-### D4. Request phases and reasons on every receipt
-
-Receipts gain observed timestamps (`accepted_at`, `queued_at`,
-`started_at`, `first_output_at`, `finished_at`) with a quality flag
-(measured, estimated, declared, unavailable) and structured reason codes
-from the admission decision. The caller sees a safe reason and a next
-action; the owner sees quantities and the policy rule. Existing admission
-codes stay; an audience dictionary translates them.
-
-Reason families: capacity (`insufficient_vram`, `display_headroom_reserved`,
-`engine_busy`, `host_memory_pressure`), fairness and policy
-(`principal_concurrency_limit`, `app_concurrency_limit`, `budget_exhausted`,
-`capability_not_allowed`), lifecycle (`model_loading`, `engine_starting`,
-`backend_unavailable`, `telemetry_stale`).
-
-### D5. Owner "Now" and member status
-
-A sampler records per device: total, used and free memory, Azizam's
-committed reservations, the display-GPU reserve, external processes where
-the driver reports them, and host memory pressure, each with `observed_at`.
-About 1-2 s while busy and 5-10 s idle; raw samples kept 24 h, minute
-rollups 7 days, hourly 90 days. Engines report residency, device placement,
-running and waiting counts, and load duration where the backend exposes it
-(engine specifics stay as data in the service record).
-
-- Owner: devices, active engines and jobs with person and app attribution,
-  recent refusals and why, what fits now (ready, must load, can queue,
-  incompatible, denied).
-- Member: own jobs and receipts, and a shared-capacity class ("busy with a
-  large job", "available"), no other person's identity or content.
-- App key: jobs in its own scope only.
-
-### D6. Surfaces to build first
-
-- REST: document the existing owner bearer routes in OpenAPI; add `plan`,
-  `status` (audience-filtered "Now") and phase fields on receipts and jobs.
-- CLI: a small curated `azizam` CLI over a client generated from OpenAPI:
-  `auth`, `capabilities`, `run`, `jobs list|get|wait|cancel|output`,
-  `receipts`, `status`, `plan`, selected owner commands, plus `api` as an
-  authenticated raw escape hatch and `schema`. JSON on stdout, NDJSON for
-  events, progress on stderr, stable error codes in the payload, never
-  prompts when not interactive.
-- MCP: keep `capabilities`, `run`, `job`; add `status` and `plan` fields to
-  them before adding tools. Owner tools only on an explicit owner
-  connection, default-deny, each mapped to a registry operation. Tool
-  annotations are hints, not access control.
-
-## Slices (each ships with REST, CLI and MCP parity tests)
-
-1. **Truth from existing facts.** Persist admission reasons, free capacity
-   and conflicting locks on the decision and the receipt; add phase
-   timestamps; show "why" on job and receipt views. No new measurement.
-2. **Registry and parity harness.** Declare operations; a test walks every
-   registered operation through each adapter with guest, member, app and
-   owner credentials. Fix the two confirmed duplicated rules.
-3. **Device and engine sampler, owner Now, member status.** Driver probes
-   are optional data sources; absent data shows as unavailable.
-4. **Plan.** Read-only, uses the same admission entry point as dispatch.
-5. **CLI and owner MCP profile.** Generated client, curated commands.
-6. **ETA.** Only after slice 1-3 data exists; record estimate error and
-   suppress estimates that do not help.
+Each operation is listed with the surfaces that support it. Supported
+surfaces get the same semantics tests; unsupported ones return an explicit
+error. Permission-escalation and privacy cases are tested exhaustively. A
+route inventory test (like the existing category route inventory) catches
+operations someone forgot to list.
 
 ## Not building
 
-- A Prometheus/Grafana stack as a prerequisite, or raw engine `/metrics` as
-  a user surface.
-- A household leaderboard, per-person token rankings, or "you are #3"
-  positions on batched backends.
-- Invented GPU-seconds. Elapsed time, work units and billed cost only.
-- One MCP tool per endpoint, or a code-execution MCP.
-- Preemption and fair-share scheduling before simple concurrency caps and
-  the display reserve prove insufficient.
+A registry framework, a metrics platform as a prerequisite, household
+leaderboards, invented GPU-seconds, queue positions on batched backends,
+one MCP tool per endpoint, a code-execution MCP, or preemption before
+simple caps prove insufficient.
 
 ## Open questions for the owner
 
-- Default per-person concurrency for large media jobs.
-- Whether members may see that a named household member is using the GPU,
-  or only an anonymous class (default: anonymous).
+- Default per-person concurrency for large media jobs, and the display
+  reserve on the desktop GPU.
+- Whether members may see that a named person is using the GPU (default:
+  no, coarse class only).
+- Where "done" notifications go beyond the app (none until asked).
