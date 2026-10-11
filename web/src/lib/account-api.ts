@@ -17,6 +17,15 @@ export interface AccountApp {
   can_mint_keys: boolean;
   credentials: Credential[];
 }
+/** The Try page's key for this sign-in. A reused key comes without its
+ * secret: the browser kept it from the mint. */
+export type TrySessionKey = Credential & {
+  app_name: string;
+  expires_at: number;
+} & (
+    | { reused: true; api_key?: undefined }
+    | { reused: false; api_key: string }
+  );
 export interface AccountSnapshot {
   authenticated: boolean;
   csrf_token: string;
@@ -75,6 +84,12 @@ export const accountApi = {
       `/me/api/apps/${encodeURIComponent(appId)}/keys`,
       { method: "POST", body: { label } },
     ).then((r) => r.credential),
+  /** Reuse this sign-in's Try key, or mint one that ends with the sign-in. */
+  tryKey: (reuseId: string | null) =>
+    accountRequest<{ credential: TrySessionKey }>("/me/api/try-key", {
+      method: "POST",
+      body: reuseId ? { reuse_id: reuseId } : {},
+    }).then((r) => r.credential),
   revokeKey: (id: string) =>
     accountRequest(`/me/api/credentials/${encodeURIComponent(id)}`, {
       method: "DELETE",

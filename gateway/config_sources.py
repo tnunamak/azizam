@@ -187,9 +187,9 @@ def inventory_config_sources(
                 current_value_summary=_summarize(admin_db_oidc),
                 recommendation=(
                     "Manage OIDC provider in the admin dashboard. "
-                    "client_secret is stored in admin.db; for at-rest "
-                    "encryption use client_secret_env to point at a secret "
-                    "supplied via the service environment."
+                    "client_secret is write-only and stored encrypted in "
+                    "the admin.db secret store; the setting keeps only a "
+                    "reference to it."
                 ),
             )
         )

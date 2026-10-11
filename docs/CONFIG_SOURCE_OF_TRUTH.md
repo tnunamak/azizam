@@ -156,9 +156,13 @@ Implications:
   metadata or references only. Provider catalog files are extensible provisioning
   data; a saved provider record is dashboard-owned runtime state. OIDC
   `client_secret` is another intentional exception:
-  when configured from `/admin`, it is stored in `admin.db`, redacted in UI/API
-  responses, preserved on blank updates, and audited. Operators who require an
-  external secret store should use the `client_secret_env` bootstrap fallback.
+  when configured from `/admin`, it is encrypted in the same `admin.db` secret
+  store; `operator_settings.oidc_provider_config` keeps only its
+  `client_secret_ref`. It is write-only (UI/API responses show only
+  `client_secret_set`), preserved on blank updates, and audited. Startup moves
+  a plaintext `client_secret` left in that setting into the store. Operators
+  who require an external secret store should use the `client_secret_env`
+  bootstrap fallback.
 - `admin.user_defaults` and the user-access env flags are bootstrap seeds, not
   ongoing runtime policy. On startup, the gateway imports self-service defaults
   and identity Profile mappings into `admin.db` when they are not already

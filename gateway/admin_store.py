@@ -47,6 +47,11 @@ _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
 SCHEMA_VERSION = 5
+# The OIDC client secret lives in the encrypted secret store; the
+# oidc_provider_config setting holds only this reference to it.
+OIDC_CLIENT_SECRET_REF = "client_secret_ref"
+# The fixed secret id makes the startup move restart-safe.
+OIDC_MOVED_CLIENT_SECRET_ID = "oidc-client-secret"
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -101,14 +106,6 @@ CREATE TABLE IF NOT EXISTS user_identity_claims (
 );
 CREATE INDEX IF NOT EXISTS user_identity_claims_lookup
   ON user_identity_claims(user_id, claim_kind);
-
--- Fixed manual access preserved during the v4 authorization migration. Old
--- claim aliases cannot safely reconstruct an immutable group path.
-CREATE TABLE IF NOT EXISTS legacy_identity_profile_grants (
-  user_id TEXT PRIMARY KEY,
-  profile_id TEXT NOT NULL,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
 
 CREATE TABLE IF NOT EXISTS service_accounts (
   id TEXT PRIMARY KEY,
@@ -166,6 +163,8 @@ CREATE TABLE IF NOT EXISTS credentials (
   expires_at INTEGER,
   revoked_at INTEGER,
   last_used_at INTEGER,
+  -- A key bound to a browser sign-in session; revoked when it signs out.
+  session_id TEXT,
   FOREIGN KEY(app_id) REFERENCES apps(id),
   FOREIGN KEY(profile_id) REFERENCES profiles(id)
 );
@@ -286,7 +285,9 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
-    migrate_legacy_claims = (row is not None and int(row[0]) < 4) or "provenance" not in role_columns
+    # Claims stored before v4 folded case and path separators, so they could
+    # match a mapping the person is not in. Sign-in stores exact claims again.
+    purge_folded_claims = (row is not None and int(row[0]) < 4) or "provenance" not in role_columns
     if row is None:
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
@@ -310,11 +311,16 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE admin_role_assignments "
             "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'"
         )
-    if migrate_legacy_claims:
-        _migrate_legacy_identity_profiles(conn)
+    if purge_folded_claims:
+        conn.execute("DELETE FROM user_identity_claims")
+    _drop_identity_profile_grants(conn)
     columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
     if "created_by" not in columns:
         conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
+    if "session_id" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN session_id TEXT")
+        _revoke_unbound_try_keys(conn)
+    conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
     # Keys made on a session App before the trigger existed stop working.
     conn.execute(
         "UPDATE credentials SET revoked_at = ? WHERE revoked_at IS NULL "
@@ -420,76 +426,53 @@ def _freeze_missing_prompt_memory_preferences(
     )
 
 
-def _migrate_legacy_identity_profiles(conn: sqlite3.Connection) -> None:
-    """Freeze existing claim-derived access, then discard unrecoverable aliases.
+TRY_APP_NAME = "Try"
+TRY_KEY_LABEL = "Try session"
 
-    The v3 matcher folded case and path separators. Preserve only its current
-    winning profile, never its ability to authorize future profile mappings.
-    This runs once inside the schema migration's write transaction.
+
+def _revoke_unbound_try_keys(conn: sqlite3.Connection) -> None:
+    """Revoke Try page keys minted before they were bound to a sign-in session.
+
+    They never expired, and their secret lived only in a closed page, so no
+    one can still use them as intended. Runs once, when the column appears.
     """
-    mappings = conn.execute(
-        "SELECT source_kind,source_value,profile_id FROM runtime_profile_mappings "
-        "WHERE disabled_at IS NULL ORDER BY priority ASC,created_at ASC"
-    ).fetchall()
-    has_account_access = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
-    ).fetchone() is not None
-    users = conn.execute(
-        "SELECT id,email FROM users WHERE EXISTS "
-        "(SELECT 1 FROM user_identity_claims WHERE user_id=users.id)"
-    ).fetchall()
-    for user_id, email in users:
-        # A manual People access plan already took precedence over mappings.
-        if has_account_access and conn.execute(
-            "SELECT 1 FROM account_access WHERE user_id=? "
-            "AND profile_id IS NOT NULL AND removed_at IS NULL", (user_id,)
-        ).fetchone():
-            continue
-        email_value = _normalize_access_value(email)
-        _, _, domain = email_value.partition("@")
-        candidates = {("all_users", "*")}
-        if email_value:
-            candidates.add(("email", email_value))
-        if domain:
-            candidates.add(("domain", domain))
-        roles = {row[0] for row in conn.execute(
-            "SELECT role FROM admin_role_assignments WHERE subject_kind='user' "
-            "AND subject_id=? AND revoked_at IS NULL", (user_id,)
-        )}
-        role = next((role for role in ("owner", "superadmin", "admin") if role in roles), "none")
-        candidates.add(("gateway_role", role))
-        for kind, value in conn.execute(
-            "SELECT claim_kind,claim_value FROM user_identity_claims WHERE user_id=?", (user_id,)
-        ):
-            normalized = _normalize_access_value(value)
-            if normalized:
-                candidates.add((kind, normalized))
-        for kind, value, profile_id in mappings:
-            if (kind, value) not in candidates:
-                continue
-            if kind in IDENTITY_CLAIM_KINDS:
-                # Match the gateway's profile-reference semantics. Default
-                # policy sentinels remain fixed defaults rather than row IDs.
-                if profile_id not in {"default", "default-local"} and not conn.execute(
-                    "SELECT 1 FROM profiles WHERE id=?", (profile_id,)
-                ).fetchone():
-                    for stored_id, name, document in conn.execute(
-                        "SELECT id,name,profile_json FROM profiles ORDER BY created_at ASC"
-                    ):
-                        try:
-                            policy = json.loads(document)
-                        except (TypeError, ValueError):
-                            policy = {}
-                        policy_id = policy.get("id") if isinstance(policy, Mapping) else None
-                        if profile_id in {stored_id, name, policy_id}:
-                            profile_id = stored_id
-                            break
-                conn.execute(
-                    "INSERT OR IGNORE INTO legacy_identity_profile_grants(user_id,profile_id) "
-                    "VALUES (?,?)", (user_id, profile_id),
-                )
-            break
-    conn.execute("DELETE FROM user_identity_claims")
+    ts = _now()
+    ids = [row[0] for row in conn.execute(
+        "SELECT c.id FROM credentials c JOIN apps a ON a.id = c.app_id "
+        "WHERE c.subject_kind = 'app' AND c.revoked_at IS NULL AND c.display_name = ? "
+        "AND lower(a.name) = lower(?) AND a.owner_user_id IS NOT NULL ORDER BY c.id",
+        (TRY_KEY_LABEL, TRY_APP_NAME),
+    )]
+    if not ids:
+        return
+    conn.executemany("UPDATE credentials SET revoked_at = ? WHERE id = ?", [(ts, i) for i in ids])
+    _record_audit_in_transaction(
+        conn, "credential.try_session_revoke",
+        actor_kind=None, actor_id=None, actor_label=None,
+        target_kind="credential", target_id=None,
+        metadata={"reason": "unbound_try_key", "credential_ids": ids}, now=ts,
+    )
+
+
+def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
+    """Drop the pre-People grant table, but never a grant someone still holds.
+
+    People access plans (``account_access``) replaced these rows. A row left
+    here would silently stop granting its plan, so refuse to start instead.
+    """
+    table = "legacy_identity_profile_grants"
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone():
+        return
+    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    if count:
+        raise sqlite3.DatabaseError(
+            f"admin.db table {table} still holds {count} access-plan grant(s). "
+            "Assign each listed person a plan in People (account_access), "
+            f"delete the rows from {table}, then start Azizam again."
+        )
+    conn.execute(f"DROP TABLE {table}")
 
 
 def secure_state_path(path: Path) -> None:
@@ -556,8 +539,64 @@ def init_db(path: Path = DB_PATH) -> None:
     try:
         _apply_pragmas(conn)
         _exec_schema(conn)
+        _move_oidc_client_secret_to_store(conn, path)
     finally:
         conn.close()
+
+
+def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> None:
+    """Move a plaintext OIDC client secret from settings into the secret store.
+
+    The secret store writes through its own connection, so this runs after the
+    schema transaction. It is idempotent: the secret id is fixed, and the
+    setting changes only while it still holds the same literal. An empty
+    literal is an explicit "no secret" override, not a secret, and stays.
+    """
+    key = "oidc_provider_config"
+
+    def literal() -> tuple[dict[str, Any], str] | None:
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (key,)).fetchone()
+        try:
+            value = json.loads(row[0]) if row else None
+        except (TypeError, json.JSONDecodeError):
+            return None
+        secret = value.get("client_secret") if isinstance(value, dict) else None
+        return (value, secret) if isinstance(secret, str) and secret else None
+
+    found = literal()
+    if found is None:
+        return
+    from gateway import secret_store
+
+    secret_store.put_provider_secret(OIDC_MOVED_CLIENT_SECRET_ID, found[1], db_path=path)
+    # Overwrite the literal's freed bytes, then fold the WAL into the file.
+    conn.execute("PRAGMA secure_delete=ON")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = literal()
+        if current is None or current[1] != found[1]:
+            conn.rollback()
+            return
+        value = current[0]
+        del value["client_secret"]
+        value[OIDC_CLIENT_SECRET_REF] = OIDC_MOVED_CLIENT_SECRET_ID
+        ts = _now()
+        conn.execute(
+            "UPDATE operator_settings SET value_json=?, updated_at=? WHERE key=?",
+            (json.dumps(value, ensure_ascii=False, sort_keys=True), ts, key),
+        )
+        _advance_setting_revision(conn, key)
+        _record_audit_in_transaction(
+            conn, "operator.oidc_provider_config.secret_moved",
+            actor_kind=None, actor_id=None, actor_label=None,
+            target_kind="operator_setting", target_id=key,
+            metadata={"secret_ref": OIDC_MOVED_CLIENT_SECRET_ID}, now=ts,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 @contextmanager
@@ -1124,40 +1163,77 @@ def delete_profile(
 ) -> dict[str, Any] | None:
     """Delete a profile row. Returns the deleted record or None if not found.
 
-    Raises ValueError if any app or runtime-profile-mapping still references
-    this profile, to prevent dangling foreign-key references.
+    Raises ValueError, naming every user, while an app (enabled or not), a
+    key that is not revoked, an active mapping, a person or a pending invite
+    uses the plan. Revoked keys cannot authenticate and cannot be deleted, so
+    they would block the plan forever; their plan is cleared instead and the
+    record's ``cleared_revoked_credential_ids`` lists them for the audit.
     """
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM profiles WHERE id = ?", (profile_id,)
         ).fetchone()
         if row is None:
+            conn.rollback()
             return None
-        app_count = conn.execute(
-            "SELECT COUNT(*) FROM apps WHERE default_profile_id = ?", (profile_id,)
-        ).fetchone()[0]
-        if app_count:
+        users = _profile_users(conn, profile_id)
+        if users:
+            conn.rollback()
             raise ValueError(
-                f"profile {profile_id!r} is assigned to {app_count} app(s); "
-                "reassign or clear those apps before deleting"
+                f"Access plan {row['name']!r} is still used by "
+                + "; ".join(users)
+                + ". Move them to another plan, revoke the keys or the invitations, "
+                "or disable the mappings, then delete the plan."
             )
-        mapping_count = conn.execute(
-            "SELECT COUNT(*) FROM runtime_profile_mappings "
-            "WHERE profile_id = ? AND disabled_at IS NULL",
-            (profile_id,),
-        ).fetchone()[0]
-        if mapping_count:
-            raise ValueError(
-                f"profile {profile_id!r} is used by {mapping_count} active runtime "
-                "mapping(s); disable those mappings before deleting"
-            )
-        from gateway.accounts import profile_reference_count
-        if profile_reference_count(conn, profile_id):
-            raise ValueError("access plan is assigned to people or pending invitations; "
-                             "change their plan or revoke the invitations before deleting")
+        cleared = [r[0] for r in conn.execute(
+            "SELECT id FROM credentials WHERE profile_id = ? AND revoked_at IS NOT NULL "
+            "ORDER BY id", (profile_id,),
+        )]
+        conn.execute(
+            "UPDATE credentials SET profile_id = NULL "
+            "WHERE profile_id = ? AND revoked_at IS NOT NULL", (profile_id,),
+        )
         conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.commit()
-    return _profile_row_to_dict(row)
+    return {**_profile_row_to_dict(row), "cleared_revoked_credential_ids": cleared}
+
+
+def _profile_users(conn: sqlite3.Connection, profile_id: str) -> list[str]:
+    """Describe what still depends on a plan, one phrase per kind of user."""
+    def phrase(noun: str, plural: str, names: list[str]) -> str | None:
+        if not names:
+            return None
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        return f"{len(names)} {noun if len(names) == 1 else plural} ({shown})"
+
+    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
+        "SELECT name, disabled_at FROM apps WHERE default_profile_id = ? ORDER BY name",
+        (profile_id,),
+    )]
+    keys = [
+        f"{r[0] or r[1]} on {r[2] or 'an unknown app'}" for r in conn.execute(
+            "SELECT c.display_name, c.prefix, a.name FROM credentials c "
+            "LEFT JOIN apps a ON a.id = COALESCE(c.app_id, c.subject_id) "
+            "WHERE c.profile_id = ? AND c.revoked_at IS NULL ORDER BY c.created_at",
+            (profile_id,),
+        )
+    ]
+    mappings = [f"{r[0]}={r[1]}" for r in conn.execute(
+        "SELECT source_kind, source_value FROM runtime_profile_mappings "
+        "WHERE profile_id = ? AND disabled_at IS NULL ORDER BY priority, created_at",
+        (profile_id,),
+    )]
+    from gateway.accounts import profile_people_and_invites
+    people, invites = profile_people_and_invites(conn, profile_id)
+    found = [
+        phrase("app", "apps", apps),
+        phrase("key", "keys", keys),
+        phrase("active mapping", "active mappings", mappings),
+        phrase("person", "people", people),
+        f"{invites} pending invitation{'' if invites == 1 else 's'}" if invites else None,
+    ]
+    return [item for item in found if item]
 
 
 def _profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -1449,6 +1525,7 @@ def create_credential_hash(
     scopes: Iterable[str] | None = None,
     created_by: str | None = None,
     expires_at: int | None = None,
+    session_id: str | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -1498,7 +1575,8 @@ def create_credential_hash(
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
             "profile_id, hash, prefix, display_name, scopes_json, "
-            "created_at, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, created_by, expires_at, session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 cred_id,
                 subject_kind,
@@ -1512,6 +1590,7 @@ def create_credential_hash(
                 ts,
                 created_by,
                 expires_at,
+                session_id,
             ),
         )
         conn.commit()
@@ -1534,6 +1613,25 @@ def revoke_credential(
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def revoke_older_session_credentials(
+    app_id: str, session_id: str, *, keep: int, now: int | None = None, path: Path = DB_PATH
+) -> int:
+    """Revoke an App's keys bound to one sign-in, except the newest ``keep``.
+
+    Insertion order (rowid) breaks ties between keys made in the same second.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        cur = conn.execute(
+            "UPDATE credentials SET revoked_at = ? WHERE id IN ("
+            "SELECT id FROM credentials WHERE app_id = ? AND session_id = ? "
+            "AND revoked_at IS NULL ORDER BY rowid DESC LIMIT -1 OFFSET ?)",
+            (ts, app_id, session_id, keep),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 # Coarsen ``last_used_at`` writes: this fires on the data-plane auth hot path

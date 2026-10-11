@@ -626,11 +626,63 @@ def test_oidc_invite_binding_reassigns_all_preexisting_apps_and_keys_to_invited_
 def test_plan_with_pending_invite_cannot_delete_until_revoked(account_db):
     path, plan = account_db
     invite, _ = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
-    with pytest.raises(ValueError, match="pending invitations"):
+    with pytest.raises(ValueError, match="1 pending invitation"):
         admin_store.delete_profile(plan["id"], path=path)
     accounts.revoke_invite(invite["id"], "owner", path=path)
     assert admin_store.delete_profile(plan["id"], path=path)["id"] == plan["id"]
     assert accounts.list_invites(path=path)[0]["profile_id"] is None
+
+
+def _plan_key(path, plan_id, *, name="Plan key"):
+    owner = admin_store.create_service_account("plan-key-owner-" + name.replace(" ", "-").lower(), path=path)
+    app = admin_store.create_app("Key app " + name, kind="service", owner_service_account_id=owner["id"], path=path)
+    return admin_store.create_credential_hash(
+        subject_kind="app", subject_id=app["id"], hash=hash_api_key("opk_test-" + name), prefix="opk_test",
+        display_name=name, profile_id=plan_id, path=path,
+    )
+
+
+def test_plan_with_a_key_level_assignment_cannot_be_deleted_and_names_the_key(account_db):
+    path, plan = account_db
+    key = _plan_key(path, plan["id"], name="Imported key")
+    with pytest.raises(ValueError) as error:
+        admin_store.delete_profile(plan["id"], path=path)
+    assert "1 key (Imported key on Key app Imported key)" in str(error.value)
+    assert "'Member plan'" in str(error.value)
+    assert admin_store.get_profile(plan["id"], path=path) is not None
+    assert rows(path, "SELECT profile_id FROM credentials WHERE id=?", (key["id"],))[0]["profile_id"] == plan["id"]
+
+
+def test_deleting_a_plan_clears_it_from_revoked_keys_and_reports_them(account_db):
+    path, plan = account_db
+    revoked = _plan_key(path, plan["id"], name="Old key")
+    admin_store.revoke_credential(revoked["id"], path=path)
+    from gateway.admin_runtime import AdminSQLiteStore
+    store = AdminSQLiteStore(path)
+    deleted = store.delete_profile(profile_id=plan["id"], actor=AdminContext(subject="owner", roles=frozenset({"owner"})))
+    assert deleted["cleared_revoked_credential_ids"] == [revoked["id"]]
+    assert admin_store.get_profile(plan["id"], path=path) is None
+    row = rows(path, "SELECT profile_id, revoked_at FROM credentials WHERE id=?", (revoked["id"],))[0]
+    assert row["profile_id"] is None and row["revoked_at"] is not None
+    audit = admin_store.list_audit(action_prefix="profile.delete", path=path)[0]
+    assert audit["metadata"]["cleared_revoked_credential_ids"] == [revoked["id"]]
+
+
+def test_plan_delete_error_lists_every_kind_of_user(account_db):
+    path, plan = account_db
+    person = admin_store.upsert_oidc_user("https://identity.example", "plan-user", email="plan-user@example.test", display_name="Plan User", path=path)
+    accounts.change_person(person["id"], "owner", profile_id=plan["id"], path=path)
+    app = admin_store.create_app("Disabled app", kind="personal", owner_user_id=person["id"], default_profile_id=plan["id"], path=path)
+    admin_store.disable_app(app["id"], path=path)
+    admin_store.create_runtime_profile_mapping(source_kind="email", source_value="x@example.test", profile_id=plan["id"], priority=1, path=path)
+    accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+    with pytest.raises(ValueError) as error:
+        admin_store.delete_profile(plan["id"], path=path)
+    message = str(error.value)
+    assert "app" in message and "Disabled app (disabled)" in message
+    assert "1 active mapping (email=x@example.test)" in message
+    assert "1 person (Plan User)" in message
+    assert "1 pending invitation" in message
 
 
 def test_people_excludes_key_claim_placeholders_and_reports_protected_oidc_users(account_db):
@@ -783,3 +835,24 @@ def test_invite_api_audits_owner_service_principal(account_client, account_db):
     assert response.status_code == 200
     event = rows(path, "SELECT * FROM audit_events WHERE action='account.invite.create'")[0]
     assert (event["actor_kind"], event["actor_id"], event["actor_label"]) == ("service_account", "svc_owner", "Owner service")
+
+
+def test_failed_reset_attempts_on_other_links_do_not_block_a_valid_reset(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    client, _ = account_client
+    user, _, _ = invited_member(account_db)
+    for attempt in range(11):
+        bogus = {"token": f"not-a-real-reset-link-{attempt}", "password": PASSWORD}
+        assert client.post("/auth/api/password-reset", json=bogus).status_code != 429
+    _, token = accounts.create_link("reset", "owner", user_id=user["id"], path=path)
+    new_password = "a password after someone else's typos"
+    assert client.post("/auth/api/password-reset", json={"token": token, "password": new_password}).status_code == 200
+    assert accounts.login(user["email"], new_password, "ip", path=path)["id"] == user["id"]
+
+
+def test_one_reset_link_is_still_throttled_on_repeated_attempts(account_db, account_client, fast_password_work):
+    client, _ = account_client
+    payload = {"token": "a-guessed-reset-link", "password": PASSWORD}
+    for _ in range(10):
+        assert client.post("/auth/api/password-reset", json=payload).status_code != 429
+    assert client.post("/auth/api/password-reset", json=payload).status_code == 429

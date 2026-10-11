@@ -343,6 +343,7 @@ Selected successful workflows are exercised separately.
 | `GET /me/api/receipts/{request_id}` | session-only | denied | `proxy.user_portal_receipt_detail`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/session` | session-view | no owner authority | `proxy.user_portal_session`; Optional browser session; returns unauthenticated view without cookie | hidden |
 | `GET /me/api/status` | session-only | denied | `gateway.home_api.member_status`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/try-key` | session-only | denied | `proxy.user_portal_try_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/usage/summary` | session-only | denied | `gateway.me_media.usage_summary`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/workflows` | session-only | denied | `gateway.workflows_catalog.workflows_catalog`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/login` | browser/public | no owner authority | `proxy.user_portal_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
