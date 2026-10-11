@@ -62,8 +62,11 @@ def test_global_cursor_survives_upgrade(tmp_path):
         assert response.status_code == 200
         tail = response.json()["events"]
         assert [event["event_type"] for event in tail] == ["succeeded"]
-        assert [(event["id"], event["sequence"]) for event in tail] == [(6, 3)]
-        assert client.get(url, params={"after_id": tail[-1]["id"]}).json()["events"] == []
+        # A saved global cursor still resumes without skipping, but callers get
+        # per-job sequences, never the household-wide id.
+        assert [event["sequence"] for event in tail] == [3]
+        assert all("id" not in event for event in tail)
+        assert client.get(url, params={"after_id": 6}).json()["events"] == []
         assert client.get(url, params={"after_sequence": 2}).json()["events"] == tail
         assert client.get(url, params={"after_sequence": 3}).json()["events"] == []
         assert client.get(url, params={"after_id": 4, "after_sequence": 2}).status_code == 400
@@ -166,7 +169,7 @@ def test_store_observations_use_store_clock(db, monkeypatch):
     assert job.accepted_at == job.finished_at == job.first_output_at == 12345
 
 
-def test_append_response_contains_both_cursors(db):
+def test_append_response_gives_callers_the_per_job_cursor_only(db):
     a = media_jobs.create({"intent": "image.generate"}, path=db)
     b = media_jobs.create({"intent": "image.generate"}, path=db)
     media_jobs.append_event(a.job_id, "started", path=db)
@@ -174,7 +177,7 @@ def test_append_response_contains_both_cursors(db):
         url = f"/gateway/v1/media/jobs/{b.job_id}/events"
         response = client.post(url, json={"event_type": "note"})
         assert response.status_code == 201
-        assert response.json()["id"] == 2
+        assert "id" not in response.json()
         assert response.json()["sequence"] == 1
         event = client.get(url).json()["events"][0]
-        assert event["id"] == 2 and event["sequence"] == 1
+        assert "id" not in event and event["sequence"] == 1

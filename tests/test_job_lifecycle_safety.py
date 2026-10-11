@@ -32,7 +32,10 @@ def test_cursors_are_local_and_pollable(db, audience):
     assert media_jobs.append_event(a.job_id, 'progress', path=db) == 2
     events = media_jobs.events(a.job_id, audience=audience, after_sequence=1, path=db)
     assert [e['sequence'] for e in events] == [2]
-    assert [e['id'] for e in events] == [3]
+    if audience == 'client':
+        assert all('id' not in e for e in events)
+    else:
+        assert [e['id'] for e in events] == [3]
 
 
 @pytest.mark.parametrize('change', [dict(app_id='other'), dict(intent='video.generate'),
@@ -139,7 +142,7 @@ def test_v1_event_migration_is_idempotent(tmp_path):
                          (global_id, job_id, 'started', '{}'))
     media_jobs.init_db(path)
     media_jobs.init_db(path)
-    events = media_jobs.events('one', after_sequence=1, audience='client', path=path)
+    events = media_jobs.events('one', after_sequence=1, audience='internal', path=path)
     assert [e['sequence'] for e in events] == [2]
     assert [e['id'] for e in events] == [12]
     assert events[0]['source'] == 'unavailable'
