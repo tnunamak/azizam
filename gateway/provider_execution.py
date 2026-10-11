@@ -17,7 +17,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from gateway import providers
+from gateway import category_enforcement, providers
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders, LlmExecutionPredispatchError,
     LiteLlmRuntimeConfig, LlmExecutionRequest, RequestDisconnectWatcher,
@@ -503,6 +503,7 @@ async def execute_paid_litellm(
     app_id: str | None = None, app_name: str | None = None,
     delegated: bool = False, paid_fallback: bool = False,
     requested_model: str | None = None,
+    identity: Any = None,
 ) -> Response:
     model = str(body.get("model") or "")
     protocol, intent = (
@@ -529,7 +530,9 @@ async def execute_paid_litellm(
                 key: value for key, value in providers.price_for_provider_model(provider, model).items()
                 if key != "models"
             })
-            decision = evaluate(profile, PolicyRequest(protocol=protocol, intent=intent, model=model))
+            policy_request = PolicyRequest(protocol=protocol, intent=intent, model=model)
+            decision = category_enforcement.apply(
+                identity, policy_request, evaluate(profile, policy_request))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:

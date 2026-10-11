@@ -225,6 +225,25 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("openrouter", body["error"]["message"])
         send.assert_not_called()
 
+    async def test_owner_category_rules_deny_a_governed_app_before_provider_call(self) -> None:
+        from types import SimpleNamespace
+
+        from gateway import category_enforcement
+        from tests.test_category_enforcement import _activate, _snapshot
+
+        path = Path(self.tmp.name) / "categories.db"
+        _activate(path, _snapshot())  # governs family-app; no service for this model
+        category_enforcement.configure(path)
+        self.addCleanup(category_enforcement.configure, None)
+        send = AsyncMock()
+
+        response, send = await self._execute(
+            send=send, identity=SimpleNamespace(person_id=None, app_id="family-app"))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
+        send.assert_not_called()
+
     async def test_delegated_litellm_request_is_denied_before_provider_call(self) -> None:
         send = AsyncMock()
 

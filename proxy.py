@@ -28014,6 +28014,7 @@ async def _forward_litellm_proxy_request(
             delegated=bool(delegated_litellm_api_key),
             paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
             requested_model=getattr(request.state, "provider_requested_model", None),
+            identity=identity,
         )
 
     try:

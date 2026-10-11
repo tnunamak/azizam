@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import providers
+from gateway import category_enforcement, providers
 from gateway.capabilities import Capability
 from gateway.policy import AppProfile, PolicyRequest, evaluate
 from gateway.decisions_api import DecisionDispatchResult
@@ -76,6 +76,10 @@ def _auth_name(auth: Any) -> str | None:
 
 def _is_delegated(auth: Any) -> bool:
     return bool(_auth_value(auth, "delegated") or _auth_value(auth, "delegated_auth"))
+
+
+def _identity(auth: Any) -> Any:
+    return getattr(auth, "identity", None) or auth
 
 
 def _require_real_app_identity(auth: Any) -> str:
@@ -283,20 +287,19 @@ async def systemone(
         if provider is None:
             raise PaidDecisionError(501, "provider_not_configured", "TypeSafe decision provider is not configured.")
         cap = capability_for(provider, requested_model)
-        decision = evaluate(
-            profile,
-            PolicyRequest(
-                protocol="typesafe.systemone",
-                intent=cap.intent,
-                model=requested_model,
-                backend=provider.id,
-                capability_exposure=cap.exposure,
-                capability_trust_tier=cap.trust_tier,
-                capability_resource_tier=cap.resource_tier,
-                capability_tags=frozenset(cap.tags),
-                remote_provider=provider.id,
-            ),
+        policy_request = PolicyRequest(
+            protocol="typesafe.systemone",
+            intent=cap.intent,
+            model=requested_model,
+            backend=provider.id,
+            capability_exposure=cap.exposure,
+            capability_trust_tier=cap.trust_tier,
+            capability_resource_tier=cap.resource_tier,
+            capability_tags=frozenset(cap.tags),
+            remote_provider=provider.id,
         )
+        decision = category_enforcement.apply(
+            _identity(auth), policy_request, evaluate(profile, policy_request))
         if decision.denied:
             raise PaidDecisionError(403, "remote_provider_not_allowed", "; ".join(decision.reasons))
         if not _model_declared(provider, requested_model):
@@ -396,20 +399,19 @@ async def openai(
         released = False
         try:
             cap = capability_for(provider, model, protocol="openai.decisions")
-            decision = evaluate(
-                profile,
-                PolicyRequest(
-                    protocol="openai.decisions",
-                    intent=cap.intent,
-                    model=model,
-                    backend=provider.id,
-                    capability_exposure=cap.exposure,
-                    capability_trust_tier=cap.trust_tier,
-                    capability_resource_tier=cap.resource_tier,
-                    capability_tags=frozenset(cap.tags),
-                    remote_provider=provider.id,
-                ),
+            policy_request = PolicyRequest(
+                protocol="openai.decisions",
+                intent=cap.intent,
+                model=model,
+                backend=provider.id,
+                capability_exposure=cap.exposure,
+                capability_trust_tier=cap.trust_tier,
+                capability_resource_tier=cap.resource_tier,
+                capability_tags=frozenset(cap.tags),
+                remote_provider=provider.id,
             )
+            decision = category_enforcement.apply(
+                _identity(auth), policy_request, evaluate(profile, policy_request))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not _model_declared(provider, model):

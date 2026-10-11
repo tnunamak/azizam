@@ -239,6 +239,37 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called)
         self.assertFalse(self.ledger.exists())
 
+    async def test_owner_category_rules_deny_a_governed_app_before_provider_call(self) -> None:
+        from gateway import category_enforcement
+        from tests.test_category_enforcement import _activate, _snapshot
+
+        path = Path(self.tmp.name) / "categories.db"
+        _activate(path, _snapshot())  # governs family-app; no service for this model
+        category_enforcement.configure(path)
+        self.addCleanup(category_enforcement.configure, None)
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(500)
+
+        real_client = httpx.AsyncClient
+
+        def client_factory(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return real_client(*args, **kwargs)
+
+        with patch.object(execution.providers.httpx, "AsyncClient", client_factory):
+            result = await execution.systemone(
+                _auth("family-app"), _profile(),
+                {"model": "typesafe/jev-latest", "state": "x", "questions": {"q": {"type": "noul", "instructions": "ok?"}}},
+                "req-cat", _registry(models=[{"id": "typesafe/jev-latest"}]), self.ledger,
+            )
+
+        self.assertEqual(result.status_code, 403)
+        self.assertIn("category rules: NO_GRANT", json.dumps(result.body))
+        self.assertEqual(calls, [])
+
     async def test_real_app_identity_required_before_paid_provider_call(self) -> None:
         result = await execution.systemone(SimpleNamespace(identity=SimpleNamespace(name="legacy")), _profile(), {"model": "typesafe/jev-latest"}, "req-auth", _registry(), self.ledger)
 
