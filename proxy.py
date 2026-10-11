@@ -14990,7 +14990,10 @@ async def _identity_submit_job(
     request: Request, auth_context: AuthContext, req: identity_scene.SceneRequest, response_format: str,
 ) -> Response:
     """Queue an identity scene as a media job: poll /gateway/v1/media/jobs/{id}, fetch .../content."""
-    admission = _media_job_admission_response("image.generate", auth_context=auth_context, path=str(request.url.path))
+    admission = _media_job_admission_response(
+        "image.generate", auth_context=auth_context,
+        path=getattr(request.url, "path", identity_api.IDENTITY_PATH),
+    )
     if admission is not None:
         return admission
     profile = _profile_for_auth_context(auth_context)
