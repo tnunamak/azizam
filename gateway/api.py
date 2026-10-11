@@ -833,10 +833,13 @@ def create_gateway_router(
             )
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
+        cursor = dict(event_id) if isinstance(event_id, Mapping) else {"id": event_id}
+        if audience not in {"admin", "internal"}:
+            # Callers page by per-job sequence; the global id reveals others' activity.
+            cursor.pop("id", None)
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
-            content={**(dict(event_id) if isinstance(event_id, Mapping) else {"id": event_id}),
-                     "job_id": job_id, "event_type": event_type},
+            content={**cursor, "job_id": job_id, "event_type": event_type},
         )
 
     @router.post("/media/jobs/{job_id}/cancel")
