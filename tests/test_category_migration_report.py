@@ -232,4 +232,3 @@ def chat():
     calls = scan_callsites(tmp_path)
     assert [c.metadata for c in calls] == ["omitted", "none", "empty", "dynamic", "dynamic"]
     assert calls[0].function == "chat" and calls[0].routes == ("/v1/chat/completions",)
-
