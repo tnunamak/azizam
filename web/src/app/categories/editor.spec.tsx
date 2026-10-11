@@ -66,7 +66,8 @@ async function pick(user: ReturnType<typeof userEvent.setup>, label: string, opt
   await user.click(await screen.findByRole("option", { name: option }));
 }
 async function showPreview(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByRole("textbox", { name: "Reason for changes" }), "Reviewed access");
+  await user.click(screen.getByRole("textbox", { name: "Reason for changes" }));
+  await user.paste("Reviewed access");
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
   await screen.findByRole("region", { name: "Change preview" });
 }
@@ -202,7 +203,7 @@ it("renames a requirement and carries its named missing-value waiver with it", a
   const { user, fetch } = mount();
   const section = within(screen.getByRole("region", { name: "Person access plans" }));
   const rowName = section.getAllByRole("textbox", { name: "Rule name" })[0];
-  await user.clear(rowName); await user.type(rowName, "reviewed-audience");
+  await user.clear(rowName); await user.paste("reviewed-audience");
   await showPreview(user);
   const posted = (fetch.mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
   expect(posted.people.sam[0].missing).toEqual({ "reviewed-audience": "allow" });
@@ -502,4 +503,98 @@ it("pauses saving when the page cannot confirm the active rules", async () => {
   await user.click(screen.getByRole("button", { name: "Close preview" }));
   expect(screen.getByRole("button", { name: "Preview changes" })).toBeDisabled();
   expect(fetch.mock.calls.filter(([path]) => path.endsWith("/activate"))).toHaveLength(0);
+});
+
+const serviceCatalog = [
+  { stem: "workflow:paint", label: "Paint workflow", kind: "workflow" as const, capabilities: ["image.generate", "image.edit"] },
+  { stem: "model:vectors", label: "Vectors model", kind: "model" as const, capabilities: ["text.embeddings"] },
+];
+function mountCatalog(snapshot: Snapshot | null = null, extra = {}) {
+  vi.mocked(adminFetch).mockImplementation(async <T,>(path: string, init?: AdminFetchInit): Promise<T> => serve(path, init) as T);
+  const props = { active: snapshot ? { revision: 2, snapshot } : null, owner: "sam", ...choices, onClose: vi.fn(), onActivated: vi.fn(), catalog: serviceCatalog, ...extra };
+  const view = render(<CategoriesEditor {...props} />);
+  return { ...view, props, user: userEvent.setup() };
+}
+it("adds catalog services after retained revisions and refuses a second active revision", async () => {
+  const snapshot = rules();
+  snapshot.retained["output-1"].id = "retained-service@r1";
+  snapshot.retained["output-1"].dependencies.push({ id: "workflow:paint@r3", checkable: true, members: [], dependencies: [] });
+  snapshot.retained["workflow:paint@r1"] = { id: "workflow:paint@r1", checkable: true, members: [], dependencies: [] };
+  const { user } = mountCatalog(snapshot);
+  await pick(user, "Service to add", "Paint workflow");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Paint workflow is already in these rules. Edit the existing service instead.");
+  await pick(user, "Service to add", "Vectors model");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  await showPreview(user);
+  const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
+  const id = "workflow:paint@r4";
+  expect(saved.services[id]).toEqual({ id, members: [{ id, kind: "workflow", assertions: [] }], dependencies: [], checkable: true });
+  expect(Object.keys(saved.services)).toEqual(["studio@1", id, "model:vectors@r1"]);
+  expect(saved.services["model:vectors@r1"]).toEqual({ id: "model:vectors@r1", members: [{ id: "model:vectors@r1", kind: "release", assertions: [] }], dependencies: [], checkable: true });
+  expect(saved.people).toEqual(snapshot.people);
+  expect(saved.retained).toEqual(snapshot.retained);
+});
+it("refuses adding an already saved stem without replacing its reviewed members or grants", async () => {
+  const snapshot = rules();
+  const original = snapshot.services["studio@1"];
+  const { user } = mountCatalog(snapshot, { catalog: [{ stem: "studio", label: "Studio", kind: "model", capabilities: ["image.generate"] }] });
+  await pick(user, "Service to add", "Studio");
+  await user.click(screen.getByRole("button", { name: "Add service" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("Studio is already in these rules. Edit the existing service instead.");
+  await showPreview(user);
+  const saved = (vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
+  expect(saved).toEqual(snapshot);
+  expect(saved.services["studio@1"]).toEqual(original);
+});
+it("rejects duplicate active service stems but allows previous revisions in retained", () => {
+  const snapshot = rules();
+  snapshot.services["studio@r2"] = { ...copy(snapshot.services["studio@1"]), id: "studio@r2" };
+  expect(validateSnapshot(snapshot)).toContain("Keep only one active revision of each service. Older revisions belong in retained services.");
+  snapshot.retained["studio@1"] = snapshot.services["studio@1"];
+  delete snapshot.services["studio@1"];
+  expect(validateSnapshot(snapshot)).toEqual([]);
+});
+it("offers exact service capabilities and clears incompatible capability when switching services", async () => {
+  const snapshot = rules(); snapshot.people = {}; snapshot.apps = {};
+  const { user } = mountCatalog(snapshot);
+  for (const label of ["Paint workflow", "Vectors model"]) {
+    await pick(user, "Service to add", label);
+    await user.click(screen.getByRole("button", { name: "Add service" }));
+  }
+  await pick(user, "Person for new access plan", "Sam");
+  await user.click(screen.getByRole("button", { name: "Add person access plan" }));
+  await user.click(screen.getByRole("button", { name: "Add grant" }));
+  await pick(user, "Service", "workflow:paint@r1");
+  await pick(user, "Capability", "Image editing");
+  await pick(user, "Service", "model:vectors@r1");
+  expect(screen.getByRole("combobox", { name: "Capability" })).toHaveTextContent("Choose capability");
+  await user.click(screen.getByRole("combobox", { name: "Capability" }));
+  expect(screen.getAllByRole("option").map((node) => node.textContent)).toEqual(["Embeddings"]);
+  await user.click(screen.getByRole("option", { name: "Embeddings" }));
+  await showPreview(user);
+  expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot.people.sam[0].grants).toEqual([{ capability: "text.embeddings", service: "model:vectors@r1" }]);
+});
+it("keeps persisted unknown grants unchanged while catalog data is present", async () => {
+  const original = rules(); original.people.sam[0].grants[0].capability = "legacy.intent";
+  const { user } = mountCatalog(original);
+  expect(screen.getAllByRole("combobox", { name: "Capability" })[0]).toHaveTextContent("legacy.intent");
+  await showPreview(user);
+  expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot).toEqual(original);
+});
+it("shows catalog loading without disabling saved service editing", () => {
+  mountCatalog(rules(), { catalogLoading: true });
+  expect(screen.getByRole("status")).toHaveTextContent("Loading available services");
+  expect(screen.queryByRole("button", { name: "Add service" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Reason for changes" })).toBeEnabled();
+});
+it("shows a retryable catalog error and an empty catalog state", async () => {
+  const retry = vi.fn();
+  const { user, rerender, props } = mountCatalog(null, { catalogError: true, onCatalogRetry: retry });
+  expect(screen.getByRole("alert")).toHaveTextContent("Available services could not be loaded");
+  await user.click(screen.getByRole("button", { name: "Retry available services" }));
+  expect(retry).toHaveBeenCalledOnce();
+  rerender(<CategoriesEditor {...props} catalog={[]} catalogError={false} />);
+  expect(screen.getByText("No available services. Add a model or workflow first.")).toBeVisible();
 });

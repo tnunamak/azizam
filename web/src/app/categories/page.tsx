@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useState } from "react";
-import { CategoriesEditor } from "./editor";
+import { CategoriesEditor, type CatalogService } from "./editor";
 import { useQuery } from "@tanstack/react-query";
 import { Layers, Lock } from "lucide-react";
 import { adminFetch, ApiError, api, fetchSession } from "@/lib/api";
@@ -24,7 +24,7 @@ type Snapshot = { id: string; categories: Record<string, Category>; people: Reco
 type Revision = { revision: number; parent_revision: number | null; created_at: string; activated_at?: string | null; author: string; reason: string; snapshot: Snapshot };
 const root = "/admin/api/categories";
 const plain = (value: string) => value.replace(/[_-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
-const capabilityNames: Record<string, string> = { "chat": "Chat", "chat.completions": "Chat", "image.generate": "Images", "video.generate": "Video", "speech.synthesis": "Voice", "speech.transcription": "Transcription", "music.generate": "Music", "sound.generate": "Sound effects", "embed": "Embeddings" };
+const capabilityNames: Record<string, string> = { "chat": "Chat", "chat.completions": "Chat", "image.generate": "Images", "image.edit": "Image editing", "text.embeddings": "Embeddings", "video.generate": "Video", "speech.synthesis": "Voice", "speech.transcription": "Transcription", "music.generate": "Music", "sound.generate": "Sound effects", "embed": "Embeddings" };
 const capabilityName = (value: string) => capabilityNames[value] ?? value;
 function time(value?: string | null) {
   const date = value ? new Date(value) : null;
@@ -207,6 +207,7 @@ function PreviewAs({ active, personName, appName }: { active: Revision; personNa
 
 function OwnerCategories() {
   const [editing, setEditing] = useState(false);
+  const catalog = useQuery({ queryKey: ["categories", "services"], queryFn: () => adminFetch<{ services: CatalogService[] }>(root + "/services"), enabled: editing, retry: false, refetchOnWindowFocus: false });
   const { data: ownerSession, isFetching: ownerSessionFetching, isError: ownerSessionError, refetch: ownerSessionRefetch } = useQuery({ queryKey: ["categories", "owner-session"], queryFn: () => fetchSession(), enabled: editing, retry: false, refetchOnWindowFocus: false });
   const { data: activeData, isError: activeIsError, isFetching: activeIsFetching, isPending: activeIsPending, refetch: activeRefetch } = useQuery({ queryKey: ["categories", "active"], queryFn: loadActive, retry: false, refetchOnWindowFocus: false });
   const { data: historyData, isError: historyIsError, isFetching: historyIsFetching, isPending: historyIsPending, refetch: historyRefetch } = useQuery({ queryKey: ["categories", "history"], queryFn: () => adminFetch<{ history: HistoryEntry[] }>(root + "/history"), retry: false, refetchOnWindowFocus: false });
@@ -272,7 +273,7 @@ function OwnerCategories() {
     <p className="text-meta text-muted-foreground">Nothing is enforced by this page yet. Request enforcement comes later; existing access plans still apply.</p>
     <Button variant="outline" disabled={busy || activeIsFetching || historyIsFetching} onClick={() => { setCandidate(null); void refresh(); }}>Refresh</Button>
     {!editing && <Button disabled={busy || !knownBase || activeIsFetching} onClick={() => { setCandidate(null); setEditing(true); }}>Edit rules</Button>}
-    {editing && <CategoriesEditor active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
+    {editing && <CategoriesEditor catalog={catalog.data?.services ?? []} catalogLoading={catalog.isFetching} catalogError={catalog.isError} onCatalogRetry={() => { void catalog.refetch(); }} active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
     {editing && ownerSessionError && <Button variant="outline" onClick={() => void ownerSessionRefetch()}>Refresh owner identity</Button>}
     {message && (message.error ? <Callout as="div" severity="critical" title={message.text} /> : <p role="status" className="text-meta">{message.text}</p>)}
     {activeIsPending && <div aria-busy="true" aria-label="Loading category rules"><StatusLine tone="unknown" text="Loading category rules" compact /></div>}

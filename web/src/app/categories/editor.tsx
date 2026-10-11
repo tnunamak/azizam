@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Callout, StatusLine } from "@/components/product/status-ui";
 
+export type CatalogService = { stem: string; label: string; kind: "workflow" | "model"; capabilities: string[] };
 export type Category = { id: string; label: string; kind?: string; values: string[]; applies_to: string[] };
 export type Rule = { id: string; category: string; op: string; values: string[] };
 export type Grant = { capability: string; service: string; release?: string; workflow?: string };
@@ -28,10 +29,10 @@ const categoryFor = (categories: Snapshot["categories"], id: string) => owns(cat
 const plain = (value: string) => value.replace(/[_-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
 export const categoryId = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const capabilities = [
-  { id: "chat.completions", label: "Chat" }, { id: "image.generate", label: "Images" },
+  { id: "chat.completions", label: "Chat" }, { id: "image.generate", label: "Images" }, { id: "image.edit", label: "Image editing" },
   { id: "video.generate", label: "Video" }, { id: "speech.synthesis", label: "Voice" },
   { id: "speech.transcription", label: "Transcription" }, { id: "music.generate", label: "Music" },
-  { id: "sound.generate", label: "Sound effects" }, { id: "embed", label: "Embeddings" },
+  { id: "sound.generate", label: "Sound effects" }, { id: "embed", label: "Embeddings" }, { id: "text.embeddings", label: "Embeddings" },
 ];
 const emptySnapshot = (): Snapshot => ({ id: "owner-rules", categories: {}, people: {}, apps: {}, services: {}, completeness_gate: true, retained: {} });
 const allPlans = (snapshot: Snapshot) => [...Object.values(snapshot.people), ...Object.values(snapshot.apps)].flat();
@@ -40,6 +41,18 @@ function servicesIn(snapshot: Snapshot) {
   const visit = (service: Service) => { result.push(service); service.dependencies.forEach(visit); };
   [...Object.values(snapshot.services), ...Object.values(snapshot.retained)].forEach(visit);
   return result;
+}
+const serviceStem = (id: string) => id.includes("@") ? id.slice(0, id.lastIndexOf("@")) : id;
+const catalogService = (catalog: CatalogService[], id: string) => catalog.find((item) => item.stem === serviceStem(id));
+function addedService(snapshot: Snapshot, entry: CatalogService): Service {
+  let revision = BigInt(1);
+  for (const service of servicesIn(snapshot)) {
+    if (!service.id.startsWith(entry.stem + "@r")) continue;
+    const match = /^([0-9]+)(?:-|$)/.exec(service.id.slice(entry.stem.length + 2));
+    if (match && BigInt(match[1]) >= revision) revision = BigInt(match[1]) + BigInt(1);
+  }
+  const id = entry.stem + "@r" + revision;
+  return { id, members: [{ id, kind: entry.kind === "workflow" ? "workflow" : "release", assertions: [] }], dependencies: [], checkable: true };
 }
 const assertionValues = (value: unknown): unknown[] => Array.isArray(value) ? value : [value];
 
@@ -99,6 +112,8 @@ export function validateSnapshot(snapshot: Snapshot): string[] {
       if (grant.workflow !== undefined && !isPinned(grant.workflow)) errors.push("Use a pinned workflow revision for every grant.");
     }
   }
+  const activeStems = Object.keys(snapshot.services).map(serviceStem);
+  if (new Set(activeStems).size !== activeStems.length) errors.push("Keep only one active revision of each service. Older revisions belong in retained services.");
   for (const [key, service] of Object.entries(snapshot.services)) {
     if (key !== service.id) errors.push("A service ID does not match its saved name.");
   }
@@ -279,7 +294,7 @@ function RuleEditor({ row, kind, categories, waiver, onChange, onWaiver, onRemov
     <Button type="button" variant="outline" onClick={onRemove}>Remove {kind === "require" ? "requirement" : "blocking rule"}</Button>
   </div>;
 }
-function PlanEditor({ plan, categories, services, onChange }: { plan: Plan; categories: Snapshot["categories"]; services: Snapshot["services"]; onChange: (plan: Plan) => void }) {
+function PlanEditor({ plan, categories, services, catalog, onChange }: { plan: Plan; categories: Snapshot["categories"]; services: Snapshot["services"]; catalog: CatalogService[]; onChange: (plan: Plan) => void }) {
   const newRule = (kind: "require" | "deny") => {
     const prefix = plan.id + "-" + (kind === "require" ? "needs" : "never");
     let number = 1;
@@ -289,12 +304,18 @@ function PlanEditor({ plan, categories, services, onChange }: { plan: Plan; cate
   return <div className="space-y-4 border-t pt-4">
     <Field label="Access plan name" value={plan.id} onChange={(id) => onChange({ ...plan, id })} />
     {plan.mode === "legacy" && <div className="space-y-3"><p className="text-meta">This access plan uses legacy tags: {plan.legacy_tags.map(plain).join(", ") || "None"}.</p><Button type="button" variant="outline" onClick={() => onChange({ ...plan, mode: "v3", legacy_tags: [] })}>Use category rules for this access plan</Button></div>}
-    {plan.grants.map((grant, index) => <div key={index} className="space-y-4">
-      <Pick label="Capability" value={grant.capability} choices={capabilities} onChange={(capability) => onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, capability } : item) })} />
-      <Pick label="Service" value={grant.service} choices={Object.keys(services).map((id) => ({ id, label: id }))} onChange={(service) => onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, service } : item) })} />
+    {plan.grants.map((grant, index) => {
+      const entry = catalogService(catalog, grant.service);
+      const choices = entry ? entry.capabilities.map((id) => ({ id, label: capabilities.find((item) => item.id === id)?.label ?? id })) : capabilities.filter((item) => item.id !== "text.embeddings");
+      return <div key={index} className="space-y-4">
+      <Pick label="Capability" value={grant.capability} choices={choices} onChange={(capability) => onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, capability } : item) })} />
+      <Pick label="Service" value={grant.service} choices={Object.keys(services).map((id) => ({ id, label: id }))} onChange={(service) => {
+        const target = catalogService(catalog, service);
+        onChange({ ...plan, grants: plan.grants.map((item, at) => at === index ? { ...item, service, capability: target && !target.capabilities.includes(item.capability) ? "" : item.capability } : item) });
+      }} />
       {(grant.release || grant.workflow) && <p className="text-meta">Also limited to {grant.release ? "model release " + grant.release : "workflow " + grant.workflow}.</p>}
       <Button type="button" variant="outline" onClick={() => onChange({ ...plan, grants: plan.grants.filter((_, at) => at !== index) })}>Remove grant</Button>
-    </div>)}
+    </div>; })}
     <Button type="button" variant="outline" onClick={() => onChange({ ...plan, grants: [...plan.grants, { capability: "", service: "" }] })}>Add grant</Button>
     {(["require", "deny"] as const).map((kind) => <div key={kind} className="space-y-4">
       {plan[kind].map((row, index) => <RuleEditor key={index} row={row} kind={kind} categories={categories} waiver={owns(plan.missing, row.id) && plan.missing[row.id] === "allow"} onChange={(next) => {
@@ -309,7 +330,7 @@ function PlanEditor({ plan, categories, services, onChange }: { plan: Plan; cate
     </div>)}
   </div>;
 }
-function PlansSection({ kind, entries, choices, categories, services, onChange, report }: { kind: "people" | "apps"; entries: Record<string, Plan[]>; choices: Choice[]; categories: Snapshot["categories"]; services: Snapshot["services"]; onChange: (entries: Record<string, Plan[]>) => void; report: (message: string) => void }) {
+function PlansSection({ kind, entries, choices, categories, services, catalog, onChange, report }: { kind: "people" | "apps"; entries: Record<string, Plan[]>; choices: Choice[]; categories: Snapshot["categories"]; services: Snapshot["services"]; catalog: CatalogService[]; onChange: (entries: Record<string, Plan[]>) => void; report: (message: string) => void }) {
   const [selected, setSelected] = useState("");
   const names = [...choices, ...Object.keys(entries).filter((id) => !choices.some((choice) => choice.id === id)).map((id) => ({ id, label: id }))];
   return <section className="space-y-3" aria-label={kind === "people" ? "Person access plans" : "App access plans"}>
@@ -317,7 +338,7 @@ function PlansSection({ kind, entries, choices, categories, services, onChange, 
     {Object.entries(entries).map(([id, plans]) => <div key={id} className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
       <p className="text-body font-medium">{kind === "people" ? "Person: " : "App: "}{names.find((choice) => choice.id === id)?.label ?? id}</p>
       {!plans.length && <p className="text-meta">No access plans. This {kind === "people" ? "person" : "app"} cannot use any service.</p>}
-      {plans.map((plan, index) => <PlanEditor key={index} plan={plan} categories={categories} services={services} onChange={(next) => onChange({ ...entries, [id]: plans.map((item, at) => at === index ? next : item) })} />)}
+      {plans.map((plan, index) => <PlanEditor key={index} plan={plan} categories={categories} services={services} catalog={catalog} onChange={(next) => onChange({ ...entries, [id]: plans.map((item, at) => at === index ? next : item) })} />)}
     </div>)}
     <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
       <Pick label={kind === "people" ? "Person for new access plan" : "App for new access plan"} choices={names} value={selected} onChange={setSelected} />
@@ -346,10 +367,11 @@ function DecisionText({ decision }: { decision: Decision }) {
     {decision.waivers.map(([row, category, member], index) => <p key={index}>Missing-value waiver used: {row} · {category} · {member}</p>)}
   </div>;
 }
-export function CategoriesEditor({ active, owner, people, apps, onClose, onActivated, ownerLoading = false, paused = false }: { active: Active | null; owner: string; ownerLoading?: boolean; paused?: boolean; people: Choice[]; apps: Choice[]; onClose: () => void; onActivated: () => Promise<void> | void }) {
+export function CategoriesEditor({ active, owner, people, apps, onClose, onActivated, ownerLoading = false, paused = false, catalog = [], catalogLoading = false, catalogError = false, onCatalogRetry }: { active: Active | null; owner: string; catalog?: CatalogService[]; catalogLoading?: boolean; catalogError?: boolean; onCatalogRetry?: () => void; ownerLoading?: boolean; paused?: boolean; people: Choice[]; apps: Choice[]; onClose: () => void; onActivated: () => Promise<void> | void }) {
   const [editToken] = useState(() => Date.now().toString(36) + Math.random().toString(36).slice(2, 6).padEnd(4, "0"));
   const [base, setBase] = useState(() => ({ revision: active?.revision ?? null, snapshot: clone(active?.snapshot ?? emptySnapshot()) }));
   const [draft, setDraft] = useState(() => clone(base.snapshot));
+  const [selectedStem, setSelectedStem] = useState("");
   const [label, setLabel] = useState("");
   const [reason, setReason] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
@@ -430,10 +452,23 @@ export function CategoriesEditor({ active, owner, people, apps, onClose, onActiv
       <section aria-label="Edit services" className="space-y-3"><h2 className="text-heading">Services</h2>
         <p className="text-meta">Changing accepted values creates new service revisions and moves current grants to them in the preview. Saved outputs keep their reviewed members.</p>
         {!Object.keys(draft.services).length && <p className="text-meta">No services are saved in these rules yet.</p>}
+        {catalogLoading ? <p role="status" className="text-meta">Loading available services</p>
+          : catalogError ? <div className="space-y-3"><p role="alert" className="text-meta">Available services could not be loaded. Saved services can still be edited.</p><Button type="button" variant="outline" onClick={onCatalogRetry}>Retry available services</Button></div>
+          : !catalog.length ? <p className="text-meta">No available services. Add a model or workflow first.</p>
+          : <div className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
+            <Pick label="Service to add" value={selectedStem} choices={catalog.map((entry) => ({ id: entry.stem, label: entry.label }))} onChange={setSelectedStem} />
+            <Button type="button" variant="outline" disabled={!catalog.some((entry) => entry.stem === selectedStem)} onClick={() => {
+              const entry = catalog.find((item) => item.stem === selectedStem);
+              if (!entry) return;
+              if (Object.keys(draft.services).some((id) => serviceStem(id) === entry.stem)) return report(entry.label + " is already in these rules. Edit the existing service instead.");
+              const service = addedService(draft, entry);
+              edit({ ...draft, services: { ...draft.services, [service.id]: service } });
+            }}>Add service</Button>
+          </div>}
         {Object.entries(draft.services).map(([id, service]) => <ServiceCard key={id} service={service} categories={Object.values(draft.categories)} owner={owner} onChange={(next) => edit(updateCurrentService(draft, next))} />)}
       </section>
-      <PlansSection kind="people" entries={draft.people} choices={people} categories={draft.categories} services={draft.services} report={report} onChange={(people) => edit({ ...draft, people })} />
-      <PlansSection kind="apps" entries={draft.apps} choices={apps} categories={draft.categories} services={draft.services} report={report} onChange={(apps) => edit({ ...draft, apps })} />
+      <PlansSection kind="people" entries={draft.people} choices={people} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(people) => edit({ ...draft, people })} />
+      <PlansSection kind="apps" entries={draft.apps} choices={apps} categories={draft.categories} services={draft.services} catalog={catalog} report={report} onChange={(apps) => edit({ ...draft, apps })} />
       {rewrites.length > 0 && <section aria-label="Service grant changes" className="rounded-panel border bg-card p-4 sm:p-6 space-y-4">
         <h2 className="text-heading">Service grant changes</h2>
         <ul className="space-y-2 text-meta">{rewrites.map((item) => <li key={item.key}>{item.label} · {plain(item.plan)}: {item.before} → {item.after}</li>)}</ul>
