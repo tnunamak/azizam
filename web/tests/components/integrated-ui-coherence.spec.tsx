@@ -42,16 +42,16 @@ describe("integrated UI coherence", () => {
     expect(loading).toHaveAttribute("aria-busy", "true");
   });
 
-  it("feature-detects a missing provider API before showing provider controls", async () => {
+  it("treats an unexplained provider API failure as a load failure with a retry", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("{}", { status: 404 })),
     );
     renderWithQuery(<ProvidersPage />);
-    expect(
-      await screen.findByText("Provider controls are not installed"),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Provider controls could not be loaded. Try again.",
+    );
+    expect(screen.getByRole("button", { name: "Retry providers" })).toBeVisible();
   });
 
   it("renders normalized provider status without secret fields", async () => {
@@ -183,9 +183,9 @@ describe("integrated UI coherence", () => {
     renderWithQuery(<ProvidersPage />);
     await user.click(await screen.findByText("Manage", { exact: true }));
     expect(
-      await screen.findByText("Charges need reconciliation"),
+      await screen.findByText("Charges need checking"),
     ).toBeVisible();
-    expect(screen.queryByText("1 charge need reconciliation")).toBeNull();
+    expect(screen.queryByText("1 charge need checking")).toBeNull();
     expect(screen.getByText(/verified provider charge/i)).toBeVisible();
   });
 

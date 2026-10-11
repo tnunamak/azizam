@@ -423,8 +423,8 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await routeProviders(page, "seeded");
   await page.goto("/ui/providers/");
   await page.getByText("Manage", { exact: true }).click();
-  await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
-  await page.getByRole("button", { name: "Reconcile charges" }).click();
+  await expect(page.getByText("1 charge needs checking")).toBeVisible();
+  await page.getByRole("button", { name: "Check charges" }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "req_pending_42_abcdefghijklmnopqrstuvwxyz",
   );
@@ -434,7 +434,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await expect(page.getByText("USD 0.015")).toBeVisible();
   await expect(page.getByText("USD 0.000001234")).toBeVisible();
   const firstActual = page.getByLabel(
-    "Verified actual charge for reconciliation 42",
+    "Verified actual charge for charge 42",
   );
   await expect(firstActual).toHaveValue("");
   await expect(
@@ -444,7 +444,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await page.getByRole("button", { name: "Record actual" }).first().click();
   await expect(page.getByText("Charge #42")).toBeHidden();
   const zeroActual = page.getByLabel(
-    "Verified actual charge for reconciliation 43",
+    "Verified actual charge for charge 43",
   );
   await expect(zeroActual).toHaveValue("");
   await zeroActual.fill("0");
@@ -454,7 +454,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await expect(zeroButton).toBeEnabled();
   await zeroButton.click();
   await expect(
-    page.getByText("No pending provider charges need reconciliation."),
+    page.getByText("No charges need checking."),
   ).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click();
   const flags = await page.evaluate(() =>
@@ -469,9 +469,9 @@ for (const theme of ["light", "dark"] as const) {
     await routeProviders(page, "seeded");
     await page.goto("/ui/providers/");
     await page.getByText("Manage", { exact: true }).click();
-    await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
+    await expect(page.getByText("1 charge needs checking")).toBeVisible();
     await inspect(page, `providers-reconciliation-card-${theme}-390`);
-    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await page.getByRole("button", { name: "Check charges" }).click();
     await expect(page.getByRole("dialog")).toContainText(
       "req_pending_42_abcdefghijklmnopqrstuvwxyz",
     );
@@ -1032,12 +1032,12 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await page.goto("/ui/providers/");
     await page.getByText("Manage", { exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Reconcile charges" }),
+      page.getByRole("button", { name: "Check charges" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await page.getByRole("button", { name: "Check charges" }).click();
     await expect(page.getByRole("dialog")).toContainText(String(pendingId));
     const actualCharge = page.getByLabel(
-      new RegExp(`Verified actual charge for reconciliation ${pendingId}`),
+      new RegExp(`Verified actual charge for charge ${pendingId}`),
     );
     await expect(actualCharge).toHaveValue("");
     await actualCharge.fill("0.000001234");
@@ -1056,7 +1056,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       reconciliation: { status: "settled", actual_usd: "0.000001234" },
     });
     await expect(
-      page.getByText("No pending provider charges need reconciliation."),
+      page.getByText("No charges need checking."),
     ).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
 
@@ -1101,4 +1101,74 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
         .catch(() => undefined);
     }
   }
+});
+
+test("providers add dialog fits a 390 px phone with long preset metadata", async ({
+  page,
+}) => {
+  await setViewport(page, "light", 390);
+  await routeProviders(page, "empty");
+  await page.route("**/admin/api/providers/-/catalog", (route: Route) =>
+    route.fulfill({
+      json: {
+        providers: [
+          // The longest real preset name, URL and billing labels.
+          {
+            id: "long-preset",
+            display_name: "Google Gemini OpenAI-compatible",
+            logo_key: "go",
+            protocol: "anthropic-messages",
+            base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+            billing_dimensions: [
+              "input_tokens",
+              "output_tokens",
+              "cache_read_input_tokens",
+              "cache_creation_input_tokens",
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/ui/providers/");
+  await page.getByRole("button", { name: "Add provider" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Search providers")).toBeVisible();
+  const overflowing = () =>
+    dialog.evaluate((node) =>
+      [node, ...node.querySelectorAll<HTMLElement>("*")]
+        .filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1)
+        .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 50)}`),
+    );
+  expect(await overflowing()).toEqual([]);
+  await dialog.getByRole("button", { name: /Google Gemini/ }).click();
+  await expect(dialog.getByLabel("Provider base URL")).toBeVisible();
+  expect(await overflowing()).toEqual([]);
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport();
+});
+
+test("providers replace a saved key in a masked dialog", async ({ page }) => {
+  await routeProviders(page, "seeded");
+  let sentKey: unknown = null;
+  await page.route("**/admin/api/providers/openrouter/key", (route: Route) => {
+    sentKey = route.request().postDataJSON()?.api_key;
+    return route.fulfill({ json: { key_status: { state: "set" } } });
+  });
+  const nativeDialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    nativeDialogs.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await page.goto("/ui/providers/");
+  await page.getByText("Manage", { exact: true }).click();
+  await page.getByRole("button", { name: "More actions for OpenRouter" }).click();
+  await page.getByRole("menuitem", { name: /Replace key/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Replace key for OpenRouter" });
+  const input = dialog.getByLabel("New provider key");
+  await expect(input).toHaveAttribute("type", "password");
+  await input.fill("fake-replacement-key");
+  await dialog.getByRole("button", { name: "Replace key" }).click();
+  await expect(dialog).toBeHidden();
+  expect(sentKey).toBe("fake-replacement-key");
+  expect(nativeDialogs).toEqual([]);
 });
