@@ -449,7 +449,7 @@ def create_gateway_router(
             def visible_rows(op: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 kept = []
                 for row in rows:
-                    model = row.get("alias") or row.get("engine") or row.get("match") or ""
+                    model = row.get("alias") or row.get("engine") or row.get("to") or row.get("match") or ""
                     if not entry_visible(request, {"operation": op, "id": model}):
                         continue
                     row = dict(row)

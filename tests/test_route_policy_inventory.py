@@ -1203,3 +1203,137 @@ def test_category_discovery_uses_declared_model_capabilities(gateway, monkeypatc
     body = response.json()
     entries = body.get("data", body.get("models"))
     assert {item.get("id", item.get("model")) for item in entries} == {"encoder"}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path", ["/v1/audio/voices", "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices"])
+@pytest.mark.parametrize("grants,compatible", [
+    ({"supertonic": ("speech.synthesis",)}, []),
+    ({"omnivoice": ("speech.synthesis",)}, ["omnivoice"]),
+])
+def test_custom_voice_discovery_requires_a_permitted_compatible_engine(gateway, monkeypatch, path, grants, compatible):
+    _activate_discovery_grants(gateway, grants)
+    voice = {"id": "voice_" + "1" * 24, "object": "audio.voice", "name": "Narrator"}
+    store = SimpleNamespace(list_voices=lambda *_args, **_kwargs: ([voice], True))
+    monkeypatch.setattr(proxy, "_voice_store", lambda: store)
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    body = response.json()
+    if compatible:
+        assert [row["id"] for row in body["data"]] == [voice["id"]]
+        assert body["data"][0]["compatible_engines"] == compatible
+        assert body["has_more"] is True
+    else:
+        assert body["data"] == []
+        assert body["first_id"] is None and body["last_id"] is None
+        assert body["has_more"] is False
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("operation,alias,intent", [
+    ("speech", "tts", "speech.synthesis"),
+    ("chat", "fast", "chat.completions"),
+])
+def test_category_discovery_checks_the_resolved_alias_instead_of_its_granted_name(gateway, operation, alias, intent):
+    _activate_discovery_grants(gateway, {alias: (intent, "models.list")})
+    response = gateway.client.get("/gateway/v1/aliases", params={"operation": operation}, headers=gateway.headers)
+    assert response.status_code == 200
+    assert response.json()["operations"] == {}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert alias not in {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_category_discovery_hides_an_unresolved_alias_even_when_its_name_is_granted(gateway, monkeypatch):
+    _activate_discovery_grants(gateway, {"tts": ("speech.synthesis", "models.list")})
+    aliases = {"speech": {"stable": {"tts": ["absent"]}, "engines": {"absent": {
+        "service": "missing-service", "model": "absent-model",
+    }}}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    response = gateway.client.get("/gateway/v1/aliases", headers=gateway.headers)
+    assert response.status_code == 200
+    assert response.json()["operations"] == {}
+    response = gateway.client.get("/v1/models", headers=gateway.headers)
+    assert response.status_code == 200
+    assert "tts" not in {row["id"] for row in response.json()["data"]}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+def test_category_alias_patterns_use_their_declared_runtime_target(gateway, monkeypatch):
+    _activate_discovery_grants(gateway, {"current": ("chat.completions",)})
+    aliases = {"chat": {"stable": {"fast": "current"}, "openai": [
+        {"match": "model-[ab]", "to": "fast"},
+    ]}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    gateway.calls.clear()
+    response = gateway.client.get("/gateway/v1/aliases", headers=gateway.headers)
+    assert response.status_code == 200
+    assert not gateway.calls
+    view = response.json()["operations"]["chat"]
+    assert view["stable"] == [{"alias": "fast", "resolves_to": "current"}]
+    assert view["openai"] == proxy._gateway_aliases_provider("chat")["chat"]["openai"]
+    assert [row["match"] for row in view["openai"]] == ["model-[ab]"]
+    assert proxy.resolve_stable_alias("chat", "model-a").target == "current"
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path,expected", [
+    ("/anthropic/v1/models", {("anthropic.messages", "chat.messages", "current")}),
+    ("/api/tags", {("ollama.chat", "chat.completions", "current"),
+                   ("ollama.generate", "chat.generate", "current"),
+                   ("ollama.embeddings", "text.embeddings", "current")}),
+])
+def test_frontend_discovery_builds_the_runtime_policy_request(gateway, monkeypatch, path, expected):
+    _activate_decoy_snapshot(gateway, {"models.list", "chat.messages", "chat.completions",
+                                       "chat.generate", "text.embeddings"})
+    real_check = category_enforcement.CategoryGate.check
+    probes = set()
+
+    def recording_check(self, identity, request):
+        if request.model == "current":
+            probes.add((request.protocol, request.intent, request.model))
+        return real_check(self, identity, request)
+
+    monkeypatch.setattr(category_enforcement.CategoryGate, "check", recording_check)
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200
+    assert _category_listing_empty(response)
+    assert probes == expected
+
+
+@pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
+def test_ungoverned_discovery_preserves_custom_voices_and_unresolved_aliases(gateway, monkeypatch):
+    voice = {"id": "voice_" + "1" * 24, "object": "audio.voice", "name": "Narrator"}
+    store = SimpleNamespace(list_voices=lambda *_args, **_kwargs: ([voice], True))
+    monkeypatch.setattr(proxy, "_voice_store", lambda: store)
+    aliases = {"speech": {"stable": {"tts": ["absent"]}, "engines": {"absent": {
+        "service": "missing-service", "model": "absent-model",
+    }}}}
+    monkeypatch.setitem(proxy.config, "model_aliases", aliases)
+    monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
+    paths = ["/v1/audio/voices", "/openai/v1/audio/voices", "/v1/voices", "/openai/v1/voices",
+             "/gateway/v1/aliases"]
+    baseline = {}
+    for path in paths:
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200
+        body = response.json()
+        if path.endswith("aliases"):
+            assert body["operations"]["speech"]["stable"][0]["alias"] == "tts"
+            assert body["operations"]["speech"]["stable"][0]["resolves_to"] is None
+        else:
+            assert [row["id"] for row in body["data"]] == [voice["id"]]
+            assert body["data"][0]["compatible_engines"] == []
+            assert body["has_more"] is True
+        baseline[path] = response.content
+    from tests.test_category_enforcement import _activate, _snapshot
+    _activate(gateway.category_path, _snapshot())
+    category_enforcement.configure(gateway.category_path)
+    for path, expected in baseline.items():
+        response = gateway.client.get(path, headers=gateway.headers)
+        assert response.status_code == 200
+        assert response.content == expected
