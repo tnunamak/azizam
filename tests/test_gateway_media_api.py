@@ -372,9 +372,9 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
             {"progress": 42, "phase": "sampling"},
         )
 
-    def test_list_events_filters_after_id(self) -> None:
+    def test_list_events_filters_after_sequence(self) -> None:
         seeded = self._seed()
-        first_id = media_jobs.append_event(
+        first_sequence = media_jobs.append_event(
             seeded["job_id"], "queued", {"status": "queued"}, path=self.db
         )
         media_jobs.append_event(
@@ -384,7 +384,7 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
 
         response = client.get(
             f"/gateway/v1/media/jobs/{seeded['job_id']}/events",
-            params={"after_id": first_id},
+            params={"after_sequence": first_sequence},
         )
 
         self.assertEqual(response.status_code, 200)

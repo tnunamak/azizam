@@ -296,12 +296,12 @@ class TestEvents(_StoreCase):
         self.assertEqual(evs[0]["payload"]["step"], 1)
         self.assertLess(evs[0]["id"], evs[1]["id"])
 
-    def test_events_after_id_pagination(self) -> None:
+    def test_events_after_sequence_pagination(self) -> None:
         job = media_jobs.create(_make_job(), path=self.db)
-        first_id = media_jobs.append_event(job.job_id, "a", {"progress": 1}, path=self.db)
+        first_sequence = media_jobs.append_event(job.job_id, "a", {"progress": 1}, path=self.db)
         media_jobs.append_event(job.job_id, "b", {"progress": 2}, path=self.db)
         media_jobs.append_event(job.job_id, "c", {"progress": 3}, path=self.db)
-        tail = media_jobs.events(job.job_id, after_id=first_id, path=self.db)
+        tail = media_jobs.events(job.job_id, after_sequence=first_sequence, path=self.db)
         self.assertEqual([e["event_type"] for e in tail], ["b", "c"])
 
     def test_events_client_audience_filters_payload(self) -> None:

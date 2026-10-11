@@ -323,10 +323,6 @@ def _submit(
     app_id = str(app["id"])
     key = (idempotency_key or "").strip()
     request_id = _idempotent_request_id(app_id, key, forget=forget) if key else new_request_id()
-    existing = media_jobs.get_by_request_id(request_id, path=jobs_path)
-    if existing is not None:
-        return _replay_status(existing), _client_job(existing["job_id"], jobs_path)
-
     source_asset_id = _owned_source(request, body, user_id=user_id, find_owned_asset=find_owned_asset,
                                     admin_path=admin_path, jobs_path=jobs_path)
     if (intent == "image.edit") != (source_asset_id is not None):
@@ -351,6 +347,8 @@ def _submit(
     try:
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
                                     input_data=backend_body, path=jobs_path)
+    except media_jobs.IdempotencyConflict as exc:
+        raise _MakeError(exc.code, str(exc), 409) from None
     except media_jobs.OutstandingLimitReached as exc:
         if exc.limit.scope == "person":
             raise _MakeError(
