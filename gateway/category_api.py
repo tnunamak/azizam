@@ -20,6 +20,10 @@ from gateway.category_store import (
 )
 
 
+class _AmbiguousProvenanceError(ValueError):
+    """Distinct stored records are equally eligible to supply provenance."""
+
+
 def _object(value, required, optional=()):
     if type(value) is not dict or not all(type(k) is str for k in value):
         raise ValueError("Expected an object")
@@ -188,7 +192,7 @@ def _stamp_acceptance(before, after, owner, accepted_at):
                            (assertion.observed_at, assertion.mapping_version)]
             eligible = exact or observation or candidates
             if len(eligible) != 1:
-                raise ValueError("Ambiguous stored assertion provenance")
+                raise _AmbiguousProvenanceError()
             return eligible[0]
         return replace(assertion, accepting_owner=owner, accepted_at=accepted_at)
 
@@ -373,6 +377,8 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 if operation == "preview":
                     return _json(policy.deny("POLICY_UNAVAILABLE", "snapshot"))
                 return _error(503, "policy_unavailable", "The policy store is unavailable.")
+            except _AmbiguousProvenanceError:
+                return _error(400, "invalid_request", "Ambiguous stored assertion provenance.")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 return _error(400, "invalid_request", "Invalid category policy request.")
         # The endpoint reads path params itself; declare them for the OpenAPI schema.
