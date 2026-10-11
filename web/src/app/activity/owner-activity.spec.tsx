@@ -462,7 +462,7 @@ it("COPY-06 provider charge precision", async () => {
   const user = userEvent.setup();
   await screen.findByRole("heading", { name: "Example Provider" });
   await user.click(screen.getByText("Manage"));
-  await user.click(screen.getByRole("button", { name: "Reconcile charges" }));
+  await user.click(screen.getByRole("button", { name: "Check charges" }));
   expect(await screen.findByText(`USD ${amount}`)).toBeVisible();
 });
 

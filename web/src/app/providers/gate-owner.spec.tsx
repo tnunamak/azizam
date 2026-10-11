@@ -124,7 +124,8 @@ function renderProviders(
   {
     catalog = [] as unknown[],
     plans = [] as unknown[],
-  }: { catalog?: unknown[]; plans?: unknown[] } = {},
+    global,
+  }: { catalog?: unknown[]; plans?: unknown[]; global?: unknown } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: {
@@ -137,7 +138,7 @@ function renderProviders(
     "fetch",
     vi.fn(async () => Response.json(client.getQueryData(["providers"]))),
   );
-  client.setQueryData(["providers"], { providers });
+  client.setQueryData(["providers"], { providers, global });
   client.setQueryData(["providers", "catalog"], catalog);
   client.setQueryData(["providers", "plans"], plans);
   render(
@@ -244,13 +245,13 @@ it("PF-102 does not carry a chosen access plan across cancel or provider change"
   });
   fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
   let dialog = await checkAddProvider(/First preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
   fireEvent.click(dialog.getByRole("switch", { name: "Allow Family" }));
   expect(dialog.getByRole("switch", { name: "Allow Family" })).toBeChecked();
   // Choosing another provider in the same flow starts with no plan.
-  fireEvent.click(dialog.getByRole("button", { name: "1. catalog" }));
+  fireEvent.click(dialog.getByRole("button", { name: "1. Provider" }));
   dialog = await checkAddProvider(/Second preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
   expect(dialog.getByRole("switch", { name: "Allow Family" })).not.toBeChecked();
   fireEvent.click(dialog.getByRole("switch", { name: "Allow Family" }));
   fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
@@ -258,7 +259,7 @@ it("PF-102 does not carry a chosen access plan across cancel or provider change"
   dialog = within(screen.getByRole("dialog"));
   expect(dialog.getByLabelText("Search providers")).toBeInTheDocument();
   dialog = await checkAddProvider(/Second preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
   expect(dialog.getByRole("switch", { name: "Allow Family" })).not.toBeChecked();
 });
 
@@ -384,14 +385,97 @@ it("PF-110 shows unknown spend on a collapsed row and rejects non-numeric prices
   expect(adminFetchMock).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
   const dialog = await checkAddProvider(/First preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "3. models" }));
+  fireEvent.click(dialog.getByRole("button", { name: "3. Models" }));
   fireEvent.change(dialog.getByLabelText("m input price"), {
     target: { value: "free" },
   });
   expect(dialog.getByText("Needs price")).toBeVisible();
-  fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
   fireEvent.click(dialog.getByRole("button", { name: "Save provider" }));
   expect(await dialog.findByRole("alert")).toHaveTextContent(
     "Enter a price of 0 or more.",
   );
+});
+
+// WP-19: plain copy, no provider-specific placeholders.
+
+it("PF-107 keeps env names, provider model ids, protocol and billing enums out of the summary", () => {
+  renderProviders(
+    [
+      {
+        ...savedProvider,
+        key_status: { state: "set", source: "env", api_key_env: "HOST_KEY_VAR" },
+        models: [
+          { id: "gw-model", upstream_model: "vendor/model", enabled: true },
+        ],
+      },
+    ],
+    {
+      catalog: [{ ...twoPresets[0], protocol: "openai-chat", billingDimensions: ["input_tokens"] }],
+    },
+  );
+  expect(screen.getByText("Key configured")).toBeVisible();
+  expect(screen.queryByText(/Set via/)).toBeNull();
+  const details = screen.getByText("Key variable: HOST_KEY_VAR");
+  expect(details.closest("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Provider model IDs: vendor/model")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Manage"));
+  fireEvent.click(screen.getByRole("button", { name: "Edit models" }));
+  const editRow = screen.getByRole("checkbox", { name: "Enable gw-model" }).closest("label")!;
+  expect(editRow).not.toHaveTextContent("vendor/model");
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.queryByText(/openai-chat/)).toBeNull();
+  expect(dialog.queryByText("input_tokens")).toBeNull();
+  for (const name of ["1. Provider", "2. Key", "3. Models", "4. Access and caps"])
+    expect(dialog.getByRole("button", { name })).toBeInTheDocument();
+});
+
+it("PF-107 shows a charge's kind and plan name, not raw enums and ids", async () => {
+  adminFetchMock.mockResolvedValue({
+    reconciliations: [
+      { id: 7, profile_id: "family-plan", cost_source: "price-table", estimated_usd: "0.01" },
+      { id: 8, profile_id: "family-plan", cost_source: "provider-reported", estimated_usd: "0.02" },
+    ],
+  });
+  renderProviders(
+    [{ ...savedProvider, spend: { status: "needs_reconciliation", pending_reconciliation_count: 2 } }],
+    { plans: [{ id: "family-plan", name: "Family" }] },
+  );
+  fireEvent.click(screen.getByText("Manage"));
+  fireEvent.click(screen.getByRole("button", { name: "Check charges" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(await dialog.findByText("Estimated")).toBeVisible();
+  expect(dialog.getByText("Verified provider charge")).toBeVisible();
+  expect(dialog.getAllByText("Family")).toHaveLength(2);
+  expect(dialog.queryByText("price-table")).toBeNull();
+  expect(dialog.queryByText("family-plan")).toBeNull();
+});
+
+it("PF-108 does not prefill or hint a provider-specific key variable", async () => {
+  renderProviders([savedProvider], { catalog: twoPresets });
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  const dialog = within(screen.getByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: /First preset/ }));
+  fireEvent.click(dialog.getByRole("button", { name: "Use environment variable" }));
+  const input = dialog.getByLabelText("Environment variable");
+  expect(input).toHaveValue("");
+  expect(input).toHaveAttribute("placeholder", "PROVIDER_KEY");
+});
+
+it("PF-109 says charges need checking, without accounting jargon", () => {
+  renderProviders([
+    {
+      ...savedProvider,
+      spend: { status: "needs_reconciliation", pending_reconciliation_count: 1 },
+    },
+    { ...savedProvider, id: "other", name: "Other" },
+  ], {
+    global: {
+      spend: { status: "needs_reconciliation", pending_reconciliation_count: 1 },
+    },
+  });
+  expect(screen.getByText(/Final spend and remaining cap are unknown until you record the verified provider charges\./)).toBeVisible();
+  expect(screen.getAllByText("1 charge needs checking").length).toBeGreaterThan(0);
+  expect(document.body).not.toHaveTextContent(/reconcil|reservation/i);
 });

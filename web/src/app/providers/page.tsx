@@ -62,16 +62,21 @@ import { cn } from "@/lib/cn";
 type CredentialMode = "key" | "env";
 type Step = "catalog" | "credentials" | "models" | "limits";
 
+const stepLabels: Record<Step, string> = {
+  catalog: "Provider",
+  credentials: "Key",
+  models: "Models",
+  limits: "Access and caps",
+};
+
 interface CatalogProvider {
   id: string;
   name: string;
   logoKey: string;
-  protocol: string;
   baseUrl: string;
   docsUrl?: string;
   keyUrl?: string;
   recommendation?: string;
-  billingDimensions: string[];
 }
 
 interface ProviderModel {
@@ -219,8 +224,8 @@ function needsReconciliationFromSpend(
 }
 
 function reconciliationLabel(count: number | null | undefined): string {
-  if (count == null || count === 0) return "Charges need reconciliation";
-  return `${count} charge${count === 1 ? " needs" : "s need"} reconciliation`;
+  if (count == null || count === 0) return "Charges need checking";
+  return `${count} charge${count === 1 ? " needs" : "s need"} checking`;
 }
 
 function decimalInputValid(value: string): boolean {
@@ -239,6 +244,15 @@ function capInput(value: string): number | null {
     throw new Error("Caps must be non-negative numbers or blank for no cap.");
   }
   return Number(value);
+}
+
+/** The gateway's cost sources, in the words an owner checks a bill with. */
+function chargeKind(costSource: string): string {
+  if (costSource === "provider-reported" || costSource === "owner-reported")
+    return "Verified provider charge";
+  if (costSource === "price-table" || costSource === "litellm")
+    return "Estimated";
+  return "Not recorded";
 }
 
 function formatIdentity(value: string): string {
@@ -319,7 +333,6 @@ function mapCatalog(raw: unknown): CatalogProvider[] {
       id: text(row.id, `provider-${index}`),
       name: text(row.display_name, text(row.name, `Provider ${index + 1}`)),
       logoKey: text(row.logo_key, text(row.id, "cloud")),
-      protocol: text(row.protocol, "openai-chat"),
       baseUrl: text(row.base_url, ""),
       docsUrl: text(row.docs_url, "") || undefined,
       keyUrl: text(row.key_url, "") || undefined,
@@ -335,9 +348,6 @@ function mapCatalog(raw: unknown): CatalogProvider[] {
               "",
             )
           : text(row.recommendation, "")) || undefined,
-      billingDimensions: Array.isArray(row.billing_dimensions)
-        ? row.billing_dimensions.map((v) => String(v))
-        : [],
     };
   });
 }
@@ -597,9 +607,10 @@ function providerState(provider: ProviderRecord) {
 function ProviderKeySummary({ provider }: { provider: ProviderRecord }) {
   if (provider.keyStatus === "missing") return <>Missing key</>;
   if (provider.keyStatus !== "set") return <>Key status unknown</>;
+  // The variable name is a host detail; Provider details shows it.
   const source =
-    provider.keySource === "env" && provider.apiKeyEnv
-      ? `Set via ${provider.apiKeyEnv}`
+    provider.keySource === "env"
+      ? "Key configured"
       : provider.keySuffix
         ? `Key ends in ${provider.keySuffix}`
         : "Key set";
@@ -981,9 +992,22 @@ function DetailCard({
             <summary className="text-muted-foreground min-h-8 max-sm:min-h-11 cursor-pointer content-center">
               Provider details
             </summary>
-            <p className="text-muted-foreground pb-3 text-meta break-all">
-              Provider ID: {provider.id}
-            </p>
+            <div className="text-muted-foreground space-y-1 pb-3 text-meta break-all">
+              <p>Provider ID: {provider.id}</p>
+              {provider.keySource === "env" && provider.apiKeyEnv && (
+                <p>Key variable: {provider.apiKeyEnv}</p>
+              )}
+              {provider.models.some(
+                (model) => model.upstreamModel !== model.id,
+              ) && (
+                <p>
+                  Provider model IDs:{" "}
+                  {provider.models
+                    .map((model) => model.upstreamModel)
+                    .join(", ")}
+                </p>
+              )}
+            </div>
           </details>
           {provider.recommendation && (
             <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-panel border p-3 text-meta">
@@ -1001,9 +1025,8 @@ function DetailCard({
                 {reconciliationLabel(provider.pendingReconciliationCount)}
               </div>
               <p className="text-muted-foreground mt-1">
-                Spend totals include estimates until an owner records the
-                verified provider charge. Reconcile before removing this
-                provider.
+                Spend totals include estimates until you record the verified
+                provider charges. Check charges before removing this provider.
               </p>
               <Button
                 type="button"
@@ -1012,7 +1035,7 @@ function DetailCard({
                 className="mt-3"
                 onClick={() => onAction("reconcile", provider)}
               >
-                Reconcile charges
+                Check charges
               </Button>
             </div>
           )}
@@ -1123,7 +1146,7 @@ function DetailCard({
               <DropdownMenuContent align="end">
                 {provider.keySource === "env" ? (
                   <DropdownMenuItem disabled>
-                    Key owned by {provider.apiKeyEnv ?? "environment"}
+                    Key is set on the gateway host
                   </DropdownMenuItem>
                 ) : (
                   <>
@@ -1151,7 +1174,7 @@ function DetailCard({
                 >
                   {provider.needsReconciliation ? (
                     <>
-                      <MinusCircle aria-hidden="true" /> Reconcile before
+                      <MinusCircle aria-hidden="true" /> Check charges before
                       removing
                     </>
                   ) : (
@@ -1213,12 +1236,7 @@ function DetailCard({
                       }
                       aria-label={`Enable ${model.id}`}
                     />
-                    <span>
-                      <span className="block font-medium">{model.id}</span>
-                      <span className="text-muted-foreground break-words">
-                        {model.upstreamModel}
-                      </span>
-                    </span>
+                    <span className="font-medium break-all">{model.id}</span>
                   </label>
                   <Input
                     aria-label={`${model.id} managed input price`}
@@ -1366,10 +1384,12 @@ function DetailCard({
 
 function ReconciliationDialog({
   provider,
+  plans,
   open,
   onOpenChange,
 }: {
   provider: ProviderRecord | null;
+  plans: AccessPlan[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -1405,7 +1425,7 @@ function ReconciliationDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Reconcile provider charges</DialogTitle>
+          <DialogTitle>Check provider charges</DialogTitle>
           <DialogDescription>
             Record verified charges from {provider?.name ?? "the provider"}.
             Estimates are shown for matching only; they are not final bills.
@@ -1413,13 +1433,13 @@ function ReconciliationDialog({
         </DialogHeader>
         {isFetching ? (
           <div role="status" className="text-muted-foreground text-meta">
-            Loading reconciliation rows…
+            Loading charges…
           </div>
         ) : isError ? (
           <div role="alert" className="text-danger text-meta">
             {error instanceof Error
               ? error.message
-              : "Reconciliation rows could not be loaded."}
+              : "Charges could not be loaded. Try again."}
             <Button
               type="button"
               variant="outline"
@@ -1427,12 +1447,12 @@ function ReconciliationDialog({
               className="mt-3 block"
               onClick={() => refetch()}
             >
-              Refresh reconciliation
+              Refresh charges
             </Button>
           </div>
         ) : rows.length === 0 ? (
           <p className="text-muted-foreground text-meta">
-            No pending provider charges need reconciliation.
+            No charges need checking.
           </p>
         ) : (
           <div className="space-y-4">
@@ -1450,8 +1470,10 @@ function ReconciliationDialog({
                       </div>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Cost source</span>
-                      <div className="font-medium">{row.costSource}</div>
+                      <span className="text-muted-foreground">Charge</span>
+                      <div className="font-medium">
+                        {chargeKind(row.costSource)}
+                      </div>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Request ID</span>
@@ -1469,8 +1491,11 @@ function ReconciliationDialog({
                     </div>
                     <div>
                       <span className="text-muted-foreground">Access plan</span>
-                      <div className="font-mono text-meta break-all">
-                        {formatIdentity(row.profileId)}
+                      <div className="break-all">
+                        {formatIdentity(
+                          plans.find((plan) => plan.id === row.profileId)
+                            ?.name ?? row.profileId,
+                        )}
                       </div>
                     </div>
                     <div>
@@ -1489,7 +1514,7 @@ function ReconciliationDialog({
                       Verified actual charge in USD
                       <Input
                         inputMode="decimal"
-                        aria-label={`Verified actual charge for reconciliation ${row.id}`}
+                        aria-label={`Verified actual charge for charge ${row.id}`}
                         placeholder="0.00"
                         value={value}
                         onChange={(event) =>
@@ -1519,7 +1544,7 @@ function ReconciliationDialog({
           <div role="alert" className="text-danger text-meta">
             {settle.error instanceof Error
               ? settle.error.message
-              : "Reconciliation failed."}
+              : "The charge could not be recorded. Try again."}
           </div>
         )}
         <DialogFooter>
@@ -1558,7 +1583,7 @@ function AddProviderDialog({
   const [selected, setSelected] = useState<CatalogProvider | null>(null);
   const [mode, setMode] = useState<CredentialMode>("key");
   const [secret, setSecret] = useState("");
-  const [envName, setEnvName] = useState("OPENROUTER_API_KEY");
+  const [envName, setEnvName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [models, setModels] = useState<ProviderModel[]>([]);
@@ -1632,7 +1657,7 @@ function AddProviderDialog({
     const term = search.trim().toLowerCase();
     return term
       ? catalog.filter((p) =>
-          `${p.name} ${p.protocol} ${p.baseUrl}`.toLowerCase().includes(term),
+          `${p.name} ${p.baseUrl}`.toLowerCase().includes(term),
         )
       : catalog;
   }, [catalog, search]);
@@ -1773,11 +1798,11 @@ function AddProviderDialog({
                     testResult?.ok !== true)
                 }
                 className={cn(
-                  "rounded-panel border px-3 py-2 text-left text-meta capitalize",
+                  "rounded-panel border px-3 py-2 text-left text-meta",
                   step === item && "border-primary bg-primary/10 text-link",
                 )}
               >
-                {index + 1}. {item}
+                {index + 1}. {stepLabels[item]}
               </button>
             ),
           )}
@@ -1872,18 +1897,7 @@ function AddProviderDialog({
                         {provider.name}
                       </div>
                       <div className="text-muted-foreground mt-1 text-meta [overflow-wrap:anywhere]">
-                        {provider.protocol} · {provider.baseUrl}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {provider.billingDimensions.map((dim) => (
-                          <Badge
-                            key={dim}
-                            variant="outline"
-                            className="max-w-full whitespace-normal [overflow-wrap:anywhere]"
-                          >
-                            {dim}
-                          </Badge>
-                        ))}
+                        {provider.baseUrl}
                       </div>
                     </div>
                   </div>
@@ -1955,7 +1969,7 @@ function AddProviderDialog({
                   setEnvName(e.target.value);
                   resetCheck();
                 }}
-                placeholder="OPENROUTER_API_KEY"
+                placeholder="PROVIDER_KEY"
               />
             )}
             <div className="flex flex-wrap items-center gap-3">
@@ -2294,9 +2308,8 @@ function GlobalCapsEditor({
             {reconciliationLabel(global.pendingReconciliationCount)}
           </div>
           <p className="text-muted-foreground mt-1">
-            Provider totals include estimates. Final spend and remaining budget
-            are unknown until an owner reconciles the matching receipt,
-            provider, and reservation IDs.
+            Final spend and remaining cap are unknown until you record the
+            verified provider charges.
           </p>
         </div>
       )}
@@ -2468,7 +2481,7 @@ export default function ProvidersPage() {
       if (name === "remove") {
         if (provider.needsReconciliation) {
           throw new Error(
-            "Reconcile pending provider charges before removing this provider.",
+            "Check pending charges before removing this provider.",
           );
         }
         return adminFetch(`/admin/api/providers/${encoded}`, {
@@ -2715,6 +2728,7 @@ export default function ProvidersPage() {
       />
       <ReconciliationDialog
         provider={reconcileTarget}
+        plans={planRows}
         open={reconcileTarget !== null}
         onOpenChange={(open) => !open && setReconcileTarget(null)}
       />

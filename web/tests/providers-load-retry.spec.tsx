@@ -124,7 +124,7 @@ it.each([
           dialog.getByRole("button", { name: "Check provider connection" }),
         );
         await dialog.findByText("Connection worked.");
-        fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+        fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
         expect(
           dialog.getByRole("button", { name: "Save provider" }),
         ).toBeEnabled();
@@ -141,7 +141,7 @@ it.each([
       expect(await dialog.findByRole("alert")).toHaveTextContent(
         "Metadata load failed",
       );
-      for (const name of ["2. credentials", "3. models", "4. limits"]) {
+      for (const name of ["2. Key", "3. Models", "4. Access and caps"]) {
         expect(dialog.getByRole("button", { name })).toBeDisabled();
       }
       expect(
@@ -156,7 +156,7 @@ it.each([
       await waitFor(() => expect(dialog.queryByRole("alert")).toBeNull());
       // Retry restores the steps whose prerequisites were met before the
       // failure; with no provider chosen yet, later steps stay gated (SE-27).
-      expect(dialog.getByRole("button", { name: "4. limits" })).toHaveProperty(
+      expect(dialog.getByRole("button", { name: "4. Access and caps" })).toHaveProperty(
         "disabled",
         !alreadyOpen,
       );
@@ -262,7 +262,7 @@ it.each([
     try {
       const dialog = await checkRegressionProvider();
       expect(await dialog.findByText(message)).toBeInTheDocument();
-      for (const name of ["Next", "3. models", "4. limits"]) {
+      for (const name of ["Next", "3. Models", "4. Access and caps"]) {
         const button = dialog.getByRole("button", { name });
         if (confirmed) expect(button).toBeEnabled();
         else expect(button).toBeDisabled();
@@ -301,7 +301,7 @@ for (const target of ["add", "provider", "global"] as const) {
         if (target === "add") {
           scope = await checkRegressionProvider();
           await scope.findByText("Connection worked.");
-          fireEvent.click(scope.getByRole("button", { name: "4. limits" }));
+          fireEvent.click(scope.getByRole("button", { name: "4. Access and caps" }));
         } else if (target === "provider") {
           fireEvent.click(screen.getByText("Manage"));
           fireEvent.click(screen.getByRole("button", { name: "Edit caps" }));
@@ -376,33 +376,33 @@ it("gates wizard headers by every preceding Next prerequisite", async () => {
   try {
     fireEvent.click(screen.getAllByRole("button", { name: "Add provider" })[0]);
     const dialog = within(screen.getByRole("dialog"));
-    for (const name of ["Next", "2. credentials", "3. models", "4. limits"]) {
+    for (const name of ["Next", "2. Key", "3. Models", "4. Access and caps"]) {
       expect(dialog.getByRole("button", { name })).toBeDisabled();
       fireEvent.click(dialog.getByRole("button", { name }));
     }
     expect(dialog.getByLabelText("Search providers")).toBeInTheDocument();
     fireEvent.click(dialog.getByRole("button", { name: /Test provider/ }));
-    for (const name of ["Next", "3. models", "4. limits"]) {
+    for (const name of ["Next", "3. Models", "4. Access and caps"]) {
       expect(dialog.getByRole("button", { name })).toBeDisabled();
     }
-    expect(dialog.getByRole("button", { name: "2. credentials" })).toBeEnabled();
+    expect(dialog.getByRole("button", { name: "2. Key" })).toBeEnabled();
     fireEvent.change(dialog.getByLabelText("Provider API key"), {
       target: { value: "test-key" },
     });
     fireEvent.click(dialog.getByRole("button", { name: "Check provider connection" }));
     await dialog.findByText("Connection worked.");
-    for (const name of ["Next", "3. models", "4. limits"]) {
+    for (const name of ["Next", "3. Models", "4. Access and caps"]) {
       expect(dialog.getByRole("button", { name })).toBeEnabled();
     }
-    fireEvent.click(dialog.getByRole("button", { name: "3. models" }));
+    fireEvent.click(dialog.getByRole("button", { name: "3. Models" }));
     expect(dialog.getByLabelText("test-model input price")).toBeInTheDocument();
-    fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+    fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
     expect(dialog.getByLabelText("Daily cap (USD)")).toBeInTheDocument();
-    fireEvent.click(dialog.getByRole("button", { name: "2. credentials" }));
+    fireEvent.click(dialog.getByRole("button", { name: "2. Key" }));
     fireEvent.change(dialog.getByLabelText("Provider API key"), {
       target: { value: "changed-key" },
     });
-    for (const name of ["Next", "3. models", "4. limits"]) {
+    for (const name of ["Next", "3. Models", "4. Access and caps"]) {
       expect(dialog.getByRole("button", { name })).toBeDisabled();
     }
   } finally {

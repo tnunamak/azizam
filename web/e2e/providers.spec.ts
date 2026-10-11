@@ -423,8 +423,8 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await routeProviders(page, "seeded");
   await page.goto("/ui/providers/");
   await page.getByText("Manage", { exact: true }).click();
-  await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
-  await page.getByRole("button", { name: "Reconcile charges" }).click();
+  await expect(page.getByText("1 charge needs checking")).toBeVisible();
+  await page.getByRole("button", { name: "Check charges" }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "req_pending_42_abcdefghijklmnopqrstuvwxyz",
   );
@@ -434,7 +434,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await expect(page.getByText("USD 0.015")).toBeVisible();
   await expect(page.getByText("USD 0.000001234")).toBeVisible();
   const firstActual = page.getByLabel(
-    "Verified actual charge for reconciliation 42",
+    "Verified actual charge for charge 42",
   );
   await expect(firstActual).toHaveValue("");
   await expect(
@@ -444,7 +444,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await page.getByRole("button", { name: "Record actual" }).first().click();
   await expect(page.getByText("Charge #42")).toBeHidden();
   const zeroActual = page.getByLabel(
-    "Verified actual charge for reconciliation 43",
+    "Verified actual charge for charge 43",
   );
   await expect(zeroActual).toHaveValue("");
   await zeroActual.fill("0");
@@ -454,7 +454,7 @@ test("providers reconcile pending charges before removal", async ({ page }) => {
   await expect(zeroButton).toBeEnabled();
   await zeroButton.click();
   await expect(
-    page.getByText("No pending provider charges need reconciliation."),
+    page.getByText("No charges need checking."),
   ).toBeVisible();
   await page.getByRole("button", { name: "Done" }).click();
   const flags = await page.evaluate(() =>
@@ -469,9 +469,9 @@ for (const theme of ["light", "dark"] as const) {
     await routeProviders(page, "seeded");
     await page.goto("/ui/providers/");
     await page.getByText("Manage", { exact: true }).click();
-    await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
+    await expect(page.getByText("1 charge needs checking")).toBeVisible();
     await inspect(page, `providers-reconciliation-card-${theme}-390`);
-    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await page.getByRole("button", { name: "Check charges" }).click();
     await expect(page.getByRole("dialog")).toContainText(
       "req_pending_42_abcdefghijklmnopqrstuvwxyz",
     );
@@ -1032,12 +1032,12 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await page.goto("/ui/providers/");
     await page.getByText("Manage", { exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Reconcile charges" }),
+      page.getByRole("button", { name: "Check charges" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Reconcile charges" }).click();
+    await page.getByRole("button", { name: "Check charges" }).click();
     await expect(page.getByRole("dialog")).toContainText(String(pendingId));
     const actualCharge = page.getByLabel(
-      new RegExp(`Verified actual charge for reconciliation ${pendingId}`),
+      new RegExp(`Verified actual charge for charge ${pendingId}`),
     );
     await expect(actualCharge).toHaveValue("");
     await actualCharge.fill("0.000001234");
@@ -1056,7 +1056,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       reconciliation: { status: "settled", actual_usd: "0.000001234" },
     });
     await expect(
-      page.getByText("No pending provider charges need reconciliation."),
+      page.getByText("No charges need checking."),
     ).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
 

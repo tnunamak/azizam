@@ -183,9 +183,9 @@ describe("integrated UI coherence", () => {
     renderWithQuery(<ProvidersPage />);
     await user.click(await screen.findByText("Manage", { exact: true }));
     expect(
-      await screen.findByText("Charges need reconciliation"),
+      await screen.findByText("Charges need checking"),
     ).toBeVisible();
-    expect(screen.queryByText("1 charge need reconciliation")).toBeNull();
+    expect(screen.queryByText("1 charge need checking")).toBeNull();
     expect(screen.getByText(/verified provider charge/i)).toBeVisible();
   });
 
