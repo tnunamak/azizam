@@ -1115,3 +1115,18 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     voices = get("/v1/audio/voices")
     assert voices["voices"]
     assert set(voices["engines"]) == {"supertonic"}
+
+
+@pytest.mark.parametrize("gateway", ["categories"], indirect=True)
+@pytest.mark.parametrize("path", sorted(_CATEGORY_LISTINGS))
+def test_category_discovery_hides_decoy_grants(gateway, path):
+    _activate_decoy_snapshot(gateway, {
+        "models.list", "chat.completions", "text.embeddings", "image.generate", "image.edit",
+        "video.generate", "audio.generate", "speech.synthesis", "speech.transcription",
+        "decision.systemone", "text.rerank",
+    })
+    gateway.calls.clear()
+    response = gateway.client.get(path, headers=gateway.headers)
+    assert response.status_code == 200, (path, response.status_code)
+    assert not gateway.calls, (path, gateway.calls)
+    assert _category_listing_empty(response), (path, _body_summary(response))
