@@ -270,6 +270,14 @@ def _request(row):
     return path, body
 
 
+def _drain_state():
+    """Drain state without clock-derived fields, which move between two reads."""
+    snapshot = dict(proxy.DRAIN_STATE.snapshot())
+    for key in [k for k in snapshot if k.startswith("seconds_since") or k.endswith("_age_s")]:
+        snapshot.pop(key)
+    return snapshot
+
+
 def _database_contents(root):
     result = {}
     for path in sorted(root.rglob("*.db")):
@@ -288,7 +296,7 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
     path, body = _request(row)
     before = _database_contents(gateway_test_state_dir)
     fixture_before = _database_contents(case.db.parent)
-    drain_before = proxy.DRAIN_STATE.snapshot()
+    drain_before = _drain_state()
     config_before = copy.deepcopy(proxy.config)
     for principal in ("app", "member"):
         case.client.cookies.clear()
@@ -305,7 +313,7 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
             assert response.json()["error"]["code"] == "admin_forbidden"
         assert _database_contents(gateway_test_state_dir) == before
         assert _database_contents(case.db.parent) == fixture_before
-        assert proxy.DRAIN_STATE.snapshot() == drain_before
+        assert _drain_state() == drain_before
         assert proxy.config == config_before
 
 
@@ -316,7 +324,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
     principals.client.cookies.clear()
     before = _database_contents(gateway_test_state_dir)
     fixture_before = _database_contents(principals.db.parent)
-    drain_before = proxy.DRAIN_STATE.snapshot()
+    drain_before = _drain_state()
     config_before = copy.deepcopy(proxy.config)
     # Config reload and global-cap deletion have no invalid-body/dry contract.
     # Stop at their first effect, after the route has completed authorization.
@@ -355,7 +363,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
             assert response.headers["location"].startswith("/ui/")
     assert _database_contents(gateway_test_state_dir) == before
     assert _database_contents(principals.db.parent) == fixture_before
-    assert proxy.DRAIN_STATE.snapshot() == drain_before
+    assert _drain_state() == drain_before
     assert proxy.config == config_before
 
 
