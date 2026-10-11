@@ -254,3 +254,15 @@ def test_new_jobs_cannot_inject_phase_history(db):
     assert a.started_at is None and a.finished_at is None and a.previous_attempts == []
     with pytest.raises(ValueError):
         job(db, previous_attempts=[{'prompt': 'must not leak'}])
+
+
+def test_old_attempt_cannot_fill_new_attempt_output(db):
+    a = job(db)
+    media_jobs.update_status(a.job_id, 'running', add_assets=[{'id': 'old'}], now=200, path=db)
+    old = media_jobs.get(a.job_id, path=db)
+    media_jobs.begin_attempt(a.job_id, now=300, path=db)
+    media_jobs.upsert(old, path=db)
+    current = media_jobs.get(a.job_id, path=db)
+    assert current['attempt_number'] == 2
+    assert current['started_at'] == 300
+    assert current['first_output_at'] is None

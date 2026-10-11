@@ -292,6 +292,8 @@ def update_phases(receipt: RouteReceipt, *, path: Path = DB_PATH) -> None:
         if row is None:
             return
         data = json.loads(row[0])
+        if data.get("attempt_number") is None:
+            return
         for name in PHASE_FIELDS:
             if data.get(name) is None:
                 data[name] = getattr(receipt, name)

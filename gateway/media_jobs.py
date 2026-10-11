@@ -539,7 +539,7 @@ def create(
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
-                owner = stored_owner_key(previous.owner_key_hash, app_id=previous.app_id)
+                owner = previous.owner_scope or stored_owner_key(previous.owner_key_hash, app_id=previous.app_id)
                 # Legacy records can only compare the facts they retained.
                 previous_hash = previous.input_hash or _input_hash(previous)
                 if (owner != record.owner_scope or previous.intent != record.intent
@@ -588,8 +588,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     if previous:
         data = json.loads(previous[0])
         preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
+        stale_attempt = data.get("attempt_number") != job.attempt_number
         for name in preserved:
-            if data.get(name) is not None:
+            if name in data and (data[name] is not None or (stale_attempt and not new_attempt)):
                 setattr(job, name, data[name])
     cutoff = conn.execute(
         "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",

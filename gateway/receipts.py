@@ -584,9 +584,10 @@ class ReceiptLifecycleOwner:
             async for item in source:
                 # Ignore empty chunks and SSE comments/keepalives. This is
                 # first output observed by the owner, not backend token time.
-                lines = [line.strip() for line in item.splitlines() if line.strip()]
-                if any(not line.startswith(b":") and line != b"data: [DONE]" for line in lines):
-                    self.mark_phase("first_output_at_ms")
+                if self.receipt.first_output_at_ms is None:
+                    lines = [line.strip() for line in item.splitlines() if line.strip()]
+                    if any(not line.startswith(b":") and line != b"data: [DONE]" for line in lines):
+                        self.mark_phase("first_output_at_ms")
                 yield item
 
 
