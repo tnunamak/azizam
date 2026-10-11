@@ -46,9 +46,10 @@ The boundary is deliberately strict:
 4. Gateway records receipts and returns the provider-compatible response.
 
 OpenAI-shaped LLM routes are explicit Gateway handlers that call the LiteLLM
-substrate. They do not flow through the generic backend-native catch-all. The
-catch-all is reserved for explicit compatibility/native paths that are mounted
-before it or policy-gated elsewhere.
+substrate. They do not flow through the unmatched-route catch-all.
+The catch-all always returns 404 after authentication. The former query flag
+that allowed backend forwarding has been removed. Explicit compatibility and
+native handlers are mounted before it.
 
 There is no legacy local executor fallback for OpenAI-shaped LLM routes. If the
 LiteLLM substrate is not configured or unavailable, those routes fail clearly
@@ -106,7 +107,11 @@ fallbacks independently in the sidecar.
 
 The operator surface over the sidecar's `/key/*` management API lives under
 `/admin/api/operator/litellm/keys` (list, create) and `…/keys/delete`, with a
-panel under **Services → LiteLLM execution keys** in `/admin`. Properties:
+legacy Python panel under **Services → LiteLLM execution keys**.
+Browser requests to `/admin` redirect to the new UI at `/ui/home/`.
+The old Python panel requires an admin key in a request header; browser
+session access does not open that panel. The management APIs remain at the
+paths above. Properties:
 
 - These routes are master-key protected at the sidecar. The gateway's sidecar
   bearer **is** the master key (`start.sh` sets
@@ -121,8 +126,8 @@ panel under **Services → LiteLLM execution keys** in `/admin`. Properties:
   protocol-shaped `503`/`502` with a diagnosable code, never a generic 500.
 
 Code: thin transport in `gateway/backends/litellm_admin.py`
-(`LiteLLMKeyAdminClient`), endpoints in `gateway/admin_api.py`, panel in
-`gateway/admin_render.py`, live client wiring in `proxy.py`.
+(`LiteLLMKeyAdminClient`), endpoints in `gateway/admin_api.py`, legacy
+header-key panel in `gateway/admin_render.py`, live client wiring in `proxy.py`.
 
 ## Target state: gateway control plane, LiteLLM execution substrate
 

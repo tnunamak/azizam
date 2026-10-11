@@ -18,9 +18,11 @@ const originalSubstrates: Record<string, unknown> = {};
 let registryHeaders: Record<string, string>;
 
 test.beforeAll(async ({ baseURL }) => {
-  // Reserve a port in the explicit fixture-only throwaway range. Other lanes may
-  // already be using adjacent gateway ports, so do not assume baseURL + 2.
-  for (let candidate = 18690; candidate <= 18710; candidate++) {
+  // Each CI lane owns ten ports: gateway, fake engine, then strict probes.
+  const fixturePort = Number(new URL(baseURL!).port);
+  if (!Number.isInteger(fixturePort) || fixturePort < 18000 || fixturePort > 18998)
+    throw new Error("Fixture port must be between 18000 and 18998");
+  for (let candidate = fixturePort + 2; candidate <= Math.min(fixturePort + 9, 18998); candidate++) {
     const reservation = createServer();
     const available = await new Promise<boolean>((resolve) => {
       reservation.once("error", () => resolve(false));
@@ -33,7 +35,10 @@ test.beforeAll(async ({ baseURL }) => {
     }
   }
   if (!enginePort) throw new Error("No isolated strict-engine port available");
-  const fixtureHome = path.resolve("../.ui-e2e-state/strict-home");
+  const fixtureHome = path.resolve(
+    process.env.UI_E2E_STATE_ROOT ?? "../.ui-e2e-state",
+    `strict-home-${fixturePort}`,
+  );
   await mkdir(fixtureHome, { recursive: true });
   engine = spawn(
     process.env.UI_E2E_PYTHON ?? path.resolve("../venv/bin/python"),

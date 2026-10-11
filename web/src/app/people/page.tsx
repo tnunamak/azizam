@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, adminFetch, ApiError, type Profile } from "@/lib/api";
 import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
@@ -550,7 +550,10 @@ export default function PeoplePage() {
                         ) : null}
                       </span>,
                       person.last_active ? (
-                        <RelativeTime key="active" ts={person.last_active} />
+                        <RelativeTime
+                          key="last-active"
+                          ts={person.last_active}
+                        />
                       ) : null,
                       ...(hasUsageMeasurement
                         ? [

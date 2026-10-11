@@ -201,6 +201,19 @@ export async function fetchProviderStatus(): Promise<
   return payload;
 }
 
+/** Unsupported/unused providers need less traffic; live providers stay at 30s. */
+export function providerStatusInterval(
+  data: unknown[] | { providers: unknown[] } | null | undefined,
+): number {
+  if (data === null) return 300_000;
+  if (
+    data !== undefined &&
+    providerViews(data).every((provider) => provider.enabled === false)
+  )
+    return 60_000;
+  return 30_000;
+}
+
 export function useOptionalProviderStatus(
   enabled = true,
 ): OptionalProviderStatus {
@@ -214,7 +227,7 @@ export function useOptionalProviderStatus(
     queryKey: ["status", "optional-providers"],
     queryFn: fetchProviderStatus,
     enabled,
-    refetchInterval: 30000,
+    refetchInterval: (query) => providerStatusInterval(query.state.data),
   });
   const views = useMemo(() => providerViews(data), [data]);
   const refetch = () => {

@@ -38,8 +38,6 @@ fi
 # Config via environment (override proxy_config.yml defaults)
 export AZIZAM_PORT="${AZIZAM_PORT:-5000}"
 export TABBY_IDLE_TIMEOUT="${TABBY_IDLE_TIMEOUT:-300}"
-export TTS_ENABLED="${TTS_ENABLED:-true}"
-export TTS_HOST="${TTS_HOST:-http://127.0.0.1:8001}"
 export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:4011}"
 export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-$(python3 - <<'PY'
 import secrets

@@ -11,7 +11,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { chartColors, ChartLegend, CHART_OTHER } from "@/components/ui/charts";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SkeletonRows } from "@/components/ui/skeleton";
@@ -575,29 +574,5 @@ describe("KeyValueList", () => {
       expect.arrayContaining(["text-meta", "text-muted-foreground", "sm:min-h-8"]),
     );
     expect(classes(screen.getByText("Video"))).toContain("text-body");
-  });
-});
-
-describe("charts", () => {
-  it("gives three series their own hue and folds the rest into Other", () => {
-    const { colors, shown, folded } = chartColors([
-      "Chat",
-      "Images",
-      "Video",
-      "Voice",
-      "Music",
-    ]);
-    expect(shown).toEqual(["Chat", "Images", "Video"]);
-    expect(folded).toEqual(["Voice", "Music"]);
-    expect(colors.Chat).toBe("var(--chart-1)");
-    expect(colors.Video).toBe("var(--chart-3)");
-    expect(colors.Voice).toBe(CHART_OTHER);
-    expect(new Set(Object.values(colors)).size).toBe(4);
-  });
-
-  it("draws legend entries as 8 px dots with their words", () => {
-    render(<ChartLegend items={[{ label: "Requests", color: "var(--chart-1)" }]} />);
-    const item = screen.getByText("Requests");
-    expect(item.querySelector("[data-slot=chart-legend-dot]")).toHaveClass("size-2");
   });
 });

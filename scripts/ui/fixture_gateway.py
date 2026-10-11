@@ -60,9 +60,11 @@ install(
         engine_port,
         *parse_allowed_ports(os.environ.get("UI_E2E_ALLOWED_PORTS", "")),
     },
-    media_root=os.path.join(os.getcwd(), "images")
-    if os.environ.get("UI_SEED_PROFILE") == "household"
-    else None,
+    # Fixtures that serve seeded media (household, live data) allow the
+    # metadata ffprobe/ffmpeg calls on files in their own images directory.
+    media_root=os.environ.get("UI_E2E_MEDIA_ROOT")
+    or (os.path.join(os.getcwd(), "images")
+        if os.environ.get("UI_SEED_PROFILE") == "household" else None),
 )
 
 if os.environ.get("UI_SEED_PROFILE") == "household":

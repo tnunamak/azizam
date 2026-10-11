@@ -2,6 +2,7 @@ schema_version: 1
 min_gateway_version: '0.1'
 version: 0.1.0
 id: audio.generate.sa3-small-sfx
+license: "Stability AI Community License (commercial registration required; separate license above USD 1M annual revenue; acceptable-use restrictions) with Gemma Terms of Use (prohibited-use policy)"
 intent: audio.generate
 capability: sfx
 display_name: Stable Audio 3 Small SFX

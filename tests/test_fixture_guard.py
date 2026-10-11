@@ -1,11 +1,59 @@
 """No actual external connection or host process is needed to test the guard."""
 import socket
+import os
 import subprocess
 import sys
 from types import SimpleNamespace
 import pytest
 
 from scripts.ui.fixture_guard import check_event, install, parse_allowed_ports
+
+
+def test_live_data_child_environment_is_clean(tmp_path, monkeypatch):
+    from scripts.ui import live_data_seed
+
+    monkeypatch.setenv("OPENAI_API_KEY", "not-a-real-provider-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://external.example/v1")
+    monkeypatch.setenv("AZIZAM_LITELLM_BASE_URL", "https://external.example/v1")
+    monkeypatch.setenv("UI_E2E_ALLOWED_PORTS", "18090,18091")
+    monkeypatch.setenv("PYTHONPATH", "/untrusted/python")
+    monkeypatch.setenv("PATH", "/untrusted/bin")
+    before = dict(os.environ)
+    env = live_data_seed._env(tmp_path, 18182, 18183, tmp_path / "config.yml")
+
+    assert dict(os.environ) == before
+    assert "OPENAI_API_KEY" not in env
+    assert "OPENAI_BASE_URL" not in env
+    assert "https://external.example/v1" not in env.values()
+    assert env["AZIZAM_LITELLM_BASE_URL"] == "http://127.0.0.1:18183"
+    assert env["HOME"] == str(tmp_path / "home")
+    assert env["PATH"] == os.defpath
+    assert env["LANG"] == "C.UTF-8"
+    assert env["PYTHONPATH"] == str(live_data_seed.REPO)
+    assert env["UI_E2E_ALLOWED_PORTS"] == ""
+
+
+def test_live_data_proxy_uses_guard_with_exact_fixture_ports(tmp_path):
+    from scripts.ui import live_data_seed
+
+    engine, proxy = live_data_seed._child_commands(18182, 18183)
+    assert engine == [sys.executable, "-m", "uvicorn", "scripts.ui.fake_engine:app",
+                      "--host", "127.0.0.1", "--port", "18183"]
+    assert proxy == [sys.executable, "-m", "scripts.ui.fixture_gateway", "18182", "18183"]
+    env = live_data_seed._env(tmp_path, 18182, 18183, tmp_path / "config.yml")
+    assert {18182, 18183, *parse_allowed_ports(env["UI_E2E_ALLOWED_PORTS"])} == {18182, 18183}
+
+
+def test_live_data_seed_preserves_parent_environment(tmp_path, monkeypatch):
+    from scripts.ui import live_data_seed
+
+    monkeypatch.setenv("LIVE_DATA_MANIFEST_PATH", str(tmp_path / "published" / "manifest.json"))
+    before = dict(os.environ)
+    manifest = live_data_seed.seed(tmp_path / "state", 18182)
+    assert dict(os.environ) == before
+    assert manifest["base_url"] == "http://127.0.0.1:18182"
+    assert (tmp_path / "state" / "admin.db").is_file()
+    assert (tmp_path / "published" / "manifest.json").is_file()
 
 
 def test_parse_declared_fixture_ports():

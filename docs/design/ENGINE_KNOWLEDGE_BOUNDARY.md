@@ -3,6 +3,13 @@
 **Status:** Design (architect's recommendation). Operationalizes the owner's binding principle.
 **Last verified against code:** 2026-06-16, branch `ideogram4-quality-tuning`.
 
+**Status update — 2026-10-10:** The owner-supplied audit at `fdc3c9d`
+supersedes the D-1/D-2/D-3 implementation status and old code anchors below.
+The engine-named classes are now generic transforms. D-2's engine framing is
+removed. D-3 is complete. D-1 still applies automatically to resolved local
+chat, with one resolved-target-gated application. It is not fully opt-in.
+The binding principle is unchanged.
+
 ---
 
 ## The binding principle (restated, so this doc is self-contained)
@@ -114,8 +121,9 @@ streaming. It lives correctly as a reviewed built-in in code.
 
 ### Bucket D — IRREDUCIBLE-CODE (genuinely cannot be a data primitive — with honest status)
 
-Three items need imperative logic the fixed primitive set cannot express. Each is documented
-with its **current status** (not aspirational) and the **required migration**.
+**Superseded status — 2026-10-10:** The table and D-1/D-2/D-3 proposals
+below record the 2026-06-16 design history. Their pending work and line numbers
+are not current implementation evidence. The current status is in the update above.
 
 | Item | Location | Why irreducible | Current status | Verdict |
 |---|---|---|---|---|
@@ -125,10 +133,11 @@ with its **current status** (not aspirational) and the **required migration**.
 
 #### D-1 `qwen3-thinking` → keep as built-in, but MIGRATE from auto-fire to opt-in
 
-**Current status (verified):** `_Qwen3ThinkingTransform().apply(body)` is called
+**Historical status (2026-06-16; superseded):** `_Qwen3ThinkingTransform().apply(body)` was called
 unconditionally on every `/v1/chat/completions` request at **two sites** (proxy.py:3217 and
 proxy.py:18896). The "data-attached, never auto-fired" model described in this design is the
-**required migration**, not the status quo.
+historical migration proposal. The current generic transform applies once,
+automatically, to resolved local chat behind a resolved-target gate.
 
 **What it actually does** (the honest decomposition):
 
@@ -157,7 +166,7 @@ legitimately configurable data (any operator can attach it to a backend that nee
 continued existence as a named built-in is justified precisely by the 400 validator — the one
 piece that cannot be data.
 
-**Required migration (before this design is complete):**
+**Historical opt-in proposal (not the current implementation):**
 - Remove the two unconditional call sites at proxy.py:3217 and proxy.py:18896.
 - Move the `reasoning_effort` processing responsibility to the per-backend transform pipeline
   (§3.1): a backend that needs thinking suppression gets `"transforms": ["qwen3-thinking"]` in
@@ -173,6 +182,9 @@ piece that cannot be data.
 
 #### D-2 `koboldcpp-null-strip` → rename to a generic primitive; cut the engine name
 
+**Completed — 2026-10-10, owner-supplied audit:** The transform is now generic.
+The engine framing is removed. The following rename proposal is historical.
+
 The behavior (drop keys whose value is null) is **not** Kobold knowledge — plenty of strict
 backends 422 on explicit nulls. The only engine-specific thing about it is its *name*. Promote
 it to a generic primitive `drop-null-params` (or a `drop-params` mode `when_value: null`),
@@ -184,6 +196,9 @@ the rename is complete. This is currently in the allowlist; removing it from the
 the signal that D-2 is done.
 
 #### D-3 `advisory_for_backend` → collapse the per-engine branches AND the engine-flag literals
+
+**Completed — 2026-10-10, owner-supplied audit:** D-3 is done. The following
+description and recommendation record the superseded design work.
 
 This is the clearest treadmill in the tree, and it has two layers:
 
@@ -437,10 +452,9 @@ koboldcpp, tabbyapi
 `proxy.py` for `_LOCAL_SWAP_BACKENDS` lifecycle routing. These are enumerated in the allowlist
 with the explicit reason "managed local-swap lifecycle infra, set frozen per §4-E".
 
-**Also allowlisted (Bucket A — the `advisory_for_backend` branches, until D-3 is cut):**
-`toolcall_detection.py:97-130` — the per-engine advisory branches exist today and are on the
-allowlist until the D-3 migration cuts them. After the cut, remove them from the allowlist; the
-test then guards against their reintroduction.
+**Status — 2026-10-10:** D-3 is complete per the owner-supplied audit.
+The former advisory-branch exception and old line numbers are superseded.
+The guard must prevent reintroducing engine-specific advisory branches.
 
 New match outside the allowlist → test fails with:
 > *"New engine-named branch at {loc}. Engine knowledge belongs in DATA (a transform row /
@@ -452,12 +466,10 @@ New match outside the allowlist → test fails with:
 Pattern: a class whose name matches `*(Ollama|VLLM|Mistral|Qwen|Gemma|Kobold|Tabby|Llama|
 SGLang|LMStudio)*Transform` beyond the frozen allowlist.
 
-**Allowlisted until migrations complete:**
-- `Qwen3ThinkingTransform` (allowed until §D-1 migration demotes it to opt-in; the class stays
-  but the auto-fire sites are removed — both the class and the two proxy.py call sites should be
-  in the allowlist with "pending §D-1 opt-in migration")
-- `KoboldCppNullStripTransform` (allowed until §D-2 rename; allowlist entry shrinks when rename
-  is done)
+**Status — 2026-10-10:** The former engine-named classes have been renamed
+to generic transforms per the owner-supplied audit. Their pending class-name
+exceptions are superseded. D-1 still applies automatically to resolved local
+chat, once behind a resolved-target gate; it is not fully opt-in.
 
 Growing the allowlist is a reviewable diff — the choke point that surfaces the decision.
 
@@ -476,9 +488,9 @@ chatml-function-calling
 functionary
 ```
 
-**Allowlisted until D-3 is cut:** `toolcall_detection.py` lines containing these literals in
-`advisory_for_backend` and `_parser_family`. After D-3 migration, the allowlist entries are
-removed and the test guards against reintroduction.
+**Status — 2026-10-10:** D-3 is complete per the owner-supplied audit.
+The pending advisory and parser-family literal exceptions are superseded.
+The guard must prevent reintroducing those engine-flag literals.
 
 **After D-3 is complete:** any appearance of these literals in the four core files is a hard
 failure. If an operator wants to convey exact engine flags, it belongs in a `tool_call_advisory`
@@ -516,6 +528,11 @@ allowlist, which is a flag for the reviewer. See docs/design/ENGINE_KNOWLEDGE_BO
 ---
 
 ## Appendix — verified code anchors (2026-06-16)
+
+**Historical anchors; status superseded 2026-10-10:** The D-1/D-2/D-3 names,
+two auto-fire sites and pending cuts below describe the earlier revision.
+The owner-supplied audit reports generic transforms, D-2 and D-3 complete,
+and one automatic D-1 application gated on a resolved local chat target.
 
 - Fixed primitive set + `register_builtin` + pipelines: `gateway/transforms.py:460-519`.
 - Tier-1 packs (orphaned, attached to nothing): `gateway/transforms.py:968-1034`.

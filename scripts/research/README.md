@@ -59,8 +59,8 @@ The default request timeout is 60 seconds because local LLM cold starts and
 queued responses can legitimately exceed typical web-service timeouts.
 
 Runtime keys are read from `AZIZAM_API_KEY`. Admin keys are read from
-`AZIZAM_ADMIN_KEY`. Both accept the migration env fallbacks. Missing keys are recorded
-as trial findings rather than guessed.
+`AZIZAM_ADMIN_KEY`. The runtime reads these exact names only. Missing keys
+are recorded as trial findings rather than guessed.
 
 Persona definitions live in `scripts/research/reddit_simulation_personas.json`.
 

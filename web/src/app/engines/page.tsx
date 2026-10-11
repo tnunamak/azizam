@@ -4,6 +4,7 @@ import { Fragment, Suspense, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 
 import {
   api,
@@ -25,20 +26,18 @@ import { normalizeModelConfigForPatch } from "./detected-models";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 import { ErrorState } from "@/components/product/error-state";
 import { useViewer } from "@/components/shell/session";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Field } from "@/components/ui/field";
+import { EmptyOperationalState, IncidentBanner } from "@/components/ui/operational";
+import { Input } from "@/components/ui/input";
 import {
-  Button,
-  ConfirmDialog,
-  DialogForm,
-  EmptyOperationalState,
-  Field,
-  IncidentBanner,
-  Input,
   OverflowMenu,
   OverflowMenuItem,
   OverflowMenuSeparator,
-  Skeleton,
-  toast,
-} from "@/components/ui";
+} from "@/components/ui/overflow-menu";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { PageHeader } from "@/components/product/page-header";
 import { StateBadge, StateWord } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -314,7 +313,7 @@ function EditEngineDialog({
               }
             />
           </fieldset>
-          <DialogForm onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col space-y-4">
             {error && (
               <IncidentBanner
                 tone="bad"
@@ -388,14 +387,26 @@ function EditEngineDialog({
               )}
             </details>
             <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={onClose}>
+              <Button
+                size="md"
+                type="button"
+                variant="ghost"
+                onClick={onClose}
+              >
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" loading={edit.isPending}>
+              <Button
+                disabled={edit.isPending}
+                size="md"
+                type="submit"
+                variant="default"
+                aria-busy={edit.isPending || undefined}
+              >
+                {edit.isPending && <Spinner className="size-4" />}
                 Save engine
               </Button>
             </div>
-          </DialogForm>
+          </form>
         </div>
       </SheetContent>
     </Sheet>
@@ -616,8 +627,8 @@ function EnginesContents() {
     return (
       <div className="flex flex-col gap-6" aria-busy="true">
         <PageHeader title="Engines" />
-        <Skeleton className="h-20 w-full" />
-        <Skeleton className="h-72 w-full" />
+        <Skeleton aria-hidden="true" className="h-20 w-full" />
+        <Skeleton aria-hidden="true" className="h-72 w-full" />
       </div>
     );
   }
@@ -631,7 +642,12 @@ function EnginesContents() {
           title="Engine list could not be loaded"
           detail={`Each engine's state is unknown. ${errorMessage(registryError)}`}
           actions={
-            <Button size="sm" onClick={() => void refetchRegistry()}>
+            <Button
+              variant="outline"
+              type="button"
+              size="sm"
+              onClick={() => void refetchRegistry()}
+            >
               Retry
             </Button>
           }
@@ -645,7 +661,12 @@ function EnginesContents() {
       <PageHeader
         title="Engines"
         actions={
-          <Button size="sm" variant="primary" onClick={() => setAddOpen(true)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="default"
+            onClick={() => setAddOpen(true)}
+          >
             Add engine
           </Button>
         }
@@ -673,7 +694,12 @@ function EnginesContents() {
             title="Live status unavailable"
             detail={errorMessage(statusError)}
             actions={
-              <Button size="sm" onClick={() => void refetchStatus()}>
+              <Button
+                variant="outline"
+                type="button"
+                size="sm"
+                onClick={() => void refetchStatus()}
+              >
                 Retry
               </Button>
             }
@@ -701,7 +727,12 @@ function EnginesContents() {
                   : "Turn on Show not in use to review engines that are disabled or not configured."
               }
               action={
-                <Button variant="primary" onClick={() => setAddOpen(true)}>
+                <Button
+                  size="md"
+                  type="button"
+                  variant="default"
+                  onClick={() => setAddOpen(true)}
+                >
                   Add engine
                 </Button>
               }
@@ -728,12 +759,13 @@ function EnginesContents() {
                             <TableRow>
                               <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
                                 <Button
+                                  type="button"
                                   variant="ghost"
                                   size="sm"
                                   aria-expanded={open}
                                   onClick={() => setExpanded((current) => ({
                                     ...current, [service.id]: !open,
-                                  }))}
+                                    }))}
                                 >
                                   Standby and fallback engines ({alternatives.length})
                                 </Button>
@@ -751,12 +783,13 @@ function EnginesContents() {
                     <TableRow>
                       <TableCell colSpan={2} className="h-(--row-1) py-0! max-sm:h-(--row-phone-1)!">
                         <Button
+                          type="button"
                           variant="ghost"
                           size="sm"
                           aria-expanded={showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")}
                           onClick={() => setShowInfrastructure(
                             !(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")),
-                          )}
+                            )}
                         >
                           Show infrastructure
                         </Button>
@@ -765,7 +798,7 @@ function EnginesContents() {
                     {(showInfrastructure ?? infrastructureIds.has(selectedServiceId ?? "")) &&
                       infrastructure.map(renderEngine)}
                   </TableBody>
-                )}
+              )}
               </Table>
             </div>
           )}
@@ -829,8 +862,8 @@ export default function Page() {
       fallback={
         <div className="flex flex-col gap-6" aria-busy="true">
           <PageHeader title="Engines" />
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-72 w-full" />
+          <Skeleton aria-hidden="true" className="h-20 w-full" />
+          <Skeleton aria-hidden="true" className="h-72 w-full" />
         </div>
       }
     >

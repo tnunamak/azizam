@@ -9,8 +9,8 @@ const port = Number(process.env.UI_E2E_PORT ?? "18184");
 if (!Number.isInteger(port) || port < 18000 || port > 18998) {
   throw new Error("UI_E2E_PORT must be an integer between 18000 and 18998");
 }
-const strictEnginePorts = Array.from({ length: 21 }, (_, index) =>
-  String(18690 + index),
+const strictEnginePorts = Array.from({ length: Math.min(8, 18997 - port) }, (_, index) =>
+  String(port + 2 + index),
 ).join(",");
 const localPython = path.resolve(__dirname, "../venv/bin/python");
 const python =
@@ -25,11 +25,14 @@ const manifestPath = path.resolve(
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "*.household.ts",
-  outputDir: "./test-results/household-artifacts",
+  outputDir: `./test-results/household-artifacts-${port}`,
   workers: 1,
   timeout: 90_000,
   expect: { timeout: 15_000 },
-  reporter: [["list"]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: `test-results/household-report-${port}` }],
+  ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     headless: true,

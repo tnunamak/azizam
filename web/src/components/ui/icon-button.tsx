@@ -11,10 +11,10 @@ export type IconButtonSize = "sm" | "md";
 
 const VARIANT_CLASSES: Record<IconButtonVariant, string> = {
   ghost:
-    "text-vf-muted hover:bg-vf-surface-2 hover:text-vf-text focus-visible:ring-vf-accent/60",
+    "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-primary/60",
   secondary:
-    "border border-vf-border bg-vf-surface-2 text-vf-muted hover:border-vf-border-strong hover:text-vf-text focus-visible:ring-vf-accent/60",
-  danger: "text-vf-bad hover:bg-vf-bad/15 focus-visible:ring-vf-bad/60",
+    "border border-border bg-muted text-muted-foreground hover:border-input hover:text-foreground focus-visible:ring-primary/60",
+  danger: "text-danger hover:bg-danger/15 focus-visible:ring-danger/60",
 };
 
 const SIZE_CLASSES: Record<IconButtonSize, string> = {
@@ -45,7 +45,7 @@ export function IconButton({
     <button
       type={type ?? "button"}
       className={cn(
-        "rounded-vf-md focus-visible:ring-offset-vf-bg inline-flex shrink-0 items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 max-sm:min-h-11 max-sm:min-w-11",
+        "rounded-md focus-visible:ring-offset-background inline-flex shrink-0 items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 max-sm:min-h-11 max-sm:min-w-11",
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
         compactTouchTargetClass,

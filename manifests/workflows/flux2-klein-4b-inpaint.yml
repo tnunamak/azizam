@@ -2,6 +2,7 @@ schema_version: 1
 min_gateway_version: "0.1"
 version: "0.1.1"
 id: image.edit.flux2-klein-4b-inpaint
+license: "Apache-2.0"
 intent: image.edit
 display_name: Flux2 Klein 4B Inpaint
 purpose: Repaint a marked area of an image

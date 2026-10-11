@@ -73,7 +73,7 @@ export function RelativeTime({
 
   const date = toDate(ts);
   if (!date) {
-    return <span className={cn("text-vf-subtle", className)}>{fallback}</span>;
+    return <span className={cn("text-muted-foreground", className)}>{fallback}</span>;
   }
 
   const absolute = formatAbsoluteUTC(date);

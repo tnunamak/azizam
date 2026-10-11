@@ -150,7 +150,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
     refetch: refetchStatus,
     isFetching: statusFetching,
   } = useQuery({
-    queryKey: ["foundation", "health"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     enabled: owner,
     refetchInterval: 60_000,

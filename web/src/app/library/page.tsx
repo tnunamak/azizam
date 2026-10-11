@@ -40,7 +40,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { cn } from "@/lib/cn";
 import { formatAbsoluteUTC } from "@/lib/format";
@@ -89,7 +89,7 @@ import {
 import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
 import { safeModelId } from "@/lib/model-name";
-import { api } from "@/lib/api";
+import { api, queryKeys } from "@/lib/api";
 import { accountApi } from "@/lib/account-api";
 import {
   promptMemoryKey,
@@ -438,26 +438,14 @@ function AudioTile({
   );
   const [error, setError] = useState<"media" | "playback" | null>(null);
 
-  const [previousAudio, setPreviousAudio] = useState({ src, duration });
-  if (
-    previousAudio.src !== src ||
-    !Object.is(previousAudio.duration, duration)
-  ) {
-    setPreviousAudio({ src, duration });
-    setIsPlaying(false);
-    setMeasuredDuration(duration ?? null);
-    setError(null);
-  }
-
   useEffect(() => {
     const audio = audioRef.current;
-    if (audio) {
-      const hadSource = audio.hasAttribute("src");
-      if (hadSource) audio.pause();
+    return () => {
+      if (!audio) return;
+      if (audio.isConnected) audio.pause();
       audio.removeAttribute("src");
-      if (hadSource) audio.load();
-    }
-  }, [duration, src]);
+    };
+  }, []);
 
   const label = isPlaying ? `Pause ${title}` : `Play ${title}`;
   const errorText =
@@ -823,35 +811,6 @@ function Preview({
     retry: false,
   });
 
-  const [previousMedia, setPreviousMedia] = useState({
-    assetId: asset.asset_id,
-    src,
-    posterId: asset.poster_asset_id,
-    duration: asset.duration_s,
-  });
-  if (
-    previousMedia.assetId !== asset.asset_id ||
-    previousMedia.src !== src ||
-    previousMedia.posterId !== asset.poster_asset_id ||
-    !Object.is(previousMedia.duration, asset.duration_s)
-  ) {
-    setPreviousMedia({
-      assetId: asset.asset_id,
-      src,
-      posterId: asset.poster_asset_id,
-      duration: asset.duration_s,
-    });
-    setMediaFailed(false);
-    setPosterFailed(false);
-    setRetryKey(0);
-    setRetrySrc(null);
-    setRecovered(false);
-    setTilePlaying(false);
-    setTileStarted(false);
-    setTileBlocked(false);
-    setTileDuration(asset.duration_s);
-  }
-
   const posterUrl = poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
@@ -1087,7 +1046,7 @@ type PersonLookup = (asset: MediaAsset) => string | null;
 
 function usePeople(enabled: boolean, sources: MediaSource[]) {
   const { data: users } = useQuery({
-    queryKey: ["library", "people"],
+    queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled,
     retry: false,
@@ -1934,14 +1893,6 @@ export default function LibraryPage() {
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
-  // The viewer's own payload: in-progress work, their id and their apps.
-  const { data: home } = useQuery({
-    queryKey: ["account", "home"],
-    queryFn: productApi.home,
-    retry: false,
-    refetchInterval: (query) =>
-      inProgressMedia(query.state.data?.receipts).length > 0 ? 15_000 : false,
-  });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const removedAssetIds = useRef(new Set<string>());
   const deletingAssetId = useRef<string | null>(null);
@@ -1963,6 +1914,25 @@ export default function LibraryPage() {
   );
   const instanceView = canChooseOwner && owner !== "mine";
   const debouncedSearch = useDebouncedValue(search, 250);
+  // The payload also supplies identity/apps, so keep its initial read. Only
+  // poll rapidly when running work can actually appear under these filters.
+  const showRunningMedia =
+    ["default", "everyone", "mine"].includes(owner) &&
+    model === "all" &&
+    source === "all" &&
+    !debouncedSearch.trim();
+  const { data: home } = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: productApi.home,
+    retry: false,
+    refetchInterval: (query) =>
+      showRunningMedia &&
+      inProgressMedia(query.state.data?.receipts).some(
+        (item) => kind === "all" || item.kind === kind,
+      )
+        ? 15_000
+        : false,
+  });
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
@@ -2132,13 +2102,10 @@ export default function LibraryPage() {
   );
   const inProgress = useMemo(
     () =>
-      ["default", "everyone", "mine"].includes(owner) &&
-      model === "all" &&
-      source === "all" &&
-      !debouncedSearch.trim()
+      showRunningMedia
         ? runningMedia.filter((item) => kind === "all" || item.kind === kind)
         : [],
-    [debouncedSearch, kind, model, owner, runningMedia, source],
+    [showRunningMedia, kind, runningMedia],
   );
   // When running work finishes, its creation is now in the list.
   const runningCount = useRef(runningMedia.length);
@@ -2148,7 +2115,7 @@ export default function LibraryPage() {
   }, [refetch, runningMedia.length]);
   // Owners can see how long the gateway keeps pictures (images.cache_ttl).
   const { data: gatewayStatus } = useQuery({
-    queryKey: ["foundation", "health"],
+    queryKey: queryKeys.status,
     queryFn: api.status,
     enabled: canChooseOwner,
     retry: false,
@@ -2566,7 +2533,7 @@ export default function LibraryPage() {
               ))}
               {storedAssets.map((asset, index) => (
                 <AssetTile
-                  key={asset.asset_id}
+                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}
@@ -2618,7 +2585,7 @@ export default function LibraryPage() {
             <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
               {goneAssets.map((asset) => (
                 <AssetTile
-                  key={asset.asset_id}
+                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}

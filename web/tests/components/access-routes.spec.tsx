@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConfirmDialog } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 afterEach(cleanup);
 describe("confirmation dialog behavior", () => {
   it("consumes destructive rejection and keeps the dialog target mounted", async () => {

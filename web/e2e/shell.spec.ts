@@ -30,7 +30,7 @@ test("You navigation keeps Workflows right after Models", async ({
     .click();
   await expect(page).toHaveURL(/\/ui\/workflows\/?$/);
   await expect(
-    page.getByRole("heading", { name: "Workflows", exact: true }),
+    page.getByRole("heading", { level: 1, name: /^Workflows( \d+)?$/ }),
   ).toBeVisible();
   await page.keyboard.press("Control+k");
   await page

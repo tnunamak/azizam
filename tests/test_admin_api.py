@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-import shutil
 import sys
 import tempfile
 import unittest
-import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -585,35 +583,6 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         self.assertEqual(items[0]["detail"], "disk / 99% full")
         self.assertNotIn("target_id", items[0])
         self.assertNotIn("href", items[0])
-
-    def test_attention_compatibility_hrefs_match_the_typescript_helper(self) -> None:
-        node = shutil.which("node")
-        if node is None:
-            self.skipTest("the hermetic Python runner intentionally does not expose Node")
-        items = derive_admin_attention({
-            "apps": [{"id": "app id", "name": "App", "default_profile_id": "p1"}],
-            "profiles": [{"id": "p1"}],
-            "credentials": [],
-            "services": [{"id": "svc id", "name": "Service", "observation": "down", "tone": "bad"}],
-        })
-        tuples = [
-            {"target_kind": item["target_kind"], "target_id": item["target_id"]}
-            for item in items
-            if item.get("target_id")
-        ]
-        script = """
-import { adminTargetHref } from './web/src/lib/admin-links.ts';
-const tuples = JSON.parse(process.argv[1]);
-process.stdout.write(JSON.stringify(tuples.map(({ target_kind, target_id }) => adminTargetHref(target_kind, target_id))));
-"""
-        result = subprocess.run(
-            [node, "--experimental-strip-types", "--input-type=module", "-e", script, json.dumps(tuples)],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual([item["href"] for item in items if item.get("target_id")], json.loads(result.stdout))
 
 
 class FakeAdminStore:

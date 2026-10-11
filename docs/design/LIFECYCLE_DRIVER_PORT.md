@@ -274,7 +274,12 @@ These were in the behavior map's `nonLifecycle` list. None is a swap branch; for
 
 ---
 
-## 7. Feature flag + rollback
+## 7. Feature flag + rollback (superseded)
+
+**Status — 2026-10-10, owner-supplied audit at `fdc3c9d`:** The driver is
+the sole runtime path. The runtime flag no longer exists. Roll back by
+restoring the previous release and config. The flag, old path and rollout
+steps below are historical design notes, not current operating instructions.
 
 A single boot flag `AGW_DRIVER_SWAP` (env / config `routing.driver_swap`), default **off** (legacy):
 
