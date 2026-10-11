@@ -83,7 +83,7 @@ def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
     mode = setting["value"].get("mode", "both") if setting else "both"
     result = {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
-            "oidc_label": oidc.get("label") or "your identity provider",
+            "oidc_label": oidc.get("label") or "single sign-on",
             "oidc_url": "/admin/login?return_to=/ui/invite/", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
     if include_revision:

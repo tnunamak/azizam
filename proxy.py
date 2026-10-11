@@ -1626,6 +1626,8 @@ def _bootstrap_admin_oidc_cfg() -> dict:
     if not isinstance(oidc_cfg, Mapping):
         oidc_cfg = {}
     oidc_cfg = dict(oidc_cfg)
+    if "AZIZAM_ADMIN_OIDC_DISPLAY_NAME" in os.environ:
+        oidc_cfg["display_name"] = os.environ["AZIZAM_ADMIN_OIDC_DISPLAY_NAME"]
     if (
         oidc_cfg.get("enabled")
         and not oidc_cfg.get("signing_key")
@@ -15543,7 +15545,7 @@ app.include_router(create_account_router(
     session_reader=lambda request: _oidc_session_from_request(request),
     cookie_provider=_browser_admin_cookie_config,
     signing_key_provider=_browser_admin_session_signing_key,
-    oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
+    oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
     effective_plan_resolver=_effective_plan_for_person,
@@ -16313,6 +16315,7 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     cfg, accepted_db_setting = _resolved_admin_oidc_config()
     if not accepted_db_setting and not (
         cfg.enabled
+        or cfg.display_name
         or cfg.issuer
         or cfg.client_id
         or cfg.redirect_uri
@@ -16344,6 +16347,7 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
         "client_id": cfg.client_id,
         "client_secret": "<redacted>" if cfg.client_secret else "",
         "client_secret_set": bool(cfg.client_secret),
+        "display_name": cfg.display_name,
         "redirect_uri": cfg.redirect_uri,
         "scopes": list(cfg.scopes),
         "allowed_email_domains": sorted(cfg.allowed_email_domains),

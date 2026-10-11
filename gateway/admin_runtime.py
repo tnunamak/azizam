@@ -31,6 +31,7 @@ from gateway.admin_oidc import (
     csrf_token_for_session,
     decode_session_cookie,
     load_oidc_config,
+    validate_oidc_display_name,
 )
 from gateway.policy import DEFAULT_PROFILE, default_profile_id, is_default_profile_id
 from gateway.profiles import ProfileLoadError, load_profile
@@ -71,6 +72,7 @@ OIDC_PROVIDER_FIELDS: tuple[str, ...] = (
     "jwks_uri",
     "clock_skew_seconds",
     "groups_claim",
+    "display_name",
 )
 
 OIDC_SECRET_FIELDS: frozenset[str] = frozenset({"client_secret"})
@@ -247,6 +249,8 @@ def _oidc_secret_changed(
 
 
 def _validate_merged_oidc_setting(value: Mapping[str, Any]) -> None:
+    if "display_name" in value:
+        validate_oidc_display_name(value["display_name"])
     if not value.get("enabled"):
         return
     for key in ("issuer", "client_id", "client_secret", "redirect_uri"):

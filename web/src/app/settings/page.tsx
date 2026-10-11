@@ -558,6 +558,7 @@ function SignInChoiceForm({ signIn }: { signIn: SignInOptions }) {
 function oidcFields(config: EffectiveOidcConfig | null) {
   return {
     enabled: config?.enabled ?? false,
+    display_name: config?.display_name ?? "",
     issuer: config?.issuer ?? "",
     client_id: config?.client_id ?? "",
     redirect_uri: config?.redirect_uri ?? "",
@@ -593,6 +594,7 @@ function OidcForm({
     mutationFn: () => {
       const body: OidcConfigUpdate = {
         enabled: fields.enabled,
+        display_name: fields.display_name,
         issuer: fields.issuer.trim(),
         client_id: fields.client_id.trim(),
         redirect_uri: fields.redirect_uri.trim(),
@@ -651,6 +653,18 @@ function OidcForm({
         checked={fields.enabled}
         onChange={(enabled) => setFields({ ...fields, enabled })}
       />
+      <Field
+        id="oidc-display-name"
+        label="Provider display name"
+        help="Shown on the sign-in page. Leave blank to use single sign-on."
+      >
+        <Input
+          id="oidc-display-name"
+          maxLength={80}
+          value={fields.display_name}
+          onChange={(e) => update("display_name", e.target.value)}
+        />
+      </Field>
       <Field id="oidc-issuer" label="Issuer URL">
         <Input
           id="oidc-issuer"

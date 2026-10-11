@@ -330,3 +330,35 @@ it("saving a sign-in mode keeps an edited provider revision valid for its own sa
     screen.queryByText("Settings changed elsewhere; reload to see the latest"),
   ).not.toBeInTheDocument();
 });
+
+it("saves and clears the public provider display name", async () => {
+  const resource = resources.find((item) => item.name === "provider")!;
+  fixture(resource);
+  const read = adminFetch.getMockImplementation()!;
+  adminFetch.mockImplementation(async (path, init) => {
+    if (path === resource.path && init?.method === "PUT")
+      return {
+        ...payload(resource, "client", "8"),
+        oidc_config: {
+          ...payload(resource, "client", "8").oidc_config,
+          ...init.body,
+        },
+      };
+    return read(path, init);
+  });
+  mount();
+  await open(resource);
+  const field = screen.getByLabelText("Provider display name");
+  expect(field).toHaveAttribute("maxlength", "80");
+  await userEvent.type(field, "Household accounts");
+  await userEvent.click(screen.getByRole("button", { name: resource.save }));
+  await waitFor(() => expect(puts()).toHaveLength(1));
+  expect(puts()[0][1].body.display_name).toBe("Household accounts");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: resource.save })).toBeEnabled(),
+  );
+  await userEvent.clear(field);
+  await userEvent.click(screen.getByRole("button", { name: resource.save }));
+  await waitFor(() => expect(puts()).toHaveLength(2));
+  expect(puts()[1][1].body.display_name).toBe("");
+});

@@ -14,6 +14,22 @@ silently disabled (they return empty data rather than crashing).
 | `AZIZAM_DOCKER_GATEWAY` | Compose bridge host address; Compose grants first-owner setup to this exact `/32` peer. Its published port remains loopback-only. | `172.30.251.1` |
 | `AZIZAM_REPO_PATH` | Absolute path to the checkout; used by the status endpoint for git-describe and drift checks | Detected from `__file__` at startup |
 
+## Identity provider sign-in
+
+The owner can set **Provider display name** in **Settings → Sign-in**.
+It is public text shown as “Continue with {name}”. The `admin.oidc.display_name`
+bootstrap setting and the environment variable below use the same validation:
+at most 80 characters, no angle brackets, control characters, or line separators.
+Leading and trailing spaces are removed. An empty name shows “Continue with
+single sign-on”. A saved Settings value overrides the bootstrap name; saving
+an empty name clears it even when the environment variable is set.
+
+| Env var | What it controls | Default |
+|---|---|---|
+| `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` | Public provider name; overrides `admin.oidc.display_name` at bootstrap | empty (single sign-on) |
+| `AZIZAM_OIDC_CLIENT_SECRET` | Client secret when referenced by `admin.oidc.client_secret_env` | unset |
+| `AZIZAM_ADMIN_OIDC_ADMIN_GROUPS` | Admin groups when referenced by `admin.oidc.admin_groups_env` | unset |
+
 ## Engine integrations
 
 | Env var | What it controls | Default |
