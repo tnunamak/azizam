@@ -1,0 +1,167 @@
+"""Offline migration comparisons use the real legacy and category evaluators."""
+
+import json
+import sqlite3
+import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from gateway.category_migration import (
+    Case, compare, convert_plan, load_database, open_database, registry_matrix,
+    report_plan, scan_callsites,
+)
+from gateway.policy import AppProfile, CapabilitySelector, PolicyRequest, RemoteProviderPolicy
+
+
+def case(**kwargs):
+    return Case("fixture", PolicyRequest(intent="chat", model="model", **kwargs),
+                "service@report", "model@report")
+
+
+@pytest.fixture
+def restricted():
+    return AppProfile(id="p", allow=CapabilitySelector(tags=frozenset({"allowed"})))
+
+
+@pytest.mark.parametrize("tags,expected", [
+    (None, (True, False, False)),
+    (frozenset(), (False, False, False)),
+    (frozenset({"allowed"}), (True, True, True)),
+    (frozenset({"other"}), (False, False, False)),
+    (frozenset({"allowed", "other"}), (True, True, False)),
+])
+def test_exact_gate_and_universal_category_values(restricted, tags, expected):
+    request = case(capability_tags=tags)
+    converted = convert_plan(restricted, [request])
+    result = compare(restricted, converted, request)
+    assert (result.exact.allowed, result.gated.allowed, result.v3.outcome == "allow") == expected
+    if tags is None:
+        assert result.gated.reasons == ("METADATA_INCOMPLETE",)
+        assert result.v3.reason == "REQUIRE_MISSING"
+    if tags == frozenset({"allowed", "other"}):
+        assert result.v3.reason == "REQUIRE_MISMATCH"
+
+
+def test_unrestricted_plan_does_not_need_tags():
+    profile = AppProfile(id="p")
+    request = case()
+    result = compare(profile, convert_plan(profile, [request]), request)
+    assert result.exact.allowed and result.gated.allowed and result.v3.outcome == "allow"
+
+
+@pytest.mark.parametrize("fixture,reason", [
+    ("unknown-category", "POLICY_UNAVAILABLE"),
+    ("person-mismatch", "NO_GRANT"),
+    ("app-mismatch", "NO_GRANT"),
+    ("empty-grants", "NO_GRANT"),
+    ("route-change", "REQUIRE_MISMATCH"),
+    ("helper", "REQUIRE_MISMATCH"),
+    ("retry", "REQUIRE_MISMATCH"),
+    ("cache", "REQUIRE_MISMATCH"),
+    ("release", "REQUIRE_MISMATCH"),
+    ("share", "REQUIRE_MISMATCH"),
+])
+def test_report_adversarial_fixtures(restricted, fixture, reason):
+    base = case(capability_tags=frozenset({"allowed"}))
+    report = report_plan(restricted, [base], examples=100)
+    result = next(r for r in report.comparisons if r.case.label == fixture)
+    assert result.exact.allowed and result.gated.allowed
+    assert result.v3.outcome == "deny" and result.v3.reason == reason
+
+
+@pytest.mark.parametrize("changes", [
+    {"models": frozenset()}, {"workflows": frozenset()},
+    {"allow": CapabilitySelector(intents=frozenset())},
+    {"backends": frozenset()}, {"protocols": frozenset()},
+    {"remote": RemoteProviderPolicy()},
+])
+def test_grants_retain_non_tag_denials(changes):
+    profile = replace(AppProfile(id="p"), **changes)
+    request = Case("denied", PolicyRequest(protocol="openai", intent="chat", model="model",
+                   workflow="workflow", backend="backend", remote_provider="paid"),
+                   "service@report", "workflow@report")
+    result = compare(profile, convert_plan(profile, [request]), request)
+    assert not result.exact.allowed and not result.gated.allowed
+    assert result.v3.reason == "NO_GRANT"
+
+
+def test_scope_family_and_none_vs_empty_grants():
+    request = case(capability_tags=frozenset({"allowed"}))
+    request = replace(request, request=replace(request.request, intent="chat.complete"))
+    profile = AppProfile(id="p", allow=CapabilitySelector(intents=frozenset({"chat"})))
+    assert compare(profile, convert_plan(profile, [request]), request).v3.outcome == "allow"
+    denied = replace(profile, models=frozenset())
+    assert convert_plan(denied, [request]).plan.grants == ()
+
+
+def database(tmp_path):
+    path = tmp_path / "admin ?#.db"
+    registry = {
+        "services": {"s": {"id": "s", "capabilities": ["chat", "image"],
+            "config": {"models": [{"id": "m", "model_metadata": {"tags": ["allowed"]}}]}}},
+        "workflows": {"w": {"manifest": {"id": "w", "intent": "image"}, "backend": "s"}},
+        "capabilities": {}, "protocol_frontends": {},
+    }
+    with sqlite3.connect(path) as conn:
+        conn.executescript("CREATE TABLE profiles(id TEXT, name TEXT, profile_json TEXT);"
+                           "CREATE TABLE operator_settings(key TEXT, value_json TEXT);")
+        conn.execute("INSERT INTO profiles VALUES (?, ?, ?)",
+                     ("p", "PRIVATE PERSON", json.dumps({"allow": {"tags": ["allowed"]}})))
+        conn.execute("INSERT INTO operator_settings VALUES (?, ?)",
+                     ("service_registry", json.dumps(registry)))
+    return path, registry
+
+
+def test_database_is_read_only_and_queries_only_policy_fields(tmp_path):
+    path, _ = database(tmp_path)
+    before = path.read_bytes()
+    statements = []
+    with open_database(path) as conn:
+        conn.set_trace_callback(statements.append)
+        profiles, registry = load_database(conn)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("DELETE FROM profiles")
+    assert profiles[0].id == "p"
+    assert len(registry_matrix(registry)) == 4
+    assert not any("name" in s.lower() for s in statements)
+    assert path.read_bytes() == before
+
+
+def test_missing_database_is_not_created(tmp_path):
+    path = tmp_path / "missing.db"
+    with pytest.raises(sqlite3.OperationalError):
+        open_database(path)
+    assert not path.exists()
+
+
+def test_cli_private_output_and_deterministic_counts(tmp_path):
+    path, _ = database(tmp_path)
+    script = Path(__file__).resolve().parents[1] / "scripts/categories-migration-report"
+    cmd = [sys.executable, str(script), str(path), "--examples", "0"]
+    before = path.read_bytes()
+    first = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    assert first == subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    assert "PRIVATE PERSON" not in first
+    assert "plan_id" in first and "1->2" in first and "1->3" in first
+    assert "proxy.py:" in first and "static" in first.lower()
+    assert path.read_bytes() == before
+
+
+def test_static_scan_preserves_missing_none_empty_and_dynamic(tmp_path):
+    source = tmp_path / "proxy.py"
+    source.write_text('''
+@app.post("/v1/chat/completions")
+def chat():
+    make_policy_request(protocol="openai")
+    PolicyRequest(capability_tags=None)
+    PolicyRequest(capability_tags=[])
+    PolicyRequest(capability_tags=tags)
+    make_policy_request(**kwargs)
+''')
+    calls = scan_callsites(tmp_path)
+    assert [c.metadata for c in calls] == ["omitted", "none", "empty", "dynamic", "dynamic"]
+    assert calls[0].function == "chat" and calls[0].routes == ("/v1/chat/completions",)
+
