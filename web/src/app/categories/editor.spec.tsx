@@ -66,7 +66,8 @@ async function pick(user: ReturnType<typeof userEvent.setup>, label: string, opt
   await user.click(await screen.findByRole("option", { name: option }));
 }
 async function showPreview(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByRole("textbox", { name: "Reason for changes" }), "Reviewed access");
+  await user.click(screen.getByRole("textbox", { name: "Reason for changes" }));
+  await user.paste("Reviewed access");
   await user.click(screen.getByRole("button", { name: "Preview changes" }));
   await screen.findByRole("region", { name: "Change preview" });
 }
@@ -202,7 +203,7 @@ it("renames a requirement and carries its named missing-value waiver with it", a
   const { user, fetch } = mount();
   const section = within(screen.getByRole("region", { name: "Person access plans" }));
   const rowName = section.getAllByRole("textbox", { name: "Rule name" })[0];
-  await user.clear(rowName); await user.type(rowName, "reviewed-audience");
+  await user.clear(rowName); await user.paste("reviewed-audience");
   await showPreview(user);
   const posted = (fetch.mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot;
   expect(posted.people.sam[0].missing).toEqual({ "reviewed-audience": "allow" });
