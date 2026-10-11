@@ -292,7 +292,10 @@ def create_category_router(*, auth: AdminAuth, store_path: Path) -> APIRouter:
                 return _error(503, "policy_unavailable", "The policy store is unavailable.")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 return _error(400, "invalid_request", "Invalid category policy request.")
-        router.add_api_route(path, endpoint, methods=[method], name="categories_" + operation)
+        # The endpoint reads path params itself; declare them for the OpenAPI schema.
+        params = [{"name": "revision", "in": "path", "required": True, "schema": {"type": "integer"}}]
+        router.add_api_route(path, endpoint, methods=[method], name="categories_" + operation,
+                             openapi_extra={"parameters": params} if "{revision}" in path else None)
 
     install("/active", "GET", "active")
     install("/history", "GET", "history")
