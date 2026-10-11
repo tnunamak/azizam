@@ -465,6 +465,8 @@ async def _run(job_id: str, *, runtime: MakeRuntime, jobs_path: Path) -> None:
     try:
         media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=5,
                                  metadata_patch={"started_at": int(time.time())}, path=jobs_path)
+        if job.get("status") == media_jobs.STATUS_RUNNING:
+            media_jobs.begin_attempt(job_id, path=jobs_path)
     except ValueError:  # Canceled before it started.
         return
     _event(job_id, "started", media_jobs.STATUS_RUNNING, jobs_path, progress=5)

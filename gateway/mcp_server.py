@@ -466,7 +466,7 @@ class Tools:
             await asyncio.sleep(min(self.deps.poll_interval, max(0.0, deadline - time.monotonic())))
             state = await self._poll(job_id)
         out: dict[str, Any] = {"status": state["status"], "job_id": job_id}
-        out.update({name: state["raw"].get(name) for name in (*PHASE_FIELDS, "attempt_number")})
+        out.update({name: state["raw"].get(name) for name in (*PHASE_FIELDS, "attempt_number", "previous_attempts")})
         if entry:
             out["target"] = entry["short_id"]
         elif state["raw"].get("workflow"):

@@ -231,3 +231,26 @@ def test_first_output_detected_after_comment_in_same_chunk():
             pass
     asyncio.run(run())
     assert receipt.first_output_at_ms is not None
+
+
+def test_retries_keep_prior_phase_facts_and_number_new_attempt(db):
+    a = job(db)
+    media_jobs.update_status(a.job_id, 'running', now=200, path=db)
+    retry = media_jobs.begin_attempt(a.job_id, now=300, path=db)
+    assert retry['attempt_number'] == 2
+    assert retry['started_at'] == 300
+    assert retry['queued_at'] is None
+    assert retry['previous_attempts'][0]['started_at'] == 200
+    assert retry['previous_attempts'][0]['finished_at'] is None
+    done = media_jobs.update_status(a.job_id, 'succeeded', now=400, path=db)
+    assert done['finished_at'] == 400
+    assert done['previous_attempts'] == retry['previous_attempts']
+    with pytest.raises(ValueError):
+        media_jobs.begin_attempt(a.job_id, path=db)
+
+
+def test_new_jobs_cannot_inject_phase_history(db):
+    a = job(db, started_at=1, finished_at=2, previous_attempts=[{'started_at': 1}])
+    assert a.started_at is None and a.finished_at is None and a.previous_attempts == []
+    with pytest.raises(ValueError):
+        job(db, previous_attempts=[{'prompt': 'must not leak'}])

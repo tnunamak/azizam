@@ -21457,6 +21457,10 @@ async def _run_image_media_job(job_id: str) -> None:
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
             receipt.job_id = job_id
             try:
+                if attempt > 1 or job.get("status") == media_jobs.STATUS_RUNNING:
+                    job = media_jobs.begin_attempt(job_id, path=media_jobs.DB_PATH) or job
+                receipt.attempt_number = job.get("attempt_number")
+                receipt.mark_phase("started_at_ms")
                 media_jobs.append_event(
                     job_id,
                     "attempt",

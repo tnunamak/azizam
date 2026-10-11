@@ -115,6 +115,7 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         "parent_request_id",
         *PHASE_FIELDS,
         "attempt_number",
+        "previous_attempts",
     }
 )
 
@@ -189,6 +190,7 @@ class MediaJob:
     first_output_at: int | None = None
     finished_at: int | None = None
     attempt_number: int | None = None
+    previous_attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -203,6 +205,11 @@ class MediaJob:
             if not isinstance(asset, Mapping):
                 raise ValueError("MediaJob.assets entries must be mappings")
             _assert_safe_mapping("MediaJob.assets[*]", asset)
+        for attempt in self.previous_attempts:
+            if not isinstance(attempt, Mapping) or set(attempt) - {*PHASE_FIELDS, "attempt_number"}:
+                raise ValueError("previous_attempts must contain only phase facts")
+            if any(value is not None and (type(value) is not int or value < 0) for value in attempt.values()):
+                raise ValueError("previous_attempts phase facts must be non-negative integers or null")
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
         if audience not in _AUDIENCES:
@@ -228,6 +235,7 @@ class MediaJob:
             "owner_scope": self.owner_scope,
             "input_hash": self.input_hash,
             "attempt_number": self.attempt_number,
+            "previous_attempts": [dict(attempt) for attempt in self.previous_attempts],
             **{name: getattr(self, name) for name in PHASE_FIELDS},
         }
         return _filter_for_audience(data, audience)
@@ -261,6 +269,7 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
     data = {**dict.fromkeys((*PHASE_FIELDS, "attempt_number")), **data}
+    data.setdefault("previous_attempts", [])
     if audience == "internal":
         return dict(data)
     if audience == "admin":
@@ -429,6 +438,7 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             owner_scope=data.get("owner_scope"),
             input_hash=data.get("input_hash"),
             attempt_number=data.get("attempt_number"),
+            previous_attempts=list(data.get("previous_attempts") or []),
             **{name: data.get(name) for name in PHASE_FIELDS},
         )
     raise TypeError(f"job must be MediaJob or mapping, got {type(job_or_dict).__name__}")
@@ -550,6 +560,9 @@ def create(
             if outstanding >= limit.maximum:
                 conn.rollback()
                 raise OutstandingLimitReached(limit)
+        for name in PHASE_FIELDS:
+            setattr(record, name, None)
+        record.previous_attempts = []
         record.accepted_at = record.created_at
         record.attempt_number = 1
         if record.status == STATUS_QUEUED:
@@ -565,7 +578,7 @@ def create(
     return record
 
 
-def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
+def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False) -> None:
     job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
     # Serialize cutoff checking with erasure. A worker holding an old job
     # object cannot put a forgotten prompt fingerprint back into the database.
@@ -574,7 +587,8 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
     previous = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
     if previous:
         data = json.loads(previous[0])
-        for name in (*PHASE_FIELDS, "attempt_number"):
+        preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
+        for name in preserved:
             if data.get(name) is not None:
                 setattr(job, name, data[name])
     cutoff = conn.execute(
@@ -873,6 +887,35 @@ def update_status(
     return updated.to_dict("internal")
 
 
+def begin_attempt(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Trusted worker retry: retain prior facts and start a new running attempt.
+
+    Only call when dispatching work again, never on a progress update or a
+    reconnect to the same upstream job. Legacy attempt numbers stay unknown.
+    """
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
+        if row is None:
+            return None
+        job = _coerce_to_job(json.loads(row[0]))
+        if job.status != STATUS_RUNNING:
+            raise ValueError("only a running job can begin another attempt")
+        if job.attempt_number is None:
+            return job.to_dict()
+        job.previous_attempts.append({"attempt_number": job.attempt_number,
+                                      **{name: getattr(job, name) for name in PHASE_FIELDS}})
+        job.attempt_number += 1
+        job.queued_at = None
+        job.started_at = int(now if now is not None else _now())
+        job.first_output_at = None
+        job.finished_at = None
+        job.updated_at = job.started_at
+        _write_job(conn, job, new_attempt=True)
+        conn.commit()
+        return job.to_dict()
+
+
 def append_event(
     job_id: str,
     event_type: str,
@@ -1084,6 +1127,7 @@ __all__ = [
     "recent",
     "list_jobs",
     "update_status",
+    "begin_attempt",
     "append_event",
     "append_client_event",
     "validate_client_event",
