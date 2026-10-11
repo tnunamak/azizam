@@ -255,7 +255,6 @@ async def serve(args: argparse.Namespace) -> None:
     async def _fixture_maintenance() -> None:
         await asyncio.Event().wait()
     proxy.maintenance_loop = _fixture_maintenance
-    proxy.evict_image_cache_loop = _fixture_wait
     proxy._workflow_drift_loop = _fixture_wait
     proxy.metrics_sampler.sampler_loop = lambda: _fixture_maintenance()
     attempts = state_root / "blocked-operator-connects.jsonl"
