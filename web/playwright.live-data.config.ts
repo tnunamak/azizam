@@ -12,6 +12,8 @@ const python =
   process.env.UI_E2E_PYTHON ??
   (existsSync(localPython) ? localPython : "python3");
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+// Legacy setup/spec consumers use these filenames. ci-local gives this config
+// a dedicated browser-${port} worktree, isolating its auth and manifest too.
 const manifestPath = path.resolve(
   __dirname,
   "test-results/live-data-manifest.json",
@@ -21,11 +23,14 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: ["live-data-scoping.spec.ts", "live-data-audio.spec.ts"],
   globalSetup: "./e2e/live-data-global-setup.ts",
-  outputDir: "./test-results/live-data-artifacts",
+  outputDir: `./test-results/live-data-artifacts-${port}`,
   workers: 1,
   timeout: 90_000,
   expect: { timeout: 15_000 },
-  reporter: [["list"]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: `test-results/live-data-report-${port}` }],
+  ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
     storageState: "./test-results/live-data-owner.json",

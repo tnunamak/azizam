@@ -1,28 +1,36 @@
 #!/usr/bin/env bash
-# Run the four CI jobs from .github/workflows/ci.yml on this machine, against
-# an exact commit, and record receipts. With --signoff, post a "signoff"
-# commit status through `gh signoff` when every job passes.
-#
-# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--skip-compose]
-#
-# The run uses a clean detached worktree of HEAD (npm ci, fresh Python
-# environments from the hermetic lock), so the live checkout and its
-# node_modules are never touched. A tree that already passed is not run
-# again unless --force is given. See docs/ops/CI.md.
+# Run every CI job on an exact commit and retain per-step receipts.
+# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--shards N] [--skip-compose]
+# Independent jobs and browser fixtures run in isolated detached worktrees.
+# A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
 
-signoff=0 force=0 port=18640 skip_compose=0
+signoff=0 force=0 port=18640 shards=4 skip_compose=0
 while (($#)); do
   case $1 in
     --signoff) signoff=1 ;;
     --force) force=1 ;;
-    --port) port=$2; shift ;;
+    --port|--shards)
+      (($# >= 2)) || { echo "$1 requires a number" >&2; exit 2; }
+      if [[ $1 == --port ]]; then port=$2; else shards=$2; fi
+      shift ;;
     --skip-compose) skip_compose=1 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
+# Each ten-port lane owns gateway +0, engine +1, strict probes +2..+9.
+# Bound inputs before arithmetic, including the two additional fixture lanes.
+if [[ ! $port =~ ^18[0-9]{3}$ || ! $shards =~ ^[1-9][0-9]?$ ]]; then
+  echo "--port must be 18000-18998 and --shards a positive integer <= 99" >&2
+  exit 2
+fi
+if ((port + 10 * (shards + 2) + 9 > 18998)); then
+  echo "shards, live-data and household lanes must fit within 18000-18998" >&2
+  exit 2
+fi
+command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -34,13 +42,11 @@ sha=$(git rev-parse HEAD)
 tree=$(git rev-parse 'HEAD^{tree}')
 receipts_root=${AZIZAM_CI_RECEIPTS:-$HOME/.tmp/azizam-ci-receipts}
 receipts=$receipts_root/$tree
-
 sign() {
   ((signoff)) || return 0
   gh signoff create
   echo "signoff posted for $sha"
 }
-
 if [[ -f $receipts/PASS && $force == 0 ]]; then
   echo "tree $tree already passed (receipts: $receipts)"
   sign
@@ -49,13 +55,42 @@ fi
 
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
+receipts=$(cd "$receipts" && pwd)
 rm -f "$receipts/PASS" "$receipts/steps.tsv"
-work=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
-cleanup() { git -C "$repo" worktree remove --force "$work" >/dev/null 2>&1 || rm -rf "$work"; }
+rm -rf "$receipts/steps" "$receipts/test-results"
+mkdir -p "$receipts/steps"
+run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
+run=$(cd "$run" && pwd)
+work=$run/web-build
+worktrees=()
+pids=()
+cleanup() {
+  local pid directory deadline=$((SECONDS + 20))
+  trap '' INT TERM
+  # Every background job has its own session: never kill the caller's group.
+  for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+  for pid in "${pids[@]}"; do
+    while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  cd "$repo"
+  for directory in "${worktrees[@]}"; do
+    git worktree remove --force "$directory" >/dev/null 2>&1 || true
+  done
+  rm -rf "$run"
+}
 trap cleanup EXIT
-git worktree add --quiet --detach "$work" "$sha"
-cd "$work"
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" > "$receipts/run.tsv"
+trap 'exit 130' INT
+trap 'exit 143' TERM
+add_worktree() {
+  worktrees+=("$1")
+  git -C "$repo" worktree add --quiet --detach "$1" "$sha"
+}
+add_worktree "$work"
+add_worktree "$run/python"
+add_worktree "$run/fresh"
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nshards\t%s\nbase_port\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" "$shards" "$port" > "$receipts/run.tsv"
 
 failed=0
 step() {
@@ -63,36 +98,114 @@ step() {
   local start=$SECONDS rc=0
   echo "== $name"
   ( "$@" ) > "$receipts/logs/$name.log" 2>&1 || rc=$?
-  printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" >> "$receipts/steps.tsv"
+  # One writer per file; aggregation happens only after every job is reaped.
+  printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
+  return 0
+}
+export receipts work skip_compose
+export -f step
+start_job() {
+  local directory=$1; shift
+  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
+  last_pid=$!
+  pids+=("$last_pid")
+}
+wait_job() {
+  local pid=$1 index deadline
+  if ! wait "$pid"; then failed=1; fi
+  # A failed supervisor must not leave fixture grandchildren running.
+  if kill -0 -- "-$pid" 2>/dev/null; then
+    failed=1
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    deadline=$((SECONDS + 20))
+    while kill -0 -- "-$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep .2; done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  fi
+  # Remove reaped groups before cleanup, avoiding stale PID signalling.
+  for index in "${!pids[@]}"; do
+    if [[ ${pids[index]} == "$pid" ]]; then unset 'pids[index]'; break; fi
+  done
 }
 
-lock=tests/requirements-hermetic.lock
-# Job: Web check
-step web-npm-ci bash -c 'cd web && npm ci --no-audit --no-fund'
-step web-check bash -c 'cd web && npm run check'
-step web-unit bash -c 'cd web && npx vitest run'
-# Job: Python tests
-step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx
-# Job: Fresh instance e2e
-step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python $lock"
-step fresh-native env FRESH_INSTANCE_PYTHON="$work/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
-if ((skip_compose)); then
-  printf 'fresh-compose\tskipped\t0\n' >> "$receipts/steps.tsv"
-  failed=1
-  echo "== fresh-compose SKIPPED: the run cannot pass without it"
-else
-  step fresh-compose env FRESH_INSTANCE_PYTHON="$work/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
-fi
-# Job: Production UI journey (build comes from web-check above)
-step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes $lock"
-step e2e-browser bash -c 'cd web && npx playwright install chromium'
-step e2e bash -c "cd web && UI_E2E_PORT=$port npm run test:e2e"
-if ((failed)) && [[ -d web/test-results ]]; then
-  # Keep browser evidence for a failing run only; the worktree is removed on exit.
-  cp -a web/test-results "$receipts/test-results"
-fi
+# These jobs never share their venv, generated files or node_modules.
+start_job "$run/python" bash -c '
+  failed=0
+  step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx
+  exit "$failed"
+'
+start_job "$run/fresh" bash -c '
+  failed=0
+  step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
+  step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+  if ((skip_compose)); then
+    printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
+    failed=1
+    echo "== fresh-compose SKIPPED: the run cannot pass without it"
+  else
+    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
+  fi
+  exit "$failed"
+'
+start_job "$work" bash -c '
+  failed=0
+  step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
+  step web-check bash -c "cd web && npm run check"
+  step web-unit bash -c "cd web && npx vitest run"
+  step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
+  step e2e-browser bash -c "cd web && npx playwright install chromium"
+  exit "$failed"
+'
+wait_job "$last_pid"
 
+# Copy the completed web tree, including dependencies and build output, only
+# after all writers stop. Reflinks save space where supported; ordinary copies
+# still isolate writable caches and legacy fixed screenshot/auth filenames.
+for ((i=1; i<=shards+2; i++)); do
+  lane_port=$((port + 10 * i))
+  lane=$run/browser-$lane_port
+  add_worktree "$lane"
+  step "e2e-copy-$lane_port" cp -a --reflink=auto "$work/web/." "$lane/web/"
+  ln -s "$work/venv" "$lane/venv"
+done
+for ((i=1; i<=shards+2; i++)); do
+  lane_port=$((port + 10 * i))
+  lane=$run/browser-$lane_port
+  config=playwright.config.ts
+  args=()
+  name=e2e-shard-$i-of-$shards
+  if ((i <= shards)); then
+    args+=("--shard=$i/$shards")
+  elif ((i == shards + 1)); then
+    config=playwright.live-data.config.ts; name=e2e-live-data
+  else
+    config=playwright.household.config.ts; name=e2e-household
+  fi
+  start_job "$lane/web" bash -c '
+    failed=0
+    name=$1; shift
+    step "$name" "$@"
+    exit "$failed"
+  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
+done
+for pid in "${pids[@]}"; do wait_job "$pid"; done
+
+cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
+# Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
+if ! awk -F '\t' -v expected="$((2 * shards + 13))" '
+  NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
+  END { exit (bad || NR != expected) }
+' "$receipts/steps.tsv"; then failed=1; fi
+if ((failed)); then
+  # Keep each lane's complete evidence, including legacy fixed filenames.
+  for ((i=1; i<=shards+2; i++)); do
+    lane_port=$((port + 10 * i))
+    if [[ -d $run/browser-$lane_port/web/test-results ]]; then
+      mkdir -p "$receipts/test-results/$lane_port"
+      cp -a "$run/browser-$lane_port/web/test-results/." "$receipts/test-results/$lane_port/"
+    fi
+  done
+fi
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 column -t "$receipts/steps.tsv"
 if ((failed)); then
