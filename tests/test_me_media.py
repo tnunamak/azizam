@@ -982,6 +982,68 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIn("coverage_start", usage)
         self.assertEqual(usage["people"], [])
 
+    def test_usage_history_floor_marks_pruned_upgrade_as_partial(self) -> None:
+        now = int(datetime(2026, 10, 25, 12, tzinfo=timezone.utc).timestamp())
+        earliest = now - 14 * 86400
+        self.receipts_db.unlink()
+        with sqlite3.connect(self.receipts_db) as conn:
+            conn.executescript(receipt_store._SCHEMA)
+            conn.execute("INSERT INTO schema_version VALUES (2)")
+        receipt_store.record({"request_id": "survivor", "app_id": self.app_a["id"]},
+                             created_at=earliest, path=self.receipts_db)
+        with patch.object(receipt_store.time, "time", return_value=now), patch.object(me_media, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime.fromtimestamp(now, timezone.utc)
+            receipt_store.init_db(self.receipts_db)
+            for days in (30, 90, 365, None):
+                admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
+                                                {"retention_days": days}, path=self.admin_db)
+                response = self.client.get("/me/api/usage/summary")
+                self.assertEqual(response.status_code, 200)
+                usage = response.json()
+                self.assertEqual(usage["coverage_start"], datetime.fromtimestamp(earliest, timezone.utc).isoformat())
+                self.assertIn("partial", usage["coverage_note"].lower())
+                self.assertEqual(usage["requests"], 1)
+            next_month = int(datetime(2026, 11, 5, tzinfo=timezone.utc).timestamp())
+            with patch.object(receipt_store.time, "time", return_value=next_month):
+                clock.now.return_value = datetime.fromtimestamp(next_month, timezone.utc)
+                usage = self.client.get("/me/api/usage/summary").json()
+                self.assertEqual(usage["coverage_start"], "2026-11-01T00:00:00+00:00")
+                self.assertNotIn("partial", usage["coverage_note"].lower())
+
+    def test_usage_fresh_install_coverage_starts_at_install(self) -> None:
+        self.receipts_db.unlink()
+        now = int(datetime(2026, 10, 25, 12, tzinfo=timezone.utc).timestamp())
+        with patch.object(receipt_store.time, "time", return_value=now), patch.object(me_media, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime.fromtimestamp(now, timezone.utc)
+            receipt_store.init_db(self.receipts_db)
+            usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["coverage_start"], "2026-10-25T12:00:00+00:00")
+        self.assertIn("partial", usage["coverage_note"].lower())
+
+    def test_usage_retention_increase_keeps_deleted_history_partial(self) -> None:
+        self.receipts_db.unlink()
+        now = int(datetime(2026, 10, 31, 12, tzinfo=timezone.utc).timestamp())
+        installed = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp())
+        with patch.object(receipt_store.time, "time", return_value=installed):
+            receipt_store.init_db(self.receipts_db)
+        self._receipt(self.app_a["id"], "deleted", created_at=now - 31 * 86400)
+        self._receipt(self.app_a["id"], "kept", created_at=now)
+        with patch.object(receipt_store.time, "time", return_value=now), patch.object(me_media, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime.fromtimestamp(now, timezone.utc)
+            preview = receipt_store.retention_preview(30, path=self.receipts_db)
+            deleted = receipt_store.save_retention(30, preview,
+                lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
+                    {"retention_days": 30}, path=self.admin_db), path=self.receipts_db)
+            self.assertEqual(deleted, 1)
+            for days in (90, 365, None):
+                receipt_store.save_retention(days, receipt_store.retention_preview(days, path=self.receipts_db),
+                    lambda: admin_store.put_operator_setting(receipt_store.RETENTION_SETTING_KEY,
+                        {"retention_days": days}, path=self.admin_db), path=self.receipts_db)
+                usage = self.client.get("/me/api/usage/summary").json()
+                self.assertEqual(usage["coverage_start"], "2026-10-01T12:00:00+00:00")
+                self.assertIn("partial", usage["coverage_note"].lower())
+                self.assertEqual(usage["requests"], 1)
+
     def test_usage_reports_saved_retention_without_changing_member_scope(self) -> None:
         self._receipt(self.app_a["id"], "req_mine")
         self._receipt(self.app_b["id"], "req_theirs")

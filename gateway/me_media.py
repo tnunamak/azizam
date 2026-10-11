@@ -1334,7 +1334,10 @@ def _usage_summary(
     if scope_label == "everyone":
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
     retention_days = receipt_store.retention_days(admin_db_path)
-    coverage_start = max(start, int(time.time()) - retention_days * 86400) if retention_days is not None else start
+    coverage_start = max(start, receipt_store.history_floor(receipts_path))
+    coverage_note = "Requests cover retained receipts; media totals also include retained assets."
+    if coverage_start > start:
+        coverage_note = "Partial receipt history for this month. " + coverage_note
     return {
         "schema_version": 1, "period": "month", "scope": scope_label,
         "source": source_filter, "sources": sources,
@@ -1347,7 +1350,7 @@ def _usage_summary(
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
         "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
-        "coverage_note": "Requests cover retained receipts; media totals also include retained assets.",
+        "coverage_note": coverage_note,
         "truncated": False, "receipts_limit": USAGE_RECEIPT_LIMIT,
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),

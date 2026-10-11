@@ -17,6 +17,14 @@ fails after the setting commits, the API reports pending cleanup; maintenance
 retries the saved choice. Usage reports the actual setting. Keeping receipts
 cannot restore previously deleted history.
 
+Usage coverage starts at the later of the month start and a persisted history
+floor. That floor advances when receipts are deleted and never moves back when
+retention increases. An existing store starts with its earliest surviving
+receipt, or the upgrade time if empty, because older pruning cannot be undone.
+A fresh store starts at installation. Usage marks the month as partial when
+the floor cuts into it; the floor is a conservative boundary, not a reconstruction
+of pre-upgrade history.
+
 ## Reclaim unused database space
 
 SQLite reuses free pages, so a large file does not mean all its bytes contain
@@ -32,7 +40,11 @@ SQLite's temporary rebuild files:
 ./venv/bin/python scripts/compact-receipts --db /path/to/receipts.db
 ```
 
-It prints only before/after byte counts. SQLite locks protect concurrent writes;
+It prints before/after logical database bytes, main-file bytes, WAL bytes and
+combined physical bytes. The original `before_bytes` and `after_bytes` fields
+are logical sizes. If a reader prevents WAL truncation, `checkpoint_pending`
+is true and the command exits nonzero with a message to retry when readers are
+idle. It never removes the WAL itself. SQLite locks protect concurrent writes;
 requests that need this database may wait or fail with a busy error during the
 rebuild. Back up the database before maintenance. The command compacts retained
 rows and enables later incremental reclamation; it does not delete receipts.

@@ -14,7 +14,10 @@ from gateway.category_migration import (
     Case, compare, convert_plan, load_database, open_database, registry_matrix,
     report_plan, scan_callsites,
 )
-from gateway.policy import AppProfile, CapabilitySelector, PolicyRequest, RemoteProviderPolicy
+from gateway.policy import (
+    AppProfile, CapabilitySelector, FallbackPolicy, NativePassthroughPolicy,
+    PolicyRequest, RemoteProviderPolicy,
+)
 from gateway import category_policy as category
 
 
@@ -26,6 +29,67 @@ def case(**kwargs):
 @pytest.fixture
 def restricted():
     return AppProfile(id="p", allow=CapabilitySelector(tags=frozenset({"allowed"})))
+
+
+@pytest.mark.parametrize("mode", ["native", "cloud", "paid"])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_non_category_modes_do_not_reuse_regular_grants(mode, allowed):
+    profile = AppProfile(id="p", remote=RemoteProviderPolicy(providers=frozenset({"paid"}),
+        allow_paid_fallback=allowed), fallback=FallbackPolicy(cloud_allowed=allowed),
+        native_passthrough=NativePassthroughPolicy(enabled=allowed,
+            allowed_backends=frozenset({"backend"}), allowed_operations=frozenset({"POST /generate"})))
+    regular = case(backend="backend", remote_provider="paid")
+    changes = {"native": {"native_passthrough": True, "native_backend": "backend",
+                          "native_operation": "POST /generate"},
+               "cloud": {"requires_cloud_fallback": True},
+               "paid": {"remote_paid_fallback": True}}[mode]
+    variant = replace(regular, request=replace(regular.request, **changes))
+    converted = convert_plan(profile, [regular, variant])
+    assert compare(profile, converted, regular).v3.outcome == "allow"
+    result = compare(profile, converted, variant)
+    assert result.exact.allowed == allowed
+    assert (result.v3.outcome == "allow") == allowed
+    if allowed:
+        assert len(converted.plan.grants) == 2
+    else:
+        assert result.v3.reason == "NO_GRANT"
+
+
+@pytest.mark.parametrize("changes", [
+    {"native_backend": "other"}, {"native_operation": "POST /other"},
+])
+def test_native_backend_and_operation_are_part_of_grant_identity(changes):
+    profile = AppProfile(id="p", native_passthrough=NativePassthroughPolicy(enabled=True,
+        allowed_backends=frozenset({"backend"}), allowed_operations=frozenset({"POST /generate"})))
+    allowed = case(backend="backend", native_passthrough=True,
+                   native_backend="backend", native_operation="POST /generate")
+    denied = replace(allowed, request=replace(allowed.request, **changes))
+    converted = convert_plan(profile, [allowed, denied])
+    assert compare(profile, converted, allowed).v3.outcome == "allow"
+    result = compare(profile, converted, denied)
+    assert not result.exact.allowed and result.v3.reason == "NO_GRANT"
+
+
+def test_matrix_and_report_sample_native_and_fallback_controls():
+    registry = {"services": {"backend": {"capabilities": ["chat"], "config": {
+        "provider_id": "paid", "models": [{"id": "m"}]}}}}
+    matrix = registry_matrix(registry)
+    assert any(c.request.native_passthrough for c in matrix)
+    assert any(c.request.requires_cloud_fallback for c in matrix)
+    assert any(c.request.remote_paid_fallback for c in matrix)
+    assert len({(c.service_id, c.root_id) for c in matrix}) == len(matrix)
+    for enabled in (False, True):
+        profile = AppProfile(id="p", remote=RemoteProviderPolicy(providers=frozenset({"paid"}),
+            allow_paid_fallback=enabled), fallback=FallbackPolicy(cloud_allowed=enabled),
+            native_passthrough=NativePassthroughPolicy(enabled=enabled,
+                allowed_backends=frozenset({"backend"}), allowed_operations=frozenset({"POST /generate"})))
+        report = report_plan(profile, matrix)
+        permission_cases = [c for c in report.comparisons if c.case.label.startswith("permission-")]
+        assert permission_cases
+        assert any(not c.exact.allowed for c in permission_cases)
+        if enabled:
+            assert any(c.exact.allowed for c in permission_cases)
+        assert all(c.exact.allowed == (c.v3.outcome == "allow") for c in permission_cases)
 
 
 @pytest.mark.parametrize("tags,expected", [
@@ -139,8 +203,8 @@ def test_projection_matches_full_plan(restricted):
     assertion = category.Assertion("legacy-tags", "allowed", "owner", True,
                                    "report", "report", "report-owner", "report-v1")
     for request in (allowed, other, replace(other, service_id="ungranted@report")):
-        service = category.Service(request.service_id,
-            (category.Subject(request.root_id, "release", (assertion,)),))
+        service = category.Service(request.grant.service,
+            (category.Subject(request.grant.release, "release", (assertion,)),))
         full = category.evaluate(converted.categories, [converted.plan], [converted.plan], service, "chat")
         assert compare(restricted, converted, request).v3 == full
 
@@ -150,14 +214,20 @@ def test_registry_provider_and_alias_contexts():
         "provider_id": "paid", "models": [{"id": "m", "model_group": "alias"}]}}},
         "protocol_frontends": {"f": {"protocol": "openai.chat", "intents": ["chat"]}}}
     matrix = registry_matrix(registry)
-    assert len(matrix) == 2
+    assert len(matrix) == 10  # Two targets x five bounded permission modes.
     assert {c.request.model for c in matrix} == {"m", "alias"}
     assert {c.request.remote_provider for c in matrix} == {"paid"}
-    assert len({c.service_id for c in matrix}) == 2
+    assert len({c.service_id for c in matrix}) == 10
     denied = AppProfile(id="p")
     assert all(not compare(denied, convert_plan(denied, matrix), c).exact.allowed for c in matrix)
     permitted = replace(denied, remote=RemoteProviderPolicy(providers=frozenset({"paid"})))
-    assert all(compare(permitted, convert_plan(permitted, matrix), c).v3.outcome == "allow" for c in matrix)
+    converted = convert_plan(permitted, matrix)
+    for c in matrix:
+        result = compare(permitted, converted, c)
+        regular = not (c.request.requires_cloud_fallback or c.request.remote_paid_fallback
+                       or c.request.native_passthrough)
+        assert result.exact.allowed == regular
+        assert (result.v3.outcome == "allow") == regular
 
 
 def test_registry_conversion_has_one_active_revision_per_service_stem():
@@ -167,20 +237,21 @@ def test_registry_conversion_has_one_active_revision_per_service_stem():
             "chat": {"protocol": "openai.chat", "intents": ["chat"]},
             "image": {"protocol": "openai.images", "intents": ["image"]}}}
     matrix = registry_matrix(registry)
-    assert len(matrix) == 8  # Two capabilities x two targets x two protocols.
+    assert len(matrix) == 24  # Two capabilities x two targets x two protocols x three modes.
     profile = AppProfile(id="p", allow=CapabilitySelector(tags=frozenset({"allowed"})))
     converted = convert_plan(profile, matrix)
     assertion = category.Assertion("legacy-tags", "allowed", "owner", True,
                                    "report", "report", "report-owner", "report-v1")
-    services = {c.service_id: category.Service(c.service_id,
-                (category.Subject(c.root_id, "release", (assertion,)),)) for c in matrix}
-    assert len(services) == 4  # Capabilities share the same pinned context.
+    services = {c.grant.service: category.Service(c.grant.service,
+                (category.Subject(c.grant.release, "release", (assertion,)),)) for c in matrix}
+    assert len(services) == 12  # Capabilities share the same pinned permission context.
     version = category.PolicyVersion("report-v1", converted.categories,
         {"person": (converted.plan,)}, {"app": (converted.plan,)}, services)
     category.validate_snapshot(version)
     for request in matrix:
+        expected = "deny" if (request.request.requires_cloud_fallback or request.request.native_passthrough) else "allow"
         assert category.decision_for(version, {"person": "person", "app": "app",
-            "service": request.service_id, "capability": request.request.intent}).outcome == "allow"
+            "service": request.grant.service, "capability": request.request.intent}).outcome == expected
 
 
 def test_normalized_workflow_bindings_enforce_backend_lists():
@@ -199,7 +270,8 @@ def test_normalized_workflow_bindings_enforce_backend_lists():
     converted = convert_plan(permitted, matrix)
     for request in matrix:
         result = compare(permitted, converted, request)
-        assert result.exact.allowed == (request.request.backend == "s")
+        assert result.exact.allowed == (request.request.backend == "s"
+            and not request.request.requires_cloud_fallback and not request.request.native_passthrough)
         assert (result.v3.outcome == "allow") == result.exact.allowed
 
 
@@ -240,7 +312,7 @@ def test_database_is_read_only_and_queries_only_policy_fields(tmp_path):
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             conn.execute("DELETE FROM profiles")
     assert profiles[0].id == "p"
-    assert len(registry_matrix(registry)) == 4
+    assert len(registry_matrix(registry)) == 12
     assert not any("name" in s.lower() for s in statements)
     assert path.read_bytes() == before
 

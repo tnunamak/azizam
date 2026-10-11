@@ -19,6 +19,7 @@ Public surface
 - ``get(request_id, ...)``         — fetch one receipt as a dict (by audience)
 - ``recent(limit, ...)``           — list recent receipts (by audience)
 - ``prune(retain_s, ...)``         — delete rows older than the retention window
+- ``history_floor(path)``         — persisted start of complete receipt history
 - ``count(...)``                   — total row count
 
 The on-disk shape stores the full internal dict as JSON. ``get`` and ``recent``
@@ -139,6 +140,19 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
             )
+    conn.commit()
+
+    # This additive metadata survives retention changes without recreating v2
+    # receipts. A pre-upgrade store may already have lost history to pruning;
+    # do not promise coverage before its earliest survivor (or now if empty).
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("""CREATE TABLE IF NOT EXISTS receipt_history (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        floor INTEGER NOT NULL
+    )""")
+    earliest = conn.execute("SELECT MIN(created_at) FROM receipts").fetchone()[0]
+    conn.execute("INSERT OR IGNORE INTO receipt_history(singleton, floor) VALUES (1, ?)",
+                 (earliest if earliest is not None else int(time.time()),))
     conn.commit()
 
 
@@ -578,9 +592,24 @@ def prune(retain_s: int | None = RETAIN_S, path: Path = DB_PATH) -> int:
         return 0
     cutoff = int(time.time()) - int(retain_s)
     with _conn(path) as conn:
-        cur = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,))
+        deleted = _delete_before(conn, cutoff)
         conn.commit()
-        return cur.rowcount
+        return deleted
+
+
+def history_floor(path: Path = DB_PATH) -> int:
+    """Earliest known-complete receipt history; persisted independently of expiry."""
+    with _conn(path) as conn:
+        return conn.execute("SELECT floor FROM receipt_history WHERE singleton = 1").fetchone()[0]
+
+
+def _delete_before(conn: sqlite3.Connection, cutoff: int | None) -> int:
+    """Advance coverage in the same transaction as deletion, never backward."""
+    deleted = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,)).rowcount
+    if deleted:
+        conn.execute("UPDATE receipt_history SET floor = MAX(floor, ?) WHERE singleton = 1",
+                     (cutoff,))
+    return deleted
 
 
 def retention_preview(days: int | None, *, path: Path = DB_PATH) -> dict[str, Any]:
@@ -621,7 +650,7 @@ def save_retention(
             if count != preview["delete_count"]:
                 raise RetentionPreviewChanged("Receipt count changed. Review the new deletion count.")
         save_setting()
-        deleted = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,)).rowcount
+        deleted = _delete_before(conn, cutoff)
         conn.commit()
         return deleted
 
@@ -632,13 +661,13 @@ def maintain(admin_path: Path, *, path: Path = DB_PATH) -> int:
         conn.execute("BEGIN IMMEDIATE")
         days = retention_days(admin_path)
         cutoff = int(time.time()) - days * 86400 if days is not None else None
-        deleted = conn.execute("DELETE FROM receipts WHERE created_at < ?", (cutoff,)).rowcount
+        deleted = _delete_before(conn, cutoff)
         conn.commit()
         conn.execute("PRAGMA incremental_vacuum(256)").fetchall()
         return deleted
 
 
-def compact(path: Path) -> dict[str, int]:
+def compact(path: Path) -> dict[str, int | bool]:
     """Explicit offline maintenance; never called by the gateway or its API.
 
     SQLite holds the necessary locks during the rebuild, so concurrent writers
@@ -647,13 +676,30 @@ def compact(path: Path) -> dict[str, int]:
     if not path.is_file():
         raise ValueError("receipt database does not exist")
     with _conn(path) as conn:
-        before = conn.execute("PRAGMA page_count").fetchone()[0]
+        before = (conn.execute("PRAGMA page_count").fetchone()[0]
+                  * conn.execute("PRAGMA page_size").fetchone()[0])
+        before_files = _file_bytes(path)
         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
         conn.execute("VACUUM")
-        after = conn.execute("PRAGMA page_count").fetchone()[0]
-        size = conn.execute("PRAGMA page_size").fetchone()[0]
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
-    return {"before_bytes": before * size, "after_bytes": after * size}
+        after = (conn.execute("PRAGMA page_count").fetchone()[0]
+                 * conn.execute("PRAGMA page_size").fetchone()[0])
+        checkpoint = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        after_files = _file_bytes(path)
+    # Keep the original logical byte fields for existing command consumers.
+    return {"before_bytes": before, "after_bytes": after,
+            "before_logical_bytes": before, "after_logical_bytes": after,
+            **{f"before_{key}": value for key, value in before_files.items()},
+            **{f"after_{key}": value for key, value in after_files.items()},
+            "checkpoint_pending": bool(checkpoint[0])}
+
+
+def _file_bytes(path: Path) -> dict[str, int]:
+    main = path.stat().st_size
+    try:
+        wal = Path(str(path) + "-wal").stat().st_size
+    except FileNotFoundError:
+        wal = 0
+    return {"main_bytes": main, "wal_bytes": wal, "physical_bytes": main + wal}
 
 
 def count(path: Path = DB_PATH, *, outer_only: bool = True) -> int:
@@ -689,6 +735,7 @@ __all__ = [
     "get",
     "recent",
     "prune",
+    "history_floor",
     "retention_days",
     "retention_preview",
     "save_retention",
