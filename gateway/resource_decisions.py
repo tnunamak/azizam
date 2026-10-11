@@ -92,6 +92,8 @@ def project_decision(value: Mapping[str, object], audience: str = "client") -> d
         if owner:
             item.update({key: raw.get(key) for key in ("rule", "observed_at", "quality")})
         reasons.append(item)
+    # A refusal leads with the rejecting rule, even if a delay was observed first.
+    reasons.sort(key=lambda reason: {"rejection": 0, "delay": 1, "info": 2}[reason["effect"]])
     actions = []
     deadline = value.get("wait_deadline")
     if type(deadline) in {int, float} and deadline > 0 and any(r["effect"] == "delay" or r["code"] in {
