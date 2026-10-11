@@ -22,9 +22,9 @@ import os
 import re
 import sys
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from unittest.mock import AsyncMock, patch
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "engine_p2"
@@ -296,15 +296,15 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
 
 # ---- runner ------------------------------------------------------------------
 
-def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design", "speech", "stt")) -> dict[str, Any]:
-    """Run the requested observation sections against the imported gateway."""
+@contextmanager
+def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstream, Path]]:
+    """The imported gateway with the fixture's configuration and fake engines: (proxy, client, upstream, scratch)."""
     import proxy
     from fastapi.testclient import TestClient
 
     from gateway import media_jobs, receipt_store
     from tests.voice_test_audio import speechlike
 
-    results: dict[str, Any] = {}
     with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
         root = Path(temp)
         receipt_store.init_db(root / "receipts.db")
@@ -322,7 +322,13 @@ def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design"
             patch.object(media_jobs, "DB_PATH", root / "media_jobs.db"),
         ):
             stack.enter_context(patcher)
-        client = TestClient(proxy.app)
+        yield proxy, TestClient(proxy.app), upstream, root
+
+
+def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design", "speech", "stt")) -> dict[str, Any]:
+    """Run the requested observation sections against the imported gateway."""
+    results: dict[str, Any] = {}
+    with running_gateway(fixture) as (proxy, client, upstream, root):
         if "voice_design" in sections:
             results["voice_design"] = asyncio.run(_observe_voice_design(proxy, client, upstream))
         if "speech" in sections:

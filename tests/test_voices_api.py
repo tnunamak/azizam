@@ -61,6 +61,7 @@ class ApiCase(unittest.TestCase):
             probe_quality=probe,
             design_voice=design,
             design_settings=lambda: self.design_settings,
+            builtin_voice_names=lambda: frozenset({"alloy", "shimmer", "cheerful_female"}),
             compatible_engines=lambda: ["chatterbox", "omnivoice"],
             quality_warn_below=lambda: 0.45,
         )
@@ -313,6 +314,7 @@ class PromptVoiceTests(ApiCase):
             store=lambda: self.store, sample_limits=lambda: SampleLimits(),
             authenticate=lambda r, p: SimpleNamespace(owner="key-a"), enforce_policy=lambda a, p: None,
             owner_of=lambda a: a.owner, probe_quality=lambda p: None, design_voice=down, design_settings=lambda: None,
+            builtin_voice_names=frozenset,
             compatible_engines=lambda: [], quality_warn_below=lambda: 0.45,
         )
         app = FastAPI()

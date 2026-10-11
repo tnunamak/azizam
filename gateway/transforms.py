@@ -4,9 +4,8 @@ This module implements the six primitive transform types from
 docs/design/ENGINE_TRANSFORMS_DESIGN.md §2, a named-transform registry,
 and a pipeline runner.
 
-STEP 0: Engine + registry, DARK — nothing in proxy.py is wired to this yet
-        (except the voxtral-voices built-in registered at module level, used
-        in Step 1).
+Service and model records attach transforms as data; proxy.py runs the
+attached pipelines.
 
 Public surface
 --------------
@@ -224,11 +223,10 @@ class ValueMapTransform(_Primitive):
 
     YAML::
 
-        voxtral-voices:
-          kind: value-map
-          param: voice
-          map: { cheerful_female: shimmer, alloy: alloy }
-          default: alloy
+        kind: value-map
+        param: quality
+        map: { hd: high, standard: medium }
+        default: medium
     """
 
     def __init__(self, cfg: dict[str, Any]) -> None:
@@ -964,72 +962,6 @@ class DropNullParamsTransform(_Primitive):
 # ---------------------------------------------------------------------------
 
 REGISTRY: TransformRegistry = TransformRegistry()
-
-# ---- TTS voice map (registry id "voxtral-voices", kept for compatibility) ----
-# Single source of truth for TTS voice names.  The id predates the OmniVoice
-# backend; it now maps every accepted voice name to a CANONICAL voice name.
-# Canonical voices are OpenAI's current TTS voices.  Each has one fixed speaker
-# identity (a reference clip + transcript in the shared voice catalog), so the
-# same name sounds the same on every backend/tier that uses the catalog.
-# Backends receive canonical names only; they never map aliases themselves.
-# The voice listing endpoint reads from this entry via _voxtral_voice_map().
-DEFAULT_TTS_VOICE = "alloy"
-
-# name -> metadata for /v1/voices.  Gender is the commonly perceived gender of
-# OpenAI's voice of the same name (OpenAI does not publish one).
-CANONICAL_TTS_VOICES: dict[str, dict[str, str]] = {
-    "alloy": {"gender": "female", "description": "Neutral, balanced, versatile."},
-    "ash": {"gender": "male", "description": "Clear, steady, conversational."},
-    "ballad": {"gender": "male", "description": "Gentle, soft, melodic."},
-    "cedar": {"gender": "male", "description": "Warm, grounded, natural."},
-    "coral": {"gender": "female", "description": "Warm, friendly, upbeat."},
-    "echo": {"gender": "male", "description": "Smooth, calm, even."},
-    "fable": {"gender": "male", "description": "Expressive storyteller."},
-    "marin": {"gender": "female", "description": "Natural, polished, composed."},
-    "nova": {"gender": "female", "description": "Energetic, bright, upbeat."},
-    "onyx": {"gender": "male", "description": "Deep, authoritative."},
-    "sage": {"gender": "female", "description": "Calm, thoughtful, measured."},
-    "shimmer": {"gender": "female", "description": "Bright, cheerful, light."},
-    "verse": {"gender": "male", "description": "Expressive, dynamic."},
-}
-
-# Names used by earlier clients (Voxtral presets, retired OpenAI-style names)
-# -> closest canonical voice.  Aliases point at canonical voices, never at
-# other aliases.
-LEGACY_TTS_VOICE_ALIASES: dict[str, str] = {
-    "neutral_female": "alloy",
-    "casual_female": "coral",
-    "cheerful_female": "shimmer",
-    "neutral_male": "ash",
-    "casual_male": "echo",
-    "sophia": "alloy",
-    "isabella": "shimmer",
-    "lily": "coral",
-    "juniper": "coral",
-    "evan": "echo",
-    "adam": "ash",
-}
-
-# "<lang>_<gender>" voice-design presets (identity not fixed) pass through.
-TTS_LANGUAGE_PRESET_VOICES = tuple(
-    f"{lang}_{gender}"
-    for lang in ("ar", "de", "es", "fr", "hi", "it", "nl", "pt")
-    for gender in ("female", "male")
-)
-
-REGISTRY.register(
-    "voxtral-voices",
-    {
-        "kind": "value-map",
-        "param": "voice",
-        "map": {
-            **{name: name for name in CANONICAL_TTS_VOICES},
-            **LEGACY_TTS_VOICE_ALIASES,
-            **{name: name for name in TTS_LANGUAGE_PRESET_VOICES},
-        },
-        "default": DEFAULT_TTS_VOICE,
-    },
-)
 
 # ---- reasoning effort (reviewed opt-in built-ins) -------------------------
 # Keep explicit list-order translation separate from the final chat policy.

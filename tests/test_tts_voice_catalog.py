@@ -1,8 +1,8 @@
-"""Canonical TTS voice catalog: OpenAI voice names are the identities.
+"""Speech voices are engine data: OpenAI voice names are the identities.
 
-The gateway owns alias -> canonical mapping (one place).  Backends only ever
-see a canonical voice name, so the same name means the same speaker on every
-TTS tier/backend that shares the voice catalog.
+Each engine record in proxy_config.yml lists its voices; ``voice_aliases`` holds
+older spellings. Backends only ever see an engine voice id, so the same name
+means the same speaker on every engine that shares the reference clips.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import yaml
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,59 +22,53 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
-from gateway.transforms import (  # noqa: E402
-    CANONICAL_TTS_VOICES,
-    DEFAULT_TTS_VOICE,
-    LEGACY_TTS_VOICE_ALIASES,
-    run_request_pipeline,
-)
+from gateway.speech_voices import resolve_voice, voice_records  # noqa: E402
 from tests.test_openai_compat_validation import _FakeTTSAsyncClient  # noqa: E402
 
 OPENAI_VOICES = {
     "alloy", "ash", "ballad", "cedar", "coral", "echo", "fable",
     "marin", "nova", "onyx", "sage", "shimmer", "verse",
 }
+SPEECH = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))["model_aliases"]["speech"]
+OMNIVOICE = SPEECH["engines"]["omnivoice"]
+ALIASES = SPEECH["voice_aliases"]
 
 
-def map_voice(name: str) -> str:
-    return run_request_pipeline(["voxtral-voices"], {"voice": name})["voice"]
+def map_voice(name: str) -> str | None:
+    return resolve_voice(OMNIVOICE, ALIASES, name.lower())
 
 
-class CanonicalVoiceMappingTests(unittest.TestCase):
-    def test_canonical_set_is_openais_current_voice_list(self) -> None:
-        self.assertEqual(set(CANONICAL_TTS_VOICES), OPENAI_VOICES)
+class SeededVoiceDataTests(unittest.TestCase):
+    def test_the_cloned_voices_are_openais_voice_list_then_the_design_presets(self) -> None:
+        ids = [record["id"] for record in voice_records(OMNIVOICE)]
+        self.assertEqual(set(ids[:13]), OPENAI_VOICES)
+        self.assertTrue(all(i.endswith(("_female", "_male")) for i in ids[13:]))
+        # Chatterbox clones the same 13 clips; the design presets are OmniVoice's alone.
+        self.assertEqual([r["id"] for r in voice_records(SPEECH["engines"]["chatterbox"])], ids[:13])
 
-    def test_canonical_names_map_to_themselves(self) -> None:
-        for name in OPENAI_VOICES:
-            with self.subTest(voice=name):
-                self.assertEqual(map_voice(name), name)
-
-    def test_every_legacy_alias_resolves_to_a_canonical_voice(self) -> None:
-        self.assertTrue(LEGACY_TTS_VOICE_ALIASES)
-        for alias, target in LEGACY_TTS_VOICE_ALIASES.items():
+    def test_every_old_spelling_names_a_cloned_voice(self) -> None:
+        for alias, target in ALIASES.items():
             with self.subTest(alias=alias):
                 self.assertIn(target, OPENAI_VOICES)
                 self.assertNotIn(alias, OPENAI_VOICES)
                 self.assertEqual(map_voice(alias), target)
+                self.assertEqual(map_voice(target), target)  # aliases never chain
 
-    def test_known_legacy_names_keep_their_character(self) -> None:
+    def test_every_engine_maps_onto_its_own_listed_voices(self) -> None:
+        for engine_id, spec in SPEECH["engines"].items():
+            ids = {record["id"] for record in voice_records(spec)}
+            with self.subTest(engine=engine_id):
+                self.assertIn(spec["default_voice"], ids)
+                self.assertLessEqual(set((spec.get("voice_map") or {}).values()), ids)
+
+    def test_names_known_and_unknown(self) -> None:
         self.assertEqual(map_voice("cheerful_female"), "shimmer")
-        self.assertEqual(map_voice("neutral_female"), "alloy")
-        self.assertEqual(map_voice("casual_male"), "echo")
-
-    def test_unknown_and_empty_voice_use_documented_default(self) -> None:
-        self.assertEqual(DEFAULT_TTS_VOICE, "alloy")
-        for name in ("", "no_such_voice", "Jenny"):
+        self.assertEqual(map_voice("Marin"), "marin")
+        self.assertEqual(map_voice("de_female"), "de_female")
+        self.assertEqual(map_voice(""), "alloy")  # no voice: the engine default
+        for name in ("no_such_voice", "Jenny", " alloy"):
             with self.subTest(voice=name):
-                self.assertEqual(map_voice(name), DEFAULT_TTS_VOICE)
-
-    def test_language_presets_pass_through(self) -> None:
-        for name in ("de_female", "pt_male", "hi_male"):
-            self.assertEqual(map_voice(name), name)
-
-    def test_aliases_never_chain(self) -> None:
-        for target in LEGACY_TTS_VOICE_ALIASES.values():
-            self.assertEqual(map_voice(target), target)
+                self.assertIsNone(map_voice(name))
 
 
 class VoiceRouteTests(unittest.TestCase):
@@ -100,44 +95,58 @@ class VoiceRouteTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def speak(self, voice: str, model: str = "omnivoice") -> str:
-        resp = self.client.post(
+    def speak(self, voice: str, model: str = "omnivoice"):
+        return self.client.post(
             "/v1/audio/speech",
             json={"model": model, "voice": voice, "input": "hello", "response_format": "wav"},
         )
+
+    def sent_voice(self, voice: str, model: str = "omnivoice") -> str:
+        resp = self.speak(voice, model)
         self.assertEqual(resp.status_code, 200, resp.text)
         return json.loads(_FakeTTSAsyncClient.requests[-1]["content"])["voice"]
 
-    def test_backend_only_sees_canonical_voice_names(self) -> None:
+    def test_backend_only_sees_engine_voice_ids(self) -> None:
         # An engine that clones the OpenAI names (OmniVoice here) receives the canonical name.
-        self.assertEqual(self.speak("cheerful_female"), "shimmer")
-        self.assertEqual(self.speak("Marin"), "marin")
-        self.assertEqual(self.speak("nope"), DEFAULT_TTS_VOICE)
+        self.assertEqual(self.sent_voice("cheerful_female"), "shimmer")
+        self.assertEqual(self.sent_voice("Marin"), "marin")
+
+    def test_an_unknown_voice_is_refused_not_replaced(self) -> None:
+        sent = len(_FakeTTSAsyncClient.requests)
+        for model in ("omnivoice", "tts-1"):
+            with self.subTest(model=model):
+                resp = self.speak("nope", model=model)
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual((resp.json()["error"]["code"], resp.json()["error"]["param"]), ("voice_not_available", "voice"))
+        self.assertEqual(len(_FakeTTSAsyncClient.requests), sent)
 
     def test_a_preset_voice_engine_resolves_legacy_names_through_the_canonical_voice(self) -> None:
         # tts-1 is Supertonic while Chatterbox is disabled: a legacy name must land on the same preset
         # voice as its canonical name, not on the engine's default voice.
-        shimmer = self.speak("shimmer", model="tts-1")
+        shimmer = self.sent_voice("shimmer", model="tts-1")
         self.assertEqual(shimmer, "F4")
-        self.assertEqual(self.speak("cheerful_female", model="tts-1"), shimmer)
-        self.assertEqual(self.speak("casual_male", model="tts-1"), self.speak("echo", model="tts-1"))
-        self.assertEqual(self.speak("Marin", model="tts-1"), "F1")
-        self.assertEqual(self.speak("nope", model="tts-1"), "F1")  # unknown stays the engine default
-        self.assertEqual(self.speak("M3", model="tts-1"), "M3")  # an engine-native name passes through
+        self.assertEqual(self.sent_voice("cheerful_female", model="tts-1"), shimmer)
+        self.assertEqual(self.sent_voice("casual_male", model="tts-1"), self.sent_voice("echo", model="tts-1"))
+        self.assertEqual(self.sent_voice("Marin", model="tts-1"), "F1")
+        self.assertEqual(self.sent_voice("", model="tts-1"), "F1")  # no voice: the engine default
+        self.assertEqual(self.sent_voice("M3", model="tts-1"), "M3")  # an engine-native name passes through
+
+    def test_every_listed_kokoro_voice_reaches_the_engine(self) -> None:
+        self.assertEqual(self.sent_voice("bm_george", model="kokoro"), "bm_george")
 
     def test_voices_endpoint_lists_canonical_then_aliases(self) -> None:
         body = self.client.get("/v1/voices").json()
         entries = {v["voice_id"]: v for v in body["voices"]}
-        self.assertEqual(body["default_voice"], DEFAULT_TTS_VOICE)
+        self.assertEqual(body["default_voice"], "alloy")
         for name in OPENAI_VOICES:
             self.assertFalse(entries[name]["alias"], name)
             self.assertEqual(entries[name]["mapped_to"], name)
             self.assertIn(entries[name]["gender"], {"female", "male"})
-        for alias, target in LEGACY_TTS_VOICE_ALIASES.items():
+        for alias, target in ALIASES.items():
             self.assertTrue(entries[alias]["alias"], alias)
             self.assertEqual(entries[alias]["mapped_to"], target)
             self.assertEqual(entries[alias]["gender"], entries[target]["gender"])
-        # Every listed voice is accepted by the speech route without falling to the default.
+        # Every listed voice is accepted by the speech route.
         for voice_id, entry in entries.items():
             self.assertEqual(map_voice(voice_id), entry["mapped_to"])
         self.assertEqual(body["voices"][0]["voice_id"] in OPENAI_VOICES, True)

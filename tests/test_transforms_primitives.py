@@ -524,9 +524,9 @@ class TestRegistry:
         assert "x" not in result
 
     def test_pipeline_uses_module_registry_by_default(self) -> None:
-        # The module-level REGISTRY has voxtral-voices registered
-        result = run_request_pipeline(["voxtral-voices"], {"voice": "cheerful_female"})
-        assert result["voice"] == "shimmer"
+        # The module-level REGISTRY has the reviewed packs registered
+        result = run_request_pipeline(["llamacpp-cache-prompt"], {"prompt": "hi"})
+        assert result["cache_prompt"] is True
 
     def test_unknown_build_primitive_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown transform kind"):

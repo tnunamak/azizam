@@ -80,6 +80,7 @@ from gateway import (
     resource_decisions,
     route_registry,
     service_registry,
+    speech_voices,
     video_inputs,
     video_media_job_http,
     video_media_jobs,
@@ -249,10 +250,6 @@ from gateway.transforms import (
     TransformRequestError as _TransformRequestError,
     QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
-    ValueMapTransform as _ValueMapTransform,
-    CANONICAL_TTS_VOICES,
-    DEFAULT_TTS_VOICE,
-    LEGACY_TTS_VOICE_ALIASES,
 )
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
@@ -2833,58 +2830,6 @@ STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("
 EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "qwen-image-2.1-edit")
 
-_LANG_NAMES = {
-    "ar": "Arabic", "de": "German", "es": "Spanish", "fr": "French",
-    "hi": "Hindi", "it": "Italian", "nl": "Dutch", "pt": "Portuguese",
-}
-
-
-def _voxtral_voice_map() -> dict[str, str]:
-    """Return the voice-name -> canonical-voice dict from the TTS voice transform.
-
-    Single source of truth lives in the "voxtral-voices" registry entry in
-    gateway/transforms.py (the id is historical; it maps to OpenAI-named
-    canonical voices).  This accessor lets the voice listing endpoint read
-    from that same source instead of a duplicate constant.
-    """
-    try:
-        primitives = _TRANSFORM_REGISTRY.resolve("voxtral-voices")
-        if primitives and isinstance(primitives[0], _ValueMapTransform):
-            return dict(primitives[0]._map)
-    except (KeyError, IndexError, AttributeError):
-        pass
-    return {}
-
-
-def _voice_metadata(voice_id: str, mapped: str) -> dict:
-    """Derive {name, language, gender, description, alias} for a voice id."""
-    if voice_id in CANONICAL_TTS_VOICES:
-        info = CANONICAL_TTS_VOICES[voice_id]
-        return {
-            "name": voice_id.title(),
-            "language": "en",
-            "gender": info["gender"],
-            "description": info["description"],
-            "alias": False,
-        }
-    if voice_id in LEGACY_TTS_VOICE_ALIASES:
-        info = CANONICAL_TTS_VOICES[mapped]
-        return {
-            "name": voice_id.replace("_", " ").title(),
-            "language": "en",
-            "gender": info["gender"],
-            "description": f"Legacy alias of '{mapped}'",
-            "alias": True,
-        }
-    lang_code, _, gender = voice_id.partition("_")
-    return {
-        "name": f"{_LANG_NAMES.get(lang_code, lang_code)} {gender.capitalize()}",
-        "language": lang_code,
-        "gender": gender if gender in {"female", "male"} else "unknown",
-        "description": "Multilingual voice-design preset (speaker identity is not fixed)",
-        "alias": False,
-    }
-
 OPENAI_STATIC_MODEL_CATEGORIES = {
     "dall-e-2": "images",
     "dall-e-3": "images",
@@ -3956,15 +3901,22 @@ def convert_wav_to_audio_format(wav_content: bytes, audio_format: str) -> bytes:
         return Path(output_file.name).read_bytes()
 
 
-def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
-    """Map an OpenAI voice name onto a non-OmniVoice engine's own voice ids."""
-    voice_map = {str(k).lower(): str(v) for k, v in (engine.get("voice_map") or {}).items()}
-    native = {v.lower(): v for v in voice_map.values()}
-    key = requested_voice.lower()
-    if key in native:
-        return native[key]
-    key = LEGACY_TTS_VOICE_ALIASES.get(key, key)  # a legacy name (cheerful_female) means its canonical voice
-    return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
+def _speech_voice_aliases() -> dict[str, str]:
+    """Older voice spellings -> the spelling each means (``model_aliases.speech.voice_aliases``)."""
+    raw = (((config.get("model_aliases") or {}).get("speech") or {}).get("voice_aliases"))
+    return {str(k).lower(): str(v).lower() for k, v in raw.items()} if isinstance(raw, Mapping) else {}
+
+
+def _builtin_voice_names() -> frozenset[str]:
+    """Voice names of the default speech engine and their older spellings, which a custom voice may not take."""
+    records = speech_voices.voice_records(_speech_engine_for_service("tts"))
+    return frozenset(record["id"].lower() for record in records) | frozenset(_speech_voice_aliases())
+
+
+def _speech_engine_for_service(service_id: str) -> Mapping[str, Any]:
+    """The first speech engine served by ``service_id``: its voices serve requests and listings that name no engine."""
+    return next((spec for spec in _speech_engines().values()
+                 if isinstance(spec, Mapping) and str(spec.get("service") or "") == service_id), {})
 
 
 # ---- custom (user-created) voices -------------------------------------------
@@ -4451,12 +4403,21 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             )
             if custom_error is not None:
                 return custom_error
-            requested_voice = ""
         else:
             requested_voice = str(body_json.get("voice", "") or "").lower()
-            body_json["voice"] = requested_voice  # normalise to lowercase before transform
             body_json.pop("voice_ref", None)
             body_json.pop("ref_text", None)
+            voice = speech_voices.resolve_voice(
+                engine if engine is not None else _speech_engine_for_service(tts_service_id),
+                _speech_voice_aliases(), requested_voice,
+            )
+            if voice is None:
+                return openai_error_response(
+                    f"Voice '{requested_voice}' is not available for model '{requested_model}'. "
+                    "GET /v1/audio/voices lists the voices.",
+                    status_code=400, param="voice", code="voice_not_available",
+                )
+            body_json["voice"] = voice
         if engine is not None:
             tts_service_id = model_resolution.alias.service or "tts"
             if tts_service_id != "tts":
@@ -4470,13 +4431,6 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 if service_response is not None:
                     return service_response
                 headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
-        transform = engine.get("voice_transform") if engine is not None else "voxtral-voices"
-        if custom_voice is not None:
-            pass  # voice and voice_ref were set by _apply_custom_voice
-        elif transform:
-            _run_request_pipeline([str(transform)], body_json, _TransformContext(), _TRANSFORM_REGISTRY)
-        else:
-            body_json["voice"] = _engine_voice(engine, requested_voice)
         body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
 
         engine_streams = engine is not None and bool_from_config(engine.get("streaming"), False)
@@ -14612,6 +14566,7 @@ voices_api.register_voice_routes(
         probe_quality=lambda reference: _probe_voice_quality(reference),
         design_voice=lambda prompt, script, seed: _design_voice(prompt, script, seed),
         design_settings=lambda: _voice_design_settings(),
+        builtin_voice_names=lambda: _builtin_voice_names(),
         compatible_engines=lambda: _custom_voice_engines(),
         quality_warn_below=lambda: float(_voice_settings().get("quality_warn_below", 0.45)),
     ),
@@ -15879,7 +15834,6 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     # The browser has a session, not a public API key. Carry the configured
     # voice contract on each already-authorized speech row so it can choose
     # a voice before creating its temporary Try key.
-    from gateway.speech_voices import speech_voice_catalog
     for row in [*catalog["aliases"], *catalog["models"]]:
         if not any(cap["intent"] == "speech.synthesis" for cap in row["capabilities"]):
             continue
@@ -15887,7 +15841,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             resolution = resolve_model_for_operation("speech", row["id"])
             spec = resolution.alias.engine_spec if resolution.alias else None
             if spec is not None:
-                row["speech_voices"] = speech_voice_catalog(spec, _TRANSFORM_REGISTRY)
+                row["speech_voices"] = speech_voices.speech_voice_catalog(spec)
         except (ModelCompatibilityError, KeyError):
             # Unknown choices remain empty rather than borrowing another model's voices.
             continue
@@ -18643,29 +18597,33 @@ async def llms_txt(request: Request):
 
 
 def _speech_engine_voices() -> dict[str, Any]:
-    """Voices of every deployed non-OmniVoice speech engine, keyed by engine id.
+    """Voices of every deployed speech engine that maps OpenAI voice names, keyed by engine id.
 
-    ``voices`` maps each OpenAI voice name to the engine's own voice;
+    ``voices`` maps each accepted name to the engine's own voice, described by the record of
+    that name in the default voice list unless the engine's own record says otherwise;
     ``native_voices`` are the ids an engine accepts directly.
     """
     section = (config.get("model_aliases") or {}).get("speech") or {}
     available = _alias_engine_available_for("speech")
+    shared = {record["id"]: record for record in speech_voices.voice_records(_speech_engine_for_service("tts"))}
     out: dict[str, Any] = {}
     for engine_id, spec in (section.get("engines") or {}).items():
         if not isinstance(spec, Mapping) or not spec.get("voice_map") or not available(str(engine_id), spec):
             continue
         voice_map = {str(k).lower(): str(v) for k, v in spec["voice_map"].items()}
+        own = {record["id"]: record for record in speech_voices.voice_records(spec)}
         out[str(engine_id).lower()] = {
             "model": spec.get("model"),
             "service": spec.get("service"),
             "default_voice": spec.get("default_voice"),
             "voices": [
                 {"voice_id": name, "id": name, "name": name.title(), "mapped_to": native, **{
-                    k: v for k, v in CANONICAL_TTS_VOICES.get(name, {}).items()
+                    k: v for record in (shared.get(name, {}), own.get(name, {})) for k, v in record.items()
+                    if k in ("gender", "description")
                 }}
                 for name, native in sorted(voice_map.items())
             ],
-            "native_voices": list(spec.get("voices") or sorted(set(voice_map.values()))),
+            "native_voices": list(own) or sorted(set(voice_map.values())),
         }
     return out
 
@@ -18684,27 +18642,31 @@ async def list_voices(request: Request):
     if policy_response is not None:
         return policy_response
 
-    # Single source of truth: derive every voice the speech endpoint accepts.
-    # The voice map lives in the voxtral-voices transform (gateway/transforms.py).
-    # If you can pass it to /v1/audio/speech, you can find it here.
-    _vmap = _voxtral_voice_map()
-    voices = []
-    for voice_id in sorted(_vmap.keys()):
-        mapped = _vmap[voice_id]
-        meta = _voice_metadata(voice_id, mapped)
-        voices.append({
+    # The voices of the engine behind the default speech service (what a request that names no
+    # engine speaks with), in their data order, then the older spellings that resolve to them.
+    default_engine = _speech_engine_for_service("tts")
+    records = {record["id"]: record for record in speech_voices.voice_records(default_engine)}
+    voices = [
+        {
             "voice_id": voice_id,
             # `id` is what Open WebUI reads ({v['id']: v['name']}); `voice_id` is kept for existing clients.
             "id": voice_id,
-            "name": meta["name"],
-            "language": meta["language"],
-            "gender": meta["gender"],
-            "description": meta["description"],
-            "mapped_to": mapped,
-            "alias": meta["alias"],
-        })
-    # Canonical voices first, then aliases and language presets.
-    voices.sort(key=lambda v: (v["voice_id"] not in CANONICAL_TTS_VOICES, v["alias"], v["voice_id"]))
+            "name": record.get("name") or voice_id,
+            "language": record.get("language"),
+            "gender": record.get("gender"),
+            "description": record.get("description"),
+            "mapped_to": voice_id,
+            "alias": False,
+        }
+        for voice_id, record in records.items()
+    ]
+    for alias, target in sorted(_speech_voice_aliases().items()):
+        if target in records:
+            voices.append({
+                "voice_id": alias, "id": alias, "name": alias.replace("_", " ").title(),
+                "language": records[target].get("language"), "gender": records[target].get("gender"),
+                "description": f"Legacy alias of '{target}'", "mapped_to": target, "alias": True,
+            })
     # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
     try:
         after, limit = voices_api.parse_page_args(request)
@@ -18722,7 +18684,7 @@ async def list_voices(request: Request):
         voices = []
     engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
                      if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
-    return {"default_voice": DEFAULT_TTS_VOICE, "voices": voices, "engines": engine_voices, **page}
+    return {"default_voice": default_engine.get("default_voice"), "voices": voices, "engines": engine_voices, **page}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)

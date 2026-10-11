@@ -541,7 +541,12 @@ class SpeechEngineRoutingTests(unittest.TestCase):
 
     def test_native_voice_and_unknown_voice(self):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
-        self.assertEqual(self._speak("tts-fast", "no-such-voice")["body"]["voice"], "F1")
+        resp = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "tts-fast", "voice": "no-such-voice", "input": "hello", "response_format": "wav"},
+        )
+        # An unknown voice is refused, not replaced by the engine default.
+        self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (400, "voice_not_available"))
 
     def test_tts_alias_goes_to_supertonic_with_mapped_voices(self):
         sent = self._speak("tts", "nova")

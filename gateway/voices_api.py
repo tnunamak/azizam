@@ -57,6 +57,7 @@ class VoiceApiDeps:
     probe_quality: Callable[[Path], Awaitable[dict[str, Any] | None]]
     design_voice: Callable[[str, str, int], Awaitable[bytes]]   # (engine instruction, script, seed) -> WAV bytes
     design_settings: Callable[[], Mapping[str, Any] | None]     # the design engine's ``voice_design`` data
+    builtin_voice_names: Callable[[], frozenset[str]]           # lower-case names a custom voice may not take
     compatible_engines: Callable[[], list[str]]
     quality_warn_below: Callable[[], float]
 
@@ -269,7 +270,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             voice_type = fields.get("type") or "audio_sample"
             if voice_type not in ("audio_sample", "prompt"):
                 raise VoiceError(400, "invalid_type", "type must be audio_sample or prompt.", param="type")
-            name = validate_name(fields.get("name"))
+            name = validate_name(fields.get("name"), reserved=deps.builtin_voice_names())
             store = deps.store()
             labels_raw = fields.get("labels")
             if isinstance(labels_raw, str):
@@ -358,7 +359,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             body = await _json_body(request)
             changes: dict[str, Any] = {}
             if "name" in body:
-                changes["name"] = validate_name(body["name"])
+                changes["name"] = validate_name(body["name"], reserved=deps.builtin_voice_names())
             if "description" in body:
                 if body["description"] is not None and (not isinstance(body["description"], str) or len(body["description"]) > 1000):
                     raise VoiceError(400, "invalid_description", "description must be a string of at most 1000 characters.", param="description")

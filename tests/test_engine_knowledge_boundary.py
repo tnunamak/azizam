@@ -388,9 +388,6 @@ _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
     "P2-2 reasoning dialect": {
         "gateway/transforms.py": {"ReasoningEffortTransform", "apply_thinking_suppression"},
     },
-    "P2-4 voice catalog": {
-        "gateway/transforms.py": {"DEFAULT_TTS_VOICE", "CANONICAL_TTS_VOICES", "LEGACY_TTS_VOICE_ALIASES"},
-    },
     "P2-5 audio intake": {
         "gateway/voice_audio.py": {"SampleLimits", "process_sample"},
         "proxy.py": {"_probe_voice_quality"},
@@ -413,6 +410,13 @@ _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
 _MIGRATED_POLICY_SYMBOLS: dict[str, dict[str, set[str]]] = {
     "P2-1 voice compiler": {
         "gateway/voice_design.py": {"_CATEGORIES", "_ORDER", "_NOISE", "VOCABULARY"},
+    },
+    "P2-4 voice catalog": {
+        "gateway/transforms.py": {
+            "DEFAULT_TTS_VOICE", "CANONICAL_TTS_VOICES", "LEGACY_TTS_VOICE_ALIASES", "TTS_LANGUAGE_PRESET_VOICES",
+        },
+        "gateway/custom_voices.py": {"RESERVED_NAMES"},
+        "proxy.py": {"_voxtral_voice_map", "_voice_metadata", "_engine_voice", "_LANG_NAMES"},
     },
 }
 

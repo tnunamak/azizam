@@ -1689,6 +1689,14 @@ answer once (an SSE request gets one delta). See the shared
 and streaming behavior. `GET /v1/audio/voices` lists each deployed engine's
 voices under `engines`.
 
+**Voices are engine data.** Each engine in `model_aliases.speech.engines` lists
+its `voices`; `voice_map` and the speech section's `voice_aliases` are accepted
+spellings (an OpenAI name such as `shimmer`, or an older one such as
+`cheerful_female`). A voice the model's engine does not list is
+`400 voice_not_available` (`param: voice`), not a silent default. Omitting
+`voice` uses the engine's `default_voice`. An engine with no `voices` list takes
+any voice id.
+
 ### Custom voices
 
 Users can create their own voices and use them with the speech route. The request

@@ -35,7 +35,7 @@ below are not evidence for the current configuration.
 | P2-1 Voice-design vocabulary | Confirmed; migrated (see Runtime migrations) | `gateway/voice_design.py:design_instruct` owns categories, aliases, precedence, ignored terms and comma rendering. `gateway/voices_api.py:_create_prompt_voice` calls it before the injected backend, so unsupported descriptions fail before dispatch. `proxy.py:_design_voice` also chooses a compiled default engine and sends a fixed voice. Migration planned. |
 | P2-2 Reasoning dialect | Confirmed | `gateway/transforms.py:ReasoningEffortTransform` accepts configured budgets but defaults to its compiled table, writes `thinking_budget_tokens`, maps unlimited to `-1`, and suppresses thinking through a fixed nested key. Opt-in attachment does not make these values operator data. Migration planned. |
 | P2-3 Quarantine properties | Confirmed, with existing test coverage | All ten property sets in `gateway/engine_quarantine.py` are compiled backend-ID policy in addition to `LOCAL_SWAP_BACKENDS`. The old boundary guard freezes only that last set. `tests/test_engine_quarantine.py` tests named backends and unknown examples, but does not reject every possible added member, table or changed predicate. Freeze all tables and predicate bodies now; migrate consumers later. |
-| P2-4 Speech catalog/default | Partly confirmed | The catalog, aliases, language presets and default remain in `gateway/transforms.py`; `proxy.py:_engine_voice`, `_voice_metadata` and `list_voices` consume them. `voxtral-voices` itself is permitted declarative seed data. Speech dispatch uses the selected alias's map/default/transform, with a global transform fallback for non-alias resolution. The audit's Try `alloy` initializer is already absent at this base: `gateway/speech_voices.py` projects per-model choices and Try uses `selectedVoice`. Global backend catalog migration planned. |
+| P2-4 Speech catalog/default | Partly confirmed; migrated (see Runtime migrations) | The catalog, aliases, language presets and default remain in `gateway/transforms.py`; `proxy.py:_engine_voice`, `_voice_metadata` and `list_voices` consume them. `voxtral-voices` itself is permitted declarative seed data. Speech dispatch uses the selected alias's map/default/transform, with a global transform fallback for non-alias resolution. The audit's Try `alloy` initializer is already absent at this base: `gateway/speech_voices.py` projects per-model choices and Try uses `selectedVoice`. Global backend catalog migration planned. |
 | P2-5 Audio intake | Partly confirmed | `gateway/voice_audio.py` cites backend preferences and owns crop/DSP defaults. `SampleLimits` already injects duration and byte limits from `proxy.py:_voice_sample_limits`; 24 kHz mono PCM is also the stored-reference contract. `_probe_voice_quality` has a compiled fallback service ID that also needs a configured destination. Comments do not prove all DSP constants are backend requirements. Separate backend policy only where demonstrated; retain the storage contract. |
 | P2-6 STT diagnostics | Confirmed | `gateway/stt_chunking.py:_parse_mergeable_chunk_payload` removes `timing` using `_ENGINE_DIAGNOSTIC_FIELDS` before rejecting unsupported fields for every service. `execute_chunking` feeds it raw response bytes; the `proxy.py` upload closure does not apply response transforms. The full service config is retained in `SttExecutionConfig.backend_config`, but this parser does not consume its transforms. Migration planned, pending preservation evidence. |
 | P2-7 Try fallback capabilities | Confirmed | `web/src/app/try/page.tsx:loadCatalogSection` assigns every fallback `/openai/v1/models` ID to chat when the richer catalog fails. IDs alone establish no capability. Remove that inference now; use reported capabilities and keep unclassified IDs explicitly unknown. |
@@ -143,9 +143,9 @@ Implementation order:
 4. Move P2-2 dialect policy and P2-3 properties independently. Review P2-5
    thresholds against actual service requirements; retain P2-8/9/10 contracts.
 
-**Preservation status (2026-10-11, `fix/engine-p2-runtime`):** P2-1 is
-migrated with differential proof; see "Runtime migrations" below. P2-2/3/4/5/6
-remain UNVERIFIED plan items. The differential fixtures were read from the
+**Preservation status (2026-10-11, `fix/engine-p2-runtime`):** P2-1 and P2-4
+are migrated with differential proof; see "Runtime migrations" below.
+P2-2/3/5/6 remain UNVERIFIED plan items. The differential fixtures were read from the
 owner's registry and `proxy_config.yml` read-only; no live gateway call was made.
 
 ### Runtime migrations
@@ -164,6 +164,15 @@ intended changes it names.
 | Item | Status | Data home | Proof |
 |---|---|---|---|
 | P2-1 | Migrated | `model_aliases.speech.engines.<voices.design_engine>.voice_design` in `proxy_config.yml`: ordered `vocabulary` (category → attribute → words), `ignore`, `separator`, and the engine `request` template (fixed voice and response format). No `voice_design.vocabulary` means the exact description is passed through. `voices.design_engine` has no compiled default; an unset value answers 503 "not configured". | 279 voice-design cases byte-identical (every vocabulary word plain, upper case and in a sentence; overlaps; words inside words; ignored and noise words; punctuation; non-ASCII; explicit and default script; fixed, string, zero and default seed; errors; engine 400/500; disabled engine). Replacement engine without vocabulary receives the free text with only `input`/`instructions`/`seed`. |
+
+| P2-4 | Migrated | Each `model_aliases.speech.engines.<id>` record: `voices` (the complete list; an id or `{id, name, language, gender, description}`), `voice_map` (accepted spelling → voice id, never a listed voice), `default_voice` (used only when no voice is named). `model_aliases.speech.voice_aliases` holds the older spellings (Voxtral presets, retired names), applied before `voice_map`. The default listing and requests that resolve to no engine use the engine of service `tts`. Try's picker (`gateway/speech_voices.py`) shows exactly the listed voices, names as written. `voice_transform` and the `voxtral-voices` registry entry are removed. | Of 937 speech cases (12 model names × 78 voices: omitted/empty/null, the 13 OpenAI names in lower and upper case, mixed case, the 11 old spellings, the 16 presets, native ids of every engine, unknown and whitespace names, custom ids) plus the voice listing, 714 cases and the listing are byte-identical. The remaining 223 are the intended changes the test classifies and counts: 222 unknown voices that the old code silently replaced by the engine default now answer `400 voice_not_available`, and the listed Kokoro voice `bm_george` reaches Kokoro instead of `af_heart`. The ungoverned discovery snapshot (Chatterbox enabled) stays byte-identical. A replacement engine's novel voice and default, and an engine with no voice list, follow their own data. |
+
+Intended P2-4 changes beyond the owner fixture: a design preset such as
+`de_female` sent to Chatterbox (disabled in the owner's registry) is now
+refused, because Chatterbox lists only the 13 clips; a custom voice may no
+longer take a preset name; an engine without a `voices` list passes an unknown
+voice through instead of its `default_voice`. The old spellings remain accepted
+until the UX batch 1 cutover removes `voice_aliases`.
 
 The `request` template is not a transform row: request transforms append keys,
 so they cannot keep the old key order, and byte-identical requests were the gate.

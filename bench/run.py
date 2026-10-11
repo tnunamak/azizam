@@ -56,7 +56,7 @@ def prepare(state: Path):
                         "workflows_dir": str(state / "workflows"), "default_model": "bench-image"},
         },
         "model_aliases": {
-            "speech": {"engines": {"bench-tts": {"service": "tts", "model": "bench-tts", "voice_transform": "",
+            "speech": {"engines": {"bench-tts": {"service": "tts", "model": "bench-tts",
                                                       "voice_map": {"alloy": "alloy", "nova": "nova"}}}, "stable": {"tts": "bench-tts"}},
             "transcriptions": {"engines": {"bench-stt": {"service": "stt", "model": "bench-stt"}}, "stable": {"stt": "bench-stt"}},
         },
