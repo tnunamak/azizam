@@ -79,6 +79,15 @@ Path tokens are configured empty (`proxy_config.yml:1450`), and the config
 comment says no public route accepts a token prefix (`:1446-1448`). The code
 path still exists (`proxy.py:2374-2384`, `:30212-30214`).
 
+A third path has no plan at all. When a key is not an Azizam key but starts
+with `sk-`, many routes forward it to LiteLLM with an empty Azizam identity
+and skip Azizam's route policy (`proxy.py:2498-2535`; for example `:25490`).
+LiteLLM then decides alone. Whether LiteLLM is enabled on the instance is
+**UNVERIFIED**.
+
+Signed creation links check only the signature and expiry
+(`proxy.py:23631-23670`), not whether the creator may still use the work.
+
 ### 1.5 Two systems called "plan"
 
 1. **Access plans** (`profiles` table, `AppProfile`, evaluated by
@@ -294,9 +303,11 @@ dispatch, and at output download and share.
 | LAN request without a key | **Removed.** 401 `key_required`: "This gateway needs an app key. Create one in Apps." | `proxy.py:2187-2230` (LAN part), `:2385-2402`, `:2487-2489`; `lan_auth_policy.py`; config keys `lan_bypass_enabled`, `lan_bypass_cidrs` |
 | Path token | **Removed.** Not routed today and none are configured | `proxy.py:2234`, `:2374-2384`, `:2491-2494`, `:30212-30214`; config key `path_tokens` |
 | Auth disabled | **Removed.** Authentication is always on | `AUTH_ENABLED` branch at `proxy.py:2468`; config key `auth.enabled` |
-| Public paths (`/health`, showcase pages and examples) | Kept. They never call the evaluator and never dispatch, list models or return creations | `is_public_path` (`proxy.py:2431-2444`) |
+| Public paths (`/health`, showcase pages and examples) | Kept. They never call the evaluator and never dispatch, list models or return creations. `public_paths` is config data (`proxy.py:1574`) and accepts `*` prefixes, so startup rejects any entry that matches a protected route in the route inventory | `is_public_path` (`proxy.py:2431-2444`) |
 | Public Ollama discovery (`ollama_compat_discovery`) | **Removed.** With no identity there is no plan to filter the list. Off today (`proxy_config.yml:1418`) | `proxy.py:2172-2175`, `:2436-2437` |
 | `?api_key=` | Kept (it is a key). Off by default | — |
+| Unknown `sk-` key forwarded to LiteLLM ("delegation") | **Removed.** Today any `sk-` key that is not an Azizam key runs with no Azizam identity, and Azizam's route policy is skipped. Only LiteLLM checks it. Models served through LiteLLM become catalog items that plans grant like any other | `_is_delegatable_litellm_key` and `authenticate_runtime_or_litellm_request` (`proxy.py:2498-2535`); the `delegated_to_litellm` skips, e.g. `proxy.py:25490`; `allow_litellm_delegation=True` call sites (`:25485`, `:26439`, `:26897`, `:26957`, `:27019`, `:27058`, `:27097`, `:27292`) |
+| Signed creation links (`/v1/assets/{id}/content`, `/v1/images/{id}/content`) | Kept as links, but each creation records its person and app. Download checks that their current plans still allow the recorded bundle (v3 R4). A link cannot outlive a disabled person or app, or a plan that no longer allows the work. A link never grants generation | `_signed_asset_content_response` checks signature and expiry only (`proxy.py:23631-23670`); the "URL without md predates the control" branch (`:23655-23656`) also goes (P11) |
 | Missing identity anywhere | Deny; never `DEFAULT_PROFILE` | `runtime_auth.py:292`; `proxy.py:13406-13409`, `:29875`; `profiles.py:365-371`; `DEFAULT_PROFILE` itself |
 | First-run setup network (`setup_allowed_cidrs`) | Kept as its own setting. It falls back to the LAN list today (`proxy.py:2370-2371`); it must not after the LAN list is removed | — |
 
@@ -661,6 +672,8 @@ is no partial undo.
 | M6 | Apps owned by service accounts | They move to the owner |
 | M7 | Disabled apps and revoked keys | Candidates for owner decision 4 |
 | M8 | The deployed config's `auth` block | Shows whether LAN bypass is really on |
+| M9 | Whether LiteLLM is enabled, and receipts or LiteLLM logs of delegated `sk-` requests | Which clients use LiteLLM virtual keys directly and will need Azizam keys. Whether delegated requests write receipts is **UNVERIFIED** |
+| M10 | Creations without a recorded person and app | Their signed links stop working after the cut-over unless the owner assigns them (owner keeps the files; only the links change) |
 
 ### 4.3 Proposed mapping for this instance
 
@@ -724,7 +737,7 @@ the YAML bootstrap maps; the `proxy_api_keys.yml` import; `ModelAccessPolicy`;
 the `default`/`default-local` ids; `DEFAULT_PROFILE`; `LEGACY_ACCESS_PLAN_NAMES`
 (`settings/page.tsx:99-101`); the category kernel's legacy mode; LAN bypass,
 LAN placeholder keys, path tokens, the auth-off switch and public Ollama
-discovery. Audit events and receipts are kept unchanged (P19): history
+discovery; LiteLLM key delegation. Audit events and receipts are kept unchanged (P19): history
 records what happened under the old names.
 
 ### 4.4 Behavior changes for owner approval
@@ -750,6 +763,8 @@ until check M2 runs.
 | 14 | Providers page | "Allowed plans" becomes a read-only list. The set of plans with provider access is unchanged |
 | 15 | Settings | "Default plan" is gone; "Access plan for new invitations" starts at "Ask each time" |
 | 16 | Any person created later without an invitation (OIDC) | Cannot generate until the owner chooses a plan (today: built-in default) |
+| 17 | Any client that sends a LiteLLM virtual key (`sk-…`) to Azizam | **Loses access** (401 `key_invalid`). It needs an Azizam app key. Which clients: check M9 |
+| 18 | Signed creation links already shared | Stop working if the creating person or app is disabled, or its plan no longer allows the work. Links to creations with no recorded person and app follow check M10 |
 
 ## 5. Test plan
 
@@ -779,6 +794,8 @@ the test if called:
 | No key from 127.0.0.1, ::1, 192.168.1.50, 10.0.0.5, 100.64.1.1, an IPv6 ULA and a public address | 401 `key_required`; engine not called |
 | Placeholder key from a LAN address | 401 `key_invalid` |
 | Former path-token prefix `/tok_x/v1/chat/completions` | 401; no token stripping |
+| Unknown `sk-` key on every former delegation route, with LiteLLM enabled | 401 `key_invalid`; LiteLLM not called |
+| Signed creation link after the creator's app is disabled, or its plan stops allowing the work | 403; file not returned |
 | Forged `X-Forwarded-For: 192.168.1.5` from an untrusted peer | 401 |
 | Config still containing `lan_bypass_enabled`, `path_tokens` or `auth.enabled: false` | Startup fails with a message naming the removed key |
 | Revoked key; key of a disabled app; key of an app whose person is disabled | 401 / 403 |
@@ -786,9 +803,10 @@ the test if called:
 | Person plan allows, app plan does not | 403 `not_in_access_plan` (app) |
 | Browser session of a person with no plan on Home, Make, Try, Library, catalog | 403 / empty list; engine not called |
 | `/health` and showcase pages | 200; never dispatch, list models or return creations |
+| Config `public_paths` containing `/v1/*` or any protected route | Startup fails naming the entry |
 | `/v1/models`, Ollama `/api/tags`, MCP `capabilities` | Only allowed items, equal to Check access |
 | Output download and share after the plan is changed | Current plan checked (v3 R4) |
-| Static guard | `DEFAULT_PROFILE`, `default-local`, `lan_bypass`, `path_tokens`, `allowed_plans`, `legacy_identity`, `LEGACY_ACCESS_PLAN` do not appear in `gateway/`, `proxy.py` or `web/src` (like `tests/test_engine_knowledge_boundary.py`) |
+| Static guard | `DEFAULT_PROFILE`, `default-local`, `lan_bypass`, `path_tokens`, `allowed_plans`, `legacy_identity`, `LEGACY_ACCESS_PLAN`, `delegated_litellm` do not appear in `gateway/`, `proxy.py` or `web/src` (like `tests/test_engine_knowledge_boundary.py`) |
 
 ### 5.3 Category exclusion
 
@@ -839,6 +857,7 @@ copy of `data/`.
 | Risk | Mitigation |
 |---|---|
 | The owner locks themselves out of generation by narrowing their own plan | The review warns "You will lose access to …"; the admin API never depends on plans, so the owner can always repair it |
+| Clients that use LiteLLM virtual keys directly stop working | Check M9 before apply; each gets an Azizam app key |
 | Unknown LAN devices stop working after the cut-over | Check M2 shows keyless traffic volume; the owner lists devices before apply; owner decision 1 offers a named app |
 | Untagged items vanish for blocked plans, which may surprise a household | The review counts "Not tagged yet" before apply; Categories shows an "Untagged" list with bulk tagging |
 | Exact grants make plans tedious as models change | "Offer new models and workflows" and the "Who can use it?" step; revision re-pins show in the preview |
