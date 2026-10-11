@@ -210,3 +210,148 @@ it("places a selected model's outage and Status link beside its picker", async (
   expect(link.closest("form")).toBe(screen.getByRole("combobox", { name: "Model" }).closest("form"));
   expect(link.parentElement).toHaveTextContent("Picture studio can’t take requests right now. See Status");
 });
+
+describe("fallback capabilities and catalog envelopes", () => {
+  const unavailable = () => new Response("", { status: 503 });
+  function withTryKey() {
+    account.params = new URLSearchParams("capability=chat");
+    account.session.mockResolvedValue({
+      authenticated: true, apps: [{ id: "try-app", name: "Try" }],
+    });
+    account.mintKey.mockResolvedValue({ id: "test-key", api_key: "fixture-only" });
+  }
+
+  it.each([
+    ["audio", false, false],
+    ["workflow", false, true],
+    ["music", true, false],
+    ["sfx", true, true],
+  ])("shows unsupported %s fallback rows (mixed=%s, workflow failure=%s)",
+    async (capability, mixed, workflowFailure) => {
+      withTryKey();
+      const rows = [
+        { id: "novel-work", capability },
+        ...(mixed ? [{ id: "novel-chat", name: "Discovered chat", capability: "chat" }] : []),
+      ];
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        if (url.includes("workflows"))
+          return workflowFailure ? unavailable() : json({ workflows: [] });
+        if (url.includes("/models/catalog")) return unavailable();
+        if (url.endsWith("/models")) return json({ data: rows });
+        return json({ choices: [{ message: { content: "Fixture reply" } }] });
+      }));
+      const user = userEvent.setup();
+      render(<TryPage />);
+      await screen.findByRole("button", { name: "Retry model catalog" });
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await screen.findByText(/1 model has no supported Try capability/);
+      const picker = screen.getByRole("combobox", { name: "Model" });
+      if (mixed) {
+        expect(picker).toHaveTextContent("Discovered chat");
+        await user.click(picker);
+        expect(screen.getAllByRole("option")).toHaveLength(1);
+        await user.keyboard("{Escape}");
+      } else {
+        expect(picker).toBeDisabled();
+      }
+      await user.click(screen.getByRole("tab", { name: "Workflow" }));
+      expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+      expect(screen.getByText(/1 model has no supported Try capability/)).toBeVisible();
+      if (workflowFailure)
+        expect(screen.getByRole("button", { name: "Retry workflow catalog" })).toBeVisible();
+    });
+
+  it.each([{}, { aliases: [], models: {} }, null])(
+    "treats malformed rich HTTP 200 as retryable on first load: %j", async (body) => {
+      let payload: unknown = body;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+        json(url.includes("workflows") ? { workflows: [] } : payload)));
+      const user = userEvent.setup();
+      render(<TryPage />);
+      await screen.findByRole("button", { name: "Retry model catalog" });
+      expect(screen.queryByText("No models are listed")).toBeNull();
+      expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+      payload = catalog;
+      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Krea 2 Turbo"));
+    });
+
+  it("preserves a chosen model after a malformed rich refresh and allows retry", async () => {
+    let payload: unknown = catalog;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      json(url.includes("workflows") ? { workflows: [] } : payload)));
+    const user = userEvent.setup();
+    const view = render(<TryPage />);
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Krea 2 Turbo"));
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "Anima Turbo (anime)" }));
+    payload = {};
+    account.params = new URLSearchParams("capability=images");
+    view.rerender(<TryPage />);
+    await screen.findByRole("button", { name: "Retry model catalog" });
+    expect(screen.getByRole("combobox")).toHaveTextContent("Anima Turbo (anime)");
+    expect(screen.queryByText("No models are listed")).toBeNull();
+    payload = catalog;
+    await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry model catalog" })).toBeNull());
+    expect(screen.getByRole("combobox")).toHaveTextContent("Anima Turbo (anime)");
+  });
+
+  it.each([{}, { data: {} }, null])(
+    "treats malformed fallback HTTP 200 as retryable on first load: %j", async (body) => {
+      withTryKey();
+      let payload: unknown = body;
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        if (url.includes("workflows")) return json({ workflows: [] });
+        if (url.includes("/models/catalog")) return unavailable();
+        return json(payload);
+      }));
+      const user = userEvent.setup();
+      render(<TryPage />);
+      await screen.findByRole("button", { name: "Retry model catalog" });
+      await user.click(screen.getByRole("button", { name: "Run" }));
+      await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        "/openai/v1/models", expect.anything()));
+      await screen.findByRole("button", { name: "Retry model catalog" });
+      expect(screen.queryByText("No models are listed")).toBeNull();
+      expect(screen.getByRole("combobox")).toBeDisabled();
+      payload = { data: [{ id: "new-chat", name: "Recovered chat", capability: "chat" }] };
+      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Recovered chat"));
+    });
+
+  it("preserves a selected model on malformed fallback refresh, then accepts valid empty", async () => {
+    withTryKey();
+    let first = true;
+    let payload: unknown = { data: {} };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("workflows")) return json({ workflows: [] });
+      if (url.includes("/models/catalog")) {
+        if (first) { first = false; return json(catalog); }
+        return unavailable();
+      }
+      if (url.endsWith("/models")) return json(payload);
+      return json({ choices: [{ message: { content: "Fixture reply" } }] });
+    }));
+    const user = userEvent.setup();
+    render(<TryPage />);
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"));
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    await screen.findByRole("button", { name: "Retry model catalog" });
+    expect(screen.getByRole("combobox")).toHaveTextContent("Chat model");
+    expect(screen.queryByText("No models are listed")).toBeNull();
+    payload = { data: [] };
+    await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+    await screen.findByText("No models are listed");
+    expect(screen.getByRole("combobox")).toBeDisabled();
+  });
+
+  it("reserves the empty state for valid rich arrays", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [] })));
+    render(<TryPage />);
+    await screen.findByText("No models are listed");
+    expect(screen.queryByRole("button", { name: "Retry model catalog" })).toBeNull();
+  });
+});

@@ -648,7 +648,7 @@ function groupCatalog(payload: unknown) {
     !Array.isArray((payload as { aliases?: unknown }).aliases) ||
     !Array.isArray((payload as { models?: unknown }).models)
   ) {
-    return {};
+    throw new Error("Invalid model catalog: expected aliases and models arrays");
   }
   const records = [
     ...(payload as { aliases: unknown[] }).aliases,
@@ -748,7 +748,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
     typeof payload !== "object" ||
     !Array.isArray((payload as { workflows?: unknown }).workflows)
   ) {
-    return [];
+    throw new Error("Invalid workflow catalog: expected a workflows array");
   }
   const options: CatalogOption[] = [];
   for (const value of (payload as { workflows: unknown[] }).workflows) {
@@ -902,7 +902,9 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
   const tabs = new Set<TryTab>();
   for (const intent of intents) {
     const tab = CAPABILITY_TABS[intent] ?? INTENT_TABS[intent];
-    if (tab) tabs.add(tab);
+    // Model rows lack the runnable descriptor required by Workflow. Only the
+    // separately discovered workflow catalog can populate that picker.
+    if (tab && tab !== "workflow") tabs.add(tab);
   }
   if (tabs.has("image") && !makesPicturesFromText(record)) tabs.delete("image");
   return [...tabs];
@@ -1379,8 +1381,11 @@ export default function TryPage() {
           signal: controller.signal,
         });
         if (!fallback.ok) throw new Error("Model catalog unavailable");
-        const payload = (await fallback.json()) as { data?: unknown };
-        const rows = Array.isArray(payload.data) ? payload.data : [];
+        const payload: unknown = await fallback.json();
+        if (!payload || typeof payload !== "object" ||
+            !Array.isArray((payload as { data?: unknown }).data))
+          throw new Error("Invalid fallback model catalog: expected a data array");
+        const rows = (payload as { data: unknown[] }).data;
         grouped = groupCatalog({ aliases: [], models: rows });
         unknownCount = rows.filter((row) => {
           if (!row || typeof row !== "object") return false;
@@ -2144,9 +2149,7 @@ export default function TryPage() {
                           tab.value === "workflow" ? "workflows" : "models"
                         ]
                       }
-                      unknownModelCount={
-                        tab.value === "workflow" ? 0 : unknownModelCount
-                      }
+                      unknownModelCount={unknownModelCount}
                       section={
                         tab.value === "workflow" ? "workflows" : "models"
                       }
@@ -2937,6 +2940,12 @@ function CatalogNotice({
   onRetry: () => void;
 }) {
   const label = section === "workflows" ? "Workflow" : "Model";
+  const unsupported = unknownModelCount ? (
+    <Badge variant="outline">
+      {unknownModelCount} model{unknownModelCount === 1 ? " has" : "s have"} no
+      supported Try capability and cannot be selected automatically.
+    </Badge>
+  ) : null;
   // ErrorState action buttons must not submit the surrounding Run form.
   if (state === "error")
     return (
@@ -2949,15 +2958,10 @@ function CatalogNotice({
             onClick: onRetry,
           }}
         />
+        {unsupported}
       </div>
     );
-  if (unknownModelCount)
-    return (
-      <Badge variant="outline">
-        {unknownModelCount} model{unknownModelCount === 1 ? " has" : "s have"} no
-        supported Try capability and cannot be selected automatically.
-      </Badge>
-    );
+  if (unsupported) return unsupported;
   if (state === "empty")
     return <Badge variant="outline">No {section} are listed</Badge>;
   return null;

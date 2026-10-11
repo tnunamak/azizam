@@ -59,12 +59,37 @@ used by seed data; moving a Python constant into another source file is insuffic
 | P2-2 | Existing reasoning policy `effort_budgets` and `default_effort`; proposed service `config.reasoning_wire` for destination, unlimited sentinel and zero-budget kwargs. Compile this data to service `config.transforms` using existing param-map/value-map/default-params and predicates where semantics permit. Retain validation/idempotence as a reviewed generic built-in if primitives cannot preserve them. | Use current attachment order and policy to compare serialized requests and error responses for all efforts, null/absent/invalid effort, explicit existing budgets, zero, unlimited and repeated internal routing. Include a replacement destination/sentinel and prove removing the attachment survives reload. Do not claim a six-primitive replacement until existing-budget and error semantics match. |
 | P2-3 | Existing service `config.default_model` and lifecycle `driver_config`; proposed fields listed below for the remaining properties. | For each property, capture current service data and compare old/new routing, activation payloads, probes, role resolution and context values. Rename the service ID without changing its properties and require identical behavior. Freeze tests alone do not establish migration parity. |
 | P2-4 | Service `config.speech_voices` (proposed) owns `voices` metadata, `default_voice` and unknown-value policy. Project that through the existing `speech_voice_catalog`/catalog `speech_voices` path. Preserve existing alias `voice_map`, `default_voice` and `voice_transform` values during migration. Attach value-map rows for compatibility aliases and default-params for omission-only defaults. | With the current service/alias snapshot and reference identities, compare exact outbound request bytes for omitted, empty, mixed-case, canonical, legacy, language-preset, native, unknown and custom voice IDs on alias and non-alias routes. Compare catalog ordering/metadata too. A seed value-map currently defaults unknown supplied IDs as well as missing ones; do not silently change that behavior. Test a replacement service's novel voice and custom default separately. |
-| P2-5 | Keep canonical stored WAV encoding as gateway policy. Proposed service `config.voice_intake` owns demonstrated backend-specific crop, minimum speech, gain or denoise policy. Existing global `voices` limits remain the compatibility source until explicitly migrated. | Replay identical audio fixtures and current limits through old/new preprocessing with the same ffmpeg version; compare WAV bytes, measurements, warnings and errors. Cover silence, clipping, short/long input and denoise. Verify each service's selected intake policy without changing shared stored references. |
+| P2-5 | Keep canonical stored WAV encoding as gateway policy. Proposed service `config.voice_intake` owns demonstrated backend-specific crop, minimum speech, gain or denoise policy. Existing global `voices` limits remain the compatibility source until explicitly migrated. Proposed `voices.quality_probe.service_id` owns the probe destination; see the migration below. | Replay identical audio fixtures and current limits through old/new preprocessing with the same ffmpeg version; compare WAV bytes, measurements, warnings and errors. Cover silence, clipping, short/long input and denoise. Verify each service's selected intake policy without changing shared stored references. Also prove probe selection, requests and failure behavior using the cases below. |
 | P2-6 | Service `config.transforms` response row: `{"kind":"drop-params","phase":"response","drop":["timing"]}` on only the service that emits it. Apply after JSON decoding, before chunk validation, using the existing response pipeline. | Compare serialized final responses, status/errors and forwarded chunk requests against the old implementation using the current service snapshot, across timing/no-timing, multiple chunks and supported formats. Preserve strict rejection of every other unmergeable field. Confirm the attachment affects chunk responses at the intended boundary and does not alter direct non-chunk responses. A replacement diagnostic must need only a different row. |
 | P2-7 | Capability metadata returned by discovered/admin-configured model catalogs, including fallback rows when present. Model IDs with no metadata carry unknown capability. Voice selections come from that model's `speech_voices`. | Component tests fail on the old chat inference, cover mixed known/unknown fallback rows, and assert unknown rows cannot silently become a chat request. Replace all fixture model/voice IDs and defaults, then verify selections and posted requests follow the replacement data. This is an intentional correction, not byte-preserving behavior for the old misclassification. |
 | P2-8 | Keep public `auto`; destination is selected service data under P2-1. Script and seed bounds remain API defaults unless requirements prove them service-specific. | P2-1 request comparison includes explicit/default script and deterministic seed. Preserve the public unsupported-model error until intentionally revised. |
 | P2-9 | Existing service `config.chunking` fields for configurable limits; remaining generic planning constants stay gateway policy. | Existing planning/extraction fixtures remain required. A future service-specific limit needs old/new plan and extracted-byte comparisons before moving it. |
 | P2-10 | Existing reviewed built-ins remain; if the format becomes opt-in, proposed service `config.reasoning_format` owns delimiter/output field and attachment. No new plugin mechanism. | Preserve streaming boundaries, finish reasons and serialized nonstream responses. Add literal-tag/no-tag fixtures before any contract change; a literal visible closing tag is not currently guaranteed to pass unchanged. |
+
+P2-5 quality-probe destination migration (proposed; runtime UNVERIFIED):
+
+- Proposed global `voices.quality_probe.service_id` is an operator-owned registry
+  service reference. Expose it in the voice-settings editor and the same settings
+  import/export/seed schema; no executable default may name an engine/service.
+- Before migration, obtain a sanitized snapshot of the effective old probe
+  destination. A reviewed one-time migration manifest supplies its compatibility
+  reference as DATA through that settings import path. Backfill only absent
+  settings; preserve explicit values and never restore later operator deletion.
+  Fresh installs seed a reference only alongside its configured service. If the
+  old destination cannot be established, stop rather than guess.
+- Differential fixtures must compare the current destination's selected service,
+  method/path, outbound request bytes, authentication source, quality results,
+  warnings and intake failure/continuation behavior. Rename/replace the service
+  ID using only registry/settings edits; prove no call uses the old destination.
+- Cover absent configuration, deleted/disabled service, timeout, unavailable
+  probe, non-success and malformed responses. Require an honest unconfigured/
+  unavailable result without a guessed destination. Preserve observed intake
+  failure/continuation behavior or explicitly approve a change before shipping.
+  Retry/cancellation must not switch destinations. Test one-time backfill,
+  preservation of explicit values and persistence of operator removal.
+- Proxy implementation is outside this repair's read scope. Current request and
+  failure semantics and the settings/migration implementation remain UNVERIFIED;
+  these are shipping gates, not runtime-preservation claims.
 
 P2-3 property destinations, each independent of backend names:
 
@@ -102,7 +127,11 @@ do not extend quarantine for a new engine.
 replacement and fallback catalogs. No compiled model/voice ID should select a
 backend in `web/src`; public operation aliases remain protocol contracts, but
 Try should select one only when discovery supplies it or the user requests it.
-G4 seed-schema enforcement and the broader G3/G5 ownership/replacement matrix
+The source scanner is a limited syntactic check of known model/voice property
+and JSX sinks, local const/state bindings, assignments and shorthand properties.
+It does not follow imports, arbitrary functions or computed data flows, or prove
+runtime discovery provenance. Catalog-replacement tests remain the behavioral
+backstop. G4 seed-schema enforcement and the broader G3/G5 ownership/replacement matrix
 remain follow-up work, not a guarantee supplied by these guards.
 
 Implementation order:
@@ -120,7 +149,10 @@ makes no live gateway calls. Repository examples are not a substitute for the
 owner's current service configuration. P2-1, P2-4 and P2-6 therefore remain
 plan items; the shipped runtime change is limited to UI discovery behavior.
 
-### Verification of this pass
+### Verification at the reviewed base (historical)
+
+The counts below predate the review-repair patch. They are not validation of
+that patch; its bridge check receipts record the current results.
 
 - Python: **382 passed, 31 subtests passed** across
   `test_engine_knowledge_boundary`, `test_engine_quarantine`,
