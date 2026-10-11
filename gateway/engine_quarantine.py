@@ -9,9 +9,9 @@ a service-config field.
 
 Rather than leave those `if backend == "kobold"` / `if backend == "tabby"`
 literals woven through a dozen functions in proxy.py, they are ISOLATED here.
-This module is the single quarantine: every remaining engine literal lives in
-the tables below, and proxy.py calls the named predicates instead of branching
-on a backend id inline.
+This module quarantines the reviewed property tables below; it is not an
+inventory of every remaining engine literal. proxy.py calls these predicates
+instead of branching on those backend ids inline.
 
 WHY THIS EXISTS AS A SEAM, NOT A FIX:
 Each predicate documents *what property* the literal stands for (e.g. "this
@@ -32,17 +32,20 @@ HOW TO REMOVE AN ENTRY (the migration recipe per property):
   - aux/mmproj               -> add `aux: {probe: pgrep}` to the service config.
   - local-swap membership    -> derive from "has a swap-capable lifecycle.driver".
 
-These are all small, independent moves. Nothing else in the codebase needs to
-branch on an engine name; if you find one that does, route it through here.
+These are independent migrations, not permission to grow quarantine. The
+boundary guard scans this module and freezes all eleven tables and their
+one-line membership predicates. New engine knowledge must use operator-owned
+configuration, never another ID, table or branch here. Migrate each consumer
+with its data field and delete the corresponding frozen entry.
 """
 
 from __future__ import annotations
 
 
 # ---------------------------------------------------------------------------
-# The residue, as DATA. Each table is one engine-specific property. Adding a
-# backend that shares a property = add its id here (or, better, give the backend
-# a config field and delete the property — see the recipe in the module docstring).
+# Frozen compiled policy debt, NOT operator-editable data. No new backend IDs,
+# tables or predicate behavior. Replace each property with service configuration
+# and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
 # Backends whose lifecycle is local + model-swap-managed (vs always-on external).

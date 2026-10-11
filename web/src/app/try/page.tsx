@@ -182,17 +182,17 @@ const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
 const FORGET_SESSION_KEY = "azizam.try.forget";
 
 const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
-  chat: { model: "chat", prompt: "Reply with one short sentence." },
-  image: { model: "image", prompt: "A calm teal fish mark on a white card." },
-  speech: { model: "tts", prompt: "The gateway is ready." },
-  transcribe: { model: "stt", prompt: "" },
+  chat: { model: "", prompt: "Reply with one short sentence." },
+  image: { model: "", prompt: "A calm teal fish mark on a white card." },
+  speech: { model: "", prompt: "The gateway is ready." },
+  transcribe: { model: "", prompt: "" },
   // Everyday examples: a member reads these, so no gateway test words.
   decide: {
-    model: "decide",
+    model: "",
     prompt: "What should I do?",
   },
   embed: {
-    model: "embeddings",
+    model: "",
     prompt: "Pancakes need flour, eggs and milk.",
   },
   workflow: {
@@ -648,7 +648,7 @@ function groupCatalog(payload: unknown) {
     !Array.isArray((payload as { aliases?: unknown }).aliases) ||
     !Array.isArray((payload as { models?: unknown }).models)
   ) {
-    return {};
+    throw new Error("Invalid model catalog: expected aliases and models arrays");
   }
   const records = [
     ...(payload as { aliases: unknown[] }).aliases,
@@ -748,7 +748,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
     typeof payload !== "object" ||
     !Array.isArray((payload as { workflows?: unknown }).workflows)
   ) {
-    return [];
+    throw new Error("Invalid workflow catalog: expected a workflows array");
   }
   const options: CatalogOption[] = [];
   for (const value of (payload as { workflows: unknown[] }).workflows) {
@@ -902,7 +902,9 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
   const tabs = new Set<TryTab>();
   for (const intent of intents) {
     const tab = CAPABILITY_TABS[intent] ?? INTENT_TABS[intent];
-    if (tab) tabs.add(tab);
+    // Model rows lack the runnable descriptor required by Workflow. Only the
+    // separately discovered workflow catalog can populate that picker.
+    if (tab && tab !== "workflow") tabs.add(tab);
   }
   if (tabs.has("image") && !makesPicturesFromText(record)) tabs.delete("image");
   return [...tabs];
@@ -970,32 +972,19 @@ function requestIsMultipart(workflow: WorkflowOption) {
 }
 
 function selectedOrDefaultModel(
-  tab: TryTab,
   current: string,
   options: CatalogOption[],
   explicit: boolean,
 ) {
-  if (!options.length) return current;
+  if (!options.length) return explicit ? current : "";
   // A model that an alias stands for is selected through the alias.
   const standIn = options.find((option) =>
     option.alsoKnownAs?.includes(current),
   );
   if (standIn) return standIn.id;
   if (explicit) return current;
-  const recommended = options.find((option) => option.recommended);
-  if (
-    current &&
-    current !== DEFAULTS[tab].model &&
-    options.some((option) => option.id === current)
-  )
-    return current;
-  if (
-    !current ||
-    current === DEFAULTS[tab].model ||
-    !options.some((option) => option.id === current)
-  )
-    return recommended?.id ?? options[0].id;
-  return current;
+  if (options.some((option) => option.id === current)) return current;
+  return options.find((option) => option.recommended)?.id ?? options[0].id;
 }
 
 export default function TryPage() {
@@ -1065,6 +1054,7 @@ export default function TryPage() {
   const [catalogState, setCatalogState] = useState<
     Record<CatalogSection, CatalogState>
   >({ models: "idle", workflows: "idle" });
+  const [unknownModelCount, setUnknownModelCount] = useState(0);
   const speechChoices = catalog.speech?.find((option) => option.id === model.speech)?.speechVoices;
   const voice = selectedVoice(speechChoices, voicesByModel[model.speech]);
   const parsedOptions = useMemo(
@@ -1328,7 +1318,6 @@ export default function TryPage() {
     for (const tab of TAB_ITEMS) {
       const options = grouped[tab.value] ?? [];
       next[tab.value] = selectedOrDefaultModel(
-        tab.value,
         next[tab.value],
         options,
         explicitModelTabs.current.has(tab.value),
@@ -1369,6 +1358,7 @@ export default function TryPage() {
         },
       );
       let grouped: CatalogGroups;
+      let unknownCount = 0;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
         let workflowOptions = groupWorkflows(await response.json());
@@ -1391,24 +1381,17 @@ export default function TryPage() {
           signal: controller.signal,
         });
         if (!fallback.ok) throw new Error("Model catalog unavailable");
-        const payload = (await fallback.json()) as {
-          data?: Array<{ id?: string }>;
-        };
-        grouped = {
-          chat: (payload.data ?? []).flatMap((item) =>
-            item.id
-              ? [
-                  {
-                    id: item.id,
-                    label: modelDisplayName(item.id),
-                    capability: "chat" as const,
-                    price: "",
-                    locality: "Available to this Try key",
-                  },
-                ]
-              : [],
-          ),
-        };
+        const payload: unknown = await fallback.json();
+        if (!payload || typeof payload !== "object" ||
+            !Array.isArray((payload as { data?: unknown }).data))
+          throw new Error("Invalid fallback model catalog: expected a data array");
+        const rows = (payload as { data: unknown[] }).data;
+        grouped = groupCatalog({ aliases: [], models: rows });
+        unknownCount = rows.filter((row) => {
+          if (!row || typeof row !== "object") return false;
+          const record = row as Record<string, unknown>;
+          return Boolean(stringValue(record.id) && !capabilitiesFor(record).length);
+        }).length;
       } else {
         throw new Error("Model catalog unavailable");
       }
@@ -1419,6 +1402,7 @@ export default function TryPage() {
           : { ...grouped, workflow: catalogRef.current.workflow };
       catalogRef.current = merged;
       setCatalog(merged);
+      if (section === "models") setUnknownModelCount(unknownCount);
       setModel((selected) => nextModelForCatalog(merged, selected));
       const hasOptions = Object.values(grouped).some(
         (options) => options?.length,
@@ -1588,6 +1572,13 @@ export default function TryPage() {
     const selectedModel = preparedCatalog
       ? nextModelForCatalog(preparedCatalog, model)
       : model;
+    if (!selectedModel[tab]) {
+      setErrors((current) => ({
+        ...current,
+        [tab]: { message: "Choose a model with a known capability before running it." },
+      }));
+      return;
+    }
     setRunning(tab);
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
@@ -2139,14 +2130,13 @@ export default function TryPage() {
                     <ModelSelect
                       loading={["idle", "loading"].includes(catalogState[tab.value === "workflow" ? "workflows" : "models"])}
                       value={model[tab.value]}
-                      fallbackLabel={DEFAULTS[tab.value].model}
                       options={catalog[tab.value] ?? []}
-                      onChange={(value) =>
+                      onChange={(value) => {
                         setModel((current) => ({
                           ...current,
                           [tab.value]: value,
-                        }))
-                      }
+                        }));
+                      }}
                     />
                   </label>
                   {unavailableMessage ? (
@@ -2159,6 +2149,7 @@ export default function TryPage() {
                           tab.value === "workflow" ? "workflows" : "models"
                         ]
                       }
+                      unknownModelCount={unknownModelCount}
                       section={
                         tab.value === "workflow" ? "workflows" : "models"
                       }
@@ -2880,13 +2871,11 @@ function SnippetBlock({
 function ModelSelect({
   loading,
   value,
-  fallbackLabel,
   options,
   onChange,
 }: {
   loading: boolean;
   value: string;
-  fallbackLabel: string;
   options: CatalogOption[];
   onChange: (value: string) => void;
 }) {
@@ -2898,12 +2887,11 @@ function ModelSelect({
     </div>
   );
   const values = [
-    ...((value || fallbackLabel) &&
-    !options.some((option) => option.id === value)
+    ...(value && !options.some((option) => option.id === value)
       ? [
           {
-            id: value || fallbackLabel,
-            label: `${modelDisplayName(value || fallbackLabel)} · Unverified model`,
+            id: value,
+            label: `${modelDisplayName(value)} · Unverified model`,
             price: "",
             locality: "Not in the catalog",
           },
@@ -2943,13 +2931,21 @@ function ModelSelect({
 function CatalogNotice({
   state,
   section,
+  unknownModelCount = 0,
   onRetry,
 }: {
   state: CatalogState;
   section: CatalogSection;
+  unknownModelCount?: number;
   onRetry: () => void;
 }) {
   const label = section === "workflows" ? "Workflow" : "Model";
+  const unsupported = unknownModelCount ? (
+    <Badge variant="outline">
+      {unknownModelCount} model{unknownModelCount === 1 ? " has" : "s have"} no
+      supported Try capability and cannot be selected automatically.
+    </Badge>
+  ) : null;
   // ErrorState action buttons must not submit the surrounding Run form.
   if (state === "error")
     return (
@@ -2962,8 +2958,10 @@ function CatalogNotice({
             onClick: onRetry,
           }}
         />
+        {unsupported}
       </div>
     );
+  if (unsupported) return unsupported;
   if (state === "empty")
     return <Badge variant="outline">No {section} are listed</Badge>;
   return null;

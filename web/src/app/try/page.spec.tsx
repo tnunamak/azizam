@@ -124,6 +124,133 @@ test("equal labels retain each selectable model ID", async () => {
   ).toHaveLength(2);
   expect(screen.getByRole("option", { name: /Provider B/ })).toBeVisible();
 });
+
+test("fallback model list keeps capabilities and leaves unknown rows unclassified", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") return response({}, false);
+    if (url === "/openai/v1/models") return response({ data: [
+      { id: "new-chat", capability: "chat" },
+      { id: "new-picture", capability: "image" },
+      {
+        id: "new-speech",
+        capability: "speech",
+        speech_voices: {
+          voices: [{ id: "new-voice", name: "New voice" }],
+          default_voice: "new-voice",
+          allow_other: false,
+        },
+      },
+      { id: "new-unknown" },
+    ] });
+    return response({ choices: [{ message: { content: "ok" } }] });
+  });
+  render(<TryPage />);
+  await screen.findByText("Model catalog could not be loaded.");
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/openai/v1/models", expect.anything(),
+  ));
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("NEW Chat");
+  expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("NEW Picture");
+  expect(screen.getByText(/1 model has no supported Try capability/)).toBeVisible();
+  await userEvent.click(screen.getByRole("tab", { name: "Make a picture" }));
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("NEW Picture");
+  expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("NEW Unknown");
+  await userEvent.click(screen.getByRole("tab", { name: "Read text aloud" }));
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("NEW Speech");
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Voice" }).value).toBe("new-voice");
+});
+
+test("fallback does not send an unknown model as chat", async () => {
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") return response({}, false);
+    if (url === "/openai/v1/models") return response({ data: [{ id: "new-unknown" }] });
+    return response({});
+  });
+  render(<TryPage />);
+  await screen.findByText("Model catalog could not be loaded.");
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    "/openai/v1/models", expect.anything(),
+  ));
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/chat/completions")).toBe(false);
+});
+
+test.each(["unknown", "speech"])(
+  "first Run does not send a selected chat model reclassified as %s",
+  async (capability) => {
+    let catalogReads = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("workflows")) return response({ workflows: [] });
+      if (url === "/me/api/models/catalog") {
+        catalogReads += 1;
+        return catalogReads === 1
+          ? response({ aliases: [], models: [
+              { id: "first-chat", name: "First chat", capability: "chat" },
+              { id: "second-chat", name: "Second chat", capability: "chat" },
+            ] })
+          : response({}, false);
+      }
+      if (url === "/openai/v1/models")
+        return response({ data: [
+          capability === "speech"
+            ? { id: "second-chat", capability: "speech" }
+            : { id: "second-chat" },
+        ] });
+      return response({});
+    });
+    render(<TryPage />);
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("First chat"));
+    await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    await userEvent.click(screen.getByRole("option", { name: "Second chat" }));
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Second chat");
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled());
+    expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/chat/completions")).toBe(false);
+  },
+);
+
+test("a missing catalog leaves no invented model selected", async () => {
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? workflows : {}, !url.includes("/me/api/models/catalog")),
+  );
+  render(<TryPage />);
+  await screen.findByText("Model catalog could not be loaded.");
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.queryByText(/Unverified model/)).toBeNull();
+});
+
+test("speech refresh uses the replacement model and its discovered voice", async () => {
+  mocks.params = new URLSearchParams("capability=speech");
+  let catalogReads = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") {
+      const next = ++catalogReads > 1;
+      return response({ aliases: [], models: [{
+        id: next ? "new-speech-b" : "new-speech-a",
+        name: next ? "Second voice model" : "First voice model",
+        capability: "speech",
+        speech_voices: {
+          voices: [{ id: next ? "novel-b" : "novel-a", name: next ? "Voice B" : "Voice A" }],
+          default_voice: next ? "novel-b" : "novel-a",
+          allow_other: false,
+        },
+      }] });
+    }
+    return response({});
+  });
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("First voice model"));
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Voice" }).value).toBe("novel-a");
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/audio/speech")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => url === "/openai/v1/audio/speech");
+  expect(JSON.parse((call?.[1] as RequestInit).body as string)).toMatchObject({ model: "new-speech-b", voice: "novel-b" });
+});
 test.each(["http", "transport"])(
   "workflow %s failure offers retry while model options survive",
   async (kind) => {

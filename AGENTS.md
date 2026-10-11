@@ -67,8 +67,15 @@ appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
 / `--jinja`). proxy.py has no allowlist entries: the remaining reviewed engine
 literals (the kobold/tabby local-swap lifecycle set and similar properties) live
-as data in `gateway/engine_quarantine.py`, which is reviewed as a unit and not
-scanned. The former engine-named transform classes are now generic. D-2's engine
+in `gateway/engine_quarantine.py` as frozen migration debt, not operator data.
+The guard scans `proxy.py` and `gateway/**/*.py`, and freezes all eleven
+quarantine tables and their membership predicates: do not add IDs, tables or
+predicate behavior. Migrate each property to operator-owned configuration and
+delete its frozen entry with the consumer migration. The UI guard is a limited
+syntactic check of known model/voice sinks and local bindings; catalog replacement
+component tests provide the behavioral backstop. Neither scanner proves full
+discovery provenance or replaces semantic review. The former engine-named
+transform classes are now generic. D-2's engine
 framing is removed and D-3 is complete. D-1's reasoning transform is opt-in through service `config.transforms`;
 admin schema v5 preserves existing enabled local chat attachments once.
 **If your change trips this guard:

@@ -20,6 +20,176 @@ The binding principle is unchanged.
 
 ---
 
+## Phase 2 migration
+
+Verified against `0061d150` on 2026-10-11, after reading the full independent
+`e9506bd6` engine-knowledge audit. This section supersedes the earlier status
+where it calls D-1 fully resolved: attachment is opt-in, but its wire dialect
+and default budgets are still compiled policy. Historical deployment claims
+below are not evidence for the current configuration.
+
+### Audit verdicts and scope
+
+| Item | Verdict at the new base | Evidence and disposition |
+|---|---|---|
+| P2-1 Voice-design vocabulary | Confirmed | `gateway/voice_design.py:design_instruct` owns categories, aliases, precedence, ignored terms and comma rendering. `gateway/voices_api.py:_create_prompt_voice` calls it before the injected backend, so unsupported descriptions fail before dispatch. `proxy.py:_design_voice` also chooses a compiled default engine and sends a fixed voice. Migration planned. |
+| P2-2 Reasoning dialect | Confirmed | `gateway/transforms.py:ReasoningEffortTransform` accepts configured budgets but defaults to its compiled table, writes `thinking_budget_tokens`, maps unlimited to `-1`, and suppresses thinking through a fixed nested key. Opt-in attachment does not make these values operator data. Migration planned. |
+| P2-3 Quarantine properties | Confirmed, with existing test coverage | All ten property sets in `gateway/engine_quarantine.py` are compiled backend-ID policy in addition to `LOCAL_SWAP_BACKENDS`. The old boundary guard freezes only that last set. `tests/test_engine_quarantine.py` tests named backends and unknown examples, but does not reject every possible added member, table or changed predicate. Freeze all tables and predicate bodies now; migrate consumers later. |
+| P2-4 Speech catalog/default | Partly confirmed | The catalog, aliases, language presets and default remain in `gateway/transforms.py`; `proxy.py:_engine_voice`, `_voice_metadata` and `list_voices` consume them. `voxtral-voices` itself is permitted declarative seed data. Speech dispatch uses the selected alias's map/default/transform, with a global transform fallback for non-alias resolution. The audit's Try `alloy` initializer is already absent at this base: `gateway/speech_voices.py` projects per-model choices and Try uses `selectedVoice`. Global backend catalog migration planned. |
+| P2-5 Audio intake | Partly confirmed | `gateway/voice_audio.py` cites backend preferences and owns crop/DSP defaults. `SampleLimits` already injects duration and byte limits from `proxy.py:_voice_sample_limits`; 24 kHz mono PCM is also the stored-reference contract. `_probe_voice_quality` has a compiled fallback service ID that also needs a configured destination. Comments do not prove all DSP constants are backend requirements. Separate backend policy only where demonstrated; retain the storage contract. |
+| P2-6 STT diagnostics | Confirmed | `gateway/stt_chunking.py:_parse_mergeable_chunk_payload` removes `timing` using `_ENGINE_DIAGNOSTIC_FIELDS` before rejecting unsupported fields for every service. `execute_chunking` feeds it raw response bytes; the `proxy.py` upload closure does not apply response transforms. The full service config is retained in `SttExecutionConfig.backend_config`, but this parser does not consume its transforms. Migration planned, pending preservation evidence. |
+| P2-7 Try fallback capabilities | Confirmed | `web/src/app/try/page.tsx:loadCatalogSection` assigns every fallback `/openai/v1/models` ID to chat when the richer catalog fails. IDs alone establish no capability. Remove that inference now; use reported capabilities and keep unclassified IDs explicitly unknown. |
+| P2-8 Voice-design public alias | Partly: behavior confirmed, no new engine violation | `gateway/voices_api.py:_create_prompt_voice` accepts only `auto`, then calls an injected dependency. Keep this public selection contract. Its single-model error wording and English preview script do not prove engine-specific behavior. Resolve the destination from data as part of P2-1. |
+| P2-9 STT planning constants | Partly: constants confirmed, engine claim unproved | `gateway/stt_chunking.py` already reads chunk thresholds, time budgets and limits from service config. Silence merging and extraction tolerance remain generic gateway planning policy on available evidence. No migration without evidence that these vary by service. |
+| P2-10 Think-tag convention | Confirmed as an existing reviewed format exception | `split_reasoning_visible_text`, `ReasoningFieldNormalizeTransform` and `StreamingThinkSplitTransform` in `gateway/transforms.py` interpret `</think>` without backend-name dispatch. Keep the existing reviewed contract; literal visible tags remain a semantic limitation. This is not a newly discovered engine branch. |
+
+None of the ten findings is wholly wrong. Several deliberately report conditional
+concerns rather than established violations. Accepted provider presets, fixed
+primitive seed rows, stable alias configuration and manifest mappings remain data.
+
+### Data homes and preservation gates
+
+Field names described as **proposed** below are design targets, not implemented
+configuration options. Each migration must expose the same operator editing path
+used by seed data; moving a Python constant into another source file is insufficient.
+
+| Item | Operator-owned destination | Required preservation proof before shipping |
+|---|---|---|
+| P2-1 | Selected service `config.voice_design` (proposed): ordered categories with attribute/alias lists, ignored words, separator and unmatched-prompt policy. Resolve the design service before compiling. No configured vocabulary means exact free-text passthrough with no ignored terms. Seed the legacy vocabulary only on the service that requires it. The service's request transform rows carry fixed voice, format and other wire defaults. | Capture a sanitized current service snapshot, resolve it through the real selection path, and compare old/new serialized outbound requests byte for byte for every attribute and synonym, overlaps, ignored terms, case, punctuation, fixed seed and explicit/default script. Preserve legacy error status/message and warning order. Separately verify a replacement service with no vocabulary receives the original free text and a service with a different vocabulary follows its own data. |
+| P2-2 | Existing reasoning policy `effort_budgets` and `default_effort`; proposed service `config.reasoning_wire` for destination, unlimited sentinel and zero-budget kwargs. Compile this data to service `config.transforms` using existing param-map/value-map/default-params and predicates where semantics permit. Retain validation/idempotence as a reviewed generic built-in if primitives cannot preserve them. | Use current attachment order and policy to compare serialized requests and error responses for all efforts, null/absent/invalid effort, explicit existing budgets, zero, unlimited and repeated internal routing. Include a replacement destination/sentinel and prove removing the attachment survives reload. Do not claim a six-primitive replacement until existing-budget and error semantics match. |
+| P2-3 | Existing service `config.default_model` and lifecycle `driver_config`; proposed fields listed below for the remaining properties. | For each property, capture current service data and compare old/new routing, activation payloads, probes, role resolution and context values. Rename the service ID without changing its properties and require identical behavior. Freeze tests alone do not establish migration parity. |
+| P2-4 | Service `config.speech_voices` (proposed) owns `voices` metadata, `default_voice` and unknown-value policy. Project that through the existing `speech_voice_catalog`/catalog `speech_voices` path. Preserve existing alias `voice_map`, `default_voice` and `voice_transform` values during migration. Attach value-map rows for compatibility aliases and default-params for omission-only defaults. | With the current service/alias snapshot and reference identities, compare exact outbound request bytes for omitted, empty, mixed-case, canonical, legacy, language-preset, native, unknown and custom voice IDs on alias and non-alias routes. Compare catalog ordering/metadata too. A seed value-map currently defaults unknown supplied IDs as well as missing ones; do not silently change that behavior. Test a replacement service's novel voice and custom default separately. |
+| P2-5 | Keep canonical stored WAV encoding as gateway policy. Proposed service `config.voice_intake` owns demonstrated backend-specific crop, minimum speech, gain or denoise policy. Existing global `voices` limits remain the compatibility source until explicitly migrated. Proposed `voices.quality_probe.service_id` owns the probe destination; see the migration below. | Replay identical audio fixtures and current limits through old/new preprocessing with the same ffmpeg version; compare WAV bytes, measurements, warnings and errors. Cover silence, clipping, short/long input and denoise. Verify each service's selected intake policy without changing shared stored references. Also prove probe selection, requests and failure behavior using the cases below. |
+| P2-6 | Service `config.transforms` response row: `{"kind":"drop-params","phase":"response","drop":["timing"]}` on only the service that emits it. Apply after JSON decoding, before chunk validation, using the existing response pipeline. | Compare serialized final responses, status/errors and forwarded chunk requests against the old implementation using the current service snapshot, across timing/no-timing, multiple chunks and supported formats. Preserve strict rejection of every other unmergeable field. Confirm the attachment affects chunk responses at the intended boundary and does not alter direct non-chunk responses. A replacement diagnostic must need only a different row. |
+| P2-7 | Capability metadata returned by discovered/admin-configured model catalogs, including fallback rows when present. Model IDs with no metadata carry unknown capability. Voice selections come from that model's `speech_voices`. | Component tests fail on the old chat inference, cover mixed known/unknown fallback rows, and assert unknown rows cannot silently become a chat request. Replace all fixture model/voice IDs and defaults, then verify selections and posted requests follow the replacement data. This is an intentional correction, not byte-preserving behavior for the old misclassification. |
+| P2-8 | Keep public `auto`; destination is selected service data under P2-1. Script and seed bounds remain API defaults unless requirements prove them service-specific. | P2-1 request comparison includes explicit/default script and deterministic seed. Preserve the public unsupported-model error until intentionally revised. |
+| P2-9 | Existing service `config.chunking` fields for configurable limits; remaining generic planning constants stay gateway policy. | Existing planning/extraction fixtures remain required. A future service-specific limit needs old/new plan and extracted-byte comparisons before moving it. |
+| P2-10 | Existing reviewed built-ins remain; if the format becomes opt-in, proposed service `config.reasoning_format` owns delimiter/output field and attachment. No new plugin mechanism. | Preserve streaming boundaries, finish reasons and serialized nonstream responses. Add literal-tag/no-tag fixtures before any contract change; a literal visible closing tag is not currently guaranteed to pass unchanged. |
+
+P2-5 quality-probe destination migration (proposed; runtime UNVERIFIED):
+
+- Proposed global `voices.quality_probe.service_id` is an operator-owned registry
+  service reference. Expose it in the voice-settings editor and the same settings
+  import/export/seed schema; no executable default may name an engine/service.
+- Before migration, obtain a sanitized snapshot of the effective old probe
+  destination. A reviewed one-time migration manifest supplies its compatibility
+  reference as DATA through that settings import path. Backfill only absent
+  settings; preserve explicit values and never restore later operator deletion.
+  Fresh installs seed a reference only alongside its configured service. If the
+  old destination cannot be established, stop rather than guess.
+- Differential fixtures must compare the current destination's selected service,
+  method/path, outbound request bytes, authentication source, quality results,
+  warnings and intake failure/continuation behavior. Rename/replace the service
+  ID using only registry/settings edits; prove no call uses the old destination.
+- Cover absent configuration, deleted/disabled service, timeout, unavailable
+  probe, non-success and malformed responses. Require an honest unconfigured/
+  unavailable result without a guessed destination. Preserve observed intake
+  failure/continuation behavior or explicitly approve a change before shipping.
+  Retry/cancellation must not switch destinations. Test one-time backfill,
+  preservation of explicit values and persistence of operator removal.
+- Proxy implementation is outside this repair's read scope. Current request and
+  failure semantics and the settings/migration implementation remain UNVERIFIED;
+  these are shipping gates, not runtime-preservation claims.
+
+P2-3 property destinations, each independent of backend names:
+
+| Frozen table | Destination |
+|---|---|
+| `LOCAL_SWAP_BACKENDS` | Presence of a swap-capable lifecycle driver |
+| `_HAS_DEFAULT_MODEL_FALLBACK` | Service `config.default_model` |
+| `_ACTIVATION_FROM_UPSTREAM_ID` | Lifecycle `driver_config.activation_model_source` (proposed) |
+| `_ACTIVATION_REQUIRES_ABS_PATH` | Lifecycle `driver_config.activation_requires_absolute_path` (proposed) |
+| `_HAS_AUX_MMPROJ` | Service `config.aux` probe declaration (proposed) |
+| `_LOADED_MODEL_IS_PATH` / `_LOADED_MODEL_IS_HTTP_ID` | Service `config.state_type` and probe field/path/auth configuration (proposed) |
+| `_ROLES_MAY_BE_UNPINNED` | Service `config.roles_allow_unpinned` (proposed) |
+| `_VISION_VIA_AUX` | Capability metadata plus the configured aux probe result |
+| `_CONTEXT_WINDOW_FROM_MODEL_PARAMS` / `_CONTEXT_WINDOW_FROM_LIVE_PROBE` | Service `config.context_window_source` and probe field configuration (proposed) |
+
+### Guard changes and order
+
+**P2-G1:** Scan `proxy.py` and every `gateway/**/*.py` file. Parse branch
+conditions as Python AST so multiline comparisons are covered and comments are
+not mistaken for executable policy. Keep an explicit inventory of the current
+findings above; an inventory entry records debt, not approval to expand it.
+The exact `protocol == "ollama"` branches in
+`gateway/resource_admission_http.py:admission_protocol_body` implement a public
+protocol's error envelope. They are a reviewed wire-contract
+exception, not backend-ID selection. Engine-name matching remains a limited
+syntactic check: arbitrary new vocabulary or renamed identifiers still need
+semantic review (G3/G5).
+
+**P2-G2:** Freeze all eleven quarantine tables, their names and values, and
+one-line membership predicates. Test additions and body changes explicitly.
+Migrate each property by deleting its frozen entry with its consumer migration;
+do not extend quarantine for a new engine.
+
+**P2-G6:** Guard discovered UI selections with component tests for initial,
+replacement and fallback catalogs. No compiled model/voice ID should select a
+backend in `web/src`; public operation aliases remain protocol contracts, but
+Try should select one only when discovery supplies it or the user requests it.
+The source scanner is a limited syntactic check of known model/voice property
+and JSX sinks, local const/state bindings, assignments and shorthand properties.
+It does not follow imports, arbitrary functions or computed data flows, or prove
+runtime discovery provenance. Catalog-replacement tests remain the behavioral
+backstop. G4 seed-schema enforcement and the broader G3/G5 ownership/replacement matrix
+remain follow-up work, not a guarantee supplied by these guards.
+
+Implementation order:
+
+1. Record these verdicts; expand G1/G2 and demonstrate mutation failures.
+2. Correct P2-7 and add G6 discovery/selection regressions.
+3. Obtain sanitized current config fixtures; migrate P2-1 first, then P2-4
+   and P2-6 only after their differential gates pass.
+4. Move P2-2 dialect policy and P2-3 properties independently. Review P2-5
+   thresholds against actual service requirements; retain P2-8/9/10 contracts.
+
+**Current preservation status: UNVERIFIED** for P2-1/2/3/4/5/6 runtime
+migrations. This pass neither reads nor edits live `data/` or `.env.local` and
+makes no live gateway calls. Repository examples are not a substitute for the
+owner's current service configuration. P2-1, P2-4 and P2-6 therefore remain
+plan items; the shipped runtime change is limited to UI discovery behavior.
+
+### Verification at the reviewed base (historical)
+
+The counts below predate the review-repair patch. They are not validation of
+that patch; its bridge check receipts record the current results.
+
+- Python: **382 passed, 31 subtests passed** across
+  `test_engine_knowledge_boundary`, `test_engine_quarantine`,
+  `test_voice_design`, `test_speech_voice_choices`, `test_transforms_primitives`,
+  `test_transforms_golden`, `test_stt_chunking`, `test_reasoning_service_opt_in`
+  and `test_reasoning_service_migration`. Used `scripts/run-hermetic-pytest.sh -q`
+  with those nine `tests/*.py` paths. The runner archives the committed tree
+  and supplies an isolated locked Python environment; it does not use the
+  operator's databases. One Authlib deprecation warning remains.
+- Boundary regressions failed before the guard changes for multiline branches,
+  loop/comprehension iterables, match/case branches and quarantine expansion.
+  The final standalone boundary run passed **14 tests** with the specified
+  workspace Python and `pytest --noconftest`; this source-only test imports no
+  gateway runtime. It also passed in the isolated combined run above.
+- UI: **68 passed** across `src/app/try/page.spec.tsx`,
+  `tests/try-workflow-media.spec.tsx`, `tests/try-model-list.spec.tsx`,
+  `tests/try-prompt-memory.spec.tsx` and
+  `tests/model-voice-discovery-guard.spec.ts`. The two fallback cases failed
+  against the old behavior, as did the missing-catalog selection case.
+  Replacement voice/model requests, picker reclassification and six injected
+  literal-selection examples are covered.
+- `npm --prefix web run check` passed TypeScript, lint, React Doctor and the
+  production build. React Doctor reported 551 nonblocking warnings, not
+  evaluated as a baseline delta here. Next.js reported existing export-rewrite
+  and workspace-root configuration warnings. Generated `.next`/`out` output
+  was removed afterward.
+- Independent source review found a picker-refresh bypass; the fix clears
+  picker choices whose capability disappears while retaining intentional URL
+  overrides. The subsequent review found no remaining blockers. No live
+  gateway or browser end-to-end run was performed.
+
+All test/check launches checked system load first. Runtime equivalence for the
+planned migrations remains UNVERIFIED; these test counts do not establish it.
+
+
+---
+
 ## The binding principle (restated, so this doc is self-contained)
 
 The gateway must **not** be in the business of tracking inference engines **in code**.
@@ -433,6 +603,10 @@ but enable transform reuse/sharing. Start simple.
 ---
 
 ## 5. ENFORCEMENT (make the boundary stick — no treadmill creep)
+
+**Historical enforcement proposal (2026-06-16):** The four-file scope,
+proxy allowlist and single-table freeze described below are superseded by
+Phase 2 G1/G2/G6 above. Keep these details as the original design record.
 
 A boundary that isn't enforced erodes. Add a **guard test** to the suite that fails CI if new
 per-engine *code* appears in the core. This is the single most important durable artifact of this
