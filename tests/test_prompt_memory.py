@@ -277,7 +277,7 @@ def test_prune_person_before_reconciles_erasure_cutoff(tmp_path):
     assert prompt_memory.get("img_new", "person-a", path=db)
 
 
-def test_prune_removes_old_video_and_unavailable_asset_prompts(tmp_path):
+def test_maintenance_keeps_old_video_and_missing_asset_prompts(tmp_path):
     db = tmp_path / "media_jobs.db"
     now = 2_000_000_000
     prompt_memory.put("video_old", "person-a", "old video", kept_until=None, created_at=now - 15 * 86400, path=db)
@@ -285,9 +285,9 @@ def test_prune_removes_old_video_and_unavailable_asset_prompts(tmp_path):
     prompt_memory.put("img_orphan", "person-a", "orphan", kept_until=None, created_at=now - 1, path=db)
     prompt_memory.put("img_present", "person-a", "present", kept_until=None, created_at=now - 1, path=db)
 
-    assert prompt_memory.prune(path=db, now=now, available_asset_ids={"img_present"}) == 2
-    assert prompt_memory.get("video_old", "person-a", path=db) is None
-    assert prompt_memory.get("img_orphan", "person-a", path=db) is None
+    assert prompt_memory.prune(path=db, now=now) == 0
+    assert prompt_memory.get("video_old", "person-a", path=db)
+    assert prompt_memory.get("img_orphan", "person-a", path=db)
     assert prompt_memory.get("video_new", "person-a", path=db)
     assert prompt_memory.get("img_present", "person-a", path=db)
 

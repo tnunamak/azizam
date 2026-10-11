@@ -1063,40 +1063,32 @@ describe("Library honesty and access", () => {
     expect(screen.getByText("Making your video")).toBeVisible();
   });
 
-  test("8 warns the owner before pictures expire and names pictures, not files", async () => {
+  test("8 does not warn that retained pictures will expire", async () => {
     session.viewer = { role: "owner", name: "Alex" };
-    const hour = 3600;
     const nowS = Math.floor(Date.now() / 1000);
     routeFetch((path) =>
-      path === "/admin/api/status"
-        ? Response.json({ status: { budgets: { images: { cache_ttl: 86_400 } } } })
-        : path.includes("/poster1/download")
-          ? Response.json({ download_url: "/signed/poster1.png" })
-          : path.startsWith("/me/api/media?")
-            ? list([
-                picture("i1", "Fresh one", { created_at: nowS - hour }),
-                picture("i2", "Fresh two", { created_at: nowS - 2 * hour }),
-                picture("i3", "Older than the cache", { created_at: nowS - 40 * hour }),
-                { ...audioAsset, asset_id: "a1", created_at: nowS - hour },
-                {
-                  ...picture("v1", "A video"),
-                  kind: "video",
-                  poster_asset_id: "poster1",
-                },
-                { ...picture("poster1", ""), prompt: null, created_at: nowS - hour },
-                picture("gone", "A gone one", {
-                  available: false,
-                  unavailable_reason: "missing_or_expired",
-                }),
-              ])
-            : undefined,
+      path.includes("/poster1/download")
+        ? Response.json({ download_url: "/signed/poster1.png" })
+        : path.startsWith("/me/api/media?")
+          ? list([
+              picture("i1", "Retained picture", { created_at: nowS - 40 * 86_400 }),
+              { ...audioAsset, asset_id: "a1", created_at: nowS - 86_400 },
+              {
+                ...picture("v1", "A video"),
+                kind: "video",
+                poster_asset_id: "poster1",
+              },
+              { ...picture("poster1", ""), prompt: null, created_at: nowS - 3600 },
+              picture("gone", "A gone one", {
+                available: false,
+                unavailable_reason: "missing_or_expired",
+              }),
+            ])
+          : undefined,
     );
     renderLibrary();
-    expect(
-      await screen.findByText(
-        "2 pictures will be removed within 3 days. Download the ones to keep.",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByRole("button", { name: /Retained picture/ })).toBeVisible();
+    expect(screen.queryByText(/will be removed within 3 days/)).toBeNull();
     // Gone files get one explanation for owners and members (red team
     // round 2), counted beside the title.
     expect(screen.getByText("Receipts remain.")).toBeVisible();
@@ -1104,21 +1096,16 @@ describe("Library honesty and access", () => {
     expect(screen.queryByText(/keeps files/)).toBeNull();
   });
 
-  test("8 does not claim picture retention when only audio is unavailable", async () => {
+  test("8 explains unavailable media without querying expiry status", async () => {
     session.viewer = { role: "owner", name: "Alex" };
     routeFetch((path) =>
-      path === "/admin/api/status"
-        ? Response.json({ status: { budgets: { images: { cache_ttl: 86_400 } } } })
-        : path.startsWith("/me/api/media?")
-          ? list([{ ...audioAsset, available: false, unavailable_reason: "missing_or_expired" }])
-          : undefined,
+      path.startsWith("/me/api/media?")
+        ? list([{ ...audioAsset, available: false, unavailable_reason: "missing_or_expired" }])
+        : undefined,
     );
     renderLibrary();
     expect(await screen.findByText(/^1 file is no longer stored\./)).toBeVisible();
-    await waitFor(() =>
-      expect(vi.mocked(fetch).mock.calls.some(([input]) => input === "/admin/api/status")).toBe(true),
-    );
-    expect(screen.queryByText(/keeps pictures/)).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => input === "/admin/api/status")).toBe(false);
   });
 
   test("11 uses the plain copy for search, filters and errors", async () => {

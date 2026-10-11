@@ -806,8 +806,6 @@ VRAM_ESTIMATES_FILE = Path(images_cfg.get(
 ))
 IMAGE_SIGNED_URL_TTL = int(images_cfg.get("signed_url_ttl", 3600))
 IMAGE_SIGNED_URL_SECRET_CFG = str(images_cfg.get("signed_url_secret", "") or "")
-IMAGE_CACHE_TTL = int(images_cfg.get("cache_ttl", 86400))
-IMAGE_CACHE_EVICT_INTERVAL = int(images_cfg.get("cache_eviction_interval", 3600))
 IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
 IMAGE_FREE_VRAM_ON_EXHAUSTION = bool_from_config(images_cfg.get("free_vram_on_exhaustion"), True)
 IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
@@ -7194,39 +7192,6 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
-def _evict_image_cache() -> None:
-    cutoff = time.time() - IMAGE_CACHE_TTL
-    if not IMAGE_CACHE_DIR.exists():
-        return
-    kinds = {suffix: kind for kind, suffixes in _ASSET_SUFFIXES_BY_KIND.items() for suffix in suffixes}
-    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
-        for entry in IMAGE_CACHE_DIR.iterdir():
-            if not entry.is_file() or entry.suffix not in kinds:
-                continue
-            try:
-                if entry.stat().st_mtime >= cutoff:
-                    continue
-                asset_id = f"{kinds[entry.suffix]}_{entry.stem}"
-                prompt_memory.delete_asset(asset_id)
-                entry.unlink(missing_ok=True)
-                sidecar = _asset_metadata_path(asset_id)
-                if sidecar is not None:
-                    sidecar.unlink(missing_ok=True)
-            except FileNotFoundError:
-                continue
-
-
-async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
-    while not stop_event.is_set():
-        try:
-            await asyncio.to_thread(_evict_image_cache)
-        except Exception as exc:
-            print(f"[proxy] image cache eviction failed: {type(exc).__name__}", flush=True)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=IMAGE_CACHE_EVICT_INTERVAL)
-        except asyncio.TimeoutError:
-            continue
-
 
 def has_vision_content(messages) -> bool:
     """Return True iff any chat message carries an image content block.
@@ -13055,15 +13020,6 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
 
-    # Image cache eviction (Fix 2): periodically delete cache files past TTL.
-    image_cache_stop = asyncio.Event()
-    image_cache_task = asyncio.create_task(evict_image_cache_loop(image_cache_stop))
-    print(
-        f"[proxy] Image cache eviction started (dir={IMAGE_CACHE_DIR}, "
-        f"ttl={IMAGE_CACHE_TTL}s, interval={IMAGE_CACHE_EVICT_INTERVAL}s)",
-        flush=True,
-    )
-
     # Workflow drift cache: run scripts/check_workflow_drift.py every 6h and
     # write the structured outcome to cache/drift_status.json. The script
     # depends on Playwright + a live ComfyUI; failures are recorded into the
@@ -13087,14 +13043,9 @@ async def lifespan(app: FastAPI):
         print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
 
     # Responses API persistence: SQLite-backed store for stateful
-    # /v1/responses conversations. Pruned hourly; rows expire after 7 days.
-    responses_prune_stop = asyncio.Event()
-    responses_prune_task = None
+    # Saved /v1/responses conversations survive until explicit deletion.
     try:
         responses_store.init_db()
-        responses_prune_task = asyncio.create_task(
-            _responses_prune_loop(responses_prune_stop)
-        )
         print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Responses store failed to start: {e}", flush=True)
@@ -13209,14 +13160,6 @@ async def lifespan(app: FastAPI):
             pass
         except Exception:
             pass
-    image_cache_stop.set()
-    image_cache_task.cancel()
-    try:
-        await image_cache_task
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
     drift_stop.set()
     drift_task.cancel()
     try:
@@ -13237,15 +13180,6 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(metrics_sampler.close_writer)
     except Exception:
         pass
-    if responses_prune_task is not None:
-        responses_prune_stop.set()
-        responses_prune_task.cancel()
-        try:
-            await responses_prune_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
     if receipts_maintenance_task is not None:
         receipts_maintenance_stop.set()
         receipts_maintenance_task.cancel()
@@ -20965,13 +20899,7 @@ def _maintain_prompt_memory() -> None:
             operation()
         except Exception as exc:
             print(f"[proxy] prompt privacy cleanup pending: {type(exc).__name__}", flush=True)
-    try:
-        assets = set(me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)()) if IMAGE_CACHE_DIR.is_dir() else set()
-    except OSError:
-        assets = set()
-    if not assets:
-        print("[proxy] orphan prompt pruning skipped: cache inventory missing or empty", flush=True)
-    prompt_memory.prune(available_asset_ids=assets or None)
+    prompt_memory.prune()
     _prune_orphaned_media_job_payloads()
 
 
@@ -25822,22 +25750,6 @@ async def _receipts_maintenance_loop(stop_event: asyncio.Event) -> None:
                 await asyncio.to_thread(receipt_store.maintain, ADMIN_STORE.path)
             except Exception as exc:
                 print(f"[proxy] receipt maintenance failed: {type(exc).__name__}", flush=True)
-
-
-async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
-    """Hourly prune of expired Responses rows. Bounded disk."""
-    interval_s = 3600
-    while not stop_event.is_set():
-        try:
-            deleted = await asyncio.to_thread(responses_store.prune)
-            if deleted:
-                print(f"[proxy] responses_store: pruned {deleted} expired row(s)", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"[proxy] responses_store: prune failed: {e}", flush=True)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
-        except asyncio.TimeoutError:
-            pass
 
 
 def _responses_error(

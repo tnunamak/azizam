@@ -222,7 +222,7 @@ export function keyPromptNote(
   if (promptMemory.description) return promptMemory.description;
   return promptMemory.person_id
     ? "This key acts as you. Anyone who has it can see the prompts you saved."
-    : "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation for up to seven days.";
+    : "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.";
 }
 
 /**

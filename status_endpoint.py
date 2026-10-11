@@ -1553,8 +1553,6 @@ def _images_budget(config: dict) -> dict:
         "max_batch_size": images.get("max_batch_size"),
         "vram_reserve_bytes": images.get("vram_reserve_bytes"),
         "signed_url_ttl": images.get("signed_url_ttl"),
-        "cache_ttl": images.get("cache_ttl"),
-        "cache_eviction_interval": images.get("cache_eviction_interval"),
         "cache_dir": images.get("cache_dir"),
     }
 

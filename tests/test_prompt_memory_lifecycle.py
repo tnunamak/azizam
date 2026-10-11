@@ -123,18 +123,19 @@ def test_kill_strips_legacy_cache_and_retries_partial_cleanup(stores, monkeypatc
     assert b"kill legacy sentinel" not in path.read_bytes()
 
 
-def test_cache_eviction_deletes_prompt_row(stores):
+def test_maintenance_keeps_old_media_and_prompt_row(stores):
     root, admin, jobs, user, _app, auth = stores
     ctx = proxy._begin_media_delivery(auth)
-    proxy._note_media_metadata_body({"prompt": "eviction sentinel"})
+    proxy._note_media_metadata_body({"prompt": "retention sentinel"})
     asset = proxy.store_asset_bytes(PNG, owner_key_hash=proxy._asset_owner_key(auth))
     path = proxy.asset_cache_path(asset)
     assert prompt_memory.get(asset, user["id"], path=jobs)
-    old = time.time() - proxy.IMAGE_CACHE_TTL - 10
+    old = 1
     os.utime(path, (old, old))
-    proxy._evict_image_cache()
-    assert not path.exists()
-    assert prompt_memory.get(asset, user["id"], path=jobs) is None
+    before = path.read_bytes()
+    proxy._maintain_prompt_memory()
+    assert path.read_bytes() == before
+    assert prompt_memory.get(asset, user["id"], path=jobs)
 
 
 def test_forget_seeded_digest_does_not_allow_prompt_guessing(stores):
@@ -286,3 +287,14 @@ def test_old_active_disk_payload_survives_cleanup(stores, status):
     os.utime(path, (1, 1))
     assert proxy._prune_orphaned_media_job_payloads() == 0
     assert path.exists()
+
+
+def test_saved_conversation_survives_restart_and_maintenance(stores):
+    _root, _admin, _jobs, user, app, _auth = stores
+    path = proxy.responses_store.DB_PATH
+    proxy.responses_store.save("resp_old", request_json={"input": "keep"},
+        response_json={"id": "resp_old"}, api_key_name="Try", app_id=app["id"],
+        person_id=user["id"], created_at=1, model="test", previous_response_id=None, path=path)
+    proxy.responses_store.init_db(path)
+    proxy._maintain_prompt_memory()
+    assert proxy.responses_store.get("resp_old", path=path)["request_json"] == {"input": "keep"}

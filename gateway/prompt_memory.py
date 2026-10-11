@@ -21,7 +21,6 @@ from gateway import admin_store, media_jobs, media_metadata
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
 RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
-VIDEO_PROMPT_RETENTION_SECONDS = 14 * 86400
 RETENTION_LOCK_TIMEOUT_SECONDS = 0.25
 ERASURE_CUTOFF_TABLE = "prompt_memory_erasure_cutoffs"
 MEMBER_DEFAULTS = {"remember": True, "retention": "never"}
@@ -672,24 +671,15 @@ def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str
             conn.close()
 
 
-def prune(*, path: Path | None = None, now: int | None = None,
-          available_asset_ids: set[str] | frozenset[str] | list[str] | tuple[str, ...] | None = None) -> int:
+def prune(*, path: Path | None = None, now: int | None = None) -> int:
+    """Apply explicit prompt privacy deadlines; missing media is not consent."""
     conn = _connect(path)
     try:
         current_time = int(time.time()) if now is None else now
-        predicates = [
-            "(kept_until IS NOT NULL AND kept_until<=?)",
-            "(asset_id LIKE 'video\\_%' ESCAPE '\\' AND created_at<=?)",
-        ]
-        args: list[Any] = [current_time, current_time - VIDEO_PROMPT_RETENTION_SECONDS]
-        if available_asset_ids:
-            ids = tuple(str(value) for value in available_asset_ids)
-            orphan_clause = "(asset_id NOT LIKE 'video\\_%' ESCAPE '\\'"
-            if ids:
-                orphan_clause += f" AND asset_id NOT IN ({','.join('?' for _ in ids)})"
-                args.extend(ids)
-            predicates.append(orphan_clause + ")")
-        count = conn.execute("DELETE FROM asset_prompts WHERE " + " OR ".join(predicates), args).rowcount
+        count = conn.execute(
+            "DELETE FROM asset_prompts WHERE kept_until IS NOT NULL AND kept_until<=?",
+            (current_time,),
+        ).rowcount
         conn.commit()
         return count
     finally:

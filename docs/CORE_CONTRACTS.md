@@ -653,16 +653,16 @@ HMAC for automatic deduplication after the execution spool is deleted. Explicit
 forget, member-off and kill-switch jobs use random request hashes instead;
 caller-supplied Idempotency-Key semantics remain unchanged.
 
-Deleting media, evicting the cache, deleting a video, failing a video, and
+Deleting media, deleting a video, failing a video, and
 removing a member remove associated prompt rows. Disabling a member only
-suspends access: saved prompts and chats remain subject to their existing
-retention deadlines and are available after re-enabling. Removal is permanent
+suspends access: saved prompts remain subject to their selected prompt-memory
+deadlines, while saved conversations remain until explicitly deleted; both are
+available after re-enabling. Removal is permanent
 and erases them; disabling does not create an erasure cutoff. Cancellation
 removes the execution spool and current placeholder, but does not abort an in-flight
-backend generation; its output can still finish. Unfetched video rows expire
-after 14 days. A separate maintenance task removes expired and orphaned rows
-and retries pending erasure. A missing, unreadable or empty cache inventory
-skips orphan deletion and logs the skip; expiry still applies. Normal policy
+backend generation; its output can still finish. A separate maintenance task
+applies prompt-memory deadlines and retries pending erasure. Generated media
+and video records remain until explicitly deleted. Normal policy
 reads use existing member preferences without a write transaction. If a legacy
 preference needs initialization while SQLite is busy, the request proceeds
 without storing its prompt. Media asset prompt writes run off the event loop

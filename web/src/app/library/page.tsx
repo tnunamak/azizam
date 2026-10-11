@@ -1906,8 +1906,6 @@ function focusTile(
   )?.focus();
 }
 
-const DAY_S = 86_400;
-
 export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
@@ -2137,30 +2135,6 @@ export default function LibraryPage() {
     if (runningMedia.length < runningCount.current) void refetch();
     runningCount.current = runningMedia.length;
   }, [refetch, runningMedia.length]);
-  // Owners can see how long the gateway keeps pictures (images.cache_ttl).
-  const { data: gatewayStatus } = useQuery({
-    queryKey: queryKeys.status,
-    queryFn: api.status,
-    enabled: canChooseOwner,
-    retry: false,
-  });
-  const retention = (
-    gatewayStatus as
-      | { budgets?: { images?: { cache_ttl?: number | null } } }
-      | undefined
-  )?.budgets?.images?.cache_ttl;
-  const imageTtl =
-    typeof retention === "number" && retention > 0 ? retention : null;
-  const expiringImages = useMemo(() => {
-    if (!imageTtl) return 0;
-    const now = Date.now();
-    return storedAssets.filter((asset) => {
-      const created = asset.kind === "image" && toDateValue(asset.created_at);
-      if (!created) return false;
-      const expires = created.getTime() + imageTtl * 1000;
-      return expires > now && expires <= now + 3 * DAY_S * 1000;
-    }).length;
-  }, [imageTtl, storedAssets]);
   const goneConfirmed = goneAssets.every((asset) =>
     confirmedGone(asset.unavailable_reason),
   );
@@ -2538,13 +2512,6 @@ export default function LibraryPage() {
               )
             }
           />
-        ) : null}
-        {!isLoading && !showInitialError && expiringImages > 0 ? (
-          <p className="text-meta mb-4">
-            {expiringImages === 1
-              ? "1 picture will be removed within 3 days. Download it to keep it."
-              : `${expiringImages} pictures will be removed within 3 days. Download the ones to keep.`}
-          </p>
         ) : null}
         {!isLoading &&
         !showInitialError &&

@@ -11,7 +11,7 @@ Layout mirrors metrics_store.py: stdlib sqlite3, WAL mode, integrity check
 on startup, short-lived reader connections, one long-lived writer is
 optional but not required (this store sees << 1 write/sec).
 
-Retention: 7 days. A background pruner deletes older rows.
+Saved conversations remain until explicit deletion or a privacy erasure request.
 """
 
 from __future__ import annotations
@@ -27,9 +27,6 @@ from typing import Any, Iterable, Optional
 
 _default_db = Path(__file__).parent / "data" / "responses.db"
 DB_PATH = Path(get_env("AZIZAM_RESPONSES_DB", _default_db))
-
-# Retention window for stored responses (seconds).
-RETAIN_S = 7 * 24 * 3600
 
 SCHEMA_VERSION = 2
 
@@ -242,15 +239,6 @@ def walk_chain(
         cur_id = row.get("previous_response_id")
     chain.reverse()
     return chain
-
-
-def prune(retain_s: int = RETAIN_S, path: Path = DB_PATH) -> int:
-    """Delete rows older than the retention window. Returns deleted count."""
-    cutoff = int(time.time()) - int(retain_s)
-    with _conn(path) as conn:
-        cur = conn.execute("DELETE FROM responses WHERE created_at < ?", (cutoff,))
-        conn.commit()
-        return cur.rowcount
 
 
 def count(path: Path = DB_PATH) -> int:

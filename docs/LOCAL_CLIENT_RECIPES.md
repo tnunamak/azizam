@@ -129,7 +129,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/audio/generate`, `GET /openai/v1/audio/models` | Gateway native | Music/SFX/voice generation; not an OpenAI SDK-compatible audio endpoint. |
 | `GET/POST /openai/v1/assistants`, `/files`, `/batches`, `/fine_tuning/*`, `/realtime/*` | OpenAI compatibility stubs | Registered compatibility routes; return `unsupported_operation`. |
 | `POST /openai/v1/videos`, `GET /openai/v1/videos/{id}`, `GET /openai/v1/videos/{id}/content` | OpenAI-shaped video | Submit/poll/download. |
-| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route (`limit`, `after`, `order`). Job records are persisted for 14 days and survive a restart. |
+| `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route (`limit`, `after`, `order`). Job records survive restarts until explicitly deleted. |
 | `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Cancels a queued/running job (ComfyUI `/api/jobs/{id}/cancel`) before tombstoning it; a `409` means cancellation couldn't be confirmed, not that the job survived. Scoped to the owning API key -- all four of status/content/list/delete are. |
 | `POST /openai/v1/videos/extensions` | OpenAI-shaped video (Sora's extend) | Add footage to a completed video; the result is the source plus the new segment. `501 video_extend_not_configured` if `videos.extend_workflow` is unset. See "Long video". |
 | `POST /openai/v1/videos/{id}/remix`, `POST /openai/v1/videos/edits` | OpenAI-shaped video | Remix a completed or uploaded video with a new prompt (Bernini-R). `501 video_remix_not_configured` if `videos.remix_workflow` is unset. See "Remix and character replace". |
@@ -581,10 +581,10 @@ LTX-2.5 distilled model has a fixed 8-step schedule at CFG 1), so sending them r
 frame (default about 960x512) and is single-stage, with no x2 upscale.
 
 List video jobs submitted by the calling API key via this route. Records are
-stored in `media_jobs.db` (table `video_job_records`) and kept 14 days, so ids
-and their owner survive a gateway restart. Status, content, list, delete, remix,
+stored in `media_jobs.db` (table `video_job_records`) and remain until explicitly
+deleted, so ids and their owner survive a gateway restart. Status, content, list, delete, remix,
 edit and extend are all scoped to the owning key: another key's id, and any id
-the gateway has no record of (never made here, expired, or made before records
+the gateway has no record of (never made here, deleted, or made before records
 were stored), returns `404 video_id not found` (unless auth is disabled). Set `videos.allow_untracked_ids: true` to keep videos made before records were stored readable for a while. A
 different API key's jobs never appear in the list:
 
@@ -1375,9 +1375,10 @@ print(second.output_text)
 - Reasoning: local reasoning returns as a `reasoning` output item (and as
   `response.reasoning_text.*` events). `reasoning.summary` is accepted but no
   summary is produced.
-- Stored responses (`store` defaults to true) last 7 days and belong to the
-  key that created them. Another key gets 404 on retrieve, delete, or as a
-  `previous_response_id`. An unknown or expired `previous_response_id` is a
+- Stored responses (`store` defaults to true) remain until explicitly deleted
+  and belong to the key that created them. Another key gets 404 on retrieve,
+  delete, or as a `previous_response_id`. An unknown or deleted
+  `previous_response_id` is a
   404 `previous_response_not_found`; the gateway does not continue without the
   context.
 - Optional hosted tools that the gateway cannot provide are listed in the

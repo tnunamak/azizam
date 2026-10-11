@@ -213,12 +213,12 @@ def test_missing_preference_under_lock_degrades_to_dont_store(household):
         assert decision.reason == 'storage_unavailable'
 
 
-def test_empty_inventory_still_expires_prompts(household):
+def test_explicit_prompt_deadline_still_expires_prompts(household):
     hh = household
     expiry = int(time.time()) + 30
     assert prompt_memory.put('img_' + 'c' * 64, hh.robin['id'], 'expired',
         kept_until=expiry, admin_path=hh.admin)
-    assert prompt_memory.prune(available_asset_ids=set(), now=expiry + 1) == 1
+    assert prompt_memory.prune(now=expiry + 1) == 1
 
 
 def test_delete_scrubs_legacy_credential_scoped_video_job(household):

@@ -8,7 +8,7 @@ checkout changes, deployments, service restarts or pushes.
 | Finding | Result | Evidence or remaining limit |
 | --- | --- | --- |
 | P0-1: App keys inherit another person’s identity | Fixed | Session/OIDC person or own personal-App owner key is the maker. Owner-created member-App keys have no person and cannot read member prompts or full workflows. Legacy personal-App keys with unresolved creators have no person; item visibility remains App-based. |
-| P1-1: Deleted/orphan prompts survive | Fixed | Library/video deletion, cache eviction, member removal and video failure remove rows. Independent maintenance deletes expired, missing-asset and 14-day unfetched-video rows. |
+| P1-1: Deleted/orphan prompts survive | Fixed; current policy supersedes age/orphan cleanup | Explicit Library/video deletion, video failure, and member removal erase associated prompt rows. Earlier cache eviction, missing-asset, and 14-day video-age cleanup no longer applies; generated media and conversations remain until explicit deletion, while prompt privacy deadlines and erasures remain. |
 | P1-2: Legacy embedded prompts survive | Fixed | Resumable throttled migration strips cached image/audio/video metadata. Delete and kill paths remove rows or record pending erasure and queue stripping; unfinished files return 202 with visible durable retries. Corrupt/unsupported files stay honestly pending. |
 | P1-3: Responses scoped by App name | Fixed | Person plus immutable App ID, or credential hash fallback. Old unscoped rows are inaccessible. Same-name Try Apps cannot share chats. |
 | P1-4: Default flip silently enables members | Fixed | Preferences materialize at rollout and user creation, and missing rows freeze before a default change. The kill switch still overrides them. |
@@ -97,9 +97,11 @@ minting records an empty creator to distinguish new keys from legacy NULLs.
 
 Both admin and self-service key-mint APIs return `prompt_memory.person_id` and
 `description`. Shared keys say: "Prompts sent with this key are not remembered. Generated items
-belong to the App. Chat requests can explicitly ask to save a conversation for
-up to seven days." This preserves the existing explicit Responses `store:true`
-exception. Personal keys warn that a key holder can access saved prompts.
+belong to the App. Chat requests can explicitly ask to save a conversation
+until explicitly deleted." Current retention policy supersedes the earlier
+age/orphan cleanup described in this review: generated media and saved
+conversations remain until explicit deletion, while prompt privacy deadlines
+and erasures remain. Personal keys warn that a key holder can access saved prompts.
 The frontend key form remains deferred.
 
 P2-19 and P2-20 use the setting change's timestamp for erasure and separate
