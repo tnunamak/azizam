@@ -523,8 +523,9 @@ def ensure_try_session_key(
         out = _sanitize_credential(reused)
         out.update(active=True, reused=True, app_name=app_name)
         return out
-    for record in sorted(session_keys, key=lambda item: (item["created_at"], item["id"]))[:-1]:
-        admin_store.revoke_credential(str(record["id"]), now=ts, path=path)
+    admin_store.revoke_older_session_credentials(
+        str(app["id"]), session.session_id, keep=1, now=ts, path=path,
+    )
     minted = mint_user_app_key(
         session, str(app["id"]), label=admin_store.TRY_KEY_LABEL,
         default_profile_id=default_profile_id, expires_at=expires_at,

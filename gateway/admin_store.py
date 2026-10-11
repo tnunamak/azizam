@@ -1615,6 +1615,25 @@ def revoke_credential(
         return cur.rowcount > 0
 
 
+def revoke_older_session_credentials(
+    app_id: str, session_id: str, *, keep: int, now: int | None = None, path: Path = DB_PATH
+) -> int:
+    """Revoke an App's keys bound to one sign-in, except the newest ``keep``.
+
+    Insertion order (rowid) breaks ties between keys made in the same second.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        cur = conn.execute(
+            "UPDATE credentials SET revoked_at = ? WHERE id IN ("
+            "SELECT id FROM credentials WHERE app_id = ? AND session_id = ? "
+            "AND revoked_at IS NULL ORDER BY rowid DESC LIMIT -1 OFFSET ?)",
+            (ts, app_id, session_id, keep),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 # Coarsen ``last_used_at`` writes: this fires on the data-plane auth hot path
 # (every authenticated request), so we only persist a new timestamp when the
 # stored one is missing or older than this many seconds. The portal shows a

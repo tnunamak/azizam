@@ -76,9 +76,13 @@ def test_another_sessions_key_is_not_reused_and_an_expired_session_gets_none(mem
     assert error.value.status_code == 401
 
 
-def test_each_session_keeps_at_most_two_try_keys(member):
-    ids = [ensure_try_session_key(member.session(), now=NOW + step, path=member.db)["id"] for step in range(4)]
-    assert active_try_keys(member.db) == sorted([(ids[2],), (ids[3],)])
+def test_each_session_keeps_at_most_two_try_keys_and_always_the_newest(member, monkeypatch):
+    # Mints in one second tie on created_at, and ids are random: make each
+    # new id sort first, so only insertion order can name the newest key.
+    counter = iter(range(999, 0, -1))
+    monkeypatch.setattr(admin_store, "_gen_id", lambda prefix: f"{prefix}_{next(counter):04d}")
+    ids = [ensure_try_session_key(member.session(), now=NOW, path=member.db)["id"] for _ in range(12)]
+    assert active_try_keys(member.db) == sorted([(ids[-2],), (ids[-1],)])
 
 
 def test_revoking_the_session_revokes_its_try_keys_only(member):
