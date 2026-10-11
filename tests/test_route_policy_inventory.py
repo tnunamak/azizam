@@ -764,7 +764,7 @@ def test_inventory_oracles_preserve_dispatch_and_backend_violations(
     }
     original = dict(row)
     if oracle == "decoy":
-        _decoy_oracle(method, template, row, env)
+        _decoy_oracle(method, template, row, env, httpx.Response(200, json={}))
     else:
         _category_oracle(env, row)
     assert row["outcome"] == "VIOLATION"
