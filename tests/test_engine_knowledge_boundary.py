@@ -9,14 +9,18 @@ engine CLI flag literals).
 
 HOW THIS TEST WORKS
 -------------------
-Five static checks run over four core files:
+Five engine checks run over four core files:
   - proxy.py
   - gateway/transforms.py
   - gateway/service_registry.py
   - gateway/toolcall_detection.py
 
-Each check has a FROZEN ALLOWLIST.  If a new match appears outside the
-allowlist, the test fails with a message pointing here.
+A retirement check also scans proxy.py and every Python file under gateway/
+for the removed executor, loader and retry constants.
+
+The engine checks have FROZEN ALLOWLISTS. If a new match appears outside an
+allowlist, the test fails with a message pointing here. The retirement check
+has no allowlist.
 
 ALLOWLIST KEY FORMAT (content-keyed, drift-proof)
 --------------------------------------------------
@@ -375,6 +379,56 @@ def _check_primitive_vocabulary_closed() -> list[str]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+_RETIRED_EXECUTOR_PATTERN = re.compile(
+    r"\b(?:proxy_request|load_model|TABBY_LOAD_TIMEOUT|MAX_LOAD_FAILURES|"
+    r"LOAD_FAILURE_BACKOFF)\b"
+)
+
+
+def _check_retired_executor_symbols(
+    _source_lines: list[tuple[str, list[str]]] | None = None,
+) -> list[str]:
+    if _source_lines is None:
+        paths = [_PROXY, *sorted((_REPO_ROOT / "gateway").rglob("*.py"))]
+        _source_lines = [
+            (str(path.relative_to(_REPO_ROOT)), _lines(path)) for path in paths
+        ]
+    return [
+        f"{rel}:{lineno}: retired symbol {match.group()!r}"
+        for rel, lines in _source_lines
+        for lineno, line in enumerate(lines, start=1)
+        for match in _RETIRED_EXECUTOR_PATTERN.finditer(line)
+    ]
+
+
+def test_retired_executor_symbols_do_not_return_to_core() -> None:
+    violations = _check_retired_executor_symbols()
+    assert not violations, (
+        "The retired executor and loader must not return to core:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_retirement_guard_catches_calls_definitions_and_dynamic_names() -> None:
+    violations = _check_retired_executor_symbols([("gateway/example.py", [
+        "await proxy_request(request, path)",
+        "async def load_model (",
+        'getattr(proxy, "TABBY_LOAD_TIMEOUT")',
+        "MAX_LOAD_FAILURES = 3",
+        "retry = LOAD_FAILURE_BACKOFF",
+        "await unload_model()",
+        "await _forward_litellm_proxy_request(request)",
+        'config["load_timeout_s"] = 300',
+    ])])
+    assert violations == [
+        f"gateway/example.py:{lineno}: retired symbol {name!r}"
+        for lineno, name in enumerate([
+            "proxy_request", "load_model", "TABBY_LOAD_TIMEOUT",
+            "MAX_LOAD_FAILURES", "LOAD_FAILURE_BACKOFF",
+        ], start=1)
+    ]
+
 
 class TestEngineKnowledgeBoundary:
     """Static boundary guard — these are the checks that keep the treadmill off."""

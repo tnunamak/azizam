@@ -3709,10 +3709,8 @@ class ProxyState:
         self.last_activity = time.time()
         self.activity_lock = threading.Lock()
 
-        self.model_loading = False
         self.model_unloading = False
         self.load_lock = asyncio.Lock()
-        self.unload_event: Optional[asyncio.Event] = None
         # NOTE: no tabby_process field — the gateway does not own engine
         # processes (see the TABBY_MANAGED removal). Existence is the operator's
         # supervisor's job (systemd / docker / CommandDriver).
@@ -12723,12 +12721,9 @@ async def is_model_loaded() -> bool:
 async def unload_model() -> bool:
     """Unload the current model."""
     async with state.load_lock:
-        if state.model_loading:
-            return False
         if state.model_unloading:
             return False
         state.model_unloading = True
-        state.unload_event = asyncio.Event()
 
     success = False
     try:
@@ -12747,9 +12742,6 @@ async def unload_model() -> bool:
         print(f"[proxy] Unload error: {e}", flush=True)
     finally:
         state.model_unloading = False
-        if state.unload_event:
-            state.unload_event.set()
-        state.unload_event = None
 
     return success
 
@@ -12781,7 +12773,7 @@ async def maintenance_loop():
             break
 
         # Check idle timeout (only meaningful when something is loaded on tabby)
-        if state.model_loading or state.model_unloading:
+        if state.model_unloading:
             continue
 
         idle = state.get_idle_seconds()
