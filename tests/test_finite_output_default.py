@@ -52,7 +52,7 @@ class _FakeResponse:
 
 def _service_config() -> dict[str, Any]:
     return {
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
         "model_policy_schema_version": service_registry.MODEL_POLICY_SCHEMA_VERSION,
         "models": [
             {
@@ -423,7 +423,7 @@ def test_current_policy_is_logical_data_not_the_active_backend() -> None:
     ]
     active_service = {
         "transforms": [
-            "reasoning-effort",
+            "reasoning-effort-final-chat",
             {"kind": "message-inject", "role": "system", "text": "execution-service", "mode": "append"}
         ]
     }

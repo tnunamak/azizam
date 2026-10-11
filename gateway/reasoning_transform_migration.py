@@ -40,9 +40,11 @@ def migrate_registry(conn: sqlite3.Connection) -> list[str]:
         transforms = config.get("transforms")
         # The old pipeline ignored non-list attachments entirely.
         transforms = list(transforms) if isinstance(transforms, list) else []
-        if "reasoning-effort" in transforms:
+        # Explicit reasoning-effort attachments keep their ordinary list slot;
+        # the old automatic final chat step also ran when one was attached.
+        if "reasoning-effort-final-chat" in transforms:
             continue
-        config["transforms"] = [*transforms, "reasoning-effort"]
+        config["transforms"] = [*transforms, "reasoning-effort-final-chat"]
         changed.append(service_id)
     if changed:
         conn.execute(

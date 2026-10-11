@@ -910,7 +910,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
     },
     {
         "id": "vllm",
@@ -920,7 +920,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
     },
     {
         "id": "ollama",
@@ -930,7 +930,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
     },
     {
         "id": "tabbyapi",
@@ -940,7 +940,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions", "vision"],
         "native_passthrough": True,
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
     },
     {
         "id": "lmstudio",
@@ -950,7 +950,7 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "protocol": "openai-compatible",
         "capabilities": ["chat", "completions"],
         "native_passthrough": True,
-        "transforms": ["reasoning-effort"],
+        "transforms": ["reasoning-effort-final-chat"],
     },
     {
         "id": "comfyui",

@@ -16,11 +16,16 @@ import pytest
 
 import proxy
 from gateway import admin_store, service_registry
+from gateway.transforms import REGISTRY, TransformContext, run_request_pipeline
 
 FIXTURES = Path(__file__).parent / "fixtures" / "d1"
 OLD_TRANSFORM_NAMESPACE = {}
 exec(compile((FIXTURES / "reasoning_before.py").read_text(), "d1-transform-before-5f7ddc4b", "exec"), OLD_TRANSFORM_NAMESPACE)
 BEFORE_NAMESPACE = dict(vars(proxy), _ReasoningEffortTransform=OLD_TRANSFORM_NAMESPACE["ReasoningEffortTransform"])
+# Explicit attachments must use the old implementation too, not today's registry.
+OLD_REGISTRY = copy.deepcopy(REGISTRY)
+OLD_REGISTRY.register_builtin("reasoning-effort", OLD_TRANSFORM_NAMESPACE["ReasoningEffortTransform"]())
+BEFORE_NAMESPACE["_TRANSFORM_REGISTRY"] = OLD_REGISTRY
 exec(compile((FIXTURES / "prepare_before.py").read_text(), "d1-before-5f7ddc4b", "exec"), BEFORE_NAMESPACE)
 BEFORE = BEFORE_NAMESPACE["_prepare_resolved_openai_request"]
 AFTER = proxy._prepare_resolved_openai_request
@@ -149,6 +154,57 @@ def test_current_registry_policy_upstream_bytes(tmp_path, service_id, policy, st
     assert_upstream_bytes_equal(tmp_path, registry, service_id, stream, effort)
 
 
+@pytest.mark.parametrize("request_path,transforms", [
+    ("/v1/chat/completions", ["reasoning-effort", {"kind": "drop-params", "drop": ["reasoning_effort"]}]),
+    ("/v1/completions", ["reasoning-effort"]),
+])
+def test_explicit_attachment_pipeline_bytes_match_before(request_path, transforms):
+    ctx = TransformContext({"request_path": request_path, "reasoning": {"default_effort": "high"}})
+    before = run_request_pipeline(transforms, {"reasoning_effort": "low"}, ctx, OLD_REGISTRY)
+    after = run_request_pipeline(transforms, {"reasoning_effort": "low"}, ctx)
+    assert before == {"thinking_budget_tokens": 4096}
+    assert json.dumps(after).encode() == json.dumps(before).encode()
+
+
+@pytest.mark.parametrize("request_path", ["/v1/chat/completions", "/v1/completions"])
+@pytest.mark.parametrize("following", [
+    {"kind": "drop-params", "drop": ["reasoning_effort"]},
+    {"kind": "drop-params", "drop": ["thinking_budget_tokens"]},
+    {"kind": "default-params", "set": {"reasoning_effort": "none"}},
+])
+@pytest.mark.parametrize("effort", ["low", "absent", None, "invalid"])
+def test_migrated_explicit_attachment_prepared_bytes(tmp_path, request_path, following, effort):
+    old = fixture_registry("kobold", False)
+    old["services"]["kobold"]["config"]["transforms"] = ["reasoning-effort", following]
+    db = legacy_database(tmp_path, old)
+    admin_store.init_db(db)
+    new = json.loads(snapshot(db)[0])
+    outcomes = []
+    for registry, prepare in [(old, BEFORE), (new, AFTER)]:
+        runtime = service_registry.apply_service_registry_to_config({"reasoning": {
+            "default_effort": "high", "effort_budgets": {"high": 8192, "low": 1234, "none": 0},
+        }}, registry)
+        target = proxy._resolve_request_target("current", runtime_config=runtime)
+        body = {"model": "current"}
+        if effort != "absent":
+            body["reasoning_effort"] = effort
+        error, prepared, _ = prepare(body, request_path=request_path, target=target,
+                                    execution_service_id="kobold", runtime_config=runtime)
+        outcomes.append((error.status_code if error else None, error.body if error else None,
+                         json.dumps(prepared).encode()))
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_explicit_ordering_upstream_bytes(tmp_path, stream):
+    registry = fixture_registry("kobold", False)
+    registry["services"]["kobold"]["config"]["transforms"] = [
+        "reasoning-effort", {"kind": "drop-params", "drop": ["reasoning_effort"]},
+    ]
+    parsed = assert_upstream_bytes_equal(tmp_path, registry, "kobold", stream, "low")
+    assert parsed["thinking_budget_tokens"] == 4096
+
+
 def test_migration_scope_generation_and_opt_out(tmp_path):
     registry = fixture_registry("kobold", True)
     prototype = registry["services"].pop("kobold")
@@ -159,6 +215,7 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
         "audio": {"capabilities": ["tts"]},
         "no-endpoint": {"config": {"port": None}},
         "already": {"config": {"transforms": ["reasoning-effort"]}},
+        "already-final": {"config": {"transforms": ["reasoning-effort-final-chat"]}},
         "completion-only": {"capabilities": ["completions"]},
     }
     for key, overrides in changes.items():
@@ -179,8 +236,8 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     assert generation == 8
     for key in changes:
         expected = copy.deepcopy(original["services"][key])
-        if key in {"local", "completion-only"}:
-            expected["config"]["transforms"].append("reasoning-effort")
+        if key in {"local", "completion-only", "already"}:
+            expected["config"]["transforms"].append("reasoning-effort-final-chat")
         assert migrated["services"][key] == expected
     migrated["services"]["local"]["config"]["transforms"] = []
     with sqlite3.connect(db) as conn:
@@ -189,7 +246,7 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     assert snapshot(db) == opted_out
     # Normalization/backfill must not reattach after an operator removes it.
-    runtime = {"backends": {"local": {**prototype["config"], "transforms": ["reasoning-effort"]}}}
+    runtime = {"backends": {"local": {**prototype["config"], "transforms": ["reasoning-effort-final-chat"]}}}
     assert service_registry.ensure_service_registry(runtime, path=db)["services"]["local"]["config"]["transforms"] == []
     with sqlite3.connect(db) as conn:
         value = json.loads(snapshot(db)[0])
@@ -222,7 +279,7 @@ def test_fresh_seed_declares_opt_in_as_data():
     config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
     seed = service_registry.build_service_registry_seed(config)
     for service_id in ("kobold", "tabby"):
-        assert "reasoning-effort" in seed["services"][service_id]["config"]["transforms"]
+        assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]
     custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
 
@@ -231,9 +288,9 @@ def test_fresh_seed_declares_opt_in_as_data():
 def test_local_chat_preset_declares_overridable_attachment(preset):
     form = {"preset": preset, "base_url": "http://127.0.0.1:5111/v1"}
     raw = service_registry.service_form_to_raw(form)
-    assert raw["transforms"] == ["reasoning-effort"]
+    assert raw["transforms"] == ["reasoning-effort-final-chat"]
     raw["transforms"].clear()
-    assert service_registry.provider_preset(preset)["transforms"] == ["reasoning-effort"]
+    assert service_registry.provider_preset(preset)["transforms"] == ["reasoning-effort-final-chat"]
     assert service_registry.service_form_to_raw({**form, "transforms": []})["transforms"] == []
 
 
@@ -260,7 +317,7 @@ def test_migration_rolls_back_registry_generation_and_version_together(tmp_path)
 
 def test_attached_translation_reads_updated_runtime_budgets():
     registry = fixture_registry("kobold", False)
-    registry["services"]["kobold"]["config"]["transforms"] = ["reasoning-effort"]
+    registry["services"]["kobold"]["config"]["transforms"] = ["reasoning-effort-final-chat"]
     runtime = service_registry.apply_service_registry_to_config({}, registry)
     target = proxy._resolve_request_target("current", runtime_config=runtime)
     for budget in (12345, 23456):
