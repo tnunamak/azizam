@@ -19,6 +19,7 @@ Public surface
 - ``get(request_id, ...)``         — fetch one receipt as a dict (by audience)
 - ``recent(limit, ...)``           — list recent receipts (by audience)
 - ``prune(retain_s, ...)``         — delete rows older than the retention window
+- ``history_floor(path)``         — persisted start of complete receipt history
 - ``count(...)``                   — total row count
 
 The on-disk shape stores the full internal dict as JSON. ``get`` and ``recent``
@@ -734,6 +735,7 @@ __all__ = [
     "get",
     "recent",
     "prune",
+    "history_floor",
     "retention_days",
     "retention_preview",
     "save_retention",

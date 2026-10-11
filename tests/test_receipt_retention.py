@@ -1,6 +1,6 @@
 """Receipt history stays durable unless an owner chooses expiry."""
-import sqlite3
 import json
+import sqlite3
 import subprocess
 import sys
 import time
@@ -78,7 +78,8 @@ def test_history_floor_never_retreats_after_retention_increase(tmp_path, monkeyp
         assert receipt_store.history_floor(path) == now - 30 * 86400
 
 
-def test_compaction_busy_reader_reports_pending_and_physical_bytes(tmp_path):
+def test_compaction_busy_reader_reports_pending_and_physical_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 1_800_000_000)
     path = tmp_path / "receipts.db"
     receipt_store.init_db(path)
     for i in range(40):
@@ -104,6 +105,22 @@ def test_compaction_busy_reader_reports_pending_and_physical_bytes(tmp_path):
     assert result["checkpoint_pending"] is False
     assert result["after_wal_bytes"] == 0
     assert receipt_store.get("39", path=path) is not None
+
+
+def test_deletion_and_history_floor_roll_back_together(tmp_path, monkeypatch):
+    path = tmp_path / "receipts.db"
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 100)
+    receipt_store.init_db(path)
+    receipt_store.record({"request_id": "old"}, created_at=101, path=path)
+    # Force a database failure after DELETE but before the floor can advance.
+    with sqlite3.connect(path) as conn:
+        conn.execute("""CREATE TRIGGER reject_floor BEFORE UPDATE ON receipt_history
+            BEGIN SELECT RAISE(ABORT, 'floor update failed'); END""")
+    monkeypatch.setattr(receipt_store.time, "time", lambda: 200)
+    with pytest.raises(sqlite3.IntegrityError, match="floor update failed"):
+        receipt_store.prune(50, path=path)
+    assert receipt_store.get("old", path=path) is not None
+    assert receipt_store.history_floor(path) == 100
 
 
 def test_compaction_cli_exits_nonzero_until_reader_is_idle(tmp_path):
