@@ -59,11 +59,7 @@ class TestReceiptStore(unittest.TestCase):
         receipt_store.init_db(self.db)
         self.assertEqual(receipt_store.schema_version(self.db), receipt_store.SCHEMA_VERSION)
 
-    def test_upgrade_from_v1_recreates_table(self) -> None:
-        # A pre-v2 receipts DB (no app_id column) is recreated, not migrated:
-        # old rows have no owning-App id, so they are discarded rather than
-        # unsafely attributed. The upgrade
-        # must succeed (not raise) and leave a clean v2 schema with app_id.
+    def test_upgrade_keeps_unattributed_history_out_of_member_feeds(self) -> None:
         import sqlite3
 
         legacy = Path(self.tmp.name) / "legacy.db"
@@ -85,8 +81,11 @@ class TestReceiptStore(unittest.TestCase):
         try:
             cols = [r[1] for r in con.execute("PRAGMA table_info(receipts)")]
             self.assertIn("app_id", cols)
-            # Old un-attributable rows were dropped.
-            self.assertEqual(receipt_store.count(legacy), 0)
+            self.assertEqual(receipt_store.count(legacy), 1)
+            self.assertEqual(con.execute("SELECT request_id, created_at, app_profile, receipt_json, app_id FROM receipts").fetchone(),
+                             ("req_old", 1, "p", "{}", None))
+            self.assertEqual(receipt_store.recent(app_ids=["some-app"], path=legacy), [])
+            self.assertEqual(receipt_store.history_floor(legacy), 1)
         finally:
             con.close()
 

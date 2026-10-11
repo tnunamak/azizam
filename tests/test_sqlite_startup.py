@@ -3,9 +3,11 @@ import sqlite3
 from unittest.mock import patch
 
 import pytest
-from gateway import media_jobs
+from gateway import media_jobs, receipt_store, admin_store
+import responses_store
+import metrics_store
 
-STORES = [media_jobs]
+STORES = [media_jobs, receipt_store, admin_store, responses_store, metrics_store]
 
 @pytest.mark.parametrize('store', STORES)
 def test_locked_database_keeps_history(store, tmp_path):
@@ -131,3 +133,16 @@ def test_partial_quarantine_blocks_next_startup(tmp_path):
     assert journal.read_bytes() == b'valuable journal'
     preserved, = tmp_path.glob('*.broken-*/history.db')
     assert preserved.read_bytes() == b'corrupt database'
+
+
+def test_stale_metrics_marker_does_not_quarantine_healthy_history(tmp_path):
+    path = tmp_path / 'metrics.db'
+    metrics_store.init_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE sentinel (value TEXT)')
+        conn.execute("INSERT INTO sentinel VALUES ('keep')")
+    metrics_store._integrity_marker(path).write_text('old failure')
+    metrics_store.init_db(path)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute('SELECT value FROM sentinel').fetchall() == [('keep',)]
+    assert not list(tmp_path.glob('*.broken-*'))

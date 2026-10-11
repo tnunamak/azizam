@@ -37,7 +37,7 @@ def quarantine_database(path: Path, reason: object) -> None:
     pending.unlink()
 
 
-def check_database(path: Path) -> None:
+def check_database(path: Path, *, full_check: bool = True) -> None:
     """Quarantine confirmed corruption; retry other database errors, then raise.
 
     Three attempts, each with SQLite's five-second busy wait and a short delay,
@@ -53,7 +53,8 @@ def check_database(path: Path) -> None:
         try:
             conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0)
             try:
-                rows = conn.execute("PRAGMA integrity_check").fetchall()
+                query = "PRAGMA integrity_check" if full_check else "SELECT name FROM sqlite_master LIMIT 1"
+                rows = conn.execute(query).fetchall()
             finally:
                 conn.close()
         except sqlite3.DatabaseError as error:
@@ -65,6 +66,6 @@ def check_database(path: Path) -> None:
                 raise
             time.sleep(0.25)
         else:
-            if rows != [("ok",)]:
+            if full_check and rows != [("ok",)]:
                 quarantine_database(path, f"integrity_check returned {rows!r}")
             return

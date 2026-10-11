@@ -30,10 +30,10 @@ the requested audience.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway.sqlite_startup import check_database
 
 import json
 import os
-import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -56,8 +56,8 @@ STALE_AFTER_MS = 5 * 60 * 1000
 # v2 adds the ``app_id`` column: the durable id of the owning App, so a user
 # can be shown ONLY their own receipts. ``app_profile`` (a shared permission
 # profile id) and ``api_key_name`` (a non-unique App name) are NOT safe owner
-# keys; ``app_id`` is. The v1→v2 upgrade discards unattributed rows because
-# they cannot be safely assigned to an owner — see ``_exec_schema``.
+# keys; ``app_id`` is. Existing unattributed rows keep a NULL app_id so
+# owner history survives without guessing a member identity.
 SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
@@ -105,42 +105,27 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
-    # Read the on-disk version BEFORE running the full schema. The schema's
-    # ``CREATE INDEX ... ON receipts(app_id)`` would fail against a pre-v2 table
-    # that lacks the column, so an older table must be dropped first.
+    # Add columns before creating their indexes. Existing history stays intact;
+    # a missing owning-App id remains NULL and is excluded from member feeds.
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     db_version = int(row[0]) if row is not None else None
-
-    if db_version is not None and db_version != SCHEMA_VERSION:
-        if db_version > SCHEMA_VERSION:
-            # A newer on-disk version than the code understands: refuse rather
-            # than risk writing a shape we don't know how to read back.
-            raise sqlite3.DatabaseError(
-                f"receipt_store schema version mismatch: db={db_version} "
-                f"code={SCHEMA_VERSION} (downgrade not supported)"
-            )
-        # Pre-v2 rows have no owning-App id and cannot be safely attributed
-        # to a user. Recreate only this historical, unattributed schema.
-        # Backfilling from the non-unique ``api_key_name`` would risk
-        # attributing one user's calls to another, the exact leak ``app_id``
-        # exists to prevent. So old rows are discarded deliberately.
-        print(
-            f"[receipt_store] upgrading schema {db_version}->{SCHEMA_VERSION}; "
-            "recreating receipts table (unattributed rows discarded)",
-            flush=True,
+    if db_version is not None and db_version > SCHEMA_VERSION:
+        raise sqlite3.DatabaseError(
+            f"receipt_store schema version mismatch: db={db_version} "
+            f"code={SCHEMA_VERSION} (downgrade not supported)"
         )
-        conn.executescript("DROP TABLE IF EXISTS receipts;\nDELETE FROM schema_version;\n")
-        db_version = None
-
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(receipts)")}
+    if columns:
+        for column in ("protocol", "intent", "path", "app_profile", "app_id",
+                       "api_key_name", "status", "job_id", "parent_request_id"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE receipts ADD COLUMN {column} TEXT")
     conn.executescript(_SCHEMA)
     if db_version is None:
-        # Fresh DB or just-recreated: stamp the current version (the schema's
-        # CREATE TABLE IF NOT EXISTS leaves schema_version empty).
-        if conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone() is None:
-            conn.execute(
-                "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
-            )
+        conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+    else:
+        conn.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
     conn.commit()
 
     # This additive metadata survives retention changes without recreating v2
@@ -158,32 +143,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
+    """Check existing data safely, then initialize the schema."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if path.exists():
-        try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[receipt_store] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[receipt_store] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
+    check_database(path)
 
     conn = sqlite3.connect(str(path), timeout=5.0)
     try:

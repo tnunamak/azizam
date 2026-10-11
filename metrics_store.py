@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
+from gateway.sqlite_startup import check_database, is_corruption
 import shutil
 import sqlite3
 import time
@@ -105,27 +106,6 @@ def _integrity_marker(path: Path) -> Path:
     return path.with_name(f"{path.name}.integrity-failed")
 
 
-def _move_broken_aside(path: Path, reason: object) -> None:
-    broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-    print(f"[metrics_store] DB corrupt ({reason}); moving aside to {broken}", flush=True)
-    try:
-        shutil.move(str(path), str(broken))
-    except Exception as mv_err:  # noqa: BLE001
-        print(f"[metrics_store] failed to move broken db: {mv_err}", flush=True)
-        try:
-            path.unlink()
-        except Exception:
-            pass
-    # A WAL left behind by the broken file must not be replayed into the new one.
-    for suffix in ("-wal", "-shm"):
-        try:
-            path.with_name(path.name + suffix).unlink()
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
-
-
 def init_db(path: Path = DB_PATH) -> None:
     """Create the data dir and run the schema; replace the file if it is unusable.
 
@@ -133,35 +113,20 @@ def init_db(path: Path = DB_PATH) -> None:
     Schema statements fail on a file whose header or schema pages are broken. The full scan
     (``PRAGMA integrity_check``, ~12 s on a 346 MB file) is ``verify_integrity``, which the caller
     runs in a background thread. When that scan finds damage it leaves a marker file; the next
-    ``init_db`` sees the marker and moves the broken file aside before opening it.
+    ``init_db`` sees the marker, rechecks it, and preserves confirmed damage before replacing it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     marker = _integrity_marker(path)
-    if marker.exists():
-        try:
-            reason = marker.read_text().strip() or "integrity_check failed on a previous run"
-        except OSError:
-            reason = "integrity_check failed on a previous run"
-        if path.exists():
-            _move_broken_aside(path, reason)
-        marker.unlink(missing_ok=True)
-
-    for attempt in (1, 2):
-        try:
-            conn = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(conn)
-                _exec_schema(conn)
-            finally:
-                conn.close()
-            return
-        except sqlite3.OperationalError:
-            raise  # locked, unreadable or out of space: not evidence that the file is damaged
-        except sqlite3.DatabaseError as e:
-            if attempt == 2 or not path.exists():
-                raise
-            _move_broken_aside(path, e)
+    # Recheck a previous failure before acting on it; the marker can be stale.
+    check_database(path, full_check=marker.exists())
+    marker.unlink(missing_ok=True)
+    conn = sqlite3.connect(str(path), timeout=5.0)
+    try:
+        _apply_pragmas(conn)
+        _exec_schema(conn)
+    finally:
+        conn.close()
 
 
 def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
@@ -181,6 +146,8 @@ def verify_integrity(path: Path = DB_PATH) -> Optional[str]:
     except sqlite3.OperationalError:
         return None  # a busy or missing file is not evidence of damage
     except sqlite3.DatabaseError as e:
+        if not is_corruption(e):
+            raise
         problem = str(e)
     if problem is not None:
         print(f"[metrics_store] {problem}; it will be moved aside at the next start", flush=True)

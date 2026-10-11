@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from gateway.compat import get_env
-import shutil
+from gateway.sqlite_startup import check_database
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -77,32 +77,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db(path: Path = DB_PATH) -> None:
-    """Create the data dir, run the schema, integrity-check, replace if broken."""
+    """Check existing data safely, then initialize the schema."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if path.exists():
-        try:
-            test = sqlite3.connect(str(path), timeout=5.0)
-            try:
-                _apply_pragmas(test)
-                row = test.execute("PRAGMA integrity_check").fetchone()
-                if not row or row[0] != "ok":
-                    raise sqlite3.DatabaseError(
-                        f"integrity_check returned: {row[0] if row else 'empty'}"
-                    )
-            finally:
-                test.close()
-        except sqlite3.DatabaseError as e:
-            broken = path.with_name(f"{path.name}.broken-{int(time.time())}")
-            print(f"[responses_store] DB corrupt ({e}); moving aside to {broken}", flush=True)
-            try:
-                shutil.move(str(path), str(broken))
-            except Exception as mv_err:  # noqa: BLE001
-                print(f"[responses_store] failed to move broken db: {mv_err}", flush=True)
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
+    check_database(path)
 
     conn = sqlite3.connect(str(path), timeout=5.0)
     try:
