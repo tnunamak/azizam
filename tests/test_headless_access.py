@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import re
 import sqlite3
@@ -50,6 +51,9 @@ def test_openapi_snapshot_and_security():
         operation = schema["paths"][path][method.lower()]
         assert operation["security"] == [{"OwnerBearer": []}]
         assert operation["tags"] == [metadata["tag"]]
+        path_names = set(re.findall(r"\{([^}]+)\}", path))
+        assert path_names == {parameter["name"] for parameter in operation["parameters"]
+                              if parameter["in"] == "path"}
         ids.append(operation["operationId"])
     assert len(ids) == len(set(ids))
     for row in INVENTORY:
@@ -120,6 +124,7 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
     before = _database_contents(gateway_test_state_dir)
     fixture_before = _database_contents(case.db.parent)
     drain_before = proxy.DRAIN_STATE.snapshot()
+    config_before = copy.deepcopy(proxy.config)
     for principal in ("app", "member"):
         case.client.cookies.clear()
         headers = {"Authorization": f"Bearer {case.app_key}"} if principal == "app" else {"Accept": "application/json"}
@@ -135,6 +140,7 @@ def test_every_owner_route_rejects_app_and_member_without_effects(row, principal
         assert _database_contents(gateway_test_state_dir) == before
         assert _database_contents(case.db.parent) == fixture_before
         assert proxy.DRAIN_STATE.snapshot() == drain_before
+        assert proxy.config == config_before
 
 
 @pytest.mark.parametrize("row", OWNER_ROUTES, ids=lambda row: row["method"] + " " + row["path"])
@@ -158,3 +164,15 @@ def test_every_owner_route_accepts_real_owner_credential_at_auth_boundary(row, p
             headers=principals._auth(), follow_redirects=False)
     assert response.status_code == 299, (row["method"], row["path"], response.status_code)
     assert response.json()["error"]["code"] == "test_owner_accepted"
+
+
+@pytest.mark.parametrize("row", [row for row in INVENTORY if row["auth"] == "session-only"],
+                         ids=lambda row: row["method"] + " " + row["path"])
+def test_session_only_routes_do_not_accept_standalone_owner_bearer(row, principals):
+    principals.client.cookies.clear()
+    path, body = _request(row)
+    response = principals.client.request(row["method"], path, json=body,
+        headers=principals._auth(), follow_redirects=False)
+    assert response.status_code in {401, 403, 302, 303}, (row["method"], row["path"], response.status_code)
+    if response.is_redirect:
+        assert response.headers["location"] in {"/setup", "/ui/sign-in/"}

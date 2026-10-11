@@ -44,6 +44,9 @@ curl --fail-with-body -sS "$AZIZAM_URL/admin/api/status" \
   -H "Authorization: Bearer $AZIZAM_OWNER_KEY"
 ```
 
+For denied `/status*` calls, request telemetry no longer touches credential usage
+or writes metrics; status pages now share the existing admin telemetry exclusion.
+
 Key creation returns the secret once in `credential.api_key`; store it privately.
 Request activity returns safe receipt records with `next_cursor`. It differs from
 the administrative change audit at `/admin/api/audit`. Continue receipt pages
@@ -123,7 +126,7 @@ registered method/path, including trailing-slash aliases: **126 owner-bearer**
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
-and member sessions. `session-only` requires a cookie and rejects a standalone
+and member sessions; browser entry points can deny members by redirecting to `/`. `session-only` requires a cookie and rejects a standalone
 owner/app bearer key. `session-view` permits an unauthenticated snapshot.
 `browser/public` covers sign-in, first-run, redirect and health contracts;
 headers alone do not turn them into owner API operations. Public data-plane
@@ -317,3 +320,56 @@ every mutation. Selected successful workflows are exercised separately.
 | `GET /status/` | owner-bearer | denied | `proxy.status_dashboard_index`; AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth | hidden |
 | `GET /status/raw` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `GET /status/raw/` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
+
+## Recorded Restish fixture run
+
+Restish **2.3.0** was installed under `~/.tmp/restish`, then exercised in a
+Bubblewrap filesystem/network namespace against the registered `proxy.app`
+routes on **127.0.0.1:44061**. The fixture used fresh SQLite stores, disabled
+server lifespan, mocked health observations, and called no inference engines.
+Setup discovered **245 operations**, including **104/104 configured owner
+operations**. This is fixture evidence, not a live deployment check.
+
+The commands above succeeded. These output filters kept the transcript short
+and prevented the one-time App key from entering logs:
+
+```sh
+# Append to the corresponding generated command from the guide.
+# List apps:
+-f 'body.apps[].name'
+# Mint key:
+-f 'body.credential.display_name'
+# Read receipts:
+-f 'body.records[].receipt.request_id'
+# Check status:
+-f 'body.status.current_health.state'
+```
+
+Real stdout and exit codes (status reflects the fixture's mocked observations):
+
+```text
+List apps (exit 0)
+[
+  "headless-fixture"
+]
+Mint app key (label only) (exit 0)
+"automation-client"
+Read receipts (exit 0)
+[
+  "headless-fixture-receipt"
+]
+Check status (health only) (exit 0)
+"bad"
+Invalid owner credential (exit 4)
+{
+  "error": {
+    "code": "admin_unauthenticated",
+    "message": "invalid admin credential"
+  }
+}
+```
+
+The invalid-credential case set the profile token to an invalid fixture value.
+The run did not test page-cap exhaustion, interrupted pagination, provider
+mutations, or real engine health. Generic URL commands can reuse credentials
+from a matching registered API; use a separate config for another identity.
