@@ -8,7 +8,7 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
     await readFile("test-results/live-data-manifest.json", "utf8"),
   );
   const response = await page.request.get(
-    `/me/api/media/${local_asset}/download`,
+    `/me/api/media/${local_asset}/download?scope=everyone`,
   );
   expect(response.status()).toBe(200);
   const { download_url } = await response.json();

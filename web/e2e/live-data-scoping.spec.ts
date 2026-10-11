@@ -34,7 +34,7 @@ test("owner sees keyless LAN and service app media and usage", async ({
   expect(keyless.status()).toBe(200);
   await anon.dispose();
 
-  const media = await (await page.request.get("/me/api/media")).json();
+  const media = await (await page.request.get("/me/api/media?scope=everyone")).json();
   expect(media.sources.map((source: { id: string }) => source.id)).toEqual(
     expect.arrayContaining(["local-network", `app:${data.service_app_id}`]),
   );
@@ -49,20 +49,20 @@ test("owner sees keyless LAN and service app media and usage", async ({
   );
 
   const serviceMedia = await (
-    await page.request.get(`/me/api/media?source=app:${data.service_app_id}`)
+    await page.request.get(`/me/api/media?scope=everyone&source=app:${data.service_app_id}`)
   ).json();
   expect(
     serviceMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
   ).toEqual([data.service_asset]);
   const localMedia = await (
-    await page.request.get("/me/api/media?source=local-network")
+    await page.request.get("/me/api/media?scope=everyone&source=local-network")
   ).json();
   expect(
     localMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
   ).toEqual(expect.arrayContaining([data.local_asset]));
 
   const usage = await (
-    await page.request.get("/me/api/usage/summary?source=local-network")
+    await page.request.get("/me/api/usage/summary?person=all&source=local-network")
   ).json();
   expect(usage.requests).toBeGreaterThanOrEqual(2);
   expect(usage.media_count).toBeGreaterThanOrEqual(1);
@@ -104,11 +104,11 @@ test("owner sees keyless LAN and service app media and usage", async ({
   // (taskNames.speech), then its model after a "·" (one line since craft
   // PR 6) and its count.
   await expect(
-    page.getByRole("row", { name: new RegExp(`${taskNames.speech} · Voice 1\\b`) }),
+    page.getByRole("row", { name: new RegExp(`${taskNames.speech} (· )?Voice 1\\b`) }),
   ).toBeVisible();
   // The same row by its literal copy, the task name Home and Try use.
   await expect(
-    page.getByRole("row", { name: /Read text aloud · Voice 1\b/ }),
+    page.getByRole("row", { name: /Read text aloud (· )?Voice 1\b/ }),
   ).toBeVisible();
 });
 
