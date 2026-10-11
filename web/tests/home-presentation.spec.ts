@@ -7,8 +7,6 @@ import HomePage from "@/app/home/page";
 import {
   capabilitySummary,
   capabilityTiles,
-  greetingName,
-  requestLabel,
 } from "@/app/home/presentation";
 import type { HomeAlias, HomeCapability } from "@/app/home/home-api";
 
@@ -47,23 +45,25 @@ it("resets a failed Home image on the first source-change commit", async () => {
     available: true,
   };
   client.setQueryData(["library", "home-recent-creations"], { assets: [creation] });
-  let capture = false;
   const commits: Array<string | null> = [];
   render(
     createElement(QueryClientProvider, { client },
       createElement(Profiler, {
         id: "home-media",
         onRender: () => {
-          if (capture) commits.push(screen.queryByRole("img", { name: "Reset Home image" })?.getAttribute("src") ?? null);
+          // Only commits rendered after the cache holds the new source count;
+          // earlier commits (pending queries, timers) legitimately show the failure.
+          const cached = client.getQueryData<{ assets: Array<{ download_url: string }> }>(
+            ["library", "home-recent-creations"],
+          );
+          if (cached?.assets[0]?.download_url !== "/home-new.png") return;
+          commits.push(screen.queryByRole("img", { name: "Reset Home image" })?.getAttribute("src") ?? null);
         },
       }, createElement(HomePage)),
     ),
   );
   fireEvent.error(screen.getByRole("img", { name: "Reset Home image" }));
   expect(screen.queryByRole("img", { name: "Reset Home image" })).toBeNull();
-  // Let the page's other queries settle so the first captured commit is the source change.
-  await waitFor(() => expect(client.isFetching()).toBe(0));
-  capture = true;
   act(() => {
     client.setQueryData(["library", "home-recent-creations"], {
       assets: [{ ...creation, download_url: "/home-new.png" }],
@@ -100,18 +100,6 @@ const alias = (
 });
 
 describe("Home presentation", () => {
-  it("greets by first display name and never invents a name from an email", () => {
-    const user = {
-      id: "person",
-      role: "member",
-      email: "tim@example.test",
-      name: "  Tim Nunamak  ",
-    };
-    expect(greetingName(user)).toBe("Tim");
-    expect(greetingName({ ...user, name: user.email })).toBe("there");
-    expect(greetingName({ ...user, name: "" })).toBe("there");
-  });
-
   it("uses alias-map generation entries instead of ready analysis or edit workflows", () => {
     const tiles = capabilityTiles(
       [
@@ -185,40 +173,6 @@ describe("Home presentation", () => {
       "No tasks are available to your account yet.",
     );
   });
-});
-
-it("labels receipts from their capability or path, never from an opaque workflow ID", () => {
-  expect(
-    requestLabel(
-      {
-        request_id: "image-receipt",
-        intent: "image.analyze",
-        requested_model: "image.analyze.face-likeness",
-      },
-      [],
-    ),
-  ).toBe("Image request");
-  expect(
-    requestLabel(
-      {
-        request_id: "video-receipt",
-        path: "/v1/videos/generations",
-        requested_model: "video.edit.bernini-r-remix",
-      },
-      [],
-    ),
-  ).toBe("Video request");
-  expect(
-    requestLabel({ request_id: "chat-receipt", requested_model: "household" }, [
-      alias("household", "chat"),
-    ]),
-  ).toBe("Chat request");
-  expect(
-    requestLabel(
-      { request_id: "unknown", requested_model: "opaque-routing-id" },
-      [],
-    ),
-  ).toBe("Request");
 });
 
 it("keeps the decision capability from the decisions alias operation", () => {

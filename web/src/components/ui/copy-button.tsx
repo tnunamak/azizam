@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
-import { Button, type ButtonSize, type ButtonVariant } from "./legacy/button";
+import { Button } from "./button";
+
+// Preserve CopyButton’s public props while using the modern primitive.
+type ButtonSize = "sm" | "md" | "lg";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 import { CheckIcon, CopyIcon } from "./icons";
 
 /** Copy text to the clipboard. Falls back to a hidden textarea when the
@@ -80,14 +84,15 @@ export function CopyButton({
   const { copied, copy } = useCopied();
   return (
     <Button
+      type="button"
       size={size}
-      variant={variant}
+      variant={variant === "primary" ? "default" : variant === "danger" ? "destructive" : variant === "secondary" ? "outline" : "ghost"}
       className={cn(children ? undefined : "px-2", className)}
       aria-label={ariaLabel ?? (children ? undefined : "Copy")}
       onClick={() => void copy(value)}
     >
       {copied ? (
-        <CheckIcon className="text-vf-ok size-4" />
+        <CheckIcon className="text-success size-4" />
       ) : (
         <CopyIcon className="size-4" />
       )}

@@ -197,6 +197,11 @@ No backfill was needed — `proxy_config.yml` already seeded `health_endpoint` f
 
 ### What remains (not addressed in this pass)
 
+**Status — 2026-10-10, owner-supplied audit at `fdc3c9d`:**
+`backend_supports()` is dead code, not an active config reader. Some named
+health wrappers remain. The findings below record the 2026-06-12 migration
+and do not establish current runtime use or removal.
+
 - **Lifecycle tier** (`proxy.py` model-swap systemd orchestration, tabby
   load/unload protocol, idle timers, pgrep mmproj discovery): genuinely
   service-shaped behavior requiring a `lifecycle` registry schema.

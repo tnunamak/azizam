@@ -1,5 +1,11 @@
 # Web UI Steering — the design contract
 
+**Superseded — 2026-10-10, owner-supplied audit at `fdc3c9d`:** The external
+brand-package and operational-widget requirements below are historical.
+Follow `docs/design/DESIGN.md` for design rules. Tokens are local in
+`web/src/styles/tokens.css`. The old operational widgets are being removed.
+Do not use these older requirements to restore them.
+
 This is the canonical product information-architecture and presentation
 contract for the React UI. The shared component contracts live in
 `docs/design/AZIZAM_COMPONENT_LIBRARY_SPEC.md`; historical design and
@@ -30,12 +36,9 @@ that layer structural.
 - **Cutover**: strangler. New surfaces mount under `/ui/` (gateway
   `StaticFiles`) until parity, then take over the canonical routes. Python
   renderers are not deleted in this phase.
-- **Brand**: `@vivid-fish/brand` (a local path dependency in this deployment,
-  with a Tailwind v4 peer) is the ONLY source of color, type, radius, shadow,
-  animation tokens. Root stylesheet: `@import "tailwindcss";
-  @import "@vivid-fish/brand";`. Token gaps are fixed UPSTREAM in the brand
-  package, never with local literals. The package name and token contract are
-  portable; the dependency checkout path is deployment-specific.
+- **Brand**: tokens are local to Azizam. The external `@vivid-fish/brand`
+  dependency and import instructions are superseded. Keep shared tokens as
+  the source of color, type, radius, shadow and animation decisions.
 
 ## The presentation law (non-negotiable)
 
@@ -61,7 +64,7 @@ that layer structural.
 9. **Components are token-only.** No literal colors, font sizes, radii, or
    shadows inside components — Tailwind utilities bound to brand `@theme`
    variables only. Rebranding must be achievable by editing
-   the brand package's `src/tokens.css` alone.
+   the local token file alone.
 10. **Copy is product language.** Services/Apps/Keys/Profiles vocabulary per
     the operator-vocab pass; no `opk_`/`oak_`/policy-internal jargon on
     operator surfaces; sentence case everywhere ("Configured services", not
@@ -70,7 +73,7 @@ that layer structural.
 ## Type & spacing scale (total, enforced)
 
 Exactly five text styles + one display, mapped to brand tokens (extend
-tokens.css upstream if a slot is missing — do not invent locals):
+the local token file if a slot is missing — do not invent component literals):
 
 | Role        | Size/line     | Usage |
 |-------------|---------------|-------|
@@ -338,11 +341,9 @@ overflow + ConfirmDialog; every state designed):
   full record (mono JSON, CopyButton). Keyset-paginated
   `GET /audit?limit=&actor_id=&action_prefix=&before=`, newest first, "Load
   more" until the filtered result is exhausted.
-- **Settings**: grouped cards with SectionHeaders, in order: Sign-in (OIDC
-  config — status line + edit Dialog; never render secrets), Extensions
-  (package list + validate/enable flow), Media admission (the existing
-  override fields, explained in product language). Each group is independent;
-  no global save button.
+- **Settings (historical surface plan, superseded 2026-10-10)**: the old
+  operational widgets are being removed. The Sign-in, Extensions and Media
+  admission widget plan is not a requirement to restore removed controls.
 
 **Shared-file discipline for parallel agents**: the shell owns `layout.tsx`
 + nav; surface agents touch ONLY their own `web/src/app/admin/<section>/`
@@ -351,8 +352,11 @@ is frozen during a fan-out.
 
 ## Later (explicitly out of this increment)
 
-Portal surfaces, absorbing legacy status rendering into `web/`, promoting
-`ui/` to `@vivid-fish/brand/react`, deleting Python renderers,
+Historical plans included portal surfaces, absorbing legacy status rendering
+into `web/`, and deleting Python renderers. Promotion of `ui/` to
+`@vivid-fish/brand/react` is superseded; tokens stay local. The following
+cutover plan is historical:
+
 canonical-route cutover (per-area flips: `/admin` first, then
 `/me`; `basePath` `''` + gateway serves export at canonical routes +
 `/ui/*` redirects).

@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { Button } from "@/components/ui/button";
 import {
-  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui";
+} from "@/components/ui/dialog";
 
 function DialogSmokeFixture() {
   const [open, setOpen] = useState(false);

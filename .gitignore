@@ -93,11 +93,6 @@ build/
 # =============================================================================
 # Status page (Next.js)
 # =============================================================================
-status-page/node_modules/
-status-page/.next/
-status-page/out/
-status-page/next-env.d.ts
-status-page/*.tsbuildinfo
 
 # Optional Node SDK compatibility probes. The lockfile is committed; the
 # installed dependency tree is local runtime state.

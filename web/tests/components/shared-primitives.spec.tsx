@@ -1,179 +1,123 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import {
-  CurrentAdvisory,
-  DataTable,
-  SectionActionHeader,
-  type DataTableColumn,
-  TrendLineChart,
-} from "@/components/ui";
-
-type Row = { id: string; name: string; detail: string };
-
-const rows: Row[] = [
-  { id: "fixture-row", name: "Fixture row", detail: "Live detail" },
-];
-
-function columns(onHeadAction: () => void, onDetailAction: () => void) {
-  return [
-    {
-      id: "name",
-      header: "Name",
-      cell: (row: Row) => (
-        <button type="button" onClick={onHeadAction}>
-          Copy {row.name}
-        </button>
-      ),
-    },
-    {
-      id: "detail",
-      header: "Detail",
-      cell: (row: Row) => (
-        <a
-          href={`#${row.id}`}
-          onClick={(event) => {
-            event.preventDefault();
-            onDetailAction();
-          }}
-        >
-          {row.detail}
-        </a>
-      ),
-    },
-  ] satisfies DataTableColumn<Row>[];
-}
-
-function CardFixture({ actionable }: { actionable: boolean }) {
-  const onRowAction = vi.fn();
-  const onHeadAction = vi.fn();
-  const onDetailAction = vi.fn();
-  const onMenuAction = vi.fn();
-
-  return {
-    onRowAction,
-    onHeadAction,
-    onDetailAction,
-    onMenuAction,
-    view: (
-      <DataTable
-        columns={columns(onHeadAction, onDetailAction)}
-        rows={rows}
-        rowKey={(row) => row.id}
-        onRowClick={actionable ? onRowAction : undefined}
-        mobileRowActionLabel={(row) => `Open ${row.name}`}
-        rowMenu={
-          actionable
-            ? () => (
-                <button type="button" onClick={onMenuAction}>
-                  More actions
-                </button>
-              )
-            : undefined
-        }
-      />
-    ),
-  };
-}
+import { EmptyOperationalState, IncidentBanner } from "@/components/ui";
+import { StatusIcon } from "@/components/ui/icons";
 
 afterEach(cleanup);
 
 describe("shared operational primitives", () => {
-  it("keeps actionable card controls above the primary action", async () => {
-    const user = userEvent.setup();
-    const fixture = CardFixture({ actionable: true });
-    render(fixture.view);
-    const card = document.querySelector<HTMLElement>(".vf-mobile-data-card");
-    if (!card) throw new Error("Expected actionable mobile data card");
-    const mobile = within(card);
-
-    await user.click(mobile.getByRole("button", { name: "Copy Fixture row" }));
-    await user.click(mobile.getByRole("link", { name: "Live detail" }));
-    await user.click(mobile.getByRole("button", { name: "More actions" }));
-    expect(fixture.onHeadAction).toHaveBeenCalledOnce();
-    expect(fixture.onDetailAction).toHaveBeenCalledOnce();
-    expect(fixture.onMenuAction).toHaveBeenCalledOnce();
-    expect(fixture.onRowAction).not.toHaveBeenCalled();
-
-    await user.click(mobile.getByRole("button", { name: "Open Fixture row" }));
-    expect(fixture.onRowAction).toHaveBeenCalledOnce();
+  it.each([
+    ["ok", "text-success"],
+    ["warn", "text-warning"],
+    ["bad", "text-danger"],
+    ["info", "text-info"],
+    ["neutral", "text-muted-foreground"],
+  ] as const)("renders the explicit %s StatusIcon colour class", (tone, colourClass) => {
+    render(<StatusIcon tone={tone} label="Engine state" className="fixture" />);
+    expect(screen.getByRole("img", { name: "Engine state" })).toHaveClass(
+      "vf-status-icon",
+      `vf-status-icon-${tone}`,
+      "size-[1em]",
+      "flex-none",
+      colourClass,
+      "fixture",
+    );
   });
 
-  it("leaves a non-actionable card and its native controls independently operable", async () => {
+  it.each(["warn", "bad", "info"] as const)(
+    "preserves the %s incident role, content and tone",
+    (tone) => {
+      render(
+        <IncidentBanner
+          tone={tone}
+          title="Engine unavailable"
+          detail="Try again later."
+          className="fixture"
+        />,
+      );
+      const banner = screen.getByRole(tone === "bad" ? "alert" : "status");
+      expect(banner).toHaveClass(
+        "vf-incident-banner",
+        `vf-incident-banner-${tone}`,
+        "bg-transparent",
+        "fixture",
+      );
+      expect(screen.getByText("Engine unavailable")).toHaveClass(
+        "vf-incident-banner-title",
+      );
+      expect(screen.getByText("Try again later.")).toHaveClass(
+        "vf-incident-banner-body",
+      );
+      expect(banner.querySelector(".vf-incident-banner-actions")).toBeNull();
+    },
+  );
+
+  it("keeps incident actions and dismissal independently operable", async () => {
     const user = userEvent.setup();
-    const fixture = CardFixture({ actionable: false });
-    render(fixture.view);
-    const card = document.querySelector<HTMLElement>(".vf-mobile-data-card");
-    if (!card) throw new Error("Expected non-actionable mobile data card");
-    const mobile = within(card);
-
-    expect(
-      mobile.queryByRole("button", { name: "Open Fixture row" }),
-    ).toBeNull();
-    await user.click(mobile.getByRole("button", { name: "Copy Fixture row" }));
-    await user.click(mobile.getByRole("link", { name: "Live detail" }));
-    expect(fixture.onHeadAction).toHaveBeenCalledOnce();
-    expect(fixture.onDetailAction).toHaveBeenCalledOnce();
-    expect(fixture.onRowAction).not.toHaveBeenCalled();
-  });
-
-  it("renders chart meaning once and never invents a trend from two samples", () => {
+    const action = vi.fn();
+    const dismiss = vi.fn();
     const { rerender } = render(
-      <TrendLineChart
-        series={[
-          { x: "08:00", y: 12 },
-          { x: "09:00", y: 18 },
-          { x: "10:00", y: 15 },
-        ]}
-        accessibility={{ mode: "data-table", label: "Request latency samples" }}
+      <IncidentBanner
+        tone="bad"
+        title="Engine unavailable"
+        actions={<button onClick={action}>Retry</button>}
+        onDismiss={dismiss}
       />,
     );
-    expect(
-      screen.getByRole("table", { name: "Request latency samples" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("group", { name: "Request latency samples" }),
-    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(action).toHaveBeenCalledOnce();
+    expect(dismiss).not.toHaveBeenCalled();
+    const button = screen.getByRole("button", { name: "Dismiss" });
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveClass("vf-button", "vf-button-ghost", "vf-button-sm");
+    await user.click(button);
+    expect(dismiss).toHaveBeenCalledOnce();
 
-    rerender(
-      <TrendLineChart
-        series={[
-          { x: "08:00", y: 12 },
-          { x: "09:00", y: 18 },
-        ]}
-        emptyLabel="No real trend data"
-      />,
-    );
-    expect(screen.getByText("No real trend data")).toBeVisible();
-    expect(screen.queryByRole("table")).toBeNull();
+    rerender(<IncidentBanner tone="info" title="Waiting" />);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(document.querySelector(".vf-incident-banner-body")).toBeNull();
   });
 
-  it("omits an empty CurrentAdvisory instead of presenting an invented all-clear state", () => {
-    const { container } = render(
-      <CurrentAdvisory tone="warn" title="Needs attention" items={[]} />,
+  it.each(["neutral", "info", "warn", "bad"] as const)(
+    "preserves the %s empty state content and tone",
+    (tone) => {
+      render(
+        <EmptyOperationalState
+          tone={tone}
+          title="No engines"
+          detail="Add an engine to start."
+          action={<button>Add engine</button>}
+          className="fixture"
+        />,
+      );
+      const title = screen.getByText("No engines");
+      expect(title).toHaveClass("vf-empty-operational-title");
+      expect(title.parentElement).toHaveClass("vf-empty-operational", "fixture");
+      if (tone !== "neutral") expect(title).toHaveClass(`text-vf-${tone}`);
+      else {
+        expect(title).toHaveClass("vf-empty-operational-title", "text-foreground");
+        for (const toneClass of ["text-vf-warn", "text-vf-bad", "text-vf-info"]) {
+          expect(title).not.toHaveClass(toneClass);
+        }
+      }
+      expect(screen.getByText("Add an engine to start.")).toHaveClass(
+        "vf-empty-operational-body",
+      );
+      expect(screen.getByRole("button", { name: "Add engine" }).parentElement)
+        .toHaveClass("vf-empty-operational-actions");
+    },
+  );
+
+  it("keeps a neutral empty state minimal when optional content is absent", () => {
+    const { container } = render(<EmptyOperationalState title="No engines" />);
+    expect(screen.getByText("No engines")).toHaveClass(
+      "vf-empty-operational-title", "text-foreground",
     );
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("uses an h2 by default without duplicate headings", () => {
-    const { container } = render(
-      <SectionActionHeader title="Service health" count={3} />,
-    );
-
-    expect(
-      screen.getByRole("heading", { name: "Service health 3", level: 2 }),
-    ).toBeInTheDocument();
-    expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(1);
-  });
-
-  it("renders a page-level h1 instead of nesting or duplicating the title", () => {
-    const { container } = render(<SectionActionHeader as="h1" title="Audit" />);
-
-    expect(
-      screen.getByRole("heading", { name: "Audit", level: 1 }),
-    ).toBeInTheDocument();
-    expect(container.querySelectorAll("h1, h2, h3")).toHaveLength(1);
-    expect(container.querySelector("h1 h1, h1 h2, h1 h3")).toBeNull();
+    expect(container.querySelector(".vf-empty-operational-body")).toBeNull();
+    expect(container.querySelector(".vf-empty-operational-actions")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

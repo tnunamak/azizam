@@ -73,7 +73,3 @@ export function useOwnerAlertTarget(
     ? { message: providerAlert, section: "Providers" }
     : null;
 }
-
-export function useOwnerAlert(enabled: boolean) {
-  return useOwnerAlertTarget(enabled)?.message ?? null;
-}

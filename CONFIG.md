@@ -18,7 +18,7 @@ silently disabled (they return empty data rather than crashing).
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_TABBYAPI_DIR` | Root directory of a [TabbyAPI](https://github.com/theroyallab/tabbyAPI) installation. When unset, TabbyAPI token auto-load, config read, and subprocess management are all disabled. | unset (feature off) |
+| `AZIZAM_TABBYAPI_DIR` | Root directory of a [TabbyAPI](https://github.com/theroyallab/tabbyAPI) installation. Used for credential auto-load and config reads; these are disabled when unset. The proxy does not spawn or manage the Tabby process. | unset (feature off) |
 | `AZIZAM_COMFY_DIR` | Root directory of a [ComfyUI](https://github.com/comfyanonymous/ComfyUI) installation. Sets the default for `AZIZAM_COMFY_OUTPUT_DIR` and `AZIZAM_COMFY_CUSTOM_NODES_DIR`. | unset (feature off) |
 | `AZIZAM_COMFY_OUTPUT_DIR` | ComfyUI output directory (overrides `AZIZAM_COMFY_DIR/output`). Used for recent-renders and disk hot-spot reporting. | `$AZIZAM_COMFY_DIR/output` if `AZIZAM_COMFY_DIR` is set, else disabled |
 | `AZIZAM_COMFY_CUSTOM_NODES_DIR` | ComfyUI custom_nodes directory (overrides `AZIZAM_COMFY_DIR/custom_nodes`). Used by the status endpoint custom-nodes list. | `$AZIZAM_COMFY_DIR/custom_nodes` if `AZIZAM_COMFY_DIR` is set, else disabled |
@@ -63,7 +63,7 @@ twice.
 | `AZIZAM_GPU_BUDGET_PATH` | Path to a shell script that exports GPU VRAM budget variables (e.g. `GPU0_TOTAL`, `GPU0_DESKTOP`). When unset, budget data is omitted from `/v1/status`. | unset (feature off) |
 | `AZIZAM_VRAM_ESTIMATES_PATH` | Path to the persistent VRAM-per-(workflow,size) JSON cache. | `<repo>/cache/vram_estimates.json` |
 | `AZIZAM_DRIFT_REPORT_PATH` | Path to the workflow drift status JSON written by `scripts/check_workflow_drift.py`. | `<repo>/cache/drift_status.json` |
-| `AZIZAM_IMAGE_CACHE_DIR` | Directory for the content-addressed image cache used by `response_format: "url"` results. | `<repo>/cache/images` |
+| `AZIZAM_IMAGE_CACHE_DIR` | Redirects only the image-storage figure in monitoring. Generated images use `images.cache_dir`. | `<repo>/cache/images` |
 
 ## Media URL inputs
 
@@ -96,8 +96,8 @@ These env vars connect the status endpoint to a [Daisy](https://github.com/daisy
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_DAISY_DIR` | Root directory of a Daisy installation. Sets the default for `AZIZAM_DAISY_AUDIT_PATH` and `AZIZAM_DAISY_MODELS_JSON`. | unset |
-| `AZIZAM_DAISY_AUDIT_PATH` | Path to Daisy's `audit.jsonl`. Used to surface recent Daisy decisions in `/v1/status`. | `$AZIZAM_DAISY_DIR/audit.jsonl` if `AZIZAM_DAISY_DIR` is set, else disabled |
+| `AZIZAM_DAISY_DIR` | Root directory of a Daisy installation. Sets the default for `AZIZAM_DAISY_MODELS_JSON` only. Set `AZIZAM_DAISY_AUDIT_PATH` separately. | unset |
+| `AZIZAM_DAISY_AUDIT_PATH` | Path to Daisy's `audit.jsonl`. Set it separately to surface recent Daisy decisions in `/v1/status`; `AZIZAM_DAISY_DIR` supplies no audit-path default. | unset (disabled) |
 | `AZIZAM_DAISY_MODELS_JSON` | Path to Daisy's `models.json` (context-window budget file). | `$AZIZAM_DAISY_DIR/.pi/agent/models.json` if `AZIZAM_DAISY_DIR` is set, else disabled |
 
 ## LiteLLM sidecar (Docker Compose)

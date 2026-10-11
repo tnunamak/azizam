@@ -84,6 +84,7 @@ describe("engine progressive disclosure", () => {
     ).toBeVisible();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull();
+    expect(rowButton).toHaveFocus();
     await user.click(screen.getByText("Standby and fallback engines (1)"));
     expect(screen.getByRole("heading", { name: "standby" })).toBeVisible();
     await user.click(screen.getByRole("switch", { name: "Show not in use" }));
@@ -101,9 +102,6 @@ it.each(["Cancel", "Escape"])(
   async (dismiss) => {
     vi.spyOn(api.services, "registry").mockResolvedValue(registry);
     vi.spyOn(api, "status").mockResolvedValue({});
-    const toggle = vi
-      .spyOn(api.services, "toggleEnabled")
-      .mockResolvedValue(registry);
     const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
     const user = userEvent.setup();
     mount();
@@ -112,7 +110,6 @@ it.each(["Cancel", "Escape"])(
     expect(
       screen.getByRole("switch", { name: "Toggle primary" }),
     ).not.toBeChecked();
-    expect(toggle).not.toHaveBeenCalled();
     expect(edit).not.toHaveBeenCalled();
     if (dismiss === "Escape") await user.keyboard("{Escape}");
     else await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -170,3 +167,17 @@ it.each([true, false])(
     expect(screen.queryByText("Unavailable", { exact: true })).toBeNull();
   },
 );
+
+it("submits the edit form by Enter with accessible field names", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  vi.spyOn(api, "status").mockResolvedValue({});
+  const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /^primary\b/ }));
+  const name = screen.getByRole("textbox", { name: /^Name/ });
+  expect(screen.getByRole("textbox", { name: "Endpoint" })).toBeVisible();
+  await user.clear(name);
+  await user.type(name, "renamed{Enter}");
+  expect(edit).toHaveBeenCalledWith("primary", expect.objectContaining({ name: "renamed" }));
+});

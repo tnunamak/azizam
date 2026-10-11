@@ -123,8 +123,10 @@ Anthropic/Ollama protocol frontends:
   revoking Credentials, listing audit events, and simulating profile policy.
 - `gateway/admin_oidc.py` — pure OIDC/session helpers for the browser admin
   login path; `proxy.py` provides the network adapter and signed-cookie wiring.
-- `gateway/admin_render.py` — compact server-rendered admin dashboard at
-  `/admin`, intentionally backed by the same admin API/store nouns.
+- `gateway/admin_render.py` — legacy server-rendered admin dashboard at
+  `/admin`, backed by the same admin API/store nouns. It requires an admin key
+  in a request header. Browser entry redirects to `/ui/home/`; the personal
+  page at `/me` also redirects there. Status is visible to members and owners.
 
 Backend adapter extraction, a richer live capability inventory, resource
 claims, generic gateway assets, and broader media-job adapters described below

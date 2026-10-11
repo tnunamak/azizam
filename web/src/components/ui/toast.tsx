@@ -22,21 +22,21 @@ export function Toaster(
         toastOptions={{
           unstyled: true,
           classNames: {
-            toast:
-              "flex w-80 items-start gap-3 rounded-vf-md border border-vf-border bg-vf-surface-2 p-4 text-vf-text shadow-vf-caustic-2",
-            icon: "shrink-0",
-            content: "flex min-w-0 flex-col gap-0.5",
-            title: "text-vf-small font-medium text-vf-text",
-            description: "text-vf-small text-vf-muted",
-            actionButton:
-              "ml-auto shrink-0 rounded-vf-sm bg-vf-accent px-2 py-1 text-vf-micro font-medium text-vf-accent-ink hover:bg-vf-accent/85",
-            cancelButton:
-              "ml-auto shrink-0 rounded-vf-sm px-2 py-1 text-vf-micro text-vf-muted hover:bg-vf-surface-3",
-            success: "[&_[data-icon]]:text-vf-ok",
-            error: "border-vf-bad/40 [&_[data-icon]]:text-vf-bad",
-            warning: "border-vf-warn/40 [&_[data-icon]]:text-vf-warn",
-            info: "[&_[data-icon]]:text-vf-info",
-          },
+          toast:
+            "flex w-80 items-start gap-3 rounded-md border border-border bg-muted p-4 text-foreground",
+          icon: "shrink-0",
+          content: "flex min-w-0 flex-col gap-0.5",
+          title: "text-sm font-medium text-foreground",
+          description: "text-sm text-muted-foreground",
+          actionButton:
+            "ml-auto shrink-0 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/85",
+          cancelButton:
+            "ml-auto shrink-0 rounded-md px-2 py-1 text-xs text-muted-foreground",
+          success: "[&_[data-icon]]:text-success",
+          error: "border-danger/40 [&_[data-icon]]:text-danger",
+          warning: "border-warning/40 [&_[data-icon]]:text-warning",
+          info: "[&_[data-icon]]:text-info",
+        },
         }}
         {...props}
       />

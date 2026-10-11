@@ -1,7 +1,38 @@
 import re
 from pathlib import Path
 
-from gateway.config_sources import CONFIG_SPECS, inventory_config_sources
+from gateway.config_sources import CONFIG_SPECS, KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
+
+
+def test_known_env_inventory_excludes_service_record_settings():
+    stale_names = {
+        "COMFY_TIMEOUT",
+        "EMBEDDINGS_ENABLED",
+        "EMBEDDINGS_HOST",
+        "STT_ENABLED",
+        "STT_HOST",
+        "STT_TIMEOUT",
+        "TTS_ENABLED",
+        "TTS_HOST",
+        "TTS_TIMEOUT",
+    }
+    assert len(KNOWN_ENV_SOURCE_NAMES) == len(set(KNOWN_ENV_SOURCE_NAMES))
+    assert stale_names.isdisjoint(KNOWN_ENV_SOURCE_NAMES)
+
+    rows = inventory_config_sources(
+        {},
+        env={name: "legacy-value" for name in stale_names},
+        env_names=KNOWN_ENV_SOURCE_NAMES,
+    )
+    row_ids = {row["id"] for row in rows}
+    assert {f"env:{name}" for name in stale_names}.isdisjoint(row_ids)
+    assert {
+        "env:AZIZAM_ADMIN_DB",
+        "env:AZIZAM_ADMIN_SESSION_KEY",
+        "env:COMFY_ENABLED",
+        "env:COMFY_HOST",
+        "env:EMBEDDINGS_TIMEOUT",
+    } <= row_ids
 
 
 def test_secrets_are_redacted_for_config_and_env():
