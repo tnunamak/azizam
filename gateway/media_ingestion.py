@@ -64,6 +64,19 @@ def index_sync_assets(
     safe_assets = [asset for asset in safe_assets if asset is not None]
     if not request_id or not intent or not safe_assets:
         return None
+    try:
+        return _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
+                               app_id, owner_key_hash, api_key_name, metadata, path)
+    except media_jobs.IdempotencyConflict:
+        # The request id is server-made per response, so a second index of it
+        # is a retry of the same response: the first record wins.
+        existing = media_jobs.get_by_request_id(
+            request_id, path=media_jobs.DB_PATH if path is None else path)
+        return media_jobs._coerce_to_job(existing) if existing else None
+
+
+def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
+                    app_id, owner_key_hash, api_key_name, metadata, path) -> media_jobs.MediaJob:
     return media_jobs.create(
         media_jobs.MediaJob(
             request_id=request_id,

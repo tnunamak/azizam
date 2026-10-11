@@ -77,7 +77,7 @@ def test_queued_route_stores_no_prompt_and_completed_asset_has_none(household, m
     receipt_store.init_db(receipt_path)
     monkeypatch.setattr(receipt_store, "DB_PATH", receipt_path)
     monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
-    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *_: None)
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *_, **__: None)
     for kind in ("image", "audio", "video"):
         monkeypatch.setattr(proxy, f"_schedule_{kind}_media_job", lambda *_: True)
     body = {"model": model, "prompt": "queued route private sentinel"}

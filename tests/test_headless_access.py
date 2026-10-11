@@ -118,8 +118,12 @@ def _request(row):
 def _database_contents(root):
     result = {}
     for path in sorted(root.rglob("*.db")):
-        with sqlite3.connect(path) as connection:
-            result[str(path)] = _digest(list(connection.iterdump()))
+        try:
+            with sqlite3.connect(path) as connection:
+                result[str(path)] = _digest(list(connection.iterdump()))
+        except sqlite3.DatabaseError:
+            # Other tests leave non-SQLite files named *.db; compare their bytes.
+            result[str(path)] = _digest([path.read_bytes().hex()])
     return result
 
 
