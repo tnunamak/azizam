@@ -173,3 +173,61 @@ def test_household_allows_the_provenance_stamp_only_inside_its_state(tmp_path):
     outside = tmp_path.parent / "elsewhere.in.mp3"
     with pytest.raises(RuntimeError, match="child process"):
         check_event("subprocess.Popen", ("ffmpeg", stamp[:6] + [str(outside)] + stamp[7:], None, None), {18080}, media)
+
+
+def test_anonymous_media_stamp_and_probe_use_the_real_guard(tmp_path, monkeypatch):
+    import io
+    import wave
+    from gateway import media_metadata
+
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\0\0" * 800)
+    run = subprocess.run
+    commands = []
+
+    def guarded_run(command, **kwargs):
+        check_event("subprocess.Popen", (command[0], command, None, None),
+                    {18750}, tmp_path / "images")
+        commands.append(command[0])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    stamped = media_metadata.embed_media_tags(audio.getvalue(), ".wav", {"title": "fixture"})
+    assert "fixture" in str(media_metadata.read_media_tags(stamped, ".wav"))
+    assert commands == ["ffmpeg", "ffprobe"]
+
+
+def test_anonymous_media_guard_rejects_other_inputs_and_commands(tmp_path):
+    from gateway import media_metadata
+
+    media = tmp_path / "images"
+    with media_metadata._media_buffers(b"fixture") as (source, destination):
+        src = f"/proc/self/fd/{source.fileno()}"
+        dst = f"/proc/self/fd/{destination.fileno()}"
+        strip = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src, "-map", "0",
+                 "-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1",
+                 "-c", "copy", "-fflags", "+bitexact", "-f", "wav", dst]
+        check_event("subprocess.Popen", ("ffmpeg", strip, None, None), {18750}, media)
+        with pytest.raises(RuntimeError, match="child process"):
+            check_event("subprocess.Popen", ("ffmpeg", strip, None, None), {18750})
+        disk = tmp_path / "input.wav"
+        disk.write_bytes(b"fixture")
+        with disk.open("rb") as handle:
+            for target in [str(disk), f"/proc/self/fd/{handle.fileno()}",
+                           "http://127.0.0.1:5000/media", dst]:
+                other = strip[:6] + [target] + strip[7:]
+                with pytest.raises(RuntimeError, match="child process"):
+                    check_event("subprocess.Popen", ("ffmpeg", other, None, None), {18750}, media)
+        for other in [strip[:-1] + [str(tmp_path / "output.wav")],
+                      strip[:-1] + [src], strip[:9] + ["-filter_complex", "x=1"] + strip[15:],
+                      strip[:-2] + ["hls", dst], strip + ["-extra"]]:
+            with pytest.raises(RuntimeError, match="child process"):
+                check_event("subprocess.Popen", ("ffmpeg", other, None, None), {18750}, media)
+        probe = ["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
+                 "-show_streams", str(disk)]
+        with pytest.raises(RuntimeError, match="child process"):
+            check_event("subprocess.Popen", ("ffprobe", probe, None, None), {18750}, media)

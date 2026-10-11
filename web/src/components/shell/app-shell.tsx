@@ -682,6 +682,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   ) : sessionPending ? (
     <p
       role="status"
+      aria-label="Loading your account"
+      aria-busy="true"
       className="text-muted-foreground text-body mx-auto max-w-md py-12"
     >
       Checking your session…

@@ -54,6 +54,13 @@ for (const theme of ["light", "dark"] as const) {
       });
       await expect(loading).toBeVisible();
       await expect(loading).toHaveAttribute("aria-busy", "true");
+      // A session that has not answered is not signed out. Keep private
+      // content and navigation unmounted until the account is known.
+      await expect(page).toHaveURL(/\/ui\/models\/$/);
+      await expect(page.getByRole("navigation")).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Models" })).toHaveCount(
+        0,
+      );
       await checkAccessibility(page);
       await mkdir(screenshots, { recursive: true });
       await page.screenshot({
@@ -68,6 +75,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(failure).toContainText(
         "Check your connection and try again.",
       );
+      await expect(page).toHaveURL(/\/ui\/models\/$/);
+      await expect(page.getByRole("navigation")).toHaveCount(0);
       await checkAccessibility(page);
       await page.screenshot({
         path: `${screenshots}/shared-error-${theme}-${width}.png`,
