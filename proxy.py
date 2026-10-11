@@ -14638,7 +14638,11 @@ def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_a
         return []
     registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
-    for provider in decision_provider_execution.systemone_providers(registry):
+    decision_providers = decision_provider_execution.systemone_providers(registry)
+    openai_decisions = decision_provider_execution.openai_decisions_provider(registry)
+    if openai_decisions is not None:
+        decision_providers.append(openai_decisions)
+    for provider in decision_providers:
         try:
             providers.require_remote_allowed(profile, provider)
         except providers.ProviderError:
