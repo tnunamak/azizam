@@ -89,7 +89,7 @@ declare -a bwrap_args=(
   --setenv HOME /home/test --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8
   --setenv TMPDIR "$state_dir/tmp" --setenv TMP "$state_dir/tmp" --setenv TEMP "$state_dir/tmp"
   --setenv XDG_CACHE_HOME "$state_dir/cache" --setenv XDG_CONFIG_HOME "$state_dir/home/.config" --setenv XDG_RUNTIME_DIR /run/user/0
-  --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
+  --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTHONPYCACHEPREFIX "$state_dir/pycache" --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
   --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv HERMETIC_HOST_DISK_DIR "$state_dir/disk" --setenv HERMETIC_TMPDIR_ON_DISK "$tmpfs_fallback" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
   --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
   --setenv HYPOTHESIS_PROFILE "${HYPOTHESIS_PROFILE:-gate}"
@@ -145,6 +145,24 @@ if [[ ${1:-} == "--check" ]]; then
 else
   # Plugin autoload is off, so load pytest-xdist explicitly; `-n N` opts in.
   test_command=("$python_bin" -m pytest -p no:cacheprovider -p xdist "$@")
+  # A full xdist run (`-n N`, no path argument) first compiles the suite once in N parallel
+  # slices (scripts/hermetic_prewarm.py) so the workers do not each rewrite every test module.
+  # AZIZAM_PYTEST_PREWARM=0 turns it off.
+  workers=
+  for argument in "$@"; do
+    if [[ $workers == next ]]; then workers=$argument; continue; fi
+    case $argument in
+      -n|--numprocesses) workers=next ;;
+      -n[0-9]*) workers=${argument#-n} ;;
+      --numprocesses=*) workers=${argument#--numprocesses=} ;;
+      -*) ;;
+      *) [[ -e $checkout_root/${argument%%::*} ]] && workers=skip ;;
+    esac
+  done
+  if [[ ${AZIZAM_PYTEST_PREWARM:-1} != 0 && $workers =~ ^[0-9]+$ ]] && ((workers > 1)); then
+    bwrap_args+=(--setenv HERMETIC_PREWARM_SLICES "$workers")
+    test_command=(/bin/bash -c '"$0" scripts/hermetic_prewarm.py "$HERMETIC_PREWARM_SLICES"; exec "$@"' "$python_bin" "${test_command[@]}")
+  fi
 fi
 rc=0
 bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}" || rc=$?

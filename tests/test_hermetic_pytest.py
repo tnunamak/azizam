@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import importlib.util
 import os
 from pathlib import Path
 import signal
@@ -224,3 +225,20 @@ def test_restore_removes_the_socket_guard_and_forgets_its_listeners() -> None:
         assert not guard._installed and not guard._allowed_tcp
     finally:
         socket.socket = before  # the run's own guard stays in place for later tests
+
+
+def test_a_full_xdist_run_finds_the_suite_bytecode_the_runner_prewarmed() -> None:
+    if not os.environ.get("HERMETIC_PREWARM_SLICES"):
+        pytest.skip("only a full xdist run (-n N, no path argument) prewarms bytecode")
+    from _pytest.assertion import rewrite
+
+    prefix = Path(os.environ["PYTHONPYCACHEPREFIX"])
+    assert sys.pycache_prefix == str(prefix) and prefix.is_relative_to(os.environ["HERMETIC_STATE_DIR"])
+    # This module and conftest are the ones pytest assert-rewrites; the prewarmed file is the one the workers read.
+    for module in (Path(__file__).resolve(), Path(__file__).resolve().with_name("conftest.py")):
+        pyc = rewrite.get_cache_dir(module) / (module.name[:-3] + rewrite.PYC_TAIL)
+        assert pyc.is_file(), pyc
+        assert rewrite._read_pyc(module, pyc) is not None, f"{pyc} is stale for {module}"
+    # Non-test code gets ordinary bytecode at the same prefix.
+    plain = Path(importlib.util.cache_from_source(str(Path(__file__).resolve().parent.parent / "proxy.py")))
+    assert plain.is_file() and plain.is_relative_to(prefix), plain
