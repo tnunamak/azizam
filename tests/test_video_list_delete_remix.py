@@ -125,7 +125,7 @@ class VideoRegistryTestCase(unittest.IsolatedAsyncioTestCase):
             "actual_seconds": 5.0,
             "created_at": 1000,
             "completed_at": None,
-            "owner_key_hash": None,
+            "owner_key_hash": "sha256:test",
             "deleted_at": None,
         }
         record.update(fields)

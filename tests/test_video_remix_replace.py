@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated  # noqa: E402, access_context
+from tests.support.access import authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
@@ -53,7 +53,7 @@ class RemixReplaceBase(unittest.TestCase):
             self.addCleanup(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
         proxy._video_job_records[SOURCE_PROMPT_ID] = {
             "model": "ltx-2.5", "resolved_model": "video-ltx-2.5-t2v", "size": "960x512",
-            "seconds": "4", "created_at": 1000, "completed_at": 1100, "owner_key_hash": None,
+            "seconds": "4", "created_at": 1000, "completed_at": 1100, "owner_key_hash": "sha256:test",
             "deleted_at": None,
         }
         self.client = TestClient(proxy.app)
