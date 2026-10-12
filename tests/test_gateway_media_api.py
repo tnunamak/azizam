@@ -236,24 +236,26 @@ class GatewayMediaJobsStoreTests(unittest.TestCase):
             self.assertNotIn("app_profile", row)
 
     def test_list_filters_by_app_profile_and_status(self) -> None:
-        self._seed(request_id="req_a", app_profile="alpha")
-        self._seed(request_id="req_b", app_profile="beta")
-        client = self._client(audience="admin")
-        response = client.get(
-            "/gateway/v1/media/jobs",
-            params={"app_profile": "alpha"},
-        )
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        ids = [row["request_id"] for row in body["jobs"]]
-        self.assertEqual(ids, ["req_a"])
+        from contextlib import closing
 
-        response = client.get(
-            "/gateway/v1/media/jobs",
-            params={"status": "queued"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json()["jobs"]), 2)
+        alpha_queued = self._seed(request_id="req_alpha_queued", app_profile="alpha")
+        self._seed(request_id="req_beta_queued", app_profile="beta")
+        alpha_running = self._seed(request_id="req_alpha_running", app_profile="alpha")
+        beta_running = self._seed(request_id="req_beta_running", app_profile="beta")
+        for job in (alpha_running, beta_running):
+            media_jobs.update_status(job["job_id"], "running", path=self.db)
+
+        with closing(self._client(audience="admin")) as client:
+            cases = [
+                ({"app_profile": "alpha", "status": "queued"}, {alpha_queued["job_id"]}),
+                ({"status": "running"}, {alpha_running["job_id"], beta_running["job_id"]}),
+                ({"app_profile": "alpha"}, {alpha_queued["job_id"], alpha_running["job_id"]}),
+            ]
+            for params, expected in cases:
+                with self.subTest(params=params):
+                    response = client.get("/gateway/v1/media/jobs", params=params)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual({job["job_id"] for job in response.json()["jobs"]}, expected)
 
     def test_list_rejects_invalid_status_with_400(self) -> None:
         client = self._client()
