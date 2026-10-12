@@ -177,6 +177,7 @@ it("uses the people list's name for a person in rows, sheet and selector (PF-141
   expect(dialog).toHaveAccessibleDescription("Details of this change");
   expect(within(dialog).getAllByText("Azizam Owner")).toHaveLength(1);
   expect(within(dialog).getAllByText("When")).toHaveLength(1);
+  expect(within(dialog).getByText("Changed").nextElementSibling).toHaveTextContent("Family app");
 });
 
 it("names the layer in change-list failures (PF-142)", async () => {
@@ -419,6 +420,34 @@ it("names the layer when the request list fails (PF-142)", async () => {
   );
 });
 
+it("sends the selected person and source as request filters", async () => {
+  const user = userEvent.setup();
+  const urls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return Response.json({
+      records: [{
+        receipt: { request_id: "filtered", intent: "chat", status: "success" },
+        person_label: "Owner", app_label: "Open WebUI", created_at: 1,
+      }],
+      next_cursor: null,
+      people: [{ id: "owner", label: "Owner" }],
+      sources: [{ id: "app-a", label: "Open WebUI" }],
+    });
+  }));
+  mountRequests();
+  await screen.findByRole("table", { name: "Request receipts" });
+  await user.click(screen.getByRole("combobox", { name: "Person" }));
+  await user.click(await screen.findByRole("option", { name: "Owner" }));
+  await user.click(screen.getByRole("combobox", { name: "Source" }));
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() =>
+    expect(urls.some((url) => url.includes("person_id=owner") && url.includes("source=app-a"))).toBe(true),
+  );
+  expect(urls[0]).not.toContain("person_id");
+  expect(urls[0]).not.toContain("source=");
+});
+
 it("labels unrecorded time and duration without inventing a zero duration", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
     ok: true,
@@ -501,6 +530,7 @@ it.each([undefined, "provider", "opaque_stage"])("COPY-08 activity failure uncer
 });
 
 it.each([
+  ["rejected", "The gateway rejected this request."],
   ["in_progress", "The request was still running when this receipt was recorded."],
   ["timed_out", "The request timed out before we recorded a result. Try again."],
   ["incomplete", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
@@ -511,6 +541,20 @@ it.each([
   const sheet = within(screen.getByRole("dialog"));
   expect(screen.getByRole("dialog")).toHaveAccessibleDescription("Request receipt");
   expect(sheet.getByText(summary)).toBeVisible();
+});
+
+it.each([
+  ["a different model served", { requested_model: "safe-chat", resolved_model: "backup-chat" }, true],
+  ["the requested model served", { requested_model: "safe-chat", resolved_model: "safe-chat" }, false],
+])("shows requested and served models only when %s", async (_name, models, different) => {
+  serveCopyReceipt({ intent: "chat", status: "success", ...models });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Request details: Chat by Sam" }));
+  const sheet = within(screen.getByRole("dialog"));
+  expect(sheet.queryByText("A different model was used.") !== null).toBe(different);
+  expect(sheet.queryByText("Requested model") !== null).toBe(different);
+  expect(sheet.queryByText("Served model") !== null).toBe(different);
+  expect(sheet.queryByText("Model", { exact: true }) !== null).toBe(!different);
 });
 
 it.each(["timed_out", "disconnected"])("points a media %s receipt to Library before a retry", async (status) => {
