@@ -460,7 +460,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.assertEqual(job["intent"], "video.generate")
         self.assertEqual(job["workflow"], "video.generate.ltx-test")
         self.assertEqual(job["backend"], "comfyui")
-        self.assertEqual(job["app_profile"], "default-local")
+        self.assertEqual(job["app_profile"], "plan_test")
         self.assertEqual(job["app_id"], "app_video")
         self.assertEqual(job["api_key_name"], "Video app")
         self.assertEqual(job["owner_key_hash"], "app:app_video")
