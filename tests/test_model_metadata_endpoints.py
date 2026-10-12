@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated, plan_for# noqa: E402
+from tests.support.access import access_context, authenticated, identity, plan_for  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
@@ -199,9 +199,6 @@ class ModelListEndpointTests(unittest.TestCase):
         patcher = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(path))
         patcher.start()
         self.addCleanup(patcher.stop)
-        visibility = patch.object(proxy, "_profile_target_visibility", return_value="available")
-        visibility.start()
-        self.addCleanup(visibility.stop)
 
     def test_dynamic_current_aliases_inherit_the_loaded_model(self) -> None:
         # Make fallback distinguishable from the loaded model's vision metadata.
@@ -273,13 +270,13 @@ class ModelListEndpointTests(unittest.TestCase):
             calls["n"] += 1
             return await inner(*args, **kwargs)
 
-        with patch.object(proxy, "_current_loaded_llm_model_ids", counting), \
-                patch.object(proxy, "_profile_target_visibility", return_value="available"):
+        with patch.object(proxy, "_current_loaded_llm_model_ids", counting):
             self._list()
         self.assertEqual(calls["n"], 1)
 
     def test_alias_target_ids_do_not_reveal_hidden_models(self) -> None:
-        with patch.object(proxy, "_profile_model_allowlist", return_value={"fast"}):
+        narrow = authenticated(identity(plan_for("fast-only", models=["fast"])))
+        with narrow:
             payload = self._list()
         entries = {entry["id"]: entry for entry in payload["data"]}
         self.assertIn("fast", entries)
@@ -377,8 +374,6 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             patch.object(proxy, "get_tabby_model_config", return_value=("", "", {})),
             patch.object(proxy, "currently_loaded_kobold_model", return_value=None),
             patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}),
-            patch.object(proxy, "_profile_target_visibility", return_value="available"),
-            patch.object(proxy, "_profile_model_allowlist", return_value=None),
             patch.object(proxy, "_litellm_models_payload", self._catalog_payload),
             patch.object(proxy.httpx, "AsyncClient",
                          side_effect=lambda *args, **kwargs: original_client(
@@ -405,35 +400,18 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                                for model_id in ("loaded-tabby", "private-public"))
         return payload
 
-    def _payload(self, *, baseline: bool = False, headers: dict | None = None) -> dict:
-        if baseline:
-            # Freeze main's filtering and context-probe code, with the same
-            # test-owned config and real HTTP readers as the new endpoint.
-            namespace = dict(vars(proxy))
-            fixture = ROOT / "tests" / "fixtures" / "catalog-main-filtering.py"
-            exec(compile(fixture.read_text(), str(fixture), "exec"), namespace)
-
-            async def main_filter(data, auth_context, **_kwargs):
-                return await namespace["_filter_model_list_for_profile"](data, auth_context)
-
-            async def main_windows(data, **_kwargs):
-                await namespace["_annotate_model_context_windows"](data)
-
-            with patch.object(proxy, "_filter_model_list_for_profile", main_filter), \
-                    patch.object(proxy, "_annotate_model_context_windows", main_windows):
-                response = self.client.get("/v1/models", headers=headers)
-        else:
-            response = self.client.get("/v1/models", headers=headers)
+    def _payload(self, *, headers: dict | None = None) -> dict:
+        response = self.client.get("/v1/models", headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
-    def _observe(self, *, baseline: bool = False, headers: dict | None = None):
+    def _observe(self, *, headers: dict | None = None):
         self.requests.clear()
-        payload = self._payload(baseline=baseline, headers=headers)
+        payload = self._payload(headers=headers)
         return {item["id"] for item in payload["data"]}, list(self.requests)
 
     def _route_current(self) -> proxy.CurrentLoadedLlmTarget:
-        context = proxy._catalog_auth_context_for_profile(plan_for("default-local"), "default-local")
+        context = access_context()
         target, error = asyncio.run(proxy._current_loaded_llm_target(
             context, enforce_gateway_policy=False))
         self.assertIsNone(error)
@@ -456,18 +434,15 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             self, listed["current"], proxy._model_metadata_sources().declared("current"))
         self.assertGreaterEqual(legacy.call_count, 1)
 
-    def test_other_backend_preserves_main_availability_without_inheriting_cached_path(self) -> None:
+    def test_other_backend_keeps_availability_without_inheriting_cached_path(self) -> None:
         self.active = "engine"
         self.backends["engine"] = {"base_url": "http://engine.test", "health_endpoint": "/health",
                                    "protocol": "openai-compatible", "capabilities": ["chat"]}
         with patch.dict(proxy.LLM_BACKEND_HOSTS, {"engine": "http://engine.test"}, clear=True), \
                 patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH):
-            baseline_ids, baseline_calls = self._observe(baseline=True)
             ids, calls = self._observe()
             listed = self._list()
-        self.assertEqual(ids, baseline_ids)
         self.assertTrue(DYNAMIC <= ids)
-        self.assertEqual(calls, baseline_calls)
         self.assertEqual(calls, [("engine.test", "/health")])
         for alias in DYNAMIC:
             _assert_declared_metadata(
@@ -506,46 +481,38 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         activation = proxy._configured_litellm_local_model_target("private-public", service_id="tabby")
         self.assertEqual(activation.model, target.model)
 
-    def test_probe_calls_and_availability_match_main_over_time(self) -> None:
+    def test_probe_calls_and_availability_are_stable_over_time(self) -> None:
         for headers in (None, {"anthropic-version": "2023-06-01"}):
             for elapsed in (0, 6, 600):
                 with self.subTest(headers=headers, elapsed=elapsed), \
                         patch.object(time, "monotonic", return_value=time.monotonic() + elapsed):
-                    baseline_ids, baseline_calls = self._observe(baseline=True, headers=headers)
                     ids, calls = self._observe(headers=headers)
-                    self.assertEqual(ids, baseline_ids)
                     self.assertTrue(DYNAMIC | {"loaded-tabby"} <= ids)
                     self.assertNotIn("private-public", ids)
-                    self.assertEqual(calls, baseline_calls)
                     self.assertEqual(calls, [("tabby.test", "/health"), ("tabby.test", "/v1/model")])
 
-    def test_hidden_profile_availability_and_probes_match_main_over_time(self) -> None:
+    def test_plan_that_grants_one_model_lists_only_it_over_time(self) -> None:
+        narrow = authenticated(identity(plan_for("loaded-only", models=["loaded-tabby"])))
+        narrow.start()
+        self.addCleanup(narrow.stop)
         for headers in (None, {"anthropic-version": "2023-06-01"}):
-            for visibility in ("available", "catalog"):
-                for elapsed in (0, 6, 600):
-                    with self.subTest(headers=headers, visibility=visibility, elapsed=elapsed), \
-                            patch.object(proxy, "_profile_target_visibility", return_value=visibility), \
-                            patch.object(proxy, "_profile_model_allowlist", return_value={"loaded-tabby"}), \
-                            patch.object(time, "monotonic", return_value=time.monotonic() + elapsed):
-                        baseline_ids, baseline_calls = self._observe(baseline=True, headers=headers)
-                        ids, calls = self._observe(headers=headers)
-                        self.assertEqual(ids, baseline_ids)
-                        self.assertTrue(DYNAMIC.isdisjoint(ids))
-                        self.assertIn("loaded-tabby", ids)
-                        self.assertEqual(calls, baseline_calls)
-                        self.assertEqual(len(calls), 2 if visibility == "available" else 0)
+            for elapsed in (0, 6, 600):
+                with self.subTest(headers=headers, elapsed=elapsed), \
+                        patch.object(time, "monotonic", return_value=time.monotonic() + elapsed):
+                    ids, _calls = self._observe(headers=headers)
+                    self.assertTrue(DYNAMIC.isdisjoint(ids))
+                    self.assertIn("loaded-tabby", ids)
 
-    def test_catalog_profile_has_no_identity_and_keeps_declared_metadata(self) -> None:
-        with patch.object(proxy, "_profile_target_visibility", return_value="catalog"):
-            listed = self._list()
+    def test_listing_keeps_declared_metadata_without_a_loaded_state_lookup(self) -> None:
+        listed = self._list()
         for alias in DYNAMIC:
             _assert_declared_metadata(
                 self, listed[alias], proxy._model_metadata_sources().declared(alias))
         self.assertEqual(self.requests, [])
 
-    def test_existing_context_probe_cache_matches_main(self) -> None:
-        # A catalog profile performs no loaded-state lookup, but main's
-        # context-window annotation still probes once on a cold/expired cache.
+    def test_context_probe_cache_is_honored(self) -> None:
+        # Listing performs no loaded-state lookup, but the context-window
+        # annotation still probes once on a cold/expired cache.
         aliases = self.backends["tabby"]["models"][1:]
         self.backends["tabby"]["models"] = self.backends["tabby"]["models"][:1]
         for alias in aliases:
@@ -553,28 +520,22 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.backends["kobold"]["models"] = aliases
         now = time.time()
         for cache in ({}, {"kobold": (now, 8192)}, {"kobold": (now - 31, 8192)}):
-            with self.subTest(cache=cache), \
-                    patch.object(proxy, "_profile_target_visibility", return_value="catalog"):
-                with patch.object(proxy, "_MODEL_CONTEXT_CACHE", copy.deepcopy(cache)):
-                    baseline_ids, baseline_calls = self._observe(baseline=True)
+            with self.subTest(cache=cache):
                 with patch.object(proxy, "_MODEL_CONTEXT_CACHE", copy.deepcopy(cache)):
                     ids, calls = self._observe()
-                self.assertEqual(ids, baseline_ids)
-                self.assertEqual(calls, baseline_calls)
                 self.assertEqual(calls, [] if cache and now - cache["kobold"][0] < 30
                                  else [("kobold.test", "/v1/models")])
 
     def test_current_model_ids_apply_same_visibility_as_data(self) -> None:
+        narrow = authenticated(identity(plan_for("current-only", models=["current", "private-public"])))
+        narrow.start()
+        self.addCleanup(narrow.stop)
         for headers in (None, {"anthropic-version": "2023-06-01"}):
-            with self.subTest(headers=headers), \
-                    patch.object(proxy, "_profile_model_allowlist", return_value={"current", "private-public"}):
+            with self.subTest(headers=headers):
                 payload = self._payload(headers=headers)
             visible_ids = {item["id"] for item in payload["data"]}
             self.assertLessEqual(set(payload["azizam_current_model_ids"]), visible_ids)
             self.assertEqual(payload["azizam_current_model_ids"], ["current"])
-            self.assertEqual(payload["azizam_profile_model_allowlist"], ["current"])
-            self.assertNotIn("private-public", visible_ids)
-
 
 
 # What each `/v1/models` type may show as on the Models page. The oracle for
@@ -601,7 +562,7 @@ class ModelsPageAgreesWithModelListTests(unittest.TestCase):
 
     def _catalog_rows(self) -> list[dict]:
         registry = proxy.ADMIN_STORE.get_service_registry()
-        context = proxy._catalog_auth_context_for_profile(plan_for("default-local"), "default-local")
+        context = access_context()
         capability_sets = [proxy._gateway_capabilities_for_auth_context(context)]
         model_entries = [
             *proxy._stable_alias_model_entries(),
