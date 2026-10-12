@@ -49,10 +49,46 @@ class ProxyWiringTests(unittest.TestCase):
             self.assertIn("n", detail["inputs"]["properties"])  # route-owned field merged in
 
     def test_a_run_reaches_the_core_route_and_a_core_refusal_comes_back_as_a_tool_error(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(proxy, "COMFY_ENABLED", False):
-            result = _tool(self.client, "run", {"target": "krea2-turbo", "inputs": {"prompt": "x", "width": 256, "height": 256}})
+        from fastapi.responses import JSONResponse
+        from fastapi.routing import APIRoute
+
+        calls = []
+
+        async def core_refusal(request: proxy.Request):
+            calls.append(await request.json())
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": "fixture core refusal",
+                        "type": "invalid_request_error",
+                        "code": "fixture_core_refusal",
+                    }
+                },
+                status_code=409,
+            )
+
+        route = APIRoute("/v1/images/generations", core_refusal, methods=["POST"])
+        with (
+            patch.object(proxy, "AUTH_ENABLED", False),
+            patch.object(proxy.app.router, "routes", [route, *proxy.app.router.routes]),
+        ):
+            result = _tool(
+                self.client,
+                "run",
+                {
+                    "target": "krea2-turbo",
+                    "mode": "sync",
+                    "inputs": {"prompt": "audit-sentinel", "width": 256, "height": 256},
+                },
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "krea2-turbo")
+        self.assertEqual(calls[0]["prompt"], "audit-sentinel")
+        self.assertEqual(calls[0]["size"], "256x256")
         self.assertTrue(result["isError"])
-        self.assertGreaterEqual(result["structuredContent"]["http_status"], 400)
+        self.assertEqual(result["structuredContent"]["http_status"], 409)
+        self.assertEqual(result["structuredContent"]["code"], "fixture_core_refusal")
 
     def test_sdapi_lists_the_real_image_models(self) -> None:
         with patch.object(proxy, "AUTH_ENABLED", False):

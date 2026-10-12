@@ -486,6 +486,11 @@ def _record_receipts(gateway, before, row):
         row["detail"] += f" dispatched receipt(s): {dispatched!r}"
 
 
+# Scalar fields that describe an empty collection; anything else could carry output.
+_EMPTY_RESPONSE_METADATA_KEYS = frozenset({"object", "schema_version", "audience", "asset_url_ttl_s",
+                                             "first_id", "last_id", "has_more"})
+
+
 def _scoped_empty(response):
     """Allow only empty member collections, never an arbitrary successful body."""
     if response.status_code != 200:
@@ -499,9 +504,11 @@ def _scoped_empty(response):
     if not isinstance(value, dict):
         return False
     lists = [item for item in value.values() if isinstance(item, list)]
+    scalars = {key for key, item in value.items() if not isinstance(item, (list, dict))}
     return (
         len(lists) == 1 and lists[0] == []
         and all(not isinstance(item, dict) for item in value.values())
+        and scalars <= _EMPTY_RESPONSE_METADATA_KEYS
     )
 
 
@@ -584,6 +591,18 @@ def test_scoped_empty_accepts_empty_collections_with_scalar_metadata(body):
     {"output": "generated"},
 ])
 def test_scoped_empty_never_hides_generation_or_nested_data(body):
+    assert not _scoped_empty(httpx.Response(200, json=body))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"models": [], "output": "generated result"},
+        {"receipts": [], "image": "data:image/png;base64,fixture"},
+        {"capabilities": [], "response": "generated text"},
+    ],
+)
+def test_scoped_empty_does_not_hide_scalar_generation_output(body):
     assert not _scoped_empty(httpx.Response(200, json=body))
 
 
