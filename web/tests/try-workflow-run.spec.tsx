@@ -489,7 +489,12 @@ describe("guided JSON fields", () => {
 
     const [url, init] = posts()[0];
     expect(String(url)).toContain("/gateway/v1/workflows/remix/run");
+    // The browser writes the multipart boundary; a hand-set content type would break it.
+    const sent = new Headers(init.headers);
+    expect(sent.get("content-type")).toBeNull();
+    expect(sent.get("authorization")).toMatch(/^Bearer /);
     const form = init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
     expect((form.get("source") as File).name).toBe("clip.mp4");
     expect(form.get("prompt")).toBe("Turn this source into a crisp launch clip.");
     expect(form.get("mode")).toBe("product");
@@ -575,6 +580,9 @@ describe("what each kind of answer shows", () => {
       expect(element).not.toBeNull();
       return element!;
     });
+    // Each player points at its own signed file; the error below is only its answer.
+    expect(audio).toHaveAttribute("src", "https://media.example.test/audio?sig=fixture");
+    expect(document.querySelector("video")).toHaveAttribute("src", "https://media.example.test/video?sig=fixture");
     fireEvent.error(audio);
     fireEvent.error(document.querySelector("video")!);
     expect(await screen.findByText("The audio couldn’t be loaded.")).toBeVisible();

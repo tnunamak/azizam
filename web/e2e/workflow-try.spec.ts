@@ -563,3 +563,90 @@ for (const scenario of [
     });
   });
 }
+
+// Browser representative: jsdom cannot build the browser's own multipart encoding
+// (boundary header, file part), so the wire contract is read from the real request.
+test("workflow multipart run sends a browser-encoded file part without a JSON content type", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "video.edit.remix");
+  await page
+    .getByRole("textbox", { name: /^prompt Required$/i })
+    .fill("Turn this source into a crisp launch clip.");
+
+  let contentType = "";
+  let method = "";
+  let uploadedBody = "";
+  await page.route("**/gateway/v1/workflows/remix/run", async (route) => {
+    const request = route.request();
+    method = request.method();
+    contentType = request.headers()["content-type"] ?? "";
+    uploadedBody = (await request.postDataBuffer())?.toString("utf8") ?? "";
+    await route.fulfill({
+      headers: {
+        "content-type": "image/png",
+        "x-azizam-request-id": "req_workflow_multipart",
+      },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
+  });
+
+  await page.setInputFiles('input[type="file"]', {
+    name: "clip.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from("fake mp4"),
+  });
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
+
+  expect(method).toBe("POST");
+  expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
+  expect(uploadedBody).toContain('name="source"; filename="clip.mp4"');
+  expect(uploadedBody).toContain("Turn this source into a crisp launch clip.");
+});
+
+// Browser representative: the signed media host is aborted, so the players' own load
+// failure (not a dispatched event) drives the "could not load" copy and Retry.
+test("workflow JSON media says each signed audio and video file could not load", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "audio.generate.voiceover");
+  await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            kind: "audio",
+            signed_url: "https://media.example.test/audio?sig=fixture",
+            media_type: "audio/mpeg",
+          },
+          {
+            kind: "video",
+            signed_url: "https://media.example.test/video?sig=fixture",
+            media_type: "video/mp4",
+          },
+        ],
+      },
+    }),
+  );
+  const requested: string[] = [];
+  await page.route("https://media.example.test/**", (route) => {
+    requested.push(new URL(route.request().url()).pathname);
+    return route.abort();
+  });
+  await fillRequiredPrompt(page);
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("The audio couldn’t be loaded.")).toBeVisible();
+  await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(2);
+  expect(requested).toEqual(expect.arrayContaining(["/audio", "/video"]));
+  await expect(
+    page.getByRole("link", { name: "Download video 2" }),
+  ).toHaveAttribute("href", "https://media.example.test/video?sig=fixture");
+  await expect(
+    page.getByRole("link", { name: "Download audio 1" }),
+  ).toHaveAttribute("href", "https://media.example.test/audio?sig=fixture");
+});
