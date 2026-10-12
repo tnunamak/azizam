@@ -1,0 +1,23 @@
+{
+  "protocol": "openai-compatible",
+  "name": "chat-text",
+  "description": "One non-streaming chat completion with a text answer and usage.",
+  "provenance": {"source": "hand-written", "reference": "https://platform.openai.com/docs/api-reference/chat/object"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}", "stream": {"$absent": true}}},
+      "response": {
+        "status": 200,
+        "json": {
+          "id": "chatcmpl-fk-text",
+          "object": "chat.completion",
+          "created": 1767225600,
+          "model": "{{model}}",
+          "choices": [{"index": 0, "message": {"role": "assistant", "content": "{{content}}"}, "finish_reason": "stop"}],
+          "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+        }
+      }
+    }
+  ]
+}
