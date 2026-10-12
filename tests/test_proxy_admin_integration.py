@@ -869,7 +869,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "not_authenticated")
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
-    def test_user_models_catalog_uses_app_profile_and_own_receipts(self) -> None:
+    def test_user_models_catalog_uses_the_apps_access_and_own_receipts(self) -> None:
         from gateway import receipt_store
         from gateway.capabilities import Capability
         from gateway.receipts import RouteReceipt
@@ -906,34 +906,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             display_name="Other Models User",
             path=self.db,
         )
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "Models profile",
-                "profile": {"id": "models-profile", "models": ["allowed-model"]},
-            },
-            headers=self._auth(),
-        ).json()["profile"]
-        app = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "models-app",
-                "kind": "personal",
-                "owner_user_id": user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        ).json()["app"]
-        other_app = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "other-models-app",
-                "kind": "personal",
-                "owner_user_id": other_user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        ).json()["app"]
+        accounts.initialize(self.db)
+        models_plan = store_plan("Models plan", path=self.db, models=["allowed-model"])
+        for person in (user, other_user):
+            accounts.change_person(person["id"], "test", path=self.db, plan_id=models_plan["id"])
+        app = self._create_app("models-app", kind="personal", owner_user_id=user["id"]).json()["app"]
+        other_app = self._create_app("other-models-app", kind="personal", owner_user_id=other_user["id"]).json()["app"]
         receipts_db = Path(self.tmp.name) / "models-receipts.db"
         old_receipts_path = receipt_store.DB_PATH
         receipt_store.DB_PATH = receipts_db
@@ -1031,7 +1009,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertTrue(body["aliases"][0]["recent_receipts"])
         self.assertNotIn("req_other", response.text)
 
-    def test_user_models_catalog_fails_closed_for_missing_or_disabled_app_profiles(self) -> None:
+    def test_user_models_catalog_fails_closed_for_apps_without_resolvable_access(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -1050,34 +1028,21 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
+        user = admin_store.upsert_oidc_user(
+            issuer=cfg.issuer, subject="user-no-plan", email="noplan@example.com", path=self.db)
+        accounts.initialize(self.db)
+        # The person has no plan, and one of their Apps is switched off.
+        app = admin_store.create_app("no-plan", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db)
+        off = admin_store.create_app("off", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db)
+        admin_store.disable_app(off["id"], path=self.db)
         session = session_from_claims(
-            {"sub": "user-missing-profile", "email": "missing@example.com"},
-            role="none",
-            cookie=cfg.cookie,
-        )
-        self.client.cookies.set(
-            cfg.cookie.name,
-            encode_session_cookie(session, signing_key=cfg.signing_key),
-        )
+            {"sub": user["id"], "email": "noplan@example.com"}, role="none", cookie=cfg.cookie)
+        self.client.cookies.set(cfg.cookie.name, encode_session_cookie(session, signing_key=cfg.signing_key))
 
         with patch.object(
             proxy,
-            "build_user_portal_snapshot",
-            return_value={
-                "authenticated": True,
-                "apps": [
-                    {"id": "disabled", "effective_profile_id": "family", "self_service_enabled": False},
-                    {"id": "missing", "effective_profile_id": "missing-profile"},
-                ],
-            },
-        ), patch.object(
-            proxy.ADMIN_STORE,
-            "profile_for_id",
-            return_value=None,
-        ), patch.object(
-            proxy,
             "_gateway_capabilities_for_auth_context",
-            side_effect=AssertionError("missing profiles must not produce catalog contexts"),
+            side_effect=AssertionError("an App without access must not produce catalog contexts"),
         ), patch.object(
             proxy,
             "_models_catalog_health_evidence",
@@ -1092,6 +1057,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["aliases"], [])
         self.assertEqual(response.json()["models"], [])
+        self.assertTrue(app["id"])
 
     def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
         cfg = OIDCConfig(
