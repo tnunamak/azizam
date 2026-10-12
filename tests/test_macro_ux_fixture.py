@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -209,13 +210,14 @@ class TestMacroUxFixture(unittest.TestCase):
                 raise Stop
 
         args = argparse.Namespace(scenario="all_clear", state_root=tempfile.gettempdir(), fd=None)
-        original = fixture.socket.socket
-        fixture.socket.socket = RecordingSocket
+        # Swap only the launcher module's `socket` name; asyncio keeps the real one.
+        original = fixture.socket
+        fixture.socket = types.SimpleNamespace(socket=RecordingSocket, AF_INET=0, SOCK_STREAM=0)
         try:
             with self.assertRaises(Stop):
                 asyncio.run(fixture.serve(args))
         finally:
-            fixture.socket.socket = original
+            fixture.socket = original
         self.assertEqual(binds, [("127.0.0.1", 0)])
 
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
