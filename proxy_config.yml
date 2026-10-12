@@ -19,6 +19,8 @@ llm:
   #   timeout_s: 120          # longest a swap waits for requests in flight
 backends:
   azizam:
+    display_name: Azizam
+    description: Access the available AI tools.
     name: Azizam (self)
     native_passthrough: false
     host: 127.0.0.1
@@ -27,6 +29,8 @@ backends:
     role: required
     managed: false
   tabby:
+    display_name: Vision chat
+    description: Ask questions about text and images.
     transforms: [reasoning-effort-final-chat]
     name: TabbyAPI (Qwen3-VL)
     native_passthrough: true
@@ -70,6 +74,8 @@ backends:
         verify_endpoint: /v1/model
         # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
+    display_name: Local chat
+    description: Chat, write, reason, and work with code.
     transforms: [reasoning-effort-final-chat]
     name: Local llama.cpp server (official; Bee rollback available)
     vram_budget_key: GPU1_LLM
@@ -95,6 +101,8 @@ backends:
     # scripts/local/sync_model_metadata_from_config.py.
     models:
       - id: default
+        display_name: General chat
+        description: Chat, reason, and ask questions about images.
         model_group: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -115,6 +123,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder
+        display_name: Coding assistant
+        description: Write, explain, and improve code.
         model_group: coder
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         activation_model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -125,6 +135,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-q5
+        display_name: Balanced coding
+        description: Write, explain, and improve code.
         model_group: coder-q5
         base_model_id: coder
         # Unique internal lifecycle aliases preserve the selected KV profile
@@ -139,6 +151,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-q8
+        display_name: Conservative coding
+        description: Write, explain, and improve code.
         model_group: coder-q8
         base_model_id: coder
         upstream_model: coder-q8
@@ -151,6 +165,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: coder-unchained
+        display_name: Unchained coding
+        description: Write, explain, and improve code.
         model_group: coder-unchained
         upstream_model: coder-unchained
         backend_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -164,6 +180,8 @@ backends:
       # Public aliases inherit the logical base policy by stable id. Physical
       # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
+        display_name: Fast chat
+        description: Get quick answers and help with everyday tasks.
         model_group: default-fast
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -185,6 +203,8 @@ backends:
       # reasoning, vision, tool use). Loading text-only cydonia-24b here is a
       # known exception the fallback does not describe.
       - id: current
+        display_name: Current chat model
+        description: Chat with the currently selected model.
         model_group: current
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -192,6 +212,8 @@ backends:
           input_modalities: [text, image]
           tags: [reasoning, tool-use, vision]
       - id: current-fast
+        display_name: Current model fast chat
+        description: Get quick answers from the currently selected model.
         model_group: current-fast
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -202,6 +224,8 @@ backends:
           input_modalities: [text, image]
           tags: [tool-use, vision]
       - id: rp
+        display_name: Roleplay
+        description: Create characters and explore fictional conversations.
         model_group: rp
         # Keep the logical alias across LiteLLM's internal gateway hop so the
         # RP-specific context profile cannot collapse into generic q5.
@@ -259,6 +283,8 @@ backends:
         # Precheck type: validate model is an absolute, existing .gguf path.
         precheck: gguf_path
   tts:
+    display_name: OmniVoice speech
+    description: Turn text into speech with a consistent voice.
     name: omnivoice-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -282,6 +308,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 150
   stt:
+    display_name: Parakeet transcription
+    description: Turn recorded speech into text.
     name: parakeet-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -340,6 +368,8 @@ backends:
       - transcriptions
     managed: false
   tts-supertonic:
+    display_name: Supertonic speech
+    description: Turn text into speech with preset voices.
     name: supertonic-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -365,6 +395,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   tts-kokoro:
+    display_name: Kokoro speech
+    description: Read text aloud with a choice of voices.
     name: kokoro-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -387,6 +419,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   tts-chatterbox:
+    display_name: Chatterbox speech
+    description: Create speech using a reference voice.
     name: chatterbox-tts
     native_passthrough: true
     host: 127.0.0.1
@@ -414,6 +448,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-nemotron:
+    display_name: Nemotron transcription
+    description: Transcribe speech as it arrives.
     name: nemotron-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -452,6 +488,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-canary:
+    display_name: Canary transcription
+    description: Turn recorded speech into text.
     name: canary-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -487,6 +525,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-parakeet-gpu:
+    display_name: Parakeet fast transcription
+    description: Quickly turn recorded speech into text.
     name: parakeet-gpu-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -524,6 +564,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   stt-diarize:
+    display_name: Speaker transcription
+    description: Transcribe audio and identify different speakers.
     name: diarize-stt
     native_passthrough: true
     host: 127.0.0.1
@@ -559,6 +601,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 120
   rerank:
+    display_name: Search ranking
+    description: Rank search results by relevance to your question.
     name: rerank-cpu
     host: 127.0.0.1
     port: 8018
@@ -580,6 +624,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   decisions:
+    display_name: Fast decisions
+    description: Choose among a set of options.
     name: Local decisions
     host: 127.0.0.1
     port: 8023
@@ -601,6 +647,8 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   decisions-quality:
+    display_name: Quality decisions
+    description: Evaluate a set of options for a careful choice.
     name: Local quality decisions
     host: 127.0.0.1
     port: 8025
@@ -622,6 +670,7 @@ backends:
         health_endpoint: /health
         health_timeout_s: 90
   realtime:
+    description: Have a spoken conversation.
     name: speech-to-speech
     display_name: Realtime voice
     host: 127.0.0.1
@@ -643,6 +692,8 @@ backends:
         health_endpoint: /v1/pool
         health_timeout_s: 120
   embeddings:
+    display_name: Nomic text embeddings
+    description: Represent text for semantic search and comparison.
     name: nomic-embed-text-v1.5 CPU
     native_passthrough: true
     protocol: openai-compatible
@@ -652,6 +703,8 @@ backends:
     model_id: nomic-embed-text-v1.5
     models:
       - id: nomic-embed-text-v1.5
+        display_name: Nomic Embed
+        description: Represent text for semantic search and comparison.
         model_group: nomic-embed-text-v1.5
         upstream_model: nomic-embed-text-v1.5.f16.gguf
     health_endpoint: /health
@@ -668,6 +721,8 @@ backends:
       max_parallel: 4
     managed: false
   comfyui:
+    display_name: Image and video creation
+    description: Create images and videos from your ideas.
     name: ComfyUI (Image + Video Generation)
     native_passthrough: true
     host: 127.0.0.1
@@ -729,7 +784,6 @@ model_routing:
   gguf_dir: /media/windows/AI Models/LLMs/GGUF
   tabby_service: tabbyapi.service
   kobold_service: llama-bee.service
-  kobold_service_legacy: llama-turbo.service
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes
@@ -776,6 +830,7 @@ reasoning:
     xhigh: unlimited
 roles:
   default:
+    display_name: General chat
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -795,6 +850,7 @@ roles:
   # Same physical model as `default`; the model record's declarative alias
   # overlay owns its reasoning default so explicit callers still win.
   default-fast:
+    display_name: Fast chat
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -809,9 +865,11 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   vision:
+    display_name: Vision assistant
     backend: tabby
     description: Vision-capable EXL3 model (when tabbyapi.service is active on :5050)
   rp:
+    display_name: Roleplay
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -827,6 +885,7 @@ roles:
       presence_penalty: 1.5
       repetition_penalty: 1.0
   coder:
+    display_name: Coding assistant
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -844,6 +903,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-q5:
+    display_name: Balanced coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -858,6 +918,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-q8:
+    display_name: Conservative coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -872,6 +933,7 @@ roles:
       presence_penalty: 0.0
       repetition_penalty: 1.0
   coder-unchained:
+    display_name: Unchained coding
     backend: kobold
     model: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf
     mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
@@ -894,6 +956,7 @@ roles:
 # want to expose without inventing a new role.
 models:
   - id: cydonia-24b
+    display_name: Cydonia 24B
     backend: kobold
     path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
     mmproj: null # 24B Cydonia is text-only — no companion mmproj on disk
@@ -1216,6 +1279,7 @@ model_aliases:
     voice_aliases: {neutral_female: alloy, casual_female: coral, cheerful_female: shimmer, neutral_male: ash, casual_male: echo, sophia: alloy, isabella: shimmer, lily: coral, juniper: coral, evan: echo, adam: ash}
     engines:
       omnivoice:
+        display_name: OmniVoice speech
         service: tts
         model: k2-fsa/OmniVoice
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
@@ -1292,6 +1356,7 @@ model_aliases:
               portuguese accent: [portuguese]
               russian accent: [russian]
       chatterbox:
+        display_name: Chatterbox speech
         service: tts-chatterbox
         model: chatterbox-turbo
         streaming: true                    # response_format=pcm streams one chunk per sentence group
@@ -1304,6 +1369,7 @@ model_aliases:
         voice_map: {alloy: alloy, ash: ash, ballad: ballad, cedar: cedar, coral: coral, echo: echo, fable: fable, marin: marin, nova: nova, onyx: onyx, sage: sage, shimmer: shimmer, verse: verse}
         description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
       supertonic:
+        display_name: Supertonic speech
         service: tts-supertonic
         model: supertonic
         streaming: true
@@ -1316,6 +1382,7 @@ model_aliases:
         voice_map: {alloy: F1, marin: F1, coral: F3, nova: F2, sage: F5, shimmer: F4, ash: M3, echo: M4, ballad: M4, cedar: M2, fable: M1, verse: M1, onyx: M5}
         description: "Supertonic realtime engine (bake-off: 49 ms first audio)"
       kokoro:
+        display_name: Kokoro speech
         service: tts-kokoro
         model: kokoro
         streaming: true
@@ -1383,16 +1450,19 @@ model_aliases:
   transcriptions:
     engines:
       parakeet:
+        display_name: Parakeet transcription
         service: stt
         model: parakeet-tdt-0.6b-v3
         description: NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)
       parakeet-gpu:
+        display_name: Parakeet fast transcription
         service: stt-parakeet-gpu
         model: parakeet-tdt-0.6b-v3
         upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
         placement: "audio.cpp on GPU0 (about 2.3-3.2 GB while loaded; weights unload after 5 min idle), on-demand unit"
         description: "Parakeet TDT 0.6B v3 q8 on GPU0 (same model as `parakeet`, no blanked spans: 5 min set WER 1.5% in 1.1 s vs 2.05% in 13.8 s on CPU)"
       nemotron-streaming:
+        display_name: Nemotron streaming transcription
         service: stt-nemotron
         model: nemotron-3.5-asr-streaming-0.6b          # served in offline mode: fastest final text
         stream_model: nemotron-3.5-asr-streaming-0.6b-stream  # same weights in streaming mode, used when stream=true
@@ -1401,12 +1471,14 @@ model_aliases:
         placement: "audio.cpp on GPU0 (~2.2 GB with both modes loaded, always loaded: never unloaded when idle), always-warm unit started at boot"
         description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
       canary:
+        display_name: Canary transcription
         service: stt-canary
         model: canary-180m-flash
         upload_format: wav16k
         placement: "audio.cpp on GPU0 (~0.9 GB while loaded; weights unload after 5 min idle), on-demand unit"
         description: Canary 180M Flash (low VRAM, strong clean-speech WER)
       nemotron-diarize:
+        display_name: Speaker transcription
         service: stt-diarize
         model: nemotron-3-diarization
         streaming: true            # stream=true sends transcript.text.segment events as windows finish
@@ -1431,6 +1503,7 @@ model_aliases:
   decisions:
     engines:
       decider-2b:
+        display_name: Fast decisions
         service: decisions
         model: decider-2b-v11
         placement: cpu
@@ -1442,6 +1515,7 @@ model_aliases:
         max_levels: 10
         calibrated: true
       decider-4b:
+        display_name: Quality decisions
         service: decisions-quality
         model: decider-4b-v2.1
         placement: cpu
@@ -1461,6 +1535,7 @@ model_aliases:
   rerank:
     engines:
       qwen3-reranker-0.6b:
+        display_name: Qwen search ranking
         service: rerank
         model: qwen3-reranker-0.6b
         max_documents: 1000

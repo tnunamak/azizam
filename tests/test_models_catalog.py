@@ -22,6 +22,57 @@ from gateway.models_catalog import (  # noqa: E402
 )
 
 
+class ModelsCatalogSeedLabelsTests(unittest.TestCase):
+    def test_structured_seed_records_have_readable_display_names(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        records = list(seed["backends"].values())
+        records.extend(seed["roles"].values())
+        records.extend(seed["models"])
+        for service in seed["backends"].values():
+            records.extend(service.get("models", []))
+        for operation in seed["model_aliases"].values():
+            records.extend(operation.get("engines", {}).values())
+        self.assertTrue(records)
+        for index, record in enumerate(records):
+            with self.subTest(record=index):
+                title = record.get("display_name")
+                self.assertIsInstance(title, str)
+                self.assertTrue(title.strip())
+                self.assertNotIn("\n", title)
+
+    def test_service_member_descriptions_omit_runtime_details(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        records = list(seed["backends"].values())
+        for service in seed["backends"].values():
+            records.extend(service.get("models", []))
+        # Existing role/engine descriptions contain operator facts. They must
+        # remain unchanged until the member/operator fields are separated.
+        internals = (
+            r"(?i)(?:\b(?:gpu\d*|cpu|vram|cuda|systemd|localhost|"
+            r"backend|gateway|activation|gguf|q[458]_\w*|kv[-_ ]?cache)\b"
+            r"|\.service\b|https?://|/v1/|/media/|:[0-9]{2,5}\b)"
+        )
+        for index, record in enumerate(records):
+            with self.subTest(record=index):
+                description = record.get("description")
+                self.assertIsInstance(description, str)
+                self.assertTrue(description.strip())
+                self.assertNotIn("\n", description)
+                self.assertNotRegex(description, internals)
+
+    def test_unused_legacy_service_key_is_absent(self) -> None:
+        import yaml
+
+        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        for section in seed.values():
+            if isinstance(section, dict):
+                self.assertNotIn("kobold_service_legacy", section)
+
+
 class ModelsCatalogBuildTests(unittest.TestCase):
     def test_catalog_titles_are_data_driven_and_override_repeated_capability_titles(self) -> None:
         model_ids = (
