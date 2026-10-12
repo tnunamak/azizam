@@ -103,7 +103,7 @@ test.each([false, true])(
         expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
       );
       fireEvent.click(screen.getByRole("button", { name: "Run" }));
-      await screen.findByText(/Try uses a temporary key/);
+      await screen.findByText("Key details");
     }
     const minted = mocks.tryKey.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Record" }));
@@ -165,10 +165,10 @@ test("fallback model list keeps capabilities and leaves unknown rows unclassifie
     return response({ choices: [{ message: { content: "ok" } }] });
   });
   render(<TryPage />);
-  await screen.findByText("Model catalog could not be loaded.");
+  await screen.findByText("We couldn’t tell why the model list didn’t load.");
   // Run waits for a list. Retry prepares the key and reads the fallback.
   expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
@@ -193,8 +193,8 @@ test("fallback does not send an unknown model as chat", async () => {
     return response({});
   });
   render(<TryPage />);
-  await screen.findByText("Model catalog could not be loaded.");
-  fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+  await screen.findByText("We couldn’t tell why the model list didn’t load.");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
@@ -243,7 +243,7 @@ test("a missing catalog leaves no invented model selected", async () => {
     response(url.includes("workflows") ? workflows : {}, !url.includes("/me/api/models/catalog")),
   );
   render(<TryPage />);
-  await screen.findByText("Model catalog could not be loaded.");
+  await screen.findByText("We couldn’t tell why the model list didn’t load.");
   expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
   expect(screen.queryByText(/Unverified model/)).toBeNull();
 });
@@ -290,11 +290,11 @@ test.each(["http", "transport"])(
     );
     await userEvent.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
-      await screen.findByText("Workflow catalog could not be loaded."),
+      await screen.findByText("We couldn’t tell why the workflow list didn’t load."),
     ).toBeVisible();
     fetchMock.mockImplementation(async () => response(workflows));
     fireEvent.click(
-      screen.getByRole("button", { name: "Retry workflow catalog" }),
+      screen.getByRole("button", { name: "Retry" }),
     );
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
@@ -323,11 +323,11 @@ test.each(["http", "transport"])(
     );
     await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
     expect(
-      await screen.findByText("Model catalog could not be loaded."),
+      await screen.findByText("We couldn’t tell why the model list didn’t load."),
     ).toBeVisible();
     fetchMock.mockImplementation(async () => response(models));
     fireEvent.click(
-      screen.getByRole("button", { name: "Retry model catalog" }),
+      screen.getByRole("button", { name: "Retry" }),
     );
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
@@ -428,9 +428,7 @@ function bearerOfLastRun() {
 test("a later visit reuses this sign-in's Try key instead of minting", async () => {
   const first = render(<TryPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
-  await screen.findByText(
-    /Try uses a temporary key that ends when you sign out/,
-  );
+  await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
   first.unmount();
@@ -439,24 +437,25 @@ test("a later visit reuses this sign-in's Try key instead of minting", async () 
   fetchMock.mockClear();
   render(<TryPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
-  await screen.findByText(/Try uses a temporary key/);
+  await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith("key");
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
 });
-test("a new key replaces the stored one and Revoke forgets it", async () => {
+test("a new key replaces the stored one and Remove this key forgets it", async () => {
   localStorage.setItem(
     "azizam.try.key",
     JSON.stringify({ id: "old", secret: "old-secret", appName: "Try" }),
   );
   render(<TryPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
-  await screen.findByText(/Try uses a temporary key/);
+  await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith("old");
   expect(JSON.parse(localStorage.getItem("azizam.try.key")!)).toMatchObject({
     id: "key",
     secret: "test-secret",
   });
-  fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+  fireEvent.click(screen.getByText("Key details"));
+  fireEvent.click(screen.getByRole("button", { name: "Remove this key" }));
   await waitFor(() => expect(mocks.revokeKey).toHaveBeenCalledWith("key"));
   await waitFor(() =>
     expect(localStorage.getItem("azizam.try.key")).toBeNull(),

@@ -653,7 +653,10 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
   );
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.locator("audio[controls]")).toBeVisible();
+  // Fake bytes cannot play; the result and its download still appear.
+  await expect(
+    page.getByRole("link", { name: "Download audio" }),
+  ).toHaveAttribute("href", /^blob:/);
 
   await selectWorkflowModel(page, "Video preview");
   await page.route("**/gateway/v1/workflows/preview/run", (route) =>
@@ -664,7 +667,9 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
   );
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.locator("video[controls]")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Download video" }),
+  ).toHaveAttribute("href", /^blob:/);
 });
 
 test("workflow async video jobs can complete with byte outputs or fail from Check job", async ({
@@ -703,12 +708,11 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
 
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Job status: queued")).toBeVisible();
+  await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
   await expectTechnicalCollapsed(page);
   await openTechnicalDetails(page);
   await expect(page.getByText('"status": "queued"')).toBeVisible();
-  await page.getByRole("button", { name: "Check job" }).click();
-  await expect(page.locator("video[controls]")).toBeVisible();
+  await page.getByRole("button", { name: "Check again" }).click();
   await expect(
     page.getByRole("link", { name: "Download video" }),
   ).toHaveAttribute("href", /^blob:/);
@@ -734,7 +738,7 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
   );
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Job status: queued")).toBeVisible();
+  await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
   await page.route("**/v1/videos/job_async_try", (route) =>
     route.fulfill({
       json: {
@@ -745,7 +749,7 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
       },
     }),
   );
-  await page.getByRole("button", { name: "Check job" }).click();
+  await page.getByRole("button", { name: "Check again" }).click();
   await expect(
     page.getByText("Renderer ran out of memory.", { exact: true }),
   ).toBeVisible();
@@ -792,7 +796,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
     route.fulfill({ status: 404, json: { error: "not found" } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Not available for this session")).toBeVisible();
+  await expect(page.getByText("No receipt was returned.")).toBeVisible();
   await expect(
     page.locator('a[href="/r/receipt%20denied%2Fvalue"]'),
   ).toHaveCount(0);
@@ -848,16 +852,17 @@ test("workflow JSON media renders signed audio and video outputs", async ({
       },
     }),
   );
+  // The signed host is not reachable here: each file says it could not
+  // load and offers Retry, and its download keeps the signed address.
+  await page.route("https://media.example.test/**", (route) => route.abort());
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.locator("audio[controls]")).toHaveAttribute(
-    "src",
-    "https://media.example.test/audio?sig=fixture",
-  );
-  await expect(page.locator("video[controls]")).toHaveAttribute(
-    "src",
-    "https://media.example.test/video?sig=fixture",
-  );
+  await expect(page.getByText("The audio couldn’t be loaded.")).toBeVisible();
+  await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(2);
+  await expect(
+    page.getByRole("link", { name: "Download video 2" }),
+  ).toHaveAttribute("href", "https://media.example.test/video?sig=fixture");
   await expect(
     page.getByRole("link", { name: "Download audio 1" }),
   ).toHaveAttribute("href", "https://media.example.test/audio?sig=fixture");
@@ -883,12 +888,12 @@ test("workflow media jobs use declared routes and load signed output after retry
   );
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Job status: queued")).toBeVisible();
+  await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
   expect(body).toEqual({
     intent: "video.generate",
     request: { model: "media-job", prompt: "A teal fish." },
   });
-  await page.getByRole("button", { name: "Check job", exact: true }).click();
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
   await expect(page.getByText("Job temporarily unavailable.")).toBeVisible();
   await page.unroute("**/gateway/v1/media/jobs/signed_job");
   await page.route("**/gateway/v1/media/jobs/signed_job", (route) =>
@@ -909,16 +914,14 @@ test("workflow media jobs use declared routes and load signed output after retry
       },
     }),
   );
+  await page.route("https://media.example.test/**", (route) => route.abort());
   await page.getByRole("button", { name: "Try again", exact: true }).click();
-  await expect(page.locator("video[controls]")).toHaveAttribute(
-    "src",
-    "https://media.example.test/completed?sig=fixture",
-  );
-  await expect(page.getByText("Job status: succeeded")).toBeVisible();
+  await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
+  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Download video", exact: true }),
   ).toHaveAttribute("href", "https://media.example.test/completed?sig=fixture");
-  await expect(page.getByText("Not available for this session")).toBeVisible();
+  await expect(page.getByText("No receipt was returned.")).toBeVisible();
 });
 
 // Composed workflows: Try names the engine a workflow waits on, the same way

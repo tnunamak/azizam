@@ -242,10 +242,10 @@ describe("fallback capabilities and catalog envelopes", () => {
       }));
       const user = userEvent.setup();
       render(<TryPage />);
-      await screen.findByRole("button", { name: "Retry model catalog" });
+      await screen.findByRole("button", { name: "Retry" });
       // Run waits for a list; Retry prepares the key and reads the fallback.
       expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await user.click(screen.getByRole("button", { name: "Retry" }));
       await screen.findByText(/1 model has no supported Try capability/);
       const picker = screen.getByRole("combobox", { name: "Model" });
       if (mixed) {
@@ -261,7 +261,7 @@ describe("fallback capabilities and catalog envelopes", () => {
       expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
       expect(screen.getByText(/1 model has no supported Try capability/)).toBeVisible();
       if (workflowFailure)
-        expect(screen.getByRole("button", { name: "Retry workflow catalog" })).toBeVisible();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
     });
 
   it.each([{}, { aliases: [], models: {} }, null])(
@@ -271,12 +271,12 @@ describe("fallback capabilities and catalog envelopes", () => {
         json(url.includes("workflows") ? { workflows: [] } : payload)));
       const user = userEvent.setup();
       render(<TryPage />);
-      await screen.findByRole("button", { name: "Retry model catalog" });
+      await screen.findByRole("button", { name: "Retry" });
       expect(screen.queryByText(/models are available/)).toBeNull();
       expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
       payload = catalog;
-      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await user.click(screen.getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Krea 2 Turbo"));
     });
 
@@ -292,12 +292,12 @@ describe("fallback capabilities and catalog envelopes", () => {
     payload = {};
     account.params = new URLSearchParams("capability=images");
     view.rerender(<TryPage />);
-    await screen.findByRole("button", { name: "Retry model catalog" });
+    await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Anima Turbo (anime)");
     expect(screen.queryByText(/models are available/)).toBeNull();
     payload = catalog;
-    await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry model catalog" })).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Retry" })).toBeNull());
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Anima Turbo (anime)");
   });
 
@@ -312,15 +312,15 @@ describe("fallback capabilities and catalog envelopes", () => {
       }));
       const user = userEvent.setup();
       render(<TryPage />);
-      await screen.findByRole("button", { name: "Retry model catalog" });
-      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await screen.findByRole("button", { name: "Retry" });
+      await user.click(screen.getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledWith(
         "/openai/v1/models", expect.anything()));
-      await screen.findByRole("button", { name: "Retry model catalog" });
+      await screen.findByRole("button", { name: "Retry" });
       expect(screen.queryByText(/models are available/)).toBeNull();
       expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
       payload = { data: [{ id: "new-chat", name: "Recovered chat", capability: "chat" }] };
-      await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      await user.click(screen.getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Recovered chat"));
     });
 
@@ -341,11 +341,11 @@ describe("fallback capabilities and catalog envelopes", () => {
     render(<TryPage />);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
     await user.click(screen.getByRole("button", { name: "Run" }));
-    await screen.findByRole("button", { name: "Retry model catalog" });
+    await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model");
     expect(screen.queryByText(/models are available/)).toBeNull();
     payload = { data: [] };
-    await user.click(screen.getByRole("button", { name: "Retry model catalog" }));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByText(/No chat models are available/);
     expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
@@ -356,7 +356,7 @@ describe("fallback capabilities and catalog envelopes", () => {
       json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [] })));
     render(<TryPage />);
     await screen.findByText(/No picture models are available/);
-    expect(screen.queryByRole("button", { name: "Retry model catalog" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   });
 });

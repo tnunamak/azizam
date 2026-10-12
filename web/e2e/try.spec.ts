@@ -4,11 +4,11 @@ import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/ui/try/");
-  // Minting the temporary key can take a while on a busy machine; wait for
-  // it, so a slow mint fails here rather than as missing copy.
-  await expect(page.getByText("Creating Try key")).toBeHidden({ timeout: 30_000 });
+  // Minting the Try key can take a while on a busy machine; wait for it, so
+  // a slow mint fails here rather than as missing copy.
+  await expect(page.getByText("Getting Try ready…")).toBeHidden({ timeout: 30_000 });
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
 }
 
 const TINY_PNG =
@@ -113,8 +113,8 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   ).toBeVisible();
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Open receipt/ }),
-  ).toHaveAttribute("title", receiptId);
+    page.getByRole("link", { name: "View receipt" }),
+  ).toHaveAttribute("href", `/r/${receiptId}`);
 });
 
 test("try shows empty, public API error, decision 404, and non-chat results", async ({
@@ -132,7 +132,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("This key cannot use demo-chat.")).toBeVisible();
+  await expect(page.getByText("This key cannot use demo-chat.", { exact: true })).toBeVisible();
   await page.unroute("**/openai/v1/chat/completions");
 
   await page.route("**/me/api/receipts/receipt_preferred", (route) =>
@@ -155,8 +155,8 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Open receipt/ }),
-  ).toHaveAttribute("title", "receipt_preferred");
+    page.getByRole("link", { name: "View receipt" }),
+  ).toHaveAttribute("href", "/r/receipt_preferred");
   await expect(page.getByRole("link", { name: "generic_request" })).toHaveCount(
     0,
   );
@@ -334,7 +334,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await page.goto("/ui/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Choose an option" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -344,7 +344,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/ui/try/?capability=chat&model=fast");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -353,7 +353,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/ui/try/?capability=chat&model=chat");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
@@ -495,7 +495,7 @@ for (const theme of ["light", "dark"] as const) {
         }),
       );
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await expect(page.getByText("This key cannot use chat.")).toBeVisible();
+      await expect(page.getByText("This key cannot use chat.", { exact: true })).toBeVisible();
       await checkState(page, `try-error-${theme}-${width}.png`);
       await page.unroute("**/openai/v1/chat/completions");
     });
@@ -732,7 +732,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 
   // The failed run says what failed and offers to edit, not to "try again".
   await expect(
-    page.getByText("The gateway could not start this video."),
+    page.getByText("The gateway could not start this video.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
   await checkState(page, "try-workflow-media-error-390.png");

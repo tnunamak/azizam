@@ -96,9 +96,14 @@ it.each(["model", "workflow"])(
     render(<TryPage />);
     if (section === "workflow")
       await user.click(screen.getByRole("tab", { name: "Workflow" }));
-    const retry = await screen.findByRole("button", {
-      name: `Retry ${section} catalog`,
-    });
+    expect(
+      await screen.findByText(
+        section === "workflow"
+          ? "Workflows couldn’t be loaded"
+          : "Models couldn’t be loaded",
+      ),
+    ).toBeVisible();
+    const retry = screen.getByRole("button", { name: "Retry" });
     failing = false;
     fetchMock.mockClear();
     await user.click(retry);
@@ -147,8 +152,10 @@ it.each([
     );
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("Provider unavailable")).toBeVisible();
-    expect(screen.getByText("HTTP 503")).toBeVisible();
-    expect(screen.getByText("42 ms")).toBeVisible();
+    // Status and time are technical: folded, not in the card (PF-006).
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).not.toBeVisible();
+    await user.click(screen.getByText("Technical details"));
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).toBeVisible();
     if (source === "missing") {
       expect(screen.queryByRole("link")).not.toBeInTheDocument();
     } else {
@@ -167,8 +174,7 @@ it.each([
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(1);
-    expect(screen.getByText("HTTP 503")).toBeVisible();
-    expect(screen.getByText("42 ms")).toBeVisible();
+    expect(screen.getByText(/HTTP 503 · 42 ms/)).toBeInTheDocument();
   } finally {
     clock.mockRestore();
   }

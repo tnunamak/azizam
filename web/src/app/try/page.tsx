@@ -96,9 +96,11 @@ type TryError = {
   lost?: boolean;
   /** Offer the Library, where a finished creation appears. */
   library?: boolean;
-  status?: number;
+  /** Where the request stopped, when the gateway said (P3). */
+  layer?: string;
   receiptId?: string | null;
-  elapsedMs?: number;
+  /** HTTP status, time and the raw answer, for Technical details. */
+  technical?: string;
 };
 type RequestInfo = {
   path: string;
@@ -166,6 +168,11 @@ type Result = {
   elapsedMs: number;
   cost?: string;
   receiptId: string | null;
+  /** The receipt could not be checked; this is what to check again. */
+  receiptLookup?: ReceiptLookup;
+  checkingReceipt?: boolean;
+  /** What the gateway did not return ("reply", "picture"), when it was missing. */
+  missing?: string;
   request: RequestInfo;
   imageUrl?: string;
   audioUrl?: string;
@@ -385,7 +392,37 @@ class PublicRequestError extends ApiError {
   ) {
     super("public_request_failed", message, response.status);
   }
+
+  /** The layer the gateway named in the error's details, if any. */
+  get layer() {
+    const layer = (
+      this.payload as { error?: { details?: { layer?: unknown } } } | null
+    )?.error?.details?.layer;
+    return typeof layer === "string" && layer in LAYER_HEADINGS
+      ? layer
+      : undefined;
+  }
 }
+
+/**
+ * A failure's heading names the layer that stopped it (P3). The layers are
+ * the gateway's public failure vocabulary; "unknown" has no heading of its
+ * own, so the card keeps "<task> request failed".
+ */
+const LAYER_HEADINGS: Record<string, string> = Object.fromEntries([
+  ["request", "The request wasn’t accepted"],
+  ["account", "Your account stopped this request"],
+  ["library", "A Library item isn’t available"],
+  ["gateway", "The gateway stopped this request"],
+  ["engine", "The engine stopped this request"],
+  // Pairs, not an object literal: the model/voice guard reads `model: "…"`
+  // as a hard-coded model id.
+  ["model", "The model stopped this request"],
+  ["workflow", "The workflow stopped this request"],
+]);
+
+/** Said when nothing shows where a request stopped. */
+const UNKNOWN_FAILURE = "We couldn’t tell where this request stopped.";
 
 /** The connection dropped and the gateway may still have finished the work. */
 class LostRequestError extends Error {
@@ -504,7 +541,7 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
       typeof (payload as { error?: { message?: unknown } }).error?.message ===
         "string"
         ? (payload as { error: { message: string } }).error.message
-        : `Request failed with HTTP ${response.status}.`;
+        : UNKNOWN_FAILURE;
     throw new PublicRequestError(message, response, payload, elapsedMs);
   }
   return { response, payload, elapsedMs };
@@ -524,46 +561,70 @@ function receiptFrom(response: Response, payload: unknown) {
   return null;
 }
 
-async function verifiedReceiptId(
+/** Where a run's receipt can be found: its request id, or its creations. */
+type ReceiptLookup = { requestId: string | null; assetIds: string[] };
+
+function receiptLookup(
   response: Response,
   payload: unknown,
   hint?: string | null,
-) {
+): ReceiptLookup {
+  // Media routes can return asset handles without a request-id header. The
+  // account-scoped asset record carries the exact generation's provenance.
+  const record = payload as {
+    data?: Array<{ asset_id?: unknown }>;
+    assets?: Array<{ asset_id?: unknown }>;
+  } | null;
+  const items = [
+    ...(Array.isArray(record?.data) ? record.data : []),
+    ...(Array.isArray(record?.assets) ? record.assets : []),
+  ];
+  return {
+    requestId: receiptFrom(response, payload) ?? hint ?? null,
+    assetIds: [
+      ...new Set(
+        items
+          .map((item) => item?.asset_id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    ].slice(0, 10),
+  };
+}
+
+/**
+ * Finds the run's receipt. "No receipt" and "could not check" are different
+ * answers (PF-008): a missing receipt is a fact, a failed check is retried.
+ */
+async function checkReceipt(
+  lookup: ReceiptLookup,
+): Promise<{ receiptId: string | null; receiptLookup?: ReceiptLookup }> {
+  let failed = false;
+  /** The id when its receipt exists; null when it does not. Throws on failure. */
   async function verify(requestId: string | null) {
     if (!requestId) return null;
     const receipt = await fetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
       { credentials: "same-origin" },
     );
-    return receipt.ok ? requestId : null;
+    if (receipt.ok) return requestId;
+    if (receipt.status === 404) return null;
+    throw new Error(`Receipt check returned HTTP ${receipt.status}`);
   }
   try {
-    const direct = await verify(receiptFrom(response, payload) ?? hint ?? null);
-    if (direct) return direct;
-    // Media routes can return asset handles without a request-id header. The
-    // account-scoped asset record carries the exact generation's provenance.
-    const record = payload as {
-      data?: Array<{ asset_id?: unknown }>;
-      assets?: Array<{ asset_id?: unknown }>;
-    } | null;
-    const items = [
-      ...(Array.isArray(record?.data) ? record.data : []),
-      ...(Array.isArray(record?.assets) ? record.assets : []),
-    ];
-    const ids = [
-      ...new Set(
-        items
-          .map((item) => item?.asset_id)
-          .filter(
-            (id): id is string => typeof id === "string" && id.length > 0,
-          ),
-      ),
-    ].slice(0, 10);
-    for (const id of ids) {
+    const direct = await verify(lookup.requestId);
+    if (direct) return { receiptId: direct };
+  } catch {
+    failed = true;
+  }
+  for (const id of lookup.assetIds) {
+    try {
       const detail = await fetch(`/me/api/media/${encodeURIComponent(id)}`, {
         credentials: "same-origin",
       });
-      if (!detail.ok) continue;
+      if (!detail.ok) {
+        if (detail.status !== 404) failed = true;
+        continue;
+      }
       const value = (await detail.json()) as {
         asset?: { request_id?: unknown };
       };
@@ -572,13 +633,29 @@ async function verifiedReceiptId(
           ? value.asset.request_id
           : null;
       const verified = await verify(requestId);
-      if (verified) return verified;
+      if (verified) return { receiptId: verified };
+    } catch {
+      failed = true;
     }
-  } catch {
-    return null;
   }
-  return null;
+  return failed ? { receiptId: null, receiptLookup: lookup } : { receiptId: null };
 }
+
+/** A media job's state in plain words (PF-006); the raw status is technical. */
+function jobPhase(status: string) {
+  const value = status.toLowerCase();
+  if (["queued", "pending", "waiting", "submitted"].includes(value))
+    return "Waiting to start";
+  if (["running", "processing", "in_progress", "started"].includes(value))
+    return "Being made";
+  if (["succeeded", "completed"].includes(value)) return "Ready";
+  if (["failed", "cancelled", "canceled", "expired", "error"].includes(value))
+    return "Couldn’t finish";
+  return "The gateway sent a state Try doesn’t know";
+}
+
+const FINISHED_JOB = ["succeeded", "completed"];
+const ENDED_JOB = [...FINISHED_JOB, "failed", "cancelled", "canceled", "expired", "error"];
 
 function codeSnippets(request: RequestInfo) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
@@ -681,7 +758,8 @@ function textFromChat(payload: unknown) {
   const choice = (
     payload as { choices?: Array<{ message?: { content?: string } }> }
   )?.choices?.[0];
-  return choice?.message?.content ?? JSON.stringify(payload, null, 2);
+  const content = choice?.message?.content;
+  return typeof content === "string" && content.trim() ? content : null;
 }
 
 function imageFrom(payload: unknown) {
@@ -1812,10 +1890,8 @@ export default function TryPage() {
           body: JSON.stringify(request.body),
         });
       }
-      const receiptId = await verifiedReceiptId(
-        result.response,
-        result.payload,
-        result.requestId,
+      const receipt = await checkReceipt(
+        receiptLookup(result.response, result.payload, result.requestId),
       );
       const oldUrls = [
         results[tab]?.audioUrl,
@@ -1841,9 +1917,10 @@ export default function TryPage() {
                 catalog[tab]?.find((option) => option.id === selectedModel[tab])
                   ?.locality,
             ),
-            receiptId,
+            receipt.receiptId,
             request,
           ),
+          receiptLookup: receipt.receiptLookup,
           promptNotSaved,
         },
       }));
@@ -1867,9 +1944,14 @@ export default function TryPage() {
                 : "This request could not be completed."),
           ...(error instanceof PublicRequestError
             ? {
-                status: error.status,
+                layer: error.layer,
                 receiptId: receiptFrom(error.response, error.payload),
-                elapsedMs: error.elapsedMs,
+                technical: [
+                  `HTTP ${error.status} · ${error.elapsedMs} ms`,
+                  error.payload instanceof Blob
+                    ? `${error.payload.type || "file"} · ${error.payload.size} bytes`
+                    : JSON.stringify(error.payload, null, 2),
+                ].join("\n"),
               }
             : {}),
         },
@@ -1980,6 +2062,27 @@ export default function TryPage() {
     }
   }
 
+  /** Checks a result's receipt again after the check itself failed. */
+  async function recheckReceipt(tab: TryTab) {
+    const lookup = results[tab]?.receiptLookup;
+    if (!lookup) return;
+    const update = (patch: Partial<Result>) =>
+      setResults((current) => {
+        const result = current[tab];
+        return result?.receiptLookup === lookup
+          ? { ...current, [tab]: { ...result, ...patch } }
+          : current;
+      });
+    update({ checkingReceipt: true });
+    const receipt = await checkReceipt(lookup);
+    if (!mounted.current) return;
+    update({
+      checkingReceipt: false,
+      receiptId: receipt.receiptId,
+      ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
+    });
+  }
+
   function editFailedRun(tab: TryTab) {
     const form = formRefs.current[tab];
     if (!form) return;
@@ -2019,14 +2122,10 @@ export default function TryPage() {
       }
       const requestId =
         previous.receiptId ?? job.requestId ?? previous.job.requestId;
-      const receiptId = requestId
-        ? await verifiedReceiptId(
-            new Response(null, {
-              headers: { "x-azizam-receipt-id": requestId },
-            }),
-            null,
-          )
-        : null;
+      const receipt = await checkReceipt({
+        requestId: requestId ?? null,
+        assetIds: [],
+      });
       setResults((current) => ({
         ...current,
         workflow: {
@@ -2037,7 +2136,8 @@ export default function TryPage() {
             payload instanceof Blob
               ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
               : JSON.stringify(payload, null, 2),
-          receiptId,
+          receiptId: receipt.receiptId,
+          receiptLookup: receipt.receiptLookup,
         },
       }));
     } catch (error) {
@@ -2078,65 +2178,52 @@ export default function TryPage() {
     receiptId: string | null,
     request: RequestInfo,
   ): Result {
+    const common = { elapsedMs, cost, receiptId, request };
+    const raw =
+      payload instanceof Blob
+        ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
+        : JSON.stringify(payload, null, 2);
+    // A success with nothing in it says what is missing; the raw answer
+    // stays under Technical details (PF-007).
+    const nothing = (title: string, missing: string): Result => ({
+      title,
+      body: "",
+      missing,
+      technical: raw,
+      ...common,
+    });
     if (tab === "chat") {
-      return {
-        title: "Chat result",
-        body: textFromChat(payload),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      const text = textFromChat(payload);
+      return text
+        ? { title: "Chat result", body: text, ...common }
+        : nothing("Chat result", "reply");
     }
     if (tab === "image") {
       const imageUrl = imageFrom(payload);
-      return {
-        title: "Image result",
-        body: imageUrl ? "Image generated." : JSON.stringify(payload, null, 2),
-        imageUrl,
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      return imageUrl
+        ? { title: "Image result", body: "Image generated.", imageUrl, ...common }
+        : nothing("Image result", "picture");
     }
     if (tab === "speech") {
-      const audioUrl =
-        payload instanceof Blob ? URL.createObjectURL(payload) : undefined;
-      if (audioUrl) {
-        objectUrls.current.push(audioUrl);
-      }
-      return {
-        title: "Speech result",
-        body: audioUrl ? "Audio generated." : JSON.stringify(payload, null, 2),
-        audioUrl,
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      if (!(payload instanceof Blob) || !payload.size)
+        return nothing("Speech result", "audio");
+      const audioUrl = URL.createObjectURL(payload);
+      objectUrls.current.push(audioUrl);
+      return { title: "Speech result", body: "Audio generated.", audioUrl, ...common };
     }
     if (tab === "transcribe") {
-      return {
-        title: "Transcription result",
-        body:
-          (payload as { text?: string } | null)?.text ??
-          JSON.stringify(payload, null, 2),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
-      };
+      const text = (payload as { text?: unknown } | null)?.text;
+      return typeof text === "string" && text.trim()
+        ? { title: "Transcription result", body: text, ...common }
+        : nothing("Transcription result", "transcript");
     }
     if (tab === "decide") {
       return {
         title: "Decision result",
-        body: JSON.stringify(payload, null, 2),
+        body: "",
         probabilities: decisionRows(payload, parsedOptions),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
+        technical: raw,
+        ...common,
       };
     }
     if (tab === "workflow") {
@@ -2146,32 +2233,20 @@ export default function TryPage() {
       return {
         title: "Workflow result",
         body: job
-          ? `Job ${job.status}.`
+          ? `${jobPhase(job.status)}.`
           : media.length
             ? `${media.length} output${media.length === 1 ? "" : "s"} returned.`
             : "Workflow returned a response. Open Technical details to inspect it.",
         media,
         job,
-        technical:
-          payload instanceof Blob
-            ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
-            : JSON.stringify(payload, null, 2),
-        elapsedMs,
-        cost,
-        receiptId,
-        request,
+        technical: raw,
+        ...common,
       };
     }
     const vector = embeddingStats(payload);
-    return {
-      title: "Embedding result",
-      body: vector ? "Vector created." : JSON.stringify(payload, null, 2),
-      vector: vector ?? undefined,
-      elapsedMs,
-      cost,
-      receiptId,
-      request,
-    };
+    return vector
+      ? { title: "Embedding result", body: "Vector created.", vector, ...common }
+      : nothing("Embedding result", "result");
   }
 
   return (
@@ -2196,23 +2271,30 @@ export default function TryPage() {
                 className="inline-flex items-center gap-2"
               >
                 <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-                Creating Try key
+                Getting Try ready…
               </span>
             )}
           </div>
         ) : (
-          <p>
-            Try uses a temporary key that ends when you sign out
-            <span aria-hidden="true"> · </span>
-            <button
-              type="button"
-              className="text-foreground underline underline-offset-4 disabled:opacity-50"
-              onClick={() => void revokeTryKey()}
-              disabled={keyBusy}
-            >
-              Revoke
-            </button>
-          </p>
+          // Try manages its key; how it works is a detail (PF-011). The
+          // gateway ends the key with the sign-in session
+          // (ensure_try_session_key), so "ends when you sign out" holds.
+          <details>
+            <summary className="inline-flex min-h-11 cursor-pointer items-center">
+              Key details
+            </summary>
+            <p>
+              Try runs with its own key, which ends when you sign out.{" "}
+              <button
+                type="button"
+                className="text-foreground min-h-11 underline underline-offset-4 disabled:opacity-50"
+                onClick={() => void revokeTryKey()}
+                disabled={keyBusy}
+              >
+                Remove this key
+              </button>
+            </p>
+          </details>
         )}
       </section>
 
@@ -2593,7 +2675,10 @@ export default function TryPage() {
                           to load has its own retry button above the form. */}
                       <ErrorState
                         heading={
-                          currentError.heading ?? `${tab.label} request failed`
+                          currentError.heading ??
+                          (currentError.layer
+                            ? LAYER_HEADINGS[currentError.layer]
+                            : `${tab.label} request failed`)
                         }
                         message={currentError.message}
                         severity={currentError.lost ? "attention" : "critical"}
@@ -2606,30 +2691,17 @@ export default function TryPage() {
                               }
                         }
                       />
-                      {currentError.status !== undefined && (
-                        <dl className="grid gap-3 text-sm sm:grid-cols-3">
-                          <Fact
-                            label="Status"
-                            value={`HTTP ${currentError.status}`}
-                          />
-                          <Fact
-                            label="Time"
-                            value={`${currentError.elapsedMs} ms`}
-                          />
-                          {currentError.receiptId && (
-                            <Fact
-                              label="Receipt"
-                              value={
-                                <ReceiptLink id={currentError.receiptId} />
-                              }
-                            />
-                          )}
-                        </dl>
+                      {currentError.receiptId && (
+                        <ReceiptLink id={currentError.receiptId} />
+                      )}
+                      {currentError.technical && (
+                        <TechnicalDetails text={currentError.technical} />
                       )}
                     </div>
                   ) : currentResult ? (
                     <ResultView
                       result={currentResult}
+                      onCheckReceipt={() => void recheckReceipt(tab.value)}
                       onCheckJob={() => void checkWorkflowJob()}
                       checkingJob={checkingJob}
                       jobError={jobError}
@@ -2652,11 +2724,13 @@ export default function TryPage() {
 
 function ResultView({
   result,
+  onCheckReceipt,
   onCheckJob,
   checkingJob,
   jobError,
 }: {
   result: Result;
+  onCheckReceipt: () => void;
   onCheckJob: () => void;
   checkingJob: boolean;
   jobError: string | null;
@@ -2665,6 +2739,9 @@ function ResultView({
     (row): row is { option: string; probability: number } =>
       row.probability !== null,
   );
+  const job = result.job;
+  const jobStatus = job?.status.toLowerCase() ?? "";
+  const noMedia = !result.media?.length;
   return (
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
@@ -2675,6 +2752,12 @@ function ResultView({
             Prompt not kept
           </p>
         ) : null}
+        {result.missing && (
+          <p className="text-sm">
+            The gateway returned no {result.missing}.
+            {result.receiptId ? " Open the receipt for details." : ""}
+          </p>
+        )}
         {Boolean(result.media?.length) && (
           <p className="text-muted-foreground text-sm">
             {result.media?.length} output{result.media?.length === 1 ? "" : "s"}{" "}
@@ -2682,17 +2765,10 @@ function ResultView({
           </p>
         )}
         {result.imageUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={result.imageUrl}
-            alt="Generated result"
-            className="max-h-96 w-full rounded-lg border object-contain"
-          />
+          <ResultMedia kind="image" url={result.imageUrl} />
         )}
         {result.audioUrl && (
-          <audio controls src={result.audioUrl} className="w-full">
-            <a href={result.audioUrl}>Download audio</a>
-          </audio>
+          <ResultMedia kind="audio" url={result.audioUrl} label="Generated audio" />
         )}
         {result.downloadUrl && (
           <a
@@ -2711,6 +2787,9 @@ function ResultView({
             <Fact label="Mean" value={result.vector.mean.toFixed(3)} />
           </dl>
         )}
+        {result.probabilities && !probabilityRows?.length ? (
+          <p className="text-sm">No answer was returned.</p>
+        ) : null}
         {probabilityRows?.length ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
@@ -2735,29 +2814,8 @@ function ResultView({
         ) : null}
         {result.media?.map((item, index) => (
           <div key={`${item.url}-${index}`} className="space-y-2">
-            {item.kind === "image" && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={item.url}
-                alt="Generated result"
-                className="max-h-96 w-full rounded-lg border object-contain"
-              />
-            )}
-            {item.kind === "audio" && (
-              <audio
-                aria-label={item.label}
-                controls
-                src={item.url}
-                className="w-full"
-              />
-            )}
-            {item.kind === "video" && (
-              <video
-                aria-label={item.label}
-                controls
-                src={item.url}
-                className="max-h-96 w-full rounded-lg"
-              />
+            {item.kind !== "file" && (
+              <ResultMedia kind={item.kind} url={item.url} label={item.label} />
             )}
             <a
               href={item.url}
@@ -2769,47 +2827,43 @@ function ResultView({
             </a>
           </div>
         ))}
-        {result.job && (
+        {job && (
           <div className="space-y-2">
-            <p className="text-sm">Job status: {result.job.status}</p>
+            <p className="text-sm">{jobPhase(job.status)}</p>
             {jobError && <ErrorState message={jobError} onRetry={onCheckJob} />}
-            {result.job.error && (
-              <p className="text-destructive text-sm">{result.job.error}</p>
+            {job.error && (
+              <p className="text-destructive text-sm">{job.error}</p>
             )}
-            {!result.media?.length &&
-              !["failed", "cancelled", "canceled"].includes(
-                result.job.status,
-              ) && (
+            {noMedia && FINISHED_JOB.includes(jobStatus) ? (
+              <p className="text-sm">
+                The workflow finished but returned no creation.
+                {result.receiptId ? " Open its receipt." : ""}
+              </p>
+            ) : null}
+            {noMedia && !ENDED_JOB.includes(jobStatus) && (
+              <>
+                <p className="text-muted-foreground text-sm">
+                  The gateway is still making this. Check again to load it.
+                </p>
                 <Button
                   type="button"
                   variant="outline"
                   disabled={checkingJob}
                   onClick={onCheckJob}
                 >
-                  {checkingJob ? "Checking job…" : "Check job"}
+                  {checkingJob ? "Checking…" : "Check again"}
                 </Button>
-              )}
-            {!result.media?.length &&
-              ![
-                "succeeded",
-                "completed",
-                "failed",
-                "cancelled",
-                "canceled",
-              ].includes(result.job.status) && (
-                <p className="text-muted-foreground text-sm">
-                  The gateway is still processing this request. Check again to
-                  load its output.
-                </p>
-              )}
+              </>
+            )}
           </div>
         )}
         {!result.imageUrl &&
           !result.audioUrl &&
           !result.media?.length &&
-          !result.job &&
+          !job &&
           !result.vector &&
-          !result.probabilities && (
+          !result.probabilities &&
+          !result.missing && (
             <pre className="bg-muted overflow-x-auto rounded-lg p-3 font-mono text-sm whitespace-pre-wrap">
               {result.body}
             </pre>
@@ -2817,7 +2871,7 @@ function ResultView({
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
         <Fact
-          label={result.job ? "Request time" : "Time"}
+          label={job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
         {result.cost && <Fact label="Cost" value={result.cost} />}
@@ -2826,25 +2880,26 @@ function ResultView({
           value={
             result.receiptId ? (
               <ReceiptLink id={result.receiptId} />
+            ) : result.receiptLookup ? (
+              // The check failed, which says nothing about the receipt.
+              <span className="flex flex-wrap items-center gap-x-2">
+                Receipt couldn’t be checked.
+                <button
+                  type="button"
+                  className="min-h-11 underline underline-offset-4 disabled:opacity-50"
+                  disabled={result.checkingReceipt}
+                  onClick={onCheckReceipt}
+                >
+                  {result.checkingReceipt ? "Checking…" : "Check again"}
+                </button>
+              </span>
             ) : (
-              "Not available for this session"
+              "No receipt was returned."
             )
           }
         />
       </dl>
-      {result.technical && (
-        <details className="border-t pt-3">
-          <summary className="min-h-11 cursor-pointer text-sm font-medium">
-            Technical details
-          </summary>
-          <pre
-            tabIndex={0}
-            className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-          >
-            {result.technical}
-          </pre>
-        </details>
-      )}
+      {result.technical && <TechnicalDetails text={result.technical} />}
       <details className="space-y-2 border-t pt-3">
         <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
@@ -2852,6 +2907,104 @@ function ResultView({
         </summary>
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </details>
+    </div>
+  );
+}
+
+/** Raw answers and status codes, folded away from the normal view (P15). */
+function TechnicalDetails({ text }: { text: string }) {
+  return (
+    <details className="border-t pt-3">
+      <summary className="min-h-11 cursor-pointer text-sm font-medium">
+        Technical details
+      </summary>
+      <pre
+        tabIndex={0}
+        className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
+      >
+        {text}
+      </pre>
+    </details>
+  );
+}
+
+const MEDIA_NOUN = { image: "picture", audio: "audio", video: "video" } as const;
+
+/**
+ * One generated picture, sound or video, with its own wait and failure
+ * (PF-009). Retry loads the same address again.
+ */
+function ResultMedia({
+  kind,
+  url,
+  label,
+}: {
+  kind: "image" | "audio" | "video";
+  url: string;
+  label?: string;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [attempt, setAttempt] = useState(0);
+  const noun = MEDIA_NOUN[kind];
+  const events = {
+    onError: () => setState("error"),
+    ...(kind === "image"
+      ? { onLoad: () => setState("ready") }
+      : { onLoadedMetadata: () => setState("ready") }),
+  };
+  if (state === "error")
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-x-3 rounded-lg border p-3 text-sm">
+        The {noun} couldn’t be loaded.
+        <button
+          type="button"
+          className="min-h-11 underline underline-offset-4"
+          onClick={() => {
+            setAttempt((value) => value + 1);
+            setState("loading");
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  return (
+    <div className="space-y-1" aria-busy={state === "loading"}>
+      {kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={attempt}
+          src={url}
+          alt="Generated result"
+          className="max-h-96 w-full rounded-lg border object-contain"
+          {...events}
+        />
+      ) : kind === "audio" ? (
+        <audio
+          key={attempt}
+          aria-label={label}
+          controls
+          src={url}
+          className="w-full"
+          {...events}
+        >
+          <a href={url}>Download audio</a>
+        </audio>
+      ) : (
+        <video
+          key={attempt}
+          aria-label={label}
+          controls
+          src={url}
+          className="max-h-96 w-full rounded-lg"
+          {...events}
+        />
+      )}
+      {state === "loading" && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Loading {noun === "audio" ? "the audio" : `the ${noun}`}…
+        </p>
+      )}
     </div>
   );
 }
@@ -3112,7 +3265,7 @@ function CatalogNotice({
   unknownModelCount?: number;
   onRetry: () => void;
 }) {
-  const label = section === "workflows" ? "Workflow" : "Model";
+  const noun = section === "workflows" ? "workflow" : "model";
   const unsupported = unknownModelCount ? (
     <Badge variant="outline">
       {unknownModelCount} model{unknownModelCount === 1 ? " has" : "s have"} no
@@ -3124,12 +3277,9 @@ function CatalogNotice({
     return (
       <div onClick={(event) => event.preventDefault()}>
         <ErrorState
-          heading={`${label} catalog unavailable`}
-          message={`${label} catalog could not be loaded.`}
-          action={{
-            label: `Retry ${label.toLowerCase()} catalog`,
-            onClick: onRetry,
-          }}
+          heading={`${noun === "model" ? "Models" : "Workflows"} couldn’t be loaded`}
+          message={`We couldn’t tell why the ${noun} list didn’t load.`}
+          action={{ label: "Retry", onClick: onRetry }}
         />
         {unsupported}
       </div>

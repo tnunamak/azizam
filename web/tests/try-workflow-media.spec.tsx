@@ -395,12 +395,13 @@ describe("a workflow catalog that failed to load", () => {
     render(<TryPage />);
     await user.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
-      await screen.findByRole("button", { name: "Retry workflow catalog" }),
+      await screen.findByRole("button", { name: "Retry" }),
     ).toBeVisible();
   });
 });
 
-it("says the Try key is temporary, in plain words", async () => {
+// PF-011: Try manages its key; how the key works is folded into Key details.
+it("keeps the Try key out of the normal view, under Key details", async () => {
   account.params = new URLSearchParams();
   const user = userEvent.setup();
   render(<TryPage />);
@@ -408,8 +409,11 @@ it("says the Try key is temporary, in plain words", async () => {
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
-  expect(await screen.findByText(/Try uses a temporary key/)).toBeVisible();
-  expect(screen.queryByText(/Using a Try key/)).toBeNull();
+  const summary = await screen.findByText("Key details");
+  expect(screen.getByText(/Try runs with its own key, which ends when you sign out/)).not.toBeVisible();
+  expect(screen.queryByText(/temporary key/)).toBeNull();
+  await user.click(summary);
+  expect(screen.getByRole("button", { name: "Remove this key" })).toBeVisible();
 });
 
 function deferredReaders() {
@@ -617,9 +621,9 @@ describe("readable Try model choices", () => {
     expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(".gguf");
     if (source === "fallback") {
       // Run waits while the list has failed; Retry reads the fallback list.
-      await screen.findByRole("button", { name: "Retry model catalog" });
+      await screen.findByRole("button", { name: "Retry" });
       expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
-      fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
