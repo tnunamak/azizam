@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 function sectionOf(heading: string) {
-  const el = screen.getByRole("heading", { name: heading, exact: true });
+  const el = screen.getByRole("heading", { name: heading });
   return el.parentElement as HTMLElement;
 }
 
@@ -47,10 +47,10 @@ describe("design page overlays", () => {
   ])("%s opens %s, Escape closes it and returns focus", async (trigger, name) => {
     const user = userEvent.setup();
     render(<DesignPage />);
-    const button = screen.getByRole("button", { name: trigger, exact: true });
+    const button = screen.getByRole("button", { name: trigger });
     await user.click(button);
     expect(
-      await screen.findByRole("dialog", { name, exact: true }),
+      await screen.findByRole("dialog", { name }),
     ).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("design page overlays", () => {
     const user = userEvent.setup();
     render(<DesignPage />);
     await user.click(
-      screen.getByRole("button", { name: "App actions", exact: true }),
+      screen.getByRole("button", { name: "App actions" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Rotate unavailable key" }),
@@ -72,7 +72,7 @@ describe("design page overlays", () => {
     const user = userEvent.setup();
     render(<DesignPage />);
     await user.click(
-      screen.getByRole("button", { name: "Open popover", exact: true }),
+      screen.getByRole("button", { name: "Open popover" }),
     );
     expect(
       await screen.findByRole("heading", { name: "Stable aliases" }),
@@ -88,31 +88,30 @@ describe("design page vocabulary", () => {
       expect(
         screen.getByRole("combobox", {
           name: `${state} capability`,
-          exact: true,
         }),
       ).toHaveTextContent("Choose a capability");
     }
     expect(screen.queryByText("Choose a model", { exact: true })).toBeNull();
     expect(
-      screen.getByRole("combobox", { name: "Disabled capability", exact: true }),
+      screen.getByRole("combobox", { name: "Disabled capability" }),
     ).toBeDisabled();
 
     await user.click(
-      screen.getByRole("combobox", { name: "Default capability", exact: true }),
+      screen.getByRole("combobox", { name: "Default capability" }),
     );
-    await user.click(await screen.findByRole("option", { name: "Chat", exact: true }));
+    await user.click(await screen.findByRole("option", { name: "Chat" }));
     expect(
-      screen.getByRole("combobox", { name: "Default capability", exact: true }),
+      screen.getByRole("combobox", { name: "Default capability" }),
     ).toHaveTextContent("Chat");
   });
 
   it("tables use a Capability column, not a Model column", () => {
     render(<DesignPage />);
     expect(
-      screen.getAllByRole("columnheader", { name: "Capability", exact: true }),
+      screen.getAllByRole("columnheader", { name: "Capability" }),
     ).toHaveLength(2);
     expect(
-      screen.queryAllByRole("columnheader", { name: "Model", exact: true }),
+      screen.queryAllByRole("columnheader", { name: "Model" }),
     ).toHaveLength(0);
   });
 
@@ -120,7 +119,7 @@ describe("design page vocabulary", () => {
     const user = userEvent.setup();
     render(<DesignPage />);
     await user.click(
-      screen.getByRole("button", { name: "Open dialog", exact: true }),
+      screen.getByRole("button", { name: "Open dialog" }),
     );
     expect(await screen.findByRole("dialog")).toHaveTextContent(
       "Give each app its own key and access plan.",
@@ -176,7 +175,7 @@ describe("design page error demonstrations", () => {
       "The request table could not be loaded from the gateway. Try again.",
     );
     act(() =>
-      within(demo).getByRole("button", { name: "Try again", exact: true }).click(),
+      within(demo).getByRole("button", { name: "Try again" }).click(),
     );
     expect(toastMock.info).toHaveBeenCalledWith(
       "Demonstration: retrying the request table.",
@@ -186,12 +185,11 @@ describe("design page error demonstrations", () => {
   it("Error tab shows the request error copy", async () => {
     const user = userEvent.setup();
     render(<DesignPage />);
-    await user.click(screen.getByRole("tab", { name: "Error", exact: true }));
-    const panel = screen.getByRole("tabpanel", { name: "Error", exact: true });
+    await user.click(screen.getByRole("tab", { name: "Error" }));
+    const panel = screen.getByRole("tabpanel", { name: "Error" });
     expect(
       within(panel).getByRole("heading", {
         name: "Error demonstration",
-        exact: true,
       }),
     ).toBeInTheDocument();
     expect(panel).toHaveTextContent(
@@ -202,15 +200,15 @@ describe("design page error demonstrations", () => {
   it("toast Error and Revoke key announce demonstration failures", async () => {
     const user = userEvent.setup();
     render(<DesignPage />);
-    await user.click(screen.getByRole("button", { name: "Error", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Error" }));
     expect(toastMock.error).toHaveBeenCalledWith(
       "Demonstration: The gateway could not save these changes. Try again.",
     );
     await user.click(
-      screen.getByRole("button", { name: "App actions", exact: true }),
+      screen.getByRole("button", { name: "App actions" }),
     );
     await user.click(
-      await screen.findByRole("menuitem", { name: "Revoke key", exact: true }),
+      await screen.findByRole("menuitem", { name: "Revoke key" }),
     );
     expect(toastMock.error).toHaveBeenCalledWith(
       "Demonstration: The gateway could not revoke this key. Try again.",
