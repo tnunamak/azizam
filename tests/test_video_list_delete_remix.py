@@ -609,18 +609,18 @@ class TestVideosOwnership(VideoRegistryTestCase):
     async def test_untracked_id_is_404_for_an_authenticated_key(self) -> None:
         """An id with no record (never tracked, or past its retention) has no
         owner. ComfyUI's /history is shared across keys, so falling through to
-        it let any key read it. Authenticated callers get 404; auth-disabled
-        deployments (nothing is owned) keep the history fallback."""
+        it let any key read it. Every caller gets 404: there is no auth-off
+        mode whose callers could keep the history fallback."""
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
                 proxy._video_id_from_prompt_id("p1"), BOB
             )
-            open_response = await proxy.proxy_comfy_video_status(
+            other_response = await proxy.proxy_comfy_video_status(
                 proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(open_response.status_code, 200)
+        self.assertEqual(other_response.status_code, 404)
 
 
 class _JsonRemixRequest:

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import access_context, authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
