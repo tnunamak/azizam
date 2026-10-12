@@ -78,12 +78,19 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        accounts.initialize(self.db)
-        self.accountable = admin_store.upsert_oidc_user(
-            "https://idp.example", "accountable", email="accountable@example.test", path=self.db)
-        self.plan = store_plan("Everything", path=self.db)
-        accounts.change_person(self.accountable["id"], "test", path=self.db, plan_id=self.plan["id"])
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
+        self._accountable = None
+
+    @property
+    def accountable(self) -> dict:
+        """The person who answers for Apps made through the admin key; holds a plan."""
+        if self._accountable is None:
+            accounts.initialize(self.db)
+            self._accountable = admin_store.upsert_oidc_user(
+                "https://idp.example", "accountable", email="accountable@example.test", path=self.db)
+            plan = store_plan("Everything", path=self.db)
+            accounts.change_person(self._accountable["id"], "test", path=self.db, plan_id=plan["id"])
+        return self._accountable
 
     def _create_app(self, name: str, **body):
         """An App accountable to the test person, "Same as its person" unless told otherwise."""
