@@ -1,4 +1,5 @@
 """Exercise connection reuse through the real HTTP chat route and middleware."""
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -40,12 +41,20 @@ def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immedia
     body = {"model": "current", "messages": [{"role": "user", "content": "ping"}]}
     headers = {"authorization": f"Bearer {key}"}
 
-    with patch.object(admin_store, "_conn", wraps=admin_store._conn) as connections:
+    lookups = []
+    real_scope = admin_store.runtime_auth_connection
+
+    @contextmanager
+    def counted(path=admin_store.DB_PATH):
+        lookups.append(path)
+        with real_scope(path) as connection:
+            yield connection
+
+    with patch.object(admin_store, "runtime_auth_connection", counted):
         first = client.post("/v1/chat/completions", json=body, headers=headers)
-        first_count = connections.call_count
-    with patch.object(admin_store, "_conn", wraps=admin_store._conn) as connections:
+        first_count = len(lookups)
         second = client.post("/v1/chat/completions", json=body, headers=headers)
-        second_count = connections.call_count
+        second_count = len(lookups) - first_count
 
     assert first.status_code == second.status_code == 200
     assert first.json()["choices"] == second.json()["choices"]

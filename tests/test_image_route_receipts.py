@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import ownership  # noqa: E402
 from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 

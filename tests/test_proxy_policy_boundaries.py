@@ -183,7 +183,7 @@ def test_native_policy_denial_is_owned_durable_attempt_and_never_dispatches(
 
     def refuse(identity, policy_request, receipt):
         decisions.append((identity, policy_request, receipt))
-        return SimpleNamespace(denied=True, reasons=("fixture policy refusal",))
+        return SimpleNamespace(denied=True, reasons=("fixture policy refusal",), code="policy_denied", side=None, sources=())
 
     def record(receipt):
         records.append(receipt)

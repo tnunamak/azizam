@@ -62,5 +62,6 @@ def test_new_app_credential_for_suspended_owner_cannot_authenticate(db):
     with admin_store._conn(store.path) as conn:
         conn.execute('UPDATE account_access SET disabled_at = ? WHERE user_id = ?', (123, user['id']))
         conn.commit()
-    assert runtime_identity_for_app_credential_hash('fixture-key-hash', path=store.path) is None
+    refused = runtime_identity_for_app_credential_hash('fixture-key-hash', path=store.path)
+    assert refused is not None and refused.denial == 'person_disabled'
     assert admin_store.get_app(app['id'], path=store.path)['disabled_at'] is None
