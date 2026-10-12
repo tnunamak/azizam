@@ -30,6 +30,7 @@ _NOT_FAKES = {
     "tests/test_decision_engine_server.py": "serves the real decision engine Handler under test",
     "tests/test_provider_missing_keys_live.py": "serves the real provider router over TCP",
     "tests/test_route_policy_inventory.py": "patches AsyncClient as a no-network tripwire",
+    "tests/test_proxy_policy_boundaries.py": "patches AsyncClient as a no-network tripwire for denied requests",
 }
 
 
