@@ -261,22 +261,22 @@ def test_all_alias_candidates_unavailable_have_retry_hint():
 
 
 @pytest.mark.parametrize("model", ["decide", "small", "small-v1", "jev-latest"])
-def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
+def test_dispatch_and_discovery_share_plan_restrictions(monkeypatch, model):
     import proxy
     from gateway.runtime_auth import RuntimeIdentity
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     auth = proxy.AuthContext(RuntimeIdentity(
-        "restricted", "hash", access=access(plan_for("restricted")),
+        "restricted", "hash", access=access(plan_for("restricted", caps=("chat",))),
     ))
     cap = proxy.DECISION_RUNTIME.capabilities()[0]
     assert proxy._capability_for_access(cap, auth).policy_available is False
     ensure = AsyncMock(return_value=None)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", ensure)
     assert proxy._decision_authorized(auth, model, "small") is False
-    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access) == []
     with pytest.raises(DecisionsError) as error:
-        asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, {**BODY, "model": model}, "r"))
+        asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.access, {**BODY, "model": model}, "r"))
     assert error.value.status == 403
     ensure.assert_not_called()
 
@@ -291,7 +291,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     auth = proxy.AuthContext(RuntimeIdentity(
         "restricted",
         "hash",
-        access=access(plan_for("restricted"), load=False),
+        access=access(plan_for("restricted", load=False)),
     ))
     def observed(_service, *, fresh=False):
         if fresh:
@@ -301,7 +301,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
 
     assert proxy._decision_authorized(auth, "decide", "small") is False
-    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access) == []
 
 
 def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatch):
@@ -314,7 +314,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
     auth = proxy.AuthContext(RuntimeIdentity(
         "cpu",
         "hash",
-        access=access(plan_for("cpu"), load=False),
+        access=access(plan_for("cpu", load=False)),
     ))
 
     def observed(_service, *, fresh=False):
@@ -324,7 +324,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
 
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
 
-    models = proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile)
+    models = proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access)
 
     assert {model.id for model in models} >= {"decide", "small", "small-v1", "jev-latest"}
     assert all(model.engine == "cpu" for model in models)
@@ -341,7 +341,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     auth = proxy.AuthContext(RuntimeIdentity(
         "gpu",
         "hash",
-        access=access(plan_for("gpu"), load=False),
+        access=access(plan_for("gpu", load=False)),
     ))
     def observed(service, *, fresh=False):
         if fresh:
@@ -354,7 +354,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", AsyncMock(return_value=AssertionError("must not activate")))
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}}, headers={"x-decision-engine": "gpu"})))):
-        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, BODY, "r"))
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.access, BODY, "r"))
 
     assert result.status_code == 200
     assert result.engine == "gpu"
@@ -541,7 +541,7 @@ def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"code": "overloaded"}})))):
         with pytest.raises(DecisionsError) as error:
-            asyncio.run(rt.dispatch(auth, auth.identity.profile, {**BODY, "model": "decide-quality"}, "r"))
+            asyncio.run(rt.dispatch(auth, auth.identity.access, {**BODY, "model": "decide-quality"}, "r"))
     assert error.value.status == 403
     ensure.assert_awaited_once_with("large")
 
