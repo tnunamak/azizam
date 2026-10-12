@@ -108,6 +108,7 @@ if [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
   test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB")')
 else
-  test_command=("$python_bin" -m pytest -p no:cacheprovider "$@")
+  # Plugin autoload is off, so load pytest-xdist explicitly; `-n N` opts in.
+  test_command=("$python_bin" -m pytest -p no:cacheprovider -p xdist "$@")
 fi
 bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}"

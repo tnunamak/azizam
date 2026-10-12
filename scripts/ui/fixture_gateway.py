@@ -136,6 +136,11 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
 
 import uvicorn
 
+# Playwright's request client keeps idle sockets alive with no timeout. With
+# uvicorn's 5 s default, a request sent as the server closes an idle socket
+# fails with ECONNRESET; on a loaded host that happened mid-journey. Keep idle
+# sockets open for the life of the fixture.
 uvicorn.run(
-    "proxy:app", host="127.0.0.1", port=port, log_level="warning", loop="asyncio"
+    "proxy:app", host="127.0.0.1", port=port, log_level="warning", loop="asyncio",
+    timeout_keep_alive=3600,
 )

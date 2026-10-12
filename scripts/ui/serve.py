@@ -82,7 +82,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
             log = (state / f'{port}.log').open('w')
             command = ([sys.executable, '-m', 'scripts.ui.fixture_gateway', str(PORT), str(ENGINE_PORT)]
                        if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
-                                                    '127.0.0.1', '--port', str(port)])
+                                                    '127.0.0.1', '--port', str(port),
+                                                    '--timeout-keep-alive', '3600'])
             children.append(subprocess.Popen(command, cwd=state, env=env,
                                              stdout=log, stderr=subprocess.STDOUT))
             log.close()

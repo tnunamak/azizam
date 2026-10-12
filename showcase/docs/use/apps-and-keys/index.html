@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Apps &amp; keys · Azizam docs</title>
+<meta name="description" content="Connect a chat app or agent, and create, rotate or revoke its keys.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/use/apps-and-keys/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase/"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Apps &amp; keys</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/" aria-current="page">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/" aria-current="page">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Use a gateway</p>
+      <h1 id="apps-keys">Apps &amp; keys</h1>
+<p>Give each app its own key. Then you can stop one app without breaking the others.</p>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#connect-a-chat-app-or-agent">Connect a chat app or agent</a></li><li class="toc-l2"><a href="#create-a-key-for-an-existing-app">Create a key for an existing app</a></li><li class="toc-l2"><a href="#rotate-keys">Rotate keys</a></li><li class="toc-l2"><a href="#stop-an-app-from-connecting">Stop an app from connecting</a></li><li class="toc-l2"><a href="#when-you-cannot-create-a-key">When you cannot create a key</a></li></ul></nav></details><h2 id="connect-a-chat-app-or-agent">Connect a chat app or agent <a class="anchor" href="#connect-a-chat-app-or-agent" aria-label="Link to Connect a chat app or agent">#</a></h2>
+<ol>
+<li>Open <strong>Apps &amp; keys</strong> and select <strong>New app</strong>.</li>
+<li>Enter an <strong>App name</strong> and choose an <strong>App recipe</strong>. Choose <strong>Other app</strong> if yours is not listed.</li>
+<li>Select <strong>Create app and key</strong>.</li>
+<li>Save the key while it is shown. You cannot see it again.</li>
+<li>In your app, choose its OpenAI-compatible provider setting. Paste the gateway address that Azizam shows, and enter the key.</li>
+</ol>
+<p>Use <strong>Connection examples</strong> if you need a setup example. If a prompt-saving note is shown with the key, read it. See <a href="/showcase/docs/api/clients/">Client setup examples</a> for common apps.</p>
+<h2 id="create-a-key-for-an-existing-app">Create a key for an existing app <a class="anchor" href="#create-a-key-for-an-existing-app" aria-label="Link to Create a key for an existing app">#</a></h2>
+<p>Find the app in the list. Select <strong>Create key</strong>, or open the app's actions menu and select <strong>Create key</strong> or <strong>Create another key</strong>. Save the key before you leave the screen.</p>
+<p>If the app was created but its key was not, select <strong>Retry key creation</strong>.</p>
+<h2 id="rotate-keys">Rotate keys <a class="anchor" href="#rotate-keys" aria-label="Link to Rotate keys">#</a></h2>
+<p>Rotate keys when a key may have leaked, or to replace old keys on a schedule.</p>
+<ol>
+<li>Open the app's actions menu and select <strong>Rotate keys</strong>.</li>
+<li>Select <strong>Create replacement key</strong>, and save the new key.</li>
+<li>Update your app to use the new key.</li>
+<li>Confirm that you saved the key. This starts to revoke the old keys.</li>
+</ol>
+<p>If some old keys still work, select <strong>Retry revoking old keys</strong>. You can also select <strong>Finish later</strong>. The app then shows <strong>Revoke old keys</strong> while the old keys are active. If the browser says it could not save that reminder, revoke the old keys before you leave the page.</p>
+<h2 id="stop-an-app-from-connecting">Stop an app from connecting <a class="anchor" href="#stop-an-app-from-connecting" aria-label="Link to Stop an app from connecting">#</a></h2>
+<p>Open the app's actions menu.</p>
+<ul>
+<li><strong>Revoke keys</strong> revokes the app's keys. The app stops connecting.</li>
+<li><strong>Remove app</strong> removes the app and its keys.</li>
+</ul>
+<p>Each action asks you to confirm.</p>
+<h2 id="when-you-cannot-create-a-key">When you cannot create a key <a class="anchor" href="#when-you-cannot-create-a-key" aria-label="Link to When you cannot create a key">#</a></h2>
+<p>Read the message shown for the app. The app may be turned off, or its access plan may have been removed. Ask the owner to check the app's access.</p>
+<p>Read <a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a> to learn what a key can do, including access to your saved prompts.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/use/library/" rel="prev"><span>Previous</span>Library</a><a class="pager-next" href="/showcase/docs/use/usage/" rel="next"><span>Next</span>Usage and receipts</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#connect-a-chat-app-or-agent">Connect a chat app or agent</a></li><li class="toc-l2"><a href="#create-a-key-for-an-existing-app">Create a key for an existing app</a></li><li class="toc-l2"><a href="#rotate-keys">Rotate keys</a></li><li class="toc-l2"><a href="#stop-an-app-from-connecting">Stop an app from connecting</a></li><li class="toc-l2"><a href="#when-you-cannot-create-a-key">When you cannot create a key</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

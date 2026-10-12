@@ -94,6 +94,15 @@ def test_compose_setup_allowance_matches_defined_gateway():
     assert "--no-proxy-headers" in compose["services"]["gateway"]["command"]
 
 
+def test_compose_keeps_data_and_creations_in_named_volumes():
+    import yaml
+    compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
+    mounts = {m.split(":")[1]: m.split(":")[0] for m in compose["services"]["gateway"]["volumes"]}
+    assert mounts["/app/data"] == "gateway-data"
+    assert mounts["/app/cache"] == "gateway-cache"
+    assert {"gateway-data", "gateway-cache"} <= set(compose["volumes"])
+
+
 def _owner_session_cookie(path: Path) -> tuple[str, str, str]:
     user = admin_store.upsert_oidc_user(
         "local",

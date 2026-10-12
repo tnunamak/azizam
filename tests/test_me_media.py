@@ -1058,9 +1058,15 @@ class MeMediaRouterTests(unittest.TestCase):
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
-        for index in range(1001):
-            admin_store.record_audit("media.asset.delete", actor_id=self.bob["id"], actor_kind="user",
-                                     target_id=f"other-{index}", path=self.admin_db)
+        # One transaction for the churn: a commit per row made this test take
+        # minutes on a busy disk without changing the rows it writes.
+        with admin_store._conn(self.admin_db) as conn:
+            for index in range(1001):
+                admin_store._record_audit_in_transaction(
+                    conn, "media.asset.delete", actor_kind="user", actor_id=self.bob["id"],
+                    actor_label=None, target_kind=None, target_id=f"other-{index}",
+                    metadata=None, now=admin_store._now())
+            conn.commit()
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.current_user = self.bob
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)

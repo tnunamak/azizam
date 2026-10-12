@@ -30,6 +30,7 @@ def test_production_environment_names_cannot_leak_into_the_suite() -> None:
     allowed_gateway_names = {
         "AZIZAM_ADMIN_DB",
         "AZIZAM_CONFIG_PATH",
+        "AZIZAM_KEY_ACTIVITY_LOG",
         "AZIZAM_MEDIA_JOBS_DB",
         "AZIZAM_METRICS_DB",
         "AZIZAM_RECEIPTS_DB",
