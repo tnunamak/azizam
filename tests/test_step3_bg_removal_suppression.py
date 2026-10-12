@@ -70,16 +70,32 @@ class TestBackgroundRemovalOutboundPayload:
 
         assert (decision.remove_background, decision.source) == (True, "llm")
         assert len(sent) == 1
+        assert sent[0].method == "POST"
         assert str(sent[0].url) == "http://127.0.0.1:9/v1/chat/completions"
         payload = json.loads(sent[0].content)
+        assert set(payload) == {
+            "model", "messages", "temperature", "max_tokens", "response_format", "chat_template_kwargs",
+        }
         # The kwarg is the only suppression mechanism; spelled out here so a
         # renamed constant cannot keep this assertion passing.
         assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+        # Dict equality alone accepts 0 == False; the JSON value must be a real boolean.
+        assert payload["chat_template_kwargs"]["enable_thinking"] is False
         for message in payload["messages"]:
             assert QWEN3_NO_THINK_HINT not in message["content"], message
         system, user = payload["messages"]
         assert system["role"] == "system"
-        assert system["content"].startswith("Decide whether")
+        assert system["content"] == (
+            "Decide whether an image generation request should have its "
+            "background removed and returned as a transparent PNG. "
+            "Use the user's intent, not keyword matching. Return only JSON "
+            "with keys remove_background boolean, confidence number 0..1, "
+            "and reason string. Choose true for reusable assets such as "
+            "logos, stickers, product cutouts, icons, isolated objects for "
+            "commerce, or explicitly transparent-background intent. Choose "
+            "false for portraits, landscapes, scenes, paintings, context-rich "
+            "images, and ordinary photos where the environment is part of the result."
+        )
         assert user == {"role": "user", "content": prompt}
         assert payload["model"] == "bg-decider-model"
         assert payload["temperature"] == 0

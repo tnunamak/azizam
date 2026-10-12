@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import importlib.util
 import json
@@ -34,11 +35,15 @@ _FIXTURE_STORES = {
     "AZIZAM_DRIFT_REPORT_PATH": "drift_status.json",
 }
 
-# Runs in a child process: start the launcher, wait for its ready file, GET
-# /health on the advertised port (unless it is protected), then stop it.
+# Runs in a child process: start the launcher, wait for its ready file, poll
+# /health on the advertised port until it answers 200 (a 503 or refused
+# connection means "not ready yet", never a final answer) and read the
+# fixture-only admin status, then stop the launcher. Loopback requests bypass
+# any proxy so the probe cannot be redirected.
 _LAUNCHER_DRIVER = """
 import json, os, subprocess, sys, time, urllib.error, urllib.request
 helper, state = sys.argv[1], sys.argv[2]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 log = open(os.path.join(state, "launcher.log"), "w")
 proc = subprocess.Popen([sys.executable, helper, "--serve", "--state-root", state, "--scenario", "all_clear"],
                         stdout=log, stderr=subprocess.STDOUT)
@@ -53,18 +58,27 @@ try:
                       "log": open(log.name).read()[-3000:]}
             break
         try:
-            result = {"port": json.load(open(ready))["port"], "health": None}
+            result = {"port": json.load(open(ready))["port"], "health": None, "last_health": None}
         except (OSError, ValueError, KeyError):
             time.sleep(0.1)
     if result.get("port") not in (None, 5000, 15000):
-        while time.monotonic() < deadline and result["health"] is None:
+        while time.monotonic() < deadline and result["health"] != 200:
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{result['port']}/health", timeout=2) as response:
-                    result["health"] = response.status
+                with opener.open(f"http://127.0.0.1:{result['port']}/health", timeout=2) as response:
+                    result["health"] = result["last_health"] = response.status
             except urllib.error.HTTPError as error:
-                result["health"] = error.code
+                result["last_health"] = error.code
+                time.sleep(0.1)
             except OSError:
                 time.sleep(0.1)
+        if result["health"] == 200:
+            bootstrap = json.load(open(os.path.join(state, "bootstrap-private.json")))
+            cookie = bootstrap["sessions"]["admin"]["cookie"]
+            request = urllib.request.Request(f"http://127.0.0.1:{result['port']}/admin/api/status",
+                                             headers={"Cookie": f"{bootstrap['cookie_name']}={cookie}"})
+            with opener.open(request, timeout=10) as response:
+                status = json.loads(response.read())
+            result["backend_keys"] = sorted(row["key"] for row in status["status"]["backends"])
 finally:
     proc.terminate()
     try:
@@ -141,8 +155,12 @@ class TestMacroUxFixture(unittest.TestCase):
         # launcher, probes the port it advertises and stops it.
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
+            # Minimal explicit environment: no inherited proxy, NO_PROXY or
+            # other ambient settings can change what the child serves.
             env = {
-                **os.environ,
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(state),
+                "TMPDIR": str(state),
                 **{name: str(state / filename) for name, filename in _FIXTURE_STORES.items()},
                 "AZIZAM_ADMIN_SESSION_KEY": "launcher-test-session-key-32-bytes-min",
                 "AZIZAM_LITELLM_BASE_URL": "http://127.0.0.1:9",
@@ -159,10 +177,46 @@ class TestMacroUxFixture(unittest.TestCase):
         self.assertIsNone(result.get("error"), result)
         port = result["port"]
         self.assertNotIn(port, {5000, 15000})
-        low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+        range_file = Path("/proc/sys/net/ipv4/ip_local_port_range")
+        if not range_file.exists():
+            self.skipTest("/proc/sys/net/ipv4/ip_local_port_range missing (non-Linux): ephemeral range unreadable")
+        low, high = map(int, range_file.read_text().split())
         self.assertTrue(low <= port <= high, f"port {port} is not OS-assigned ({low}-{high})")
-        # The advertised port is the live listener, not a stale number.
+        # The advertised port is the live listener, not a stale number, and it
+        # is this fixture (only the fixture seeds these backends), not any
+        # other server that happens to answer 200.
         self.assertEqual(result["health"], 200, result)
+        self.assertIn("fixture-required", result["backend_keys"], result)
+
+    def test_launcher_binds_port_zero_and_advertises_the_bound_port(self) -> None:
+        # Fast seam: record the bind() call, then abort before the app imports.
+        class Stop(Exception):
+            pass
+
+        binds: list[tuple] = []
+
+        class RecordingSocket:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def bind(self, address: tuple) -> None:
+                binds.append(address)
+
+            def listen(self) -> None:
+                pass
+
+            def getsockname(self) -> tuple:
+                raise Stop
+
+        args = argparse.Namespace(scenario="all_clear", state_root=tempfile.gettempdir(), fd=None)
+        original = fixture.socket.socket
+        fixture.socket.socket = RecordingSocket
+        try:
+            with self.assertRaises(Stop):
+                asyncio.run(fixture.serve(args))
+        finally:
+            fixture.socket.socket = original
+        self.assertEqual(binds, [("127.0.0.1", 0)])
 
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")

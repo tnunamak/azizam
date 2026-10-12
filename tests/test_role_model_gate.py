@@ -331,14 +331,14 @@ class TestRoleIsAlarmOnly(unittest.TestCase):
 
         projection = derive_admin_health_projection(registry, payload, observation_available=True)
 
-        rows = {row["service_id"]: (row["observation"], row["tone"]) for row in projection["services"]}
-        self.assertEqual(rows, {
-            "standby-down": ("down", "warn"),
-            "required-down": ("down", "bad"),
-            "standby-up": ("up", "ok"),
-            "standby-stopped": ("standby_stopped", "neutral"),
-            "required-stopped": ("idle", "neutral"),
-        })
+        rows = [(row["service_id"], row["observation"], row["tone"]) for row in projection["services"]]
+        self.assertEqual(rows, [
+            ("standby-down", "down", "warn"),
+            ("required-down", "down", "bad"),
+            ("standby-up", "up", "ok"),
+            ("standby-stopped", "standby_stopped", "neutral"),
+            ("required-stopped", "idle", "neutral"),
+        ])
 
     # --- Routing functions ignore role field ----------------------------------
 
