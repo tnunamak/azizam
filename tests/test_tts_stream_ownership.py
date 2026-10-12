@@ -1,7 +1,6 @@
 """The streaming TTS proxy releases its client and upstream body on every early exit."""
 
 import asyncio
-import json
 import unittest
 from unittest.mock import patch
 
