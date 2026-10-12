@@ -24,36 +24,18 @@ ingress that you control, such as the edge network. Verify both public-edge
 and direct LAN requests after changing forwarding settings. See the
 [Traefik entrypoint reference](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/).
 
-Anonymous LAN access is a shared identity. Disable
-`auth.lan_bypass_enabled` if family members must keep separate access and
-ownership on the LAN, and give each member an App key. An explicit valid key
-uses that App's identity even on the LAN; an invalid or revoked real key fails.
-The `lan_placeholder_keys` operator setting defaults to
-`["lan", "none", "sk-local", "dummy", "EMPTY", "not-needed"]`. These exact,
-case-sensitive strings count as absent credentials only for resolved clients
-allowed by enabled LAN bypass. This supports clients that require a key field.
-Other supplied credentials still take effect, so a dummy Bearer header cannot
-hide a real key in another supported header or an enabled query parameter.
-Public placeholders receive 401, including `sk-local` on delegated LLM routes.
-A caller on a trusted LAN can still omit the key while bypass is on.
-
-Owners can read the list with GET `/admin/api/settings/lan-placeholder-keys`.
-PUT the same endpoint with
-`{"lan_placeholder_keys": ["lan", "none", "sk-local", "dummy", "EMPTY", "not-needed"]}`.
-Writes use the existing admin authorization and browser CSRF guard, persist in
-`admin.db`, and apply immediately. `[]` disables exemptions. Values are trimmed;
-up to 64 nonempty strings of 128 characters are allowed, with no control
-characters or real gateway key prefixes (`opk_`, `oak_`, or `sk-` except the
-exact `sk-local` placeholder). The defaults remain excluded from delegated
-credentials even if removed from LAN exemptions. Malformed stored policy
-grants no exemptions. Audit records contain the count, not the strings.
+There is no anonymous LAN access. A request from the LAN, loopback or a
+tailnet needs an App key like any other, and uses that App's identity; an
+invalid or revoked key fails, and so does a placeholder such as `lan`,
+`sk-local` or `EMPTY` (`401 key_invalid`). The client address decides only
+throttling and which networks may claim the first owner. Give each device and
+each family member their own App and key.
 
 ## Claim the first owner
 
 Password-based first-owner claiming accepts a resolved loopback client or a
 client in `auth.setup_allowed_cidrs` (`AZIZAM_SETUP_ALLOWED_CIDRS`). When
-that setting is absent, it uses `auth.lan_bypass_cidrs`. This rule applies even when runtime
-LAN bypass is disabled. Public or unresolved clients receive 403. A browser
+that setting is absent, only loopback is accepted. Public or unresolved clients receive 403. A browser
 form from a different origin is also refused. Setup accepts `localhost`, an
 IP-literal Host, or the configured public base URL's hostname; arbitrary
 hostnames cannot use DNS rebinding to pass the setup check. The database commits the first
@@ -61,8 +43,8 @@ owner and password together, so concurrent setup requests cannot create two
 first owners or replace the winner's password.
 
 Compose defines a bridge network and grants setup to its exact host gateway
-address. The published port remains loopback-only, and runtime LAN bypass is
-not enabled by this grant. If the default subnet conflicts with your networks,
+address. The published port remains loopback-only, and this grant admits no
+inference access. If the default subnet conflicts with your networks,
 set `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` together.
 
 If you add a host reverse proxy, include its translated socket peer in
@@ -83,11 +65,11 @@ secret environment variable.
   host-only, ten-minute cookie binds that flow to its initiating browser.
   Finish pending sign-ins before updating the gateway, or start them again.
 - Firewall the gateway's listening port so public clients cannot skip ingress.
-  Keep `auth.enabled` on. Leave query credentials and path tokens off unless
-  their URL disclosure risks are acceptable.
+  Leave query credentials off unless their URL disclosure risks are
+  acceptable.
 - Use member-owned keys and explicit access plans. Remote providers require an
   explicit grant and spend limits; keep remote grants empty for local-only
-  members. Anonymous LAN bypass cannot enforce separation between LAN users.
+  members.
 - Set request/upload byte limits, read timeouts, and rate/concurrency limits at
   ingress. Media admission does not provide a per-member chat or Realtime
   session limit. Protect login and OIDC start routes from sustained abuse.

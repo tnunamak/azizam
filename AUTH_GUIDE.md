@@ -15,24 +15,34 @@ The product entity is an **App**.
 ## Access model at a glance
 
 ```text
-User -> owns App -> has Profile -> has Keys -> produces Activity
+Person -> answers for App -> App has Keys -> Keys produce Activity
+Person and App each hold an Access plan
 ```
 
-- **User** — a human, typically authenticated via OIDC.
+- **Person** — a human, typically authenticated via OIDC. A person holds one
+  access plan, or none. A person with no plan cannot generate anything.
 - **App** — an access boundary for a tool, device, agent, or family member.
-- **Profile** — the policy bundle attached to an App.
+  Every App has an **accountable person** and exactly one assignment: an
+  access plan, or **Same as its person**. An App with no assignment is refused.
+- **Access plan** — a named, reusable list of what may run: the capabilities
+  with their models and workflows, the paid providers, direct engine access,
+  spending caps, whether models may be loaded, and how much receipt detail
+  and file metadata a caller gets. Nothing is allowed unless a plan lists it.
 - **Key** — a rotatable bearer secret, usually an App API key (`opk_...`) or
-  admin automation key (`oak_...`).
+  admin automation key (`oak_...`). A key acts for its App and has no plan of
+  its own.
 - **Activity** — usage, audit events, receipts, jobs, and errors rendered as
   facts.
 
-Service accounts, credentials, admin roles, audit events, capabilities,
-providers, workflows, jobs, receipts, and usage records are still precise
-internal facts. Most operators should meet them through App/Profile/Key screens
-or Activity views, not as a pile of top-level concepts.
+A request runs only if **both** the accountable person's plan and the App's
+plan allow it. The gateway has no built-in default plan: there is no keyless
+LAN access, no path token, no auth-off switch, and no plan that applies
+because nothing else did. Roles (Owner, Admin, Member) control the management
+screens, never generation.
 
-The invariant: every executed request resolves an App + Profile + policy
-decision before it runs, and produces exactly one body-free **Receipt**.
+The invariant: every executed request resolves an App, its accountable
+person, and both plans before it runs, and produces exactly one body-free
+**Receipt**.
 
 ## First-Run Setup
 
@@ -44,15 +54,17 @@ The short version:
 2. Open `/setup`.
 3. Claim or create the first owner — OIDC sign-in when configured, or a local
    owner account created in the browser when OIDC is not configured yet.
-4. The app seeds default Profiles and identity/Profile mappings, creates the
-   signed-in user's first App, and mints one `opk_...` runtime key shown once.
-5. Manage providers, users, Apps, Profiles, keys, admission limits, and
+4. The owner gets one starting plan, **Local only** (every local model and
+   workflow, no paid providers, no direct engine access), creates their first
+   App ("Same as its person"), and mints one `opk_...` runtime key shown once.
+   The plan is an ordinary plan the owner can edit or delete. Nobody else gets
+   it: people who sign in later have no plan until the owner chooses one.
+5. Manage providers, people, Apps, access plans, keys, admission limits, and
    service availability from the web app (`/settings/`, `/people/`,
    `/apps/`, `/engines/`, `/providers/`). OIDC provider settings are dashboard
    owned after setup. The narrow, authenticated service-registry export at
    `GET /admin/api/config/export` is shipped; only full deployment-bundle
-   restore and authoritative file-wins reconciliation remain deferred. Default
-   Profiles live in `admin.db`, not YAML.
+   restore and authoritative file-wins reconciliation remain deferred.
 
 The full operator-facing walkthrough is in
 [`docs/FIRST_RUN_SETUP.md`](docs/FIRST_RUN_SETUP.md). What follows in this
@@ -65,10 +77,10 @@ an App API key is from setup, the dashboard, or the account portal:
 
 - During first run, a signed-in owner/admin opens `/setup/` and mints the first
   `opk_...` key for their Personal App. This is the quickest smoke-test path.
-- An operator opens `/apps/`, creates an App, attaches a Profile, and
-  generates an `opk_...` key for it.
-- A signed-in user opens `/` (the Apps page), creates a Personal App,
-  and mints their own `opk_...` key bound to that App.
+- An operator opens `/apps/`, creates an App, chooses its access plan (or
+  "Same as {person}'s access plan"), and generates an `opk_...` key for it.
+- A signed-in member opens `/` (the Apps page), creates a Personal App
+  ("Same as my access plan"), and mints their own `opk_...` key bound to it.
 
 Dashboard-minted keys live in `admin.db`. The raw `opk_...` value is shown
 exactly once; the hash is what persists. Use it as the OpenAI API key
@@ -109,7 +121,7 @@ until every configured app has moved.
 ## What Key Creation Does
 
 Creating a key inserts one active Credential row for an App in `admin.db`. The
-database stores the App, its default Profile, the key hash, display label,
+database stores the App, the key hash, display label,
 expiry/revocation metadata, and audit timestamps. The raw `opk_...` key is
 shown only once. If it is lost, create a new key for the same App and update
 the consuming app's configuration.
@@ -169,15 +181,6 @@ the YAML bootstrap fallback instead:
 ```yaml
 admin:
   db_path: data/admin.db
-  user_defaults:
-    self_service_apps: true
-    auto_create_personal_app: true
-    default_profile_id: prof_family_default
-    role_profile_ids:
-      none: prof_family_default
-      admin: prof_operator_default
-    domain_profile_ids:
-      example.com: prof_operator_default
   oidc:
     enabled: true
     issuer: https://idp.example.com
@@ -191,63 +194,42 @@ admin:
 
 The first allowed OIDC login becomes `owner` if no owner exists yet. Later
 allowed logins get the configured role or no admin role until an owner grants
-one.
-
-`admin.user_defaults` and the legacy user-access env flags are bootstrap seeds
-for self-service defaults and identity/Profile mappings. On startup, those
-defaults are imported into `admin.db`; after that, People and Settings identity mappings
-and operator settings are the runtime policy boundary. Omit
-`default_profile_id` to use the gateway's built-in `default-local` profile.
+one. A person who signs in without an invitation has **no access plan**: they
+can sign in, see their account and ask for access, and nothing else, until an
+owner chooses a plan in People.
 
 ## Give A Family Member Access
 
 Concrete walkthrough of the canonical "share my gateway with another human"
 flow:
 
-1. **OIDC User.** The family member signs in once so the admin store has
-   their **User** row. They do not need a global admin role.
-2. **Personal App.** The account portal lets them create one or more
-   self-service Personal Apps. One human can own several Apps; one App is the
-   access boundary for one client, tool, workflow, or script.
-3. **Inherited Profile.** By default, the Personal App inherits the user's
-   effective Profile. Admins control that default with identity
-   mappings in the web app, which may be seeded once from `admin.user_defaults`, and can still
-   attach an explicit App/Profile override when needed.
-   For a typical chat-only setup:
-   ```yaml
-   profile:
-     id: aunt-mary-chat
-     protocols: ["openai.chat", "openai.audio"]
-     fallback:
-       cloud_allowed: false
-     native_passthrough:
-       enabled: false
-     status_visibility:
-       level: basic
-   ```
-4. **App API key.** They mint their own bearer token from the account portal.
-   They can visit `https://ai.example.com/`, sign in with OIDC, create their
-   Personal App if one does not already exist, mint an `opk_...` key, and verify
-   the base URL, SDK snippets, and effective capabilities visible to that key.
-   Then they paste the same key into their chat app of choice
-   (LibreChat, Open WebUI, an iOS shortcut, etc.) with base URL
-   `https://ai.example.com/v1`.
+1. **Invite them.** In People, choose **Invite someone** and pick one of your
+   access plans. There is no "None" option, and the plan is stored with the
+   invitation. Settings → People and access sets which plan the form
+   preselects (initially **Ask each time**); it affects future invitations
+   only.
+2. **They sign in** with the invitation. Accepting it gives them that plan and
+   a first App, "Same as its person".
+3. **Personal App.** The account portal lets them create more Apps. Members
+   cannot choose a plan: a member's Apps are always "Same as my access plan".
+   Owners and admins can give an App its own plan, which can only narrow what
+   the person's plan allows.
+4. **App API key.** They mint their own bearer token from the account portal,
+   verify the base URL and the capabilities visible to that key, and paste the
+   key into their chat app of choice (LibreChat, Open WebUI, an iOS shortcut,
+   etc.) with base URL `https://ai.example.com/v1`.
 
 Rotation stays per-App: delete the old Credential and create a new key for the
-same App while leaving the User, the Profile, and the audit history intact.
-Dashboard/default key minting inherits the App's current Profile at runtime;
-use a per-key Profile override only when you intentionally want a narrower or
-temporary exception.
+same App while leaving the person, the plans, and the audit history intact.
 
 Signed-in users may create Personal Apps, create API keys for Apps they own,
-and delete those keys from the account portal. Those Apps inherit the user's
-default Profile unless an admin attaches an explicit App Profile. Self-service
-does not let users change ownership, assign Profiles, enable cloud fallback, or
-grant themselves new capability classes; those remain admin-plane actions.
+and delete those keys from the account portal. Self-service does not let users
+change ownership, choose plans, enable paid-provider fallback, or grant
+themselves new capabilities; those remain admin-plane actions.
 
 ## Request Auth Rules
 
-All gateway runtime traffic requires a valid App API key. `/` (the web app's Home page), `/health`,
+All gateway runtime traffic requires a valid App API key whose App and accountable person each hold an access plan. `/` (the web app's Home page), `/health`,
 `/me/api/session`, and the `/.well-known/*` discovery surfaces are public.
 `/me` no longer exists. The web app shell is public only: it does not show
 private capability, model, or job data until the browser sends either the
@@ -314,6 +296,12 @@ The full local test script also expects the key:
 AZIZAM_API_KEY='opk_...' ./test_e2e.sh
 ```
 
+Refusals use the OpenAI error shape with `type: "access_error"` and a `code`:
+`key_required`, `key_invalid`, `app_disabled`, `person_disabled`,
+`no_access_plan` (the `details.side` says whether the person or the App has
+none), `not_in_access_plan`, `cannot_start_model`, `blocked_by_category`,
+`not_reviewed`, `cap_reached`.
+
 ## Downstream Credential Mapping
 
 By default, App API keys map to the global downstream provider credentials
@@ -324,55 +312,46 @@ configured for the gateway:
 - TTS, STT, ComfyUI, Kobold: no extra auth unless configured per key
 
 The current DB runtime path does not expose per-App downstream credential
-overrides. Use Profiles to decide which protocols, models, workflows, and
+overrides. Use access plans to decide which models, workflows, and
 provider-native routes an App may call; use the gateway's global provider
 configuration to decide which local services and backend credentials those
 allowed calls use.
 
-## Policy Profiles
+## Access plans
 
-A Profile is the authorization and audience boundary attached to an App. Apps
-point at stored Profiles in the durable admin store, and App keys inherit that
-Profile at runtime. When mounted in the request path, the Profile decides:
+An access plan is the authorization and audience boundary for a person or an
+App. Plans are stored in `admin.db` and edited in People → Access plans, or
+through `/admin/api/access-plans`. A plan document has these fields, all
+required:
 
-- which protocols the App may use (e.g. `openai.chat`, `openai.images`,
-  `openai.audio`, `openai.responses`, `anthropic.messages`, `ollama.chat`,
-  `ollama.generate`)
-- which workflows, models, and providers the App may target
-- whether cloud fallback is allowed
-- whether — and where — native passthrough is permitted
-- how much status, discovery, and receipt detail the App sees
+| Field | Meaning |
+|---|---|
+| `can_use` | Per capability (`chat`, `image`, `video`, `speech`, `transcribe`, `music`, `sfx`, `audio`, `decide`, `embed`, `rerank`): `{"items": "all"}` or a list of `{"model": name}` / `{"workflow": name}`. A capability that is not listed grants nothing. |
+| `direct_engine_access` | `{"engines": [...] or "all", "operations": ["METHOD /path", ...]}`. Empty lists grant nothing. |
+| `paid_providers` | Providers a granted item may route to. Empty means engines on this gateway only. |
+| `provider_fallback` | Whether a paid provider may be used when the engine is unavailable. |
+| `caps` | `usd_per_request`, `usd_per_day`, `usd_per_month`: dollar amounts or `null` for no cap. |
+| `can_load_models` | Whether a request may start a model that is not running. |
+| `receipt_detail` | `none`, `basic`, `standard` or `full`: how much of a receipt the caller sees. |
+| `media_metadata` | `none` or `full`: the most provenance metadata delivered files may carry. |
 
-Missing Profile bindings fall back to `DEFAULT_PROFILE` (local-only, basic
-visibility), so simple Apps keep working unchanged.
+A request is judged against the accountable person's plan, then the App's plan,
+and every part composes by restriction:
 
-Allow-lists are conservative by construction:
+- a model or workflow must be granted by both plans;
+- paid providers are the intersection; fallback needs both;
+- model loading needs both; receipt detail and file metadata use the lower;
+- a spending cap applies to the counter of whoever holds the plan: the
+  person's plan caps what the person has spent in total (across every App they
+  answer for), the App's plan caps the App's total. Provider and gateway caps
+  (Providers page) apply too. Changing, renaming or reassigning a plan never
+  resets a counter.
 
-- omit a list → "no opinion" for that dimension (no restriction)
-- set a list to `[]` → "deny all" for that dimension
+When both sides hold the same plan it is evaluated once.
 
-As the gateway grows, avoid managing Profiles as long lists of model and
-workflow IDs. Prefer category selectors backed by capability metadata:
-
-```yaml
-allow:
-  intents: ["chat.completions", "speech.synthesis"]
-  trust_tiers: ["stable"]
-  resource_tiers: ["interactive"]
-  exposure: ["default"]
-fallback:
-  cloud_allowed: false
-native_passthrough:
-  enabled: false
-```
-
-Then a new stable interactive chat model becomes available to matching Apps
-without editing every Profile. Experimental, expensive, native, or admin-power
-workflows remain opt-in through their own metadata.
-
-`status_visibility.level` maps an App to a discovery/receipt audience tier.
-"Client" here is the protocol/audience tier name (kept for compatibility),
-not a product noun — the requester is still an App:
+`receipt_detail` maps to a discovery/receipt audience tier. "Client" here is
+the protocol/audience tier name, not a product noun — the requester is still
+an App:
 
 | Level      | Audience       | What the App sees                              |
 |------------|----------------|------------------------------------------------|
@@ -381,34 +360,40 @@ not a product noun — the requester is still an App:
 | `standard` | admin          | Routing facts, fallback reasons                |
 | `full`     | internal       | Backend, policy source, manifest hash, diags   |
 
-Example stored Profile body:
+Example plan document:
 
-```yaml
-id: image-agent
-protocols: ["openai.images"]
-workflows: ["image.edit.controlnet.example"]
-models: ["sdxl-base"]
-backends: ["comfyui.local"]
-fallback:
-  cloud_allowed: false
-status_visibility:
-  level: basic
+```json
+{
+  "name": "Family",
+  "can_use": {
+    "chat": {"items": [{"model": "family-chat"}]},
+    "image": {"items": "all"}
+  },
+  "direct_engine_access": {"engines": [], "operations": []},
+  "paid_providers": [],
+  "provider_fallback": false,
+  "caps": {"usd_per_request": null, "usd_per_day": "2.00", "usd_per_month": "20.00"},
+  "can_load_models": true,
+  "receipt_detail": "basic",
+  "media_metadata": "none"
+}
 ```
 
-### Native passthrough
+A plan cannot be deleted while a person, an App or an open invitation uses it.
+Removing a provider removes it from every plan's `paid_providers`.
 
-`native_passthrough` is opt-in and scoped per profile. It is not a blanket
+### Direct engine access
+
+`direct_engine_access` is opt-in and scoped per plan. It is not a blanket
 ComfyUI DSL — it is a privileged lane for specific operations on specific
-backends, and every use is recorded in receipts.
+engines, and every use is recorded in receipts.
 
-```yaml
-id: comfy-tinkerer
-native_passthrough:
-  enabled: true
-  allowed_backends: ["comfyui.local"]
-  allowed_operations: ["queue_prompt", "history"]
-  audit: true
+```json
+{"engines": ["comfyui-local"], "operations": ["POST /prompt", "GET /history/*"]}
 ```
+
+`"*"` as an operation lets the App do anything the engine's own API allows,
+including loading or deleting models; narrow it with operation scopes.
 
 Provider-native HTTP passthrough is deliberately namespaced below
 `/gateway/v1/providers/{provider}/{path...}`. Do not expose backend-native
@@ -418,7 +403,7 @@ legacy convenience alias, Anthropic Messages uses `/anthropic/v1`, and
 Ollama-compatible uses `/ollama/api` with `/api` as a convenience alias. When a
 provider's native path collides with a frontend path, the frontend wins and the
 native call must go through `/gateway/v1/providers/{provider}/{path...}` with a
-profile that explicitly enables `native_passthrough`.
+plan that grants direct engine access.
 
 ### Gateway-owned controls live under extensions
 
@@ -440,47 +425,6 @@ gateway extensions:
 Unknown extension inputs are rejected with a reason; known-but-unsupported
 inputs are recorded as ignored. The gateway never silently drops inputs.
 
-### Templates for current Apps
-
-Safe starter Profiles for the agent/UI/harness Apps this gateway serves today.
-Create these in the dashboard as stored Profiles, then attach them to Apps.
-They use non-secret placeholders only. Tighten the allow-lists when an App has
-a narrow role; leave fields unset to keep "no opinion" semantics until you need
-to restrict.
-
-```yaml
-id: simon
-# Omit protocols/models to stay permissive; add lists when narrowing.
-fallback:
-  cloud_allowed: false
-status_visibility:
-  level: standard
-
----
-id: librechat
-protocols: ["openai.chat", "openai.responses", "openai.audio"]
-fallback:
-  cloud_allowed: false
-status_visibility:
-  level: basic
-
----
-id: open-webui
-protocols: ["openai.chat", "openai.responses", "openai.audio", "openai.images"]
-fallback:
-  cloud_allowed: false
-status_visibility:
-  level: basic
-
----
-id: claude-test
-protocols: ["anthropic.messages"]
-fallback:
-  cloud_allowed: false
-status_visibility:
-  level: full
-```
-
 ## Rotation And Deletion
 
 Rotate one App's API key:
@@ -495,12 +439,12 @@ Delete an App's API key from `/apps/`; it is revoked immediately in
 
 ## Common Failures
 
-`401 Missing API key.`
+`401 key_required`.
 
 The request reached an authenticated endpoint without
 `Authorization: Bearer opk_...` or another accepted auth header.
 
-`401 Invalid API key.`
+`401 key_invalid`.
 
 The presented App API key does not match any active App credential in
 `admin.db`, or the owning App is disabled.
@@ -515,64 +459,32 @@ and update the consuming app.
 The App API key was accepted, but the selected downstream provider was
 unavailable or rejected its own backend credentials.
 
-## Disabling Auth (`auth.enabled=false`)
+`403 no_access_plan.`
 
-Setting `auth.enabled=false` (or `AZIZAM_AUTH_ENABLED=false`) removes
-the App-key check on all runtime endpoints. Use only in controlled environments:
+The App's accountable person has no access plan, or the App has none. People
+and Apps show "Choose a plan"; an owner picks one.
 
-- **Safe:** gateway bound to `127.0.0.1` (loopback), local dev only.
-- **Requires extra controls:** gateway bound to `0.0.0.0` or any LAN/public
-  address — every host that can reach the port has unauthenticated API access.
+## Every device needs a key
 
-If the gateway starts with auth disabled and `proxy.host` is not loopback, it
-prints a prominent startup warning to stdout/journal:
+There is no keyless access. A request from the LAN, from loopback or from a
+Tailscale address needs an App key like any other; a source address is not an
+identity. Give each device its own App and key in Apps.
 
-```
-[proxy] WARNING: auth is disabled and the gateway is bound to '0.0.0.0'
-(non-loopback). Any client that can reach this host:port has unauthenticated
-access to all API endpoints and the admin UI. ...
-```
+Startup refuses a config that still sets `auth.lan_bypass_enabled`,
+`auth.lan_bypass_cidrs`, `auth.path_tokens`, `auth.enabled: false` or
+`auth.ollama_compat_discovery`, and names the key. Placeholder keys (`lan`,
+`sk-local`, `EMPTY`) and unknown `sk-` keys are `401 key_invalid`; the gateway
+no longer forwards them to LiteLLM.
 
-To silence this legitimately (e.g. when auth is handled by the reverse proxy):
-bind to `127.0.0.1` and put auth enforcement in the reverse proxy layer.
-See [`docs/REVERSE_PROXY.md`](docs/REVERSE_PROXY.md) for recommended Nginx/Caddy
-configuration including TLS and authentication headers.
+### Client address, throttling and first-run setup
 
-## Frictionless Auth: LAN bypass, header-less clients, path tokens
-
-Three **optional, default-OFF** features for trusted local clients and for apps
-that cannot send an `Authorization` header. With every option at its default the
-gateway behaves exactly as documented above (a valid Bearer / `x-api-key` is
-required on every non-public route). Configure under `auth:` in `proxy_config.yml`.
-
-### 1. LAN / localhost auth bypass
-
-Let clients on your trusted network skip the API key, while the public/WAN path
-still requires it. Models a Home-Assistant-style `trusted_networks` provider.
-
-```yaml
-auth:
-  lan_bypass_enabled: true
-  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
-  trusted_proxies: []        # see "Behind a reverse proxy" below
-```
-Env override: `AZIZAM_LAN_BYPASS=true`.
-
-**How the real client IP is determined (this is the security-critical part):**
-By default the gateway trusts **only the TCP socket peer** — it never reads
-`X-Forwarded-For`. That is safe even with no proxy in front, because forwarded
-headers from an untrusted source are ignored. You only opt into trusting them by
-listing your proxy in `trusted_proxies` (see below). The leftmost `X-Forwarded-For`
-entry is attacker-controlled, so the gateway walks the header **right-to-left** and
-takes the first IP that is *not* one of your trusted proxies — the real client.
-IPv4-mapped IPv6 (`::ffff:1.2.3.4`) is normalized before matching.
-
-#### Behind a reverse proxy (the important bit)
-
-If a proxy/load balancer sits in front of the gateway, the socket peer is the
-*proxy's* IP, not the client's — so LAN detection won't work until you tell the
-gateway which proxies to trust. Set `trusted_proxies` to the proxy's IP/CIDR and
-ensure the proxy forwards `X-Forwarded-For`:
+The client address still decides throttling and which networks may claim the
+first owner (`auth.setup_allowed_cidrs`, env `AZIZAM_SETUP_ALLOWED_CIDRS`); it
+never decides access. By default the gateway trusts **only the TCP socket
+peer** and never reads `X-Forwarded-For`. You opt into forwarded headers by
+listing your proxy in `trusted_proxies`; the gateway then walks the header
+**right-to-left** and takes the first IP that is not one of your trusted
+proxies. IPv4-mapped IPv6 (`::ffff:1.2.3.4`) is normalized before matching.
 
 | Deployment | gateway config | proxy config |
 |---|---|---|
@@ -583,50 +495,23 @@ ensure the proxy forwards `X-Forwarded-For`:
 | **Nginx Proxy Manager** | `trusted_proxies: ["<npm-ip-or-cidr>"]` | Advanced tab: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` |
 | **Cloudflare Tunnel** | `cloudflare_mode: true`, `trusted_proxies: []` | none (CF-Connecting-IP used; ranges fetched + verified at startup, fail-closed) |
 | **Docker bridge** | `trusted_proxies: ["<proxy-container-ip>"]` | NOT the bridge gateway; the gateway warns at startup if peer looks like Docker NAT with no `trusted_proxies` |
-| **Tailscale (keyless)** | `lan_bypass_cidrs: ["100.64.0.0/10"]` | bind to the tailnet; trust the Tailscale CGNAT range |
 
 > **Cloudflare note:** `cf-connecting-ip` is honored *only* when the connection
 > arrives from a verified Cloudflare edge IP. Firewall your origin so it only
 > accepts Cloudflare, or an attacker can re-front your origin and forge the header.
 
-### 2. Header-less clients (`?api_key=`)
+### Header-less clients (`?api_key=`)
 
 Some apps (dictation tools, embedded clients) expose only a base-URL field with
-no place for an auth header. Enable a query-param key fallback:
+no place for an auth header. Enable a query-param key fallback (off by default):
 
 ```yaml
 auth:
   allow_query_param_key: true
 ```
+
 Env override: `AZIZAM_QUERY_PARAM_KEY=true`. The client uses base URL
 `https://your-host/v1?api_key=YOURKEY`. The gateway strips `api_key` before
 forwarding upstream so it never reaches the backend or its logs. **Note:** query
-params can still appear in *front-proxy* access logs — prefer the header, or a
-LAN bypass, when possible.
-
-### 3. Per-device path tokens
-
-Give each device a unique URL whose path *is* the credential, independently
-revocable:
-
-```yaml
-auth:
-  path_tokens:
-    tok_livingroom: living-room-speaker
-    tok_workshop: workshop-pi
-```
-**Not routed today.** A token prefix authenticates (constant-time check), but no
-public route accepts it: every `https://your-host/tok_livingroom/...` request gets
-404 and never reaches a backend. Give the device an App key instead (header, or
-the query-param fallback above).
-
-### Quick recipe: a header-less app on your LAN (e.g. OpenWhispr)
-
-If the gateway is reachable on your LAN (directly or via a reverse proxy whose IP
-is in `trusted_proxies`) and your client's IP is in `lan_bypass_cidrs`, the client
-needs **no key at all** — just point it at the base URL:
-
-```
-Base URL: https://your-host/v1
-API key:  (leave blank, or any placeholder if the field is required)
-```
+params can still appear in *front-proxy* access logs — prefer the header when
+the client allows it.

@@ -7,18 +7,23 @@ silently disabled (they return empty data rather than crashing).
 ## Core gateway
 
 The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0`.
-It enables `auth.lan_bypass_enabled` for loopback, `192.168.0.0/16`,
-`10.0.0.0/8` and `100.64.0.0/10`.
+It sets `auth.setup_allowed_cidrs` (the networks that may claim the first
+owner) to loopback, `192.168.0.0/16`, `10.0.0.0/8` and `100.64.0.0/10`.
 It sets `auth.trusted_proxies` to `192.168.1.4`.
+There is no keyless access: every request needs an App key or a browser
+session, and the gateway refuses to start while `auth.enabled`,
+`auth.lan_bypass_enabled`, `auth.lan_bypass_cidrs`, `auth.path_tokens`,
+`auth.ollama_compat_discovery` or the env vars `AZIZAM_AUTH_ENABLED`,
+`AZIZAM_LAN_BYPASS` and `OLLAMA_COMPAT_DISCOVERY` are set.
 These are deployment-specific values, not an all-features-off baseline.
 Environment variables and Compose port publishing can override them. Check
-the effective listener, published ports, trusted proxies and bypass networks
+the effective listener, published ports, trusted proxies and setup networks
 before exposing the gateway.
 
 | Env var | What it controls | Default |
 |---|---|---|
 | `AZIZAM_PORT` | Listener port | `5000` |
-| `AZIZAM_SETUP_ALLOWED_CIDRS` | Exact client networks allowed to claim the first password owner; overrides `auth.setup_allowed_cidrs`. Loopback is always allowed. This does not enable anonymous inference access. | `auth.lan_bypass_cidrs` when neither setup setting exists |
+| `AZIZAM_SETUP_ALLOWED_CIDRS` | Exact client networks allowed to claim the first password owner; overrides `auth.setup_allowed_cidrs`. Loopback is always allowed. This does not enable anonymous inference access. | loopback only when neither setup setting exists |
 | `AZIZAM_DOCKER_SUBNET` | Compose bridge subnet; configure with its gateway to avoid local subnet conflicts. | `172.30.251.0/24` |
 | `AZIZAM_DOCKER_GATEWAY` | Compose bridge host address; Compose grants first-owner setup to this exact `/32` peer. Its published port remains loopback-only. | `172.30.251.1` |
 | `AZIZAM_REPO_PATH` | Absolute path to the checkout; used by the status endpoint for git-describe and drift checks | Detected from `__file__` at startup |
