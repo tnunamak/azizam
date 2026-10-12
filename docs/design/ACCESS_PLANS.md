@@ -1,15 +1,12 @@
-# Access plans (design v3)
+# Access plans (design v4)
 
-Status: proposed design, not implemented. 2026-10-11. v2 resolved the
-independent red-team of v1 (`azizam-redteam-access-plans-e20b388-r0.md`: 3
-blockers, 9 major, 3 minor). v3 resolves the second red-team of v2
-(`azizam-redteam2-access-plans-e6e4965-r0.md`: 2 blockers, 5 major, 2 minor),
-mostly by removing machinery: §10 lists what was cut. An independent
-consistency check of this revision (a different model) found 20 defects (8
-major: invitation plan storage, re-authorization after an owner change,
-reservation expiry during a capacity wait, sign-out triggers, attempt
-allocation, the lock inside `data/`, restore without a marker, backup
-space); all are fixed here. The resolution table is §9. A go decision on this version is still required before any build starts
+Status: proposed design, not implemented. 2026-10-11. Three independent
+red-teams found blockers. Every blocker in rounds 2 and 3 came from one
+mechanism: a Permit decided early and checked again later. v4 deletes that
+mechanism. The deciding authorization now happens at the moment of each
+external effect, from the current key or session, person, app and plan, and
+the same step reserves spending (§2.13). §10 lists what v4 cut; §9 maps every finding.
+A go decision on this version is still required before any build starts
 (P20).
 
 This design replaces the built-in default access, the "Legacy …" plans and the
@@ -24,6 +21,13 @@ Inputs:
   Cited as [RT B1] … [RT m3].
 - Red-team of v2: `~/Documents/azizam/ux-findings/research-results/azizam-redteam2-access-plans-e6e4965-r0.md`.
   Cited as [RT2 B1] … [RT2 m2].
+- Red-team of v3: `~/Documents/azizam/ux-findings/research-results/azizam-redteam3-access-plans-b81a9a5-r0.md`.
+  Cited as [R3-B1] … [R3-m1].
+- Owner visibility: `design/owner-visibility:docs/design/OWNER_VISIBILITY.md`
+  (v2, `81ce3204`). Cited as [OV §n]. It owns the shared ownership model
+  (personal and service apps, the accountable person, the app-binding
+  triggers). This design uses that model and does not restate it. OV is
+  being revised in parallel; section numbers are v2's.
 - Owner data preview: `~/Documents/azizam/ux-findings/reports/access-plan-migration-preview-2026-10-11.md`
   (read-only copy of `admin.db`). Cited as [P§n].
 - Divan `local-ai-gateway/`, 2026-10-10: the categories v3 evidence.
@@ -32,8 +36,9 @@ Inputs:
   secret in the secret store; plan deletion refused while keys, apps, people,
   invitations or mappings use the plan; `legacy_identity_profile_grants`
   dropped. This design does not redesign those.
-- Code: all `file:line` references are at `e20b3882`. The code there is the
-  same as `0061d150` and `e6e4965b` (only this file differs).
+- Code: `file:line` references are at `e20b3882` (the same code as
+  `b81a9a5c`), except the v4 store and lock references in §4.2, which are at
+  `8a3147f0`.
 
 ## 1. Problem
 
@@ -62,17 +67,13 @@ Inputs:
 | 4 | Unknown `sk-` key on a delegation route | **No Azizam plan**; LiteLLM decides | `proxy.py:2498-2535`, e.g. `:25490` |
 | — | Browser surfaces | Person plan, else `default-local` | `proxy.py:1992-1994`; `gateway/user_runtime.py:110-116`; `gateway/home_api.py:49-65` |
 
-Two more fallbacks make an empty plan mean "everything": `load_profile(None
-or {})` (`gateway/profiles.py:365-371`) and `evaluate_and_apply` with a missing
-identity (`gateway/runtime_auth.py:283-302`). 12 active keys on 5 apps resolve
-to the default [P§4].
-
-The default (`DEFAULT_PROFILE = AppProfile()`, `gateway/policy.py:280`) grants
-every local model, workflow and capability, may load models, has no paid
-providers, no direct engine access, basic receipt detail and no cap [P§1].
-
-The repository config turns LAN bypass on for 127/8, ::1, 192.168/16, 10/8 and
-100.64/10 (`proxy_config.yml:1432-1434`). The deployed config is
+Two more fallbacks make an empty plan mean "everything" (`profiles.py:365-371`;
+`runtime_auth.py:283-302`). 12 active keys on 5 apps resolve to the default
+[P§4]. The default (`DEFAULT_PROFILE`, `gateway/policy.py:280`) grants every
+local model, workflow and capability, may load models, and has no paid
+providers, no direct engine access, basic receipts and no cap [P§1]. The
+repository config turns LAN bypass on for 127/8, ::1, 192.168/16, 10/8 and
+100.64/10 (`proxy_config.yml:1432-1434`); the deployed config is
 **UNVERIFIED**.
 
 ### 1.3 Two systems called "plan"
@@ -81,54 +82,51 @@ The repository config turns LAN bypass on for 127/8, ::1, 192.168/16, 10/8 and
 2. **Category plans**: a snapshot in `categories.db`, evaluated by
    `gateway/category_policy.py:375`, attached in `PolicyVersion.people/apps`.
 
-The category gate only tightens an allowed decision, and it passes in four
-cases: no gate configured (`gateway/category_enforcement.py:153-162`); a
-store file that was never opened (`:68-70`); no active snapshot (`:87-90`,
-`:112-113`); both the person and the app unlisted (`:116-117`; the LAN
-identity has neither, so it always skips). `visible()` passes with no gate
-(`:171-173`). The adapter resolves the service by its stem without a
-revision and takes the first match (`:43-44`, `:135`). It never passes phase,
-output or metadata completeness, so `decision_for` assumes `dispatch` and
-complete metadata (`category_policy.py:482`, `:497`) [RT B1]. Whether an
-active snapshot exists on the instance is **UNVERIFIED**.
+The category gate only tightens an allowed decision, and it passes when: no
+gate is configured (`gateway/category_enforcement.py:153-162`); the store
+file was never opened (`:68-70`); there is no active snapshot (`:87-90`,
+`:112-113`); both the person and the app are unlisted (`:116-117`; the LAN
+identity has neither). `visible()` passes with no gate (`:171-173`). The
+adapter resolves the service by its stem without a revision (`:43-44`,
+`:135`) and never passes phase, output or metadata completeness
+(`category_policy.py:482`, `:497`) [RT B1]. Whether an active snapshot
+exists on the instance is **UNVERIFIED**.
 
 ### 1.4 Two provider allow-lists
 
-A paid provider call passes only if both agree [RT M3]:
-- the plan's `remote.providers` (`gateway/policy.py:517-534`);
-- the provider's `allowed_plans` (`gateway/providers.py:1281-1302`). An absent
-  key means no restriction. `null`, an empty list or an invalid value denies.
-  A non-mapping provider policy counts as absent (`:1278`). Membership compares
-  the plan's JSON `id`, not its row id.
-
-On this instance both providers list `["owner-local"]` [P§2]. Changing a
-plan's display name is safe: it does not change the JSON id
-(`gateway/admin_store.py:1082-1092`). Changing the JSON id or merging plans
+A paid provider call passes only if both the plan's `remote.providers`
+(`gateway/policy.py:517-534`) and the provider's `allowed_plans`
+(`gateway/providers.py:1281-1302`) agree [RT M3]. For `allowed_plans`, an
+absent key means no restriction; `null`, an empty list or an invalid value
+denies; a non-mapping policy counts as absent (`:1278`). Membership
+compares the plan's JSON `id`, not its row id. On this instance both
+providers list `["owner-local"]` [P§2]. Renaming a plan keeps the JSON id
+(`gateway/admin_store.py:1082-1092`); changing the id or merging plans
 would drop provider access.
 
 ### 1.5 Spending today
 
-Plan caps add up `provider_spend` rows by `profile_id`, the plan id
+Plan caps add up `provider_spend` rows by `profile_id`
 (`gateway/providers.py:303-316`, `:1060-1073`). The ledger has no person or
 app column, so every app on one plan shares one total [RT M1]. The day is a
 rolling 24 hours (`:425`, `:1131`); the month is the UTC calendar month
 (`:1091-1093`). A per-request ceiling exists (`gateway/policy.py:74`,
 `providers.py:406-408`). Unknown costs become `needs_reconciliation`, which
-blocks new paid requests in scope until the owner reconciles them
-(`providers.py:352-376`, `:564-570`, `:1032-1044`, `:613-649`). No stored plan
-sets a cap [P§2]. Provider and global caps add up by provider only
-(`providers.py:1000-1012`, `:1066-1075`).
+blocks new paid requests in scope until reconciled (`providers.py:352-376`,
+`:564-570`, `:1032-1044`, `:613-649`). No stored plan sets a cap [P§2].
+Provider and global caps add up by provider only (`:1000-1012`,
+`:1066-1075`).
 
 ### 1.6 Other legacy items (P11)
 
-Five keys with a `legacy-` prefix and the `legacy-key-import` service account
-that owns daisy, cap and open-webui [P§6]; `runtime_profile_mappings` (2 rows,
+Five `legacy-` keys and the `legacy-key-import` service account that owns
+daisy, cap and open-webui [P§6]; `runtime_profile_mappings` (2 rows,
 disabled) and the YAML bootstrap maps (`proxy.py:1939-1958`);
-`ModelAccessPolicy` (`gateway/policy.py:137-141`, `:170-173`); the `default` and
-`default-local` ids (`gateway/admin_store.py:473`, `:2001`); first-run seeding
-of live plans (`gateway/default_profiles.py`); the category kernel's legacy
-mode (`category_policy.py:256-257`, `:306`, `:327`); the "Let people create
-their own apps" toggle changing which plan an app gets
+`ModelAccessPolicy` (`gateway/policy.py:137-141`, `:170-173`); the `default`
+and `default-local` ids (`gateway/admin_store.py:473`, `:2001`); first-run
+seeding of live plans (`gateway/default_profiles.py`); the category
+kernel's legacy mode (`category_policy.py:256-257`, `:306`, `:327`); the
+"Let people create their own apps" toggle changing which plan an app gets
 (`settings/page.tsx:1060`; `proxy.py:1998`).
 
 ## 2. The model
@@ -217,59 +215,54 @@ The operators are the kernel's (`category_policy.py:270-279`): require `in`,
 
 - Every **person** has one plan, or none.
 - Every **app** has exactly one assignment: a plan, or **Same as its
-  person**. "Same as its person" is a stored choice, not a fallback. The API
-  never returns success for an app without an assignment, and there is no
-  operation that clears one; to stop an app, disable it [RT m2].
+  person**, which is a stored choice, not a fallback. No operation clears
+  an assignment; to stop an app, disable it [RT m2].
 - **App creation writes the app row first, then the assignment** [RT2 M5].
-  The app row is today's single `admin.db` transaction
-  (`admin_store.py:1181-1221`; session apps `:1268-1303`). The assignment is
-  a compare-and-swap in the access settings; the server accepts it only if
-  the app row exists. No code deletes app rows (only `disabled_at` is set,
-  `:1373-1388`), so "the app exists" never becomes false again and there is
-  no orphan to clean up. If the second write fails or the process stops
-  between the writes, the app exists without an assignment: step 3 denies it
-  (`no_access_plan`, app side), the request returns an error, and Apps shows
-  it with "Choose a plan". `ensure_session_app_for_user` checks both halves,
-  so the next sign-in writes a missing "Same as its person". If invitation
-  accept stops after its rows commit, the person and "My first app" exist
-  with no plan; People shows "No access plan" with "Choose a plan", and the
-  owner chooses. Plan deletion and assignment are changes to the same document,
-  so its compare-and-swap orders them: an assignment to a deleted plan fails,
-  and deletion of an assigned plan is refused.
-- **Keys have no plan.** A key acts for its app. The key-level plan
-  (`credentials.profile_id`) goes away. If an app's active keys have
-  different effective plans today, the migration requires a choice per app:
-  split the app, narrow every key to one plan, or revoke keys (§4.4) [RT M5].
-- Every app has an **accountable person**: `apps.owner_user_id`, for both app
-  kinds. The person must exist and be enabled; a missing account row denies
-  (today it is accepted, `gateway/admin_runtime.py:1694-1701`) [RT B3].
-  Service accounts no longer own apps.
+  The app row is one `admin.db` transaction (`admin_store.py:1181-1221`;
+  session apps `:1268-1303`). The assignment is a compare-and-swap in the
+  access settings, accepted only if the app row exists. No code deletes
+  app rows (only `disabled_at` is set, `:1373-1388`), so there is no orphan
+  to clean up. If the second write fails, the app exists without an
+  assignment: step 3 denies it (`no_access_plan`, app side) and Apps shows
+  "Choose a plan". `ensure_session_app_for_user` writes a missing "Same as
+  its person" at the next sign-in. An invitation accept that stops after
+  its rows commit leaves a person and "My first app" with no plan; People
+  shows "Choose a plan". Plan deletion and assignment change the same
+  document, so compare-and-swap orders them.
+- **Keys have no plan.** A key acts for its app; `credentials.profile_id`
+  goes away. If an app's active keys have different effective plans today,
+  the migration requires a choice per app: split, narrow or revoke (§4.4)
+  [RT M5].
+- Every app has an **accountable person**, `apps.owner_user_id`, in the
+  ownership model of [OV §3.1, §3.5]: a `personal` app's owner never
+  changes; a `service` app's accountable person changes only while it has
+  no unrevoked key; `admin.db` triggers enforce both and allow the
+  migration's first assignment from a service account. `create_app`
+  changes with them, since today it requires a service account for service
+  apps (`admin_store.py:1193-1198`). The person must exist and be enabled;
+  a missing row denies (today it is accepted,
+  `gateway/admin_runtime.py:1694-1701`) [RT B3].
 - A request runs only if **both** the accountable person's plan and the
-  app's assignment allow it (v3 A10). Composition is §2.6.
-- The accountable person is **only** the policy and spending subject. It
-  does not make a key act as that person for personal data. That stays as
-  today: `person_for_app_credential` returns a person only for a `personal`
-  app whose key was created by its owner (`admin_runtime.py:1562-1572`).
-  Migrated apps keep kind `service`, so moving daisy to Tim does not give
-  daisy's key Tim's saved prompts or Library [RT B3]. Which consumers read
-  `person_for_app_credential` is **UNVERIFIED**; the build must trace them
-  before it changes app ownership.
-- A role (Owner, Admin, Member) controls management screens. It never grants
-  generation. The admin API does not depend on plans, so the owner can always
-  repair a plan that locks them out [R§20 item 5].
-- **Browser surfaces** keep their existing identities [RT M7]. Make uses the
-  per-person session app (`session_apps`, one row per person, credentials
-  blocked by triggers, `gateway/admin_store.py:139-188`;
-  `ensure_session_app_for_user`, `:1268-1303`). Home uses the person's
-  personal app (`home_api.py:49-65`). Try uses the person's Try app with
-  session-bound keys (fix/access-hygiene). Each is an app with an
-  assignment. The migration sets "Same as its person" on them, except the
-  owner's own, which follow decision 1 (§7). `ensure_session_app_for_user` writes
-  "Same as its person" when it creates a missing row. **UNVERIFIED**: which
-  app Library uses.
+  app's assignment allow it (v3 A10; §2.6).
+- For plans, the accountable person is the policy and spending subject;
+  [OV §3.1] also lets them see what a service app made. It never makes a
+  key act as that person for personal data: `person_for_app_credential`
+  returns a person only for a `personal` app whose key its owner created
+  (`admin_runtime.py:1562-1572`). Migrated apps stay `service`, so moving
+  daisy to Tim does not give daisy's key Tim's saved prompts [RT B3]. Its
+  consumers are **UNVERIFIED**; the build traces them first.
+- A role (Owner, Admin, Member) controls management screens, never
+  generation. The admin API does not depend on plans, so the owner can
+  always repair a plan that locks them out [R§20 item 5].
+- **Browser surfaces** keep their identities [RT M7]: Make uses the
+  per-person session app (`gateway/admin_store.py:139-188`,
+  `:1268-1303`), Home the person's personal app (`home_api.py:49-65`), Try
+  the person's Try app with session-bound keys (fix/access-hygiene). Each
+  is an app with an assignment; the migration sets "Same as its person",
+  except the owner's own (decision 1, §7). Which app Library uses is
+  **UNVERIFIED**.
 
-One plan per side makes "which plan applies?" one answer [R§20 Rank 1]. The
-kernel keeps its list type; the store allows one entry per side.
+One plan per side makes "which plan applies?" one answer [R§20 Rank 1].
 
 ### 2.5 Evaluation order
 
@@ -283,7 +276,7 @@ change preview. The order is total, so the first reason is deterministic
 | 2 | The gate is initialized and one valid active access revision is loaded | 503 `access_settings_unavailable` | gateway |
 | 3 | The person has a plan, and the active revision has an assignment for the app | 403 `no_access_plan` (side named) | access plan |
 | 4 | Blocked rows: person's plan, then the app's plan, over every member of the selected closure | 403 `blocked_by_category`, `not_reviewed` (unknown deny input) | access plan |
-| 5 | Grants: person's plan, then the app's plan. Capability and item revision; each paid route in Paid providers; each fallback route needs fallback on; direct engine scope | 403 `not_in_access_plan` (side named) | access plan |
+| 5 | Grants: person's plan, then the app's plan. Capability and item revision; each paid route in Paid providers; each fallback route needs fallback on; direct engine scope. For a model that is not running, May load models on both sides (§2.13, effect `load`) | 403 `not_in_access_plan` (side named); 403 `cannot_start_model` | access plan |
 | 6 | Must match rows: person's plan, then the app's plan | 403 `not_reviewed` (missing value), `blocked_by_category` (known mismatch) | access plan |
 | 7 | Capacity admission (`HEADLESS_AND_RESOURCES.md`, Release A) | as designed there | gateway / engine |
 | 8 | Paid routes only: per-request ceiling, then one atomic reservation against every applicable cap (§2.11) | 429 `cap_reached`; 503 `spending_unavailable` | spending |
@@ -292,17 +285,15 @@ When both sides hold the same plan, it is evaluated once and the
 explanation says "your access plan". The kernel today checks grants and
 requirements per plan in one loop (`category_policy.py:421-443`); the build
 changes it to the order above. Within one step, rows are checked in document
-order and closure members in graph order, so the first reason is stable. No
-reservation happens before steps 1-7 pass. v2 reserved before the capacity
-wait; v3 reserves after it, so a reservation never waits and cannot time out
-unsent [RT2 review].
+order and closure members in graph order, so the first reason is stable.
 
-Step 1's key or session lookup resolves the subjects and their state; steps
-1-6 over those resolved subjects are one pure function, `evaluate` (§2.13). Discovery, Check
-access, the change preview, the migration oracle and the download check
-call only `evaluate`; they never reserve and never return a Permit. Only
-`authorize`, called immediately before an external effect, runs steps 7-8.
-A capacity slot taken at step 7 is released if step 8 denies.
+Steps 2-6 are one pure function, `evaluate` (§2.13). Discovery, Check
+access, the change preview and the migration oracle call only `evaluate`.
+The request handler runs steps 1-6 at entry, so a denied request fails
+before it waits for capacity (step 7). That answer is only early. The
+decision that lets an effect happen is `authorize`, which runs steps 1-6
+again and then step 8 at the moment of the effect, after any wait. A
+capacity slot taken at step 7 is released if `authorize` denies.
 
 ### 2.6 How two plans compose
 
@@ -345,22 +336,20 @@ The new grant:
   method, prefix ending in `*`, or `"*"`; `policy.py:326-366`), so stored
   scopes convert unchanged.
   An empty list grants nothing. There is no implicit "all".
-- Azizam does not parse an engine's own API (AGENTS.md binding principle), so
-  it cannot see which model a direct call uses. The **engine** is therefore
-  the closure member that category rules check: a plan with a Blocked or Must
-  match row allows direct access only to an engine whose own tags pass. The
-  owner's tag on an engine is an assertion about everything behind its API.
-  This is the one exception to pinned item revisions: a direct call pins the
-  engine, not a model or helper revision behind it [RT2 note on B2].
-- The action that `authorize` checks for a direct call is the engine id plus
-  the canonical `METHOD /path` of the request, so `GET /props` and
-  `POST /delete` on one engine are different actions (§2.13) [RT2 B1].
-- `"*"` can include the engine's own model management (for example loading or
-  deleting models). Azizam cannot tell which paths of an engine's API manage
-  models without engine knowledge in code, so it does not try. The owner
-  narrows with operation scopes, and the plan editor says in words: "This app
+- Azizam does not parse an engine's own API (AGENTS.md), so it cannot see
+  which model a direct call uses. The **engine** is the closure member that
+  category rules check; the owner's tag on an engine covers everything
+  behind its API. A direct call pins the engine, not a model revision
+  [RT2 note on B2].
+- The effect that `authorize` checks for a direct call is the engine id plus
+  the canonical `METHOD /path` of the request about to be sent, so
+  `GET /props` and `POST /delete` on one engine are different effects
+  (§2.13) [RT2 B1].
+- `"*"` can include the engine's own model management. Azizam cannot tell
+  which engine paths manage models without engine knowledge in code, so
+  the owner narrows with operation scopes, and the editor says: "This app
   can do anything {engine}'s own API allows, including loading or deleting
-  models." Azizam's own management routes stay 501 whatever the plan says.
+  models." Azizam's own management routes stay 501.
 - Direct engine routes accept only app keys. A browser session identity is
   denied there.
 - Direct engine access never bypasses identity, categories, caps or the
@@ -386,7 +375,7 @@ engine knowledge as code.
 | Public Ollama discovery | **Removed** | `proxy.py:2172-2175`, `:2436-2437` |
 | Public paths (`/health`, showcase) | Kept. Never call the evaluator, dispatch, list protected models or return creations. Startup rejects a `public_paths` entry that matches a protected route in the route inventory | `is_public_path` (`proxy.py:2431-2444`) |
 | `?api_key=` | Kept (it is a key). Off by default | — |
-| Signed creation links | Kept as links. Each creation records person, app and closure members. Download runs `evaluate` on those against the current plans (§2.13), in addition to the link's own signature and ownership checks; it does not authenticate the recipient | `proxy.py:23631-23670`; the "URL without md" branch `:23655-23656` |
+| Signed creation links | Governed by [OV §3.4]: signature plus a grant (`g`), decided from the app and maker that the creation records. Access plans govern effects, not stored files; v4 removes v3's re-check of a file against current plans (§2.13) | `proxy.py:23631-23670` |
 | Missing gate, snapshot or identity anywhere | Deny; never `DEFAULT_PROFILE` | `category_enforcement.py:68-70`, `:87-90`, `:112-117`, `:153-173`; `runtime_auth.py:292`; `proxy.py:13406-13409`, `:29875`; `profiles.py:365-371` |
 | First-run setup network (`setup_allowed_cidrs`) | Kept as its own setting. It admits only first-run owner creation, and only while no owner exists. It no longer falls back to the LAN list (`proxy.py:2370-2371`) | — |
 
@@ -429,69 +418,70 @@ Invitation accept writes the person's plan and creates "My first app" with
 Results: Adults only is blocked; untagged is blocked ("This hasn't been
 reviewed for your access plan yet."); {Everyone, Adults only} is blocked; a
 workflow with an Adults-only or untagged member is blocked; discovery hides
-blocked items; plans without the row ignore the tag.
+blocked items; plans without the row ignore the tag. A block stops new
+generation only: files already made stay visible to whoever could see them
+before [OV §3.1]. The review screen says so: "Files already made stay in
+Library."
 
 ### 2.11 Spending
 
-Resolves [RT M1, M2; RT2 M1, M3].
+Resolves [RT M1, M2; RT2 M1, M3; R3-B2].
 
-- **Ledger**: one row per paid external call (an **attempt**). The row
-  records the person, the app, the provider, the request id and the attempt
-  number. It does not record a plan. A plan change, rename or reassignment
-  never resets a counter. Counters are sums over the ledger by person, app,
-  provider or all, per period. Each row counts once in each counter it
-  belongs to; no row is ever copied to represent a second subject.
-- **Caps** that apply to one paid attempt: the person plan's caps on the
-  person counter, the app plan's caps on the app counter, the provider caps,
-  the global caps. With "Same as its person" the same amounts cap both
-  counters; the person counter already includes the app's spend, so that
-  never charges twice.
-- **Periods** stay as today: day = rolling 24 hours; month = UTC calendar
-  month. `usd_per_request` stays. Copy shows the real reset: "You can spend
-  again from 14:32" (when the oldest charge in the window leaves it) and
-  "Resets on 1 November at 01:00" (the UTC boundary in the reader's time
-  zone).
-- **Attempt identity**: every paid call of a request is one attempt: each
-  paid helper of a workflow, each retry, each fallback. The first
-  `authorize` of an attempt allocates its number as one more than the
-  request's highest in the ledger, inside the same `BEGIN IMMEDIATE`
-  transaction that checks the caps (`providers.py:417-531`). So parallel
-  helpers and a resumed job never reuse a number. The Permit carries the
-  number; re-authorization passes it back instead of allocating. A unique
-  index on (request id, attempt) makes a duplicate row impossible. The one
-  insert path always sets both; today the request id is attached after the
-  insert (`:579-589`), and it moves into the insert. Historic rows keep
-  `attempt` null (§4.3), which the index ignores. A retry records no link
-  to the attempt it replaces: each send is its own charge, and a link
-  changes no counter.
-- **One owner per attempt**: `authorize` reserves (§2.13); the provider-call
-  boundary takes the Permit and only sends, settles or releases. TypeSafe
-  stops reserving inside `call_typesafe_systemone` (`providers.py:848-873`),
-  and the OpenAI-shaped callers stop reserving around `call_openai_json`
-  (`:1754-1767`); both use the Permit's reservation.
-- **States** of one attempt's row:
+- **Ledger**: one row per paid external call (an **attempt**), with the
+  person, app, provider, request id and `attempt_id`, but no plan. The
+  `person_id` is the spending subject (the accountable person), not the
+  data person that [OV §3.1] reads from receipts and creations. Plan
+  changes, renames and reassignments never reset a counter. Counters are
+  sums over the ledger by person, app, provider or all, per period; each
+  row counts once in each counter it belongs to and is never copied.
+- **Caps** on one paid attempt: the person plan's caps on the person
+  counter, the app plan's caps on the app counter, provider caps, global
+  caps. With "Same as its person" the same amounts cap both counters; the
+  person counter already includes the app's spend, so nothing is charged
+  twice.
+- **Periods** stay: day = rolling 24 hours; month = UTC calendar month;
+  `usd_per_request` per attempt. Copy shows the real reset: "You can spend
+  again from 14:32"; "Resets on 1 November at 01:00" (reader's time zone).
+- **One row per send.** Each paid helper, retry and fallback is its own
+  `authorize` and its own row, created in the cap transaction
+  (`BEGIN IMMEDIATE`, today `providers.py:417-531`). `attempt_id` is a
+  random 128-bit id made there, unique in the ledger, never sent to a
+  client. The request id moves into the insert (today it is attached
+  after, `:579-589`). No retry links are kept; no counter reads them.
+- **Single use** [R3-B2]. Immediately before the send, `dispatch` claims
+  the row: `UPDATE provider_spend SET status = 'sending' WHERE
+  attempt_id = ? AND status = 'reserved'`, and sends only if one row
+  changed. A second claim
+  changes nothing and sends nothing. The claim commits durably first
+  (`synchronous=FULL` on the ledger; today's setting is **UNVERIFIED**).
+- **One reserver**: `authorize`. TypeSafe stops reserving inside
+  `call_typesafe_systemone` (`providers.py:848-873`) and the OpenAI-shaped
+  callers around `call_openai_json` (`:1754-1767`).
+- **States**:
 
   | From | Event | To |
   |---|---|---|
-  | — | `authorize` passes steps 1-8 | `reserved` |
-  | `reserved` | re-authorization of the same, still unsent attempt passes | `reserved` (same row; no new insert) |
-  | `reserved` | denied before the send, or the call fails before any byte is sent | `released` |
-  | `reserved` | sent, cost known | `settled` |
-  | `reserved` | sent, result or cost unknown | `needs_reconciliation` |
-  | `reserved` | process restart or timeout (`recover_provider_spend`, `providers.py:352-376`) | `needs_reconciliation` |
-  | `needs_reconciliation` | owner or automatic reconciliation | `settled` |
+  | — | `authorize` allows a paid effect | `reserved` |
+  | `reserved` | claim succeeds | `sending` |
+  | `reserved` | `dispatch` stops before the claim, or restart | `released` (never sent) |
+  | `sending` | sent, cost known | `settled` |
+  | `sending` | connection failed before any request byte, or a rejection today's code treats as unbilled (provider auth failure, rate limit; `providers.py:900-902`) | `released` |
+  | `sending` | any other failure, unknown cost, or restart | `needs_reconciliation` |
+  | `needs_reconciliation` | reconciliation | `settled` |
 
-  The attempt owner releases in a `finally` block unless it has started the
-  send. A Permit that is dropped without a send is therefore released in
-  process, and a crash is handled by today's restart rule. A reservation is
-  released only when no send started; anything else is never released.
-  `needs_reconciliation` keeps today's rule with the new subjects: it blocks
-  paid requests in every cap scope (person, app, provider, global) that
-  contains the row and has a cap, until the owner reconciles it
-  (`providers.py:1026-1044`; a scope without a cap is not blocked).
+  Each transition is a conditional update on the expected status (settle
+  requires `sending`; today `reserved`, `providers.py:566`). Caps count
+  `reserved`, `sending`, `settled` and `needs_reconciliation` (today the
+  list lacks `sending`, `:1069`, `:1211`). A `reserved` row past its
+  `expires_at` (seconds; a reservation never waits) is released by
+  recovery, in process as well as at restart, because it was never sent.
+  Recovery (`recover_provider_spend`, `:352-376`) turns `sending` rows of a
+  dead process into `needs_reconciliation`; today it does that to every
+  open row.
+  `needs_reconciliation` blocks paid requests in every capped scope that
+  contains the row until reconciled (`:1026-1044`).
 - **Unavailable**: if the ledger cannot be read or written, paid routes
-  fail with 503 `spending_unavailable`. Local
-  routes still run.
+  fail with 503 `spending_unavailable`. Local routes still run.
 
 ### 2.12 Storage and changes to categories v3
 
@@ -508,18 +498,17 @@ Removed from `admin.db`: `profiles`, `account_access.profile_id`,
 `credentials.profile_id`, `account_links.profile_id` (replaced by
 `account_links.plan_id`, an opaque plan id), `runtime_profile_mappings`, the `user_access_defaults` setting.
 Removed from provider settings: `allowed_plans`. Ledger: `profile_id`
-replaced by `person_id`, `app_id` and `attempt` (all three nullable for
-history only, §4.3), with a unique index on (request id, attempt). Added to `admin.db`: a
-one-row `access_epoch` counter and the triggers that bump it (§2.13).
+replaced by `person_id`, `app_id` and `attempt_id` (all three nullable for
+history only, §4.3); `attempt_id` is unique; the `sending` state is added.
+The access settings stay in the categories store beside the admin
+database (`proxy.py:15588-15592`).
 
 Creating a person or app writes the `admin.db` row, then the assignment
-(§2.4). An invitation's plan was previewed when the owner sent it, so accept
-commits it without another review; a concurrent change makes the
-compare-and-swap retry. Open invitations stay in `admin.db`, so
-`delete_plan`'s "in an open invitation" check is a cross-store read and can
-race a new invitation. The race fails closed: accept's compare-and-swap
-fails for a deleted plan, and the person gets no plan and shows "Choose a
-plan" (§2.4).
+(§2.4). An invitation's plan was previewed when sent, so accept commits it
+without another review. `delete_plan`'s "in an open invitation" check reads
+`admin.db` and can race a new invitation; the race fails closed: accept's
+compare-and-swap fails for a deleted plan, and the person shows "Choose a
+plan".
 
 | v3 text | Change |
 |---|---|
@@ -529,91 +518,112 @@ plan" (§2.4).
 | Several plans per identity | The store allows one per side |
 | Waiver as `missing: {row: allow}` on the plan | Kept in the kernel; the API puts it on the row as `waive_missing` |
 
-### 2.13 The authorization contract
+### 2.13 Authorization at the moment of effect
 
-Resolves [RT B1; RT2 B1, M1, M2]. Reusing today's adapter is not enough: it
-authorizes a service stem, not the work about to run. Two functions and one
-small record; no general framework.
+Resolves [RT B1; RT2 B1, M1, M2; R3-B1, B2, M1, M2]. v2 and v3 decided
+early and carried the decision (a digest, then a Permit) to the effect,
+where it had to be proved fresh, equal to the effect and used once. Each
+round broke that proof. v4 carries nothing: it decides at the effect, from
+current state.
 
 ```
-evaluate(settings, subjects, action) -> Allow | Denial        pure; steps 1-6
-authorize(subjects, action, request_id, attempt) -> Permit | Denial
-                                                              steps 1-8; reserves
+evaluate(settings, subjects, effect) -> Allow | Denial     pure; steps 2-6
+authorize(auth, effect) -> Allow(attempt?) | Denial        steps 1-6 and 8
 
-subjects (server-resolved in step 1, never from the request body):
-  person_id, app_id
-  auth_kind        app_key | session
-
-action (server-resolved after alias, wrapper and fallback resolution):
-  capability       a capability id (§2.2), or direct_engine
-  members          every route, helper and engine of the graph, each with its
-                   revision; for direct_engine: the engine id
-  operation        direct_engine only: canonical "METHOD /path"
-  route            local, or the provider id; fallback: yes or no
-
-Permit = subjects + action + the version it was decided under:
-  settings_revision   the active access settings revision
-  identity_epoch      admin.db access_epoch
-  not_after           the key's or session's expiry
-  plus, for a paid attempt: request_id, attempt, reservation_id, reserved_usd
+auth      AppKey(key_hash)
+          | Session(person_id, session_id, expires_at, surface)
+          server-held; a session's fields come from its signed cookie
+subjects  person_id, app_id, auth_kind; resolved from auth
+effect    effect_of(outbound): derived from the request about to be sent:
+  kind         generate | load | direct
+  item         the granted model or workflow, with revision (direct: none)
+  member       the route, helper or engine called, with revision
+  capability   the item's capability (direct: direct_engine)
+  closure      every member of the item's pinned graph
+  route        local or a provider id; fallback yes or no
+  operation    direct only: canonical "METHOD /path"
+  bounded_usd  paid only: from the body about to be sent (providers.py:790-815)
 ```
 
-`check(permit, effect)` runs at **every point of effect**: immediately
-before the dispatcher sends to an engine and immediately before the
-provider boundary sends to a provider, after any capacity wait. It passes
-only if all of these hold:
+**One dispatch path.** Every engine send, provider send, model load and
+direct call goes through `dispatch(auth, outbound)`. `outbound` is a typed
+request: target member, destination, method and path, body. `dispatch`
+derives the effect from it with `effect_of`, runs `authorize`, claims a
+paid attempt (§2.11), and sends that same object. A caller cannot declare
+an effect that differs from what is sent [R3-M1]. Nothing outlives the
+call, so nothing can be replayed. The route inventory and an AST check
+(§5.2, §5.3) prove no other path reaches an engine or provider; a fixture
+per call site proves its `outbound` yields the expected effect.
 
-1. **Fresh**: `settings_revision` is still active, `identity_epoch` is
-   unchanged, and now is before `not_after`.
-2. **Same action**: the effect's member is in `members`, its route equals
-   `route`, and for a direct call its `METHOD /path` equals `operation`. The
-   auth kind is the one the route accepts (direct engine routes: `app_key`
-   only, §2.7).
-3. **Same cost bound** (paid only): the boundary recomputes the bounded cost
-   from the body it is about to send (`providers.py:790-815` derives it from
-   the model, the input and the output limit). It must not exceed
-   `reserved_usd`, and the row must still be `reserved`.
+**`authorize`**, in order:
+- (a) One `SELECT` on `admin.db` resolves the identity with every state
+  column of §2.5 step 1. For a key: the credential by key hash, its app
+  and the accountable person. For a session: `now < expires_at` from the
+  signed cookie; no `account_session_revocations` row for the session id;
+  the person's `account_access` row exists and is enabled; if it has
+  `require_registered_session`, a live `account_sessions` row; and the
+  person's surface app. One statement is one snapshot. The runtime
+  connection is in autocommit (`admin_store.py:575-581`), so this must
+  stay one statement [R3-B1]. A revoked key or signed-out session fails
+  even when another key of the app or session of the person works. A
+  missing `account_access` row denies (today `session_allowed` accepts it,
+  `accounts.py:149-167`); D1 lists people without one, and apply creates
+  their rows as approved rows.
+- (b) Read the active access settings revision (cached by `PRAGMA
+  data_version`, `category_enforcement.py:47-55`).
+- (c) Run `evaluate`. A denial ends here, without touching the ledger.
+- (d) Paid only: `BEGIN IMMEDIATE` on the ledger (it serializes reservers,
+  as today's cap transaction does); per-request ceiling,
+  `needs_reconciliation` block, caps; insert the `reserved` row with a new
+  `attempt_id`; commit.
 
-If 1 fails, the caller calls `authorize` again for the **same** attempt. If
-steps 1-6 pass **and** the person and app equal the reservation row's, the
-row is kept, its `expires_at` is refreshed, and steps 7-8 are not repeated (a
-cap edit applies to new attempts). If the person or app changed (for example
-a new app owner), the row is released and the call becomes a new attempt, so
-the charge lands on the right counter. If denied, the row is released and
-nothing is sent. If 2 fails, the effect is a
-different action: a new attempt number and a new `authorize`. If 3 fails,
-the boundary refuses and releases; this is a defect, not a user error.
+A session stays tied to its signed-in person. Its app is that person's
+surface app (§2.4), a `personal` app whose owner the [OV §3.5] triggers
+fix; if the owner differs, `authorize` denies.
 
-**Revocation invalidates through the same freshness check** [RT2 M2]. The
-`access_epoch` row in `admin.db` is bumped by SQLite triggers in the same
-transaction as every change that step 1 reads: `credentials.revoked_at` and
-`expires_at`; `apps.disabled_at` and `owner_user_id`; `account_access`
-`disabled_at`, `removed_at` and `require_registered_session`; inserts into
-`account_session_revocations` and deletes from `account_sessions`
-(sign-out; `gateway/accounts.py:28-37`); and any other column the step 1
-query reads (the test in §5.2 derives the list from that query). `admin.db` already enforces rules with
-triggers (`admin_store.py:177-188`); a trigger cannot be skipped by a new code
-path, as a call to "bump the epoch" could be. Today these changes are
-independent writes (`admin_store.py:1373-1388`; checks at
-`admin_runtime.py:1553-1558`, `:1691-1701`). Any revocation anywhere makes
-every outstanding Permit stale, which costs one re-authorization per
-in-flight request. That is accepted: revocations are rare at this scale, and
-one counter is simpler than per-subject epochs.
+**Freshness.** Every change committed before (a) is seen: revocation,
+sign-out, expiry, a disabled app or person, a new accountable person, a
+plan or tag change. No epoch or trigger is needed [R3-B1]. The stores are
+read separately, but each read returns that store's latest commit, and the
+one cross-store link (an app's assignment) denies when missing. The
+**linearization point** is (a): a change after it does not stop this
+send; it stops the next `dispatch`.
 
-**Linearization point**: the `check` call. A revocation that commits before
-it stops the effect; a send that passed its check before the revocation is
-not recalled. Long jobs check before each external call, so a revocation
-stops the next one.
+**Waits and jobs.** Capacity admission (step 7) comes before `dispatch`,
+so `authorize` always follows any wait. A job stores its `auth` with the
+job: the key hash (stored today, `media_jobs.py:187-190`) or, new, the
+session's person id, session id and expiry. It dispatches each external
+call with it. A revocation, sign-out or session expiry stops it at its
+next call.
+
+**Every dimension is checked directly** [R3-M1]. No earlier action has to
+match the effect. `evaluate` checks: the grant for (the item's capability,
+item revision) on both sides; that `member` is in the item's pinned graph
+at that revision (a helper needs no grant of its own: the owner granted
+the pinned graph); the route against Paid providers and
+fallback; for `direct`, engine, `METHOD /path` and `app_key` (§2.7); every
+`closure` member against category rules. Loading is its own effect,
+`load`: the item granted and May load models on both sides (today
+`may_activate` versus `existing_only`, `policy.py:113-134`). Otherwise
+`cannot_start_model`.
+
+**Files are not re-authorized** [R3-M2]. v3 re-ran `evaluate` on a
+creation at download. That needed the capability, route and fallback of
+every effect behind the file, which no creation records: creations are
+content-addressed and their sidecar holds only owner principals and makers
+(`proxy.py:7006-7055`). It also guarded bytes the client already had.
+Access to a stored file is [OV §3.1, §3.4], from the recorded app and
+maker.
 
 Other rules:
-- Discovery (`/v1/models`, MCP `capabilities`, target details, alias lists,
-  unknown-target suggestions) calls `evaluate` per item. Its result is never
-  a Permit.
-- A creation records the person, app and `members`. Download, share and
-  signed links call `evaluate` with those against the current plans.
-- Deny if: the gate is not initialized; no valid active revision; unknown,
-  disabled or missing person or app; closure metadata missing for a member;
-  an effect that cannot be checked before it happens.
+- Discovery calls `evaluate` per item and never reserves.
+- Deny if: the gate is not initialized; no valid active revision; the
+  credential or session is unknown, revoked or expired; the app or person
+  is disabled or missing; closure metadata is missing; an effect cannot be
+  built before it happens.
+- [OV §3.5] item 3 says a service-app transfer "invalidates in-flight
+  permits" through `access_epoch`. v4 has neither; the revoked keys fail
+  at their next `authorize`. The OV revision should drop the reference.
 
 ## 3. Interfaces
 
@@ -711,6 +721,7 @@ OpenAI error shape, `type: "access_error"`. Members see the sentence;
 | `not_in_access_plan` (app) | Your access plan allows {model name}, but this app's access plan doesn't. Ask {owner name} to change the app's access plan. |
 | `blocked_by_category` | {model name} is blocked for your access plan. |
 | `not_reviewed` | {model name} hasn't been reviewed for your access plan yet. |
+| `cannot_start_model` | {model name} isn't running, and your access plan can't start it. Try again when it's running, or ask {owner name}. |
 | `cap_reached` | Built from `details`: whose cap (yours, this app's, the gateway's), the period and the reset. Example: "Your monthly cap for paid models is reached (USD 5.00). It resets on 1 November at 01:00." Example: "The gateway's daily cap for {provider} is reached. You can use it again from 14:32." |
 | `spending_unavailable` | Paid models are unavailable because spending can't be checked. Models on this gateway still work. |
 | `access_settings_unavailable` | Access settings couldn't be loaded, so nothing can run. Ask {owner name} to check the gateway. |
@@ -786,8 +797,9 @@ Owner MCP tools stay deferred (`HEADLESS_AND_RESOURCES.md`).
 One-time and reviewed. No compatibility layer and no period where old and
 new rules both run [R§24].
 
-1. **Dry run**, from the release **before** the cut-over, so the old
-   evaluator computes "today" and the new release ships none of it [RT m3]:
+1. **Dry run**, from the predecessor release (§4.2), so the old evaluator
+   computes "today" and the new release ships none of it [RT m3]. It reads
+   the store manifest (§4.2) and copies of every store:
    `scripts/access-migrate dry-run --admin-db <copy> --categories-db <copy>
    --spend-db <copy> --receipts-db <copy> --config <copy> --out <dir>`. It
    opens inputs read-only and writes `report.md`, `report.json` (old
@@ -803,84 +815,119 @@ new rules both run [R§24].
 
 ### 4.2 Stop, back up, migrate, verify, accept
 
-Resolves [RT M6; RT2 B2, M4]. The stores are separate files, so one
-transaction cannot cover them. v3 does not stage and swap them: it migrates
-the stopped gateway in place after a verified full backup, and the only
-recovery is to restore that backup, before any traffic.
+Resolves [RT M6; RT2 B2, M4; R3-M3, M4, m1]. The stores are separate
+files, so no transaction covers them. Apply migrates the stopped gateway
+in place after a verified backup; the only recovery is to restore that
+backup, before any traffic.
+
+**Store manifest** [R3-M4]. Stores need not be in `data/`: admin
+(`AZIZAM_ADMIN_DB` or config `admin.db_path`, `bootstrap_config.py:28`),
+ledger (`AZIZAM_PROVIDER_LEDGER_DB`, `providers.py:35`), receipts
+(`AZIZAM_RECEIPTS_DB`), jobs (`AZIZAM_MEDIA_JOBS_DB`), config
+(`AZIZAM_CONFIG_PATH`, `bootstrap_config.py:15-16`), and the categories
+store beside the admin database (`proxy.py:15588-15592`). The tool
+resolves each with the gateway's own resolver, then `realpath`, and lists
+every SQLite store the gateway opens plus the config: configured path,
+real path, size, SHA-256. Media files are not in it; apply does not write
+them. Apply refuses before any change if two resolvers disagree about one
+store (today they can: `proxy.py:12956` recovers
+`ADMIN_DB_PATH.parent / "provider_spend.db"` while the ledger follows
+`AZIZAM_PROVIDER_LEDGER_DB`, and `providers.py:1259-1261` derives the
+admin database from the ledger's directory; the build makes one resolver
+per store), if two entries share a real path, or if a store the gateway
+opens is missing from the list.
+
+**Lock and control record** [R3-M3]. The gateway holds an exclusive
+`flock` on `azizam.lock` for its whole life; apply, restore and accept hold
+it to the end. Per-store `.lock` files (`sqlite_startup.py`) are not
+enough: they are held only while a connection is open, and the ledger and
+categories store do not use them (at `8a3147f0`). The lock and the control
+record `access-migration.json` live in the admin database's real
+directory. Restore replaces files, never directories, so it cannot remove
+either.
+
+**Predecessor release** (the last before the cut-over): the gateway lock,
+the dry-run tool, and two startup checks [R3-m1]. It reads the schema
+version before any DDL and refuses a newer one without writing (today
+`executescript(_SCHEMA)` runs first, `admin_store.py:82-188`, `:284-297`),
+and it refuses to start while the control record says `migrating`,
+`verified` or `restoring`.
 
 `scripts/access-migrate apply`:
 
-1. **Lock and preconditions** (apply refuses otherwise). The gateway holds
-   an exclusive `flock` on `azizam.lock` in the parent directory of `data/`
-   (outside it, so a restore that replaces `data/` cannot drop the lock)
-   while it runs; apply and
-   restore hold it to the end, so neither runs beside the gateway and the
-   gateway cannot start during them. The lock ships in the release that
-   runs the dry run, so the gateway being replaced already takes it. Every
-   `approval.yaml` row is decided and its digest matches; the inputs match
-   the dry run; no active key would keep a `legacy-` prefix (§4.5); no
-   ledger row is `reserved` or `needs_reconciliation`; free space is at
-   least twice the size of `data/` plus the config, for the backup and a
-   possible restore copy (D11).
-2. **Backup**. Checkpoint every SQLite database (`PRAGMA
-   wal_checkpoint(TRUNCATE)`). Copy all of `data/` and the config to
-   `data.access-backup-<id>/` on the same filesystem; fsync every file and
-   directory. Write `backup.json` (path, size and SHA-256 of each copy)
-   through a temporary file, fsync, rename and directory fsync. A backup
-   without a matching `backup.json` is incomplete and is never used.
-   Receipts, jobs and audit are in it, so a restore cannot leave them newer
-   than the other stores.
-3. **Marker**. Write `data/access-migration.json` (`state: migrating`, the
-   backup path, the digest of `backup.json`) the same atomic way. No live
-   file changes before it exists.
-4. **Migrate in place**. `admin.db` first: its first transaction sets schema
-   version 6, so the previous release refuses to open it from then on
-   (`admin_store.py:294-296`). Then the access settings, the ledger and the
-   config (temporary file, fsync, rename). Each store change is one SQLite
-   transaction with `synchronous=FULL`.
-5. **Verify** the live migrated files, gateway still stopped: the new
-   schema; no removed table, column, setting, config key or plan name; the
-   §4.4 oracle, run with `evaluate`, equals the approved matrix; provider and
-   global ledger totals per period are unchanged; every approved revocation
-   and disable is applied; every app has an assignment; the new release's
-   startup checks (config validator, store opening, access settings load)
-   pass against the migrated files without opening a listener. Checkpoint and fsync
-   every changed file, then set the marker to `verified`. On any failure the
-   marker stays `migrating` and the tool prints the restore command.
+1. **Preconditions**, under the lock: every `approval.yaml` row decided
+   with a matching digest; inputs equal the dry run's; the manifest checks
+   pass; no active key keeps a `legacy-` prefix (§4.5); no ledger row is
+   `reserved`, `sending` or `needs_reconciliation`; enough free space
+   (D10).
+2. **Backup**. `PRAGMA wal_checkpoint(TRUNCATE)` on every store. Copy
+   every manifest file to `access-backup-<id>/` in the admin database's
+   directory; fsync files and directory. Write `backup.json` (manifest
+   plus each copy's SHA-256) atomically: temporary file, fsync, rename,
+   directory fsync. A backup without a matching `backup.json` is never
+   used.
+3. **Control record** `migrating`, with the backup id and the digest of
+   `backup.json`, written the same atomic way before any store changes.
+4. **Migrate in place**. `admin.db` first; its first transaction sets
+   schema version 6, which the predecessor refuses. Then the access
+   settings, the ledger, the config. Each store change is one transaction
+   with `synchronous=FULL`; the config is written atomically.
+5. **Verify**, gateway stopped: new schema; no removed table, column,
+   setting, config key or plan name; the §4.4 oracle, run with `evaluate`,
+   equals the approved matrix; provider and global ledger totals per
+   period unchanged; approved revocations and disables applied; every app
+   has an assignment; unmigrated stores (receipts, jobs) still match their
+   backup hashes; the new release's startup checks pass read-only, without
+   a listener. Fsync, then set `verified`. On failure the state stays
+   `migrating` and the tool prints the restore command.
 6. **Report**: "Verified. Nothing has run on the new rules yet. To start:
    `access-migrate accept`. To go back: `access-migrate restore` (allowed
-   until you accept)." Before accepting, `access-migrate check --person …
-   --app … --capability … --model …` runs the same `evaluate` offline.
+   until you accept)." `access-migrate check …` runs `evaluate` offline.
 
-`accept` sets the marker to `accepted`. The new release starts only then; with
-no marker and the old schema it stops with "Run access-migrate".
+`accept` takes the lock and sets `accepted`.
 
-`restore` runs only while the marker says `migrating` or `verified`. It
-checks every backup file against `backup.json` and refuses, changing
-nothing, on any mismatch. It copies the backup to `data.restoring/`, fsyncs
-it, renames `data/` to `data.failed-<id>/` (kept, P19), renames
-`data.restoring/` to `data/` and fsyncs the parent; the config likewise. Then
-the owner runs the previous release.
+**`restore`** runs in `migrating`, `verified` or `restoring`, under the
+lock. It checks every backup file against `backup.json` and refuses,
+changing nothing, on a mismatch. It sets `restoring`. A destination is
+**restored** when its SHA-256 equals the backup's and no `-wal` or `-shm`
+file is beside it. For each manifest entry that is not restored, in this
+order, each step skipped if already done:
+1. Copy the backup to `<real path>.access-restoring`; fsync it.
+2. Rename `-wal`, then `-shm`, to `<name>.access-failed-<id>` (kept,
+   P19). A stale WAL beside a restored database would be replayed into
+   it; moving them first means a crash never leaves a restored main file
+   beside an old WAL.
+3. Rename the destination to `<name>.access-failed-<id>`, unless that name
+   exists already (an earlier run moved it).
+4. Rename the copy into place; fsync the directory.
 
-**After accept there is no tool rollback** [RT2 B2]; `restore` refuses. The
-backup has none of the traffic served since accept. Restoring it by hand
-would delete every charge since accept (caps would undercount), every new
-key, every revocation (a revoked key would work again), and every audit
-event, receipt and job. Fixes after accept are forward, through the normal
-API. An owner who still restores by hand accepts those losses and must
-revoke again every key revoked since accept.
+If an `.access-failed-<id>` name exists and its source does too, something
+outside the lock wrote the store; restore stops and names the file.
+Rerunning `restore` repairs any crash. Only when every destination is
+restored does it set `restored`; until then both releases refuse to start
+[R3-M3]. Then the owner runs the predecessor release. Apply may run again
+after `restored`, with a new backup id.
 
-Interruptions [RT2 M4]:
+**Start rules.** The predecessor starts with no control record or with
+`restored`; its schema check refuses migrated stores. The new release
+starts only with `accepted`, or on a fresh install whose `admin.db` it
+creates. A migrated `admin.db` without a control record refuses to start:
+"The access migration record is missing."
+
+**After accept there is no tool rollback** [RT2 B2]; `restore` refuses.
+A manual restore would delete every charge (caps undercount), key,
+revocation (a revoked key works again), audit event, receipt and job since
+accept. Fixes after accept are forward, through the API.
 
 | Stopped during | Found next | Result |
 |---|---|---|
-| Backup, before `backup.json` is written | no marker | Live files unchanged; apply deletes its incomplete backup and starts again |
-| After `backup.json`, before the marker | no marker | Live files unchanged; apply starts again with a new backup |
-| Marker write | old or new marker (rename is atomic) | As for that state |
-| Migrate or verify | `migrating` | Gateway refuses to start; restore, then apply again |
-| After `verified` | `verified` | All changes were fsynced first; accept or restore |
-| Restore | `data.restoring/` | Restore again: it recopies an incomplete `data.restoring/`, or finishes the renames if `data/` is gone and the copy matches `backup.json` |
-| Marker unreadable | — | Gateway, apply and restore all refuse; the owner decides by hand with the backup path that apply printed and logged at step 2, and the §4.2 losses apply if traffic was served |
+| Backup, before `backup.json` | no record | Stores unchanged; apply deletes the incomplete backup and starts again |
+| After `backup.json`, before the record | no record | Stores unchanged; apply starts again |
+| Record write | old or new record (atomic rename) | As for that state |
+| Migrate or verify | `migrating` | Both releases refuse to start; restore, then apply again |
+| After `verified` | `verified` | Accept or restore |
+| Restore, any step | `restoring` | Both releases refuse to start; restore again finishes |
+| Record unreadable | — | Everything refuses; the owner uses the backup path printed and logged at step 2 |
 
 ### 4.3 Old field to new field
 
@@ -904,14 +951,14 @@ representation blocks apply and is listed as unrepresentable.
 | `target_policy.visibility` | Removed: discovery lists granted items with their state (running or loadable). A stored `available` value is unrepresentable | **UNVERIFIED** per plan |
 | `model_access.mode` | Read once into `target_policy`, then removed | **UNVERIFIED** |
 | `media_metadata.default` | `media_metadata` as a bound (§2.6) | none |
-| Category snapshot plans | If the active snapshot governs anyone, each attached plan's rows must map into one access plan per identity, or apply refuses | **UNVERIFIED** (store in `data/`) |
-| Ledger `profile_id` | Each row stays one row [RT2 M3]. `app_id` from the receipt with the same request id; `person_id` = that app's accountable person after the move (D7). A row with no receipt match (`request_id` may be null, `providers.py:303-316`) is **unattributed**: `person_id` and `app_id` null; it counts in provider and global totals only. Unattributed rows inside the current day or month are `approval.yaml` rows, `pending` by default; the owner names a person and app, or accepts "unattributed". Ownership is never inferred from who holds a plan today | **UNVERIFIED** (ledger in `data/`); no stored plan sets a cap [P§2], so today no person or app counter depends on these rows |
+| Category snapshot plans | If the active snapshot governs anyone, each attached plan's rows must map into one access plan per identity, or apply refuses | **UNVERIFIED** (categories store on the instance) |
+| Ledger `profile_id` | One row each, `attempt_id` null [RT2 M3]. `app_id` from the receipt with the same request id; `person_id` = that app's accountable person after the move (D7). No receipt match (`request_id` may be null, `providers.py:303-316`): **unattributed**, counted in provider and global totals only; inside the current day or month it is a `pending` approval row where the owner names a person and app or accepts "unattributed". Never inferred from today's plan holders | **UNVERIFIED** (ledger on the instance); no stored plan sets a cap [P§2], so today no person or app counter depends on these rows |
 
 ### 4.4 Checks the dry run must report
 
 | # | Check | Why |
 |---|---|---|
-| D1 | Every person, app and active key with today's effective plan; each app's active keys grouped by effective plan | An app with more than one group needs a split, narrow or revoke decision [RT M5] |
+| D1 | Every person, app and active key with today's effective plan; each app's active keys grouped by effective plan; each key's `created_by` against its app's accountable person after the move | An app with more than one group needs a split, narrow or revoke decision [RT M5]. Keys whose maker is not the accountable person are the ones [OV §3.5] item 4 revokes later; the owner replaces them once |
 | D2 | Provider matrix: each old plan × provider, plan side, provider side (absent, null, empty, string, list), effective result; duplicate JSON ids | Paid access comes from the intersection [RT M3] |
 | D3 | The oracle: for every **valid** (app, its accountable person) pair × capability × item revision × route (local, each paid provider, fallback) and each engine × direct operation, old decision and reason against new; plus per pair: receipt detail, metadata, model loading, caps. Results are reused per plan pair. Wrong-owner pairs are covered by fixed adversarial fixtures (§5.6), not by the full product [RT2 note] | Every difference must be a row of §8 or apply refuses. Covers known subjects only, not future traffic |
 | D4 | Receipts in the last 90 days by app and for `api_key_name = "lan-bypass"` (written today, `proxy.py:2489`, `:29844`) by path and capability | Keyless traffic that will stop. Receipts have no client IP (`gateway/receipt_store.py:67-92`), so the owner must name the devices |
@@ -919,9 +966,8 @@ representation blocks apply and is listed as unrepresentable.
 | D6 | The deployed config's `auth` block, `public_paths` and `ollama_compat_discovery` | Confirms LAN bypass, auth-off and public discovery state; flags public entries that match protected routes |
 | D7 | Each app's accountable person after the move, that person's plan, and the app's effective access (person ∩ app); apps whose person would be missing or disabled | The owner approves the owner column of §8; a missing person blocks apply [RT B3] |
 | D8 | Ledger rows in the current day and month with their attribution (§4.3); rows with no receipt match; any `reserved` or `needs_reconciliation` rows; provider and global totals per period | Reconcile before apply; unattributed in-window rows become `pending` approval rows; apply verifies the totals are unchanged [RT M1; RT2 M3] |
-| D9 | Creations without a recorded person and app | Their signed links stop working unless the owner assigns them |
-| D10 | Stored values listed as unrepresentable in §4.3 | Blocks apply |
-| D11 | Size of `data/` and the config, and free space on that filesystem | The backup and a restore copy (§4.2) need twice that space; size on this instance is **UNVERIFIED** |
+| D9 | Stored values listed as unrepresentable in §4.3 | Blocks apply |
+| D10 | The store manifest (§4.2): configured and real path, size and filesystem of every store and the config; resolver disagreements; free space on each filesystem | The backup needs the manifest's total size in the admin database's directory; a restore needs, on each filesystem, the size of the files restored there. Apply refuses without it. Layout and sizes on this instance are **UNVERIFIED** |
 
 ### 4.5 Prerequisites on this instance
 
@@ -929,8 +975,11 @@ Done by the owner through the normal Apps and Providers flows before apply
 [RT M8, m3]. Revocations and disables listed in §8 are approved rows that
 apply performs; these steps are the ones that need a client changed:
 1. `fix/access-hygiene` has landed (it revokes unbound Try keys once).
-2. Create new keys for **daisy** and **open-webui** in Apps, update those
-   clients, and revoke their two `legacy-` keys. The other three `legacy-`
+2. Create new keys for **daisy** and **open-webui** in Apps, as the person
+   who becomes their accountable person (Tim), update those clients, and
+   revoke their two `legacy-` keys. This uses today's key rules; it must
+   happen before [OV]'s switch, which allows key creation only by the
+   accountable person [OV §3.5]. The other three `legacy-`
    keys (simon, librechat, cap) were never used; apply revokes them as
    approved rows. Apply refuses if any active key would still have a
    `legacy-` prefix after the approved revocations, so no legacy string stays
@@ -939,9 +988,13 @@ apply performs; these steps are the ones that need a client changed:
 3. Give every LAN device found in D4 an app and a key.
 4. Give every client found in D5 an Azizam app key.
 5. Reconcile any ledger row that D8 lists.
-6. Deploy the last release before the cut-over. It carries the dry-run tool
-   and the gateway lock (§4.2), so the gateway that apply stops already
-   takes the lock.
+6. Deploy the predecessor release (§4.2). It carries the dry-run tool, the
+   gateway lock and the early startup checks, so the gateway that apply
+   stops already takes the lock.
+
+**Order with owner visibility.** This cut-over is accepted before [OV]'s
+privacy switch. OV's Accountable basis needs the people that §8 assigns to
+service apps; before this lands it matches nothing [OV §12].
 
 ### 4.6 Removed data and code (P11)
 
@@ -976,41 +1029,46 @@ apps is **UNVERIFIED**; this design removes only their app ownership.
 - Missing plan field fails validation; empty `can_use` grants nothing; an
   empty `direct_engine_access` list grants nothing.
 
-### 5.2 Authorization contract (§2.13)
+### 5.2 Authorization at the moment of effect (§2.13)
 
-- Stem unchanged, settings revision changed: `check` fails until
-  re-authorized.
-- One engine, one plan granting only `GET /props`: a Permit for
-  `GET /props` is refused by `check` for `POST /delete`; the engine is not
-  called [RT2 B1].
-- An app-key Permit and a session Permit for the same action: the session
-  one is refused on a direct engine route.
-- The body is changed after `authorize` so its bounded cost exceeds
-  `reserved_usd`: the provider boundary refuses and releases.
-- A Permit for another person, app, member or route is refused at both
-  boundaries.
-- Alternative route changed, helper changed, retry, fallback: each is a new
-  attempt number with its own `authorize`.
-- Revoke the key, expire it, disable the app, disable or remove the person,
-  or sign out the session between `authorize` and the send: zero sends; the
-  reservation is released; no second reservation exists [RT2 M2].
-- Change the app's owner between `authorize` and the send, to a person whose
-  plan also allows it: the old row is released and the charge lands on the
-  new person's counter as a new attempt.
-- Trigger coverage: for each column that step 1 reads, an update bumps
-  `access_epoch`; the test lists the columns from the step 1 query, so a new
-  column without a trigger fails it.
-- Download: a wrong recorded member denies; a plan changed after creation
-  uses the current plan.
+- One engine, one plan granting only `GET /props`: `POST /delete` through
+  `dispatch` is denied; the engine is not called [RT2 B1].
+- An `outbound` whose target member is not in the granted revision's
+  graph, or is at another revision: denied. Per call site (TypeSafe,
+  OpenAI-shaped, native, engine dispatch), a fixture `outbound` yields
+  exactly the expected capability, member, route and operation [R3-M1].
+- Generation granted, May load models off on one side, model not running:
+  `cannot_start_model`, nothing loaded. Same with the model running:
+  allowed, no `load` effect [R3-M1].
+- A session identity on a direct engine route: denied.
+- Two keys on one app: revoke key A while a request on A waits for
+  capacity; A's next `dispatch` is denied and sends nothing; key B keeps
+  working. The same with two sessions of one person and sign-out or expiry
+  of session A [R3-B1].
+- Revoke, expire, disable the app, disable or remove the person, or sign
+  out, each committed after entry and before `dispatch`: zero sends, no
+  ledger row.
+- A change committed between the `admin.db` read and the send: this send
+  happens; the next `dispatch` of the same job is denied (the stated
+  linearization point).
+- Change a service app's accountable person between two calls of one job
+  (keys revoked first, as [OV §3.5] requires): the next call is denied.
+  Change the plan of the accountable person instead: the next call uses
+  the new plan.
 - Gate not initialized, store file missing, no active revision, no
   assignment for the person or the app: deny.
-- `evaluate` never reserves and never returns a Permit; discovery output
-  passed to dispatch is refused.
+- `evaluate` never reserves; discovery output passed to an engine route is
+  not an authorization.
+- Static: no engine or provider client is called outside `dispatch` (an
+  AST check like §5.3's guard).
 
 ### 5.3 Server denial tests (every path)
 
-Extend the route inventory test so every protected route lists its
-enforcing boundary. A mock engine fails the test if called.
+Extend the route inventory test so every protected route (HTTP, browser
+Home, Make, Try and Library, MCP, signed links, async jobs, native) shows
+that each of its effects goes through `dispatch` (§2.13), and that
+discovery never stands in for it [R3 route coverage]. A mock engine fails
+the test if called.
 
 | Case | Expected |
 |---|---|
@@ -1027,7 +1085,6 @@ enforcing boundary. A mock engine fails the test if called.
 | Native request to a paid remote target | 400 `provider_native_paid_remote_forbidden` (today's code, `proxy.py:29964-29976`) |
 | Native request from a browser session identity | 403; engine not called |
 | Azizam management route (`/api/pull`, `/api/delete`, …) with a plan that has direct engine access `"*"` | 501 |
-| Signed link after the app is disabled or the plan stops allowing the work | 403; file not returned |
 | `/health` and showcase | 200; never dispatch, list or return creations |
 | `/v1/models`, `/api/tags`, MCP `capabilities`, MCP target details, speech alias lists and unknown-target suggestions (`mcp_server.py:285-348`) | Equal to Check access; nothing outside it is named |
 | MCP `run`, `job`, content for an item the plan does not allow | The §3.3 code; core route enforcement, not an MCP-only check |
@@ -1050,18 +1107,23 @@ file. This is not a repository-wide string ban.
 
 Concurrent requests against one cap; cap edit during a reservation; plan
 reassignment and rename without a counter change; app recreated; same plan
-on both sides charged once; restart with a `reserved` row; unknown cost;
+on both sides charged once; unknown cost;
 reconciliation; ledger unavailable gives `spending_unavailable` while local
 routes run; rolling-day and UTC-month boundaries; per-request ceiling.
 
-Attempts [RT2 M1]: a workflow with two paid helpers writes two rows with
-attempts 1 and 2; a second insert of one (request id, attempt) fails;
-re-authorizing an unsent attempt keeps its one row; a retry and a fallback
-each add one row; a Permit dropped before the send leaves the row
-`released`; a send that started with an unknown result leaves it
-`needs_reconciliation`, never `released`; TypeSafe and an OpenAI-shaped
-route both reserve only through `authorize`. Each case: exactly one row per
-actual send, and provider and global totals count each row once.
+Attempts [RT2 M1; R3-B2]: a workflow with two paid helpers writes two
+rows; a retry and a fallback each add one row; two concurrent claims of
+one `attempt_id` send once (the loser changes zero rows and sends
+nothing); a crash after the insert and before the claim leaves `released`
+after restart; a crash after the claim leaves `needs_reconciliation`,
+never `released`; a connection refused before any request byte leaves
+`released`; a provider rate limit or auth failure leaves `released`; a
+`sending` row counts toward caps; a `reserved` row past `expires_at` in a
+live process is released; settle on a row not in `sending` changes
+nothing; TypeSafe
+and an OpenAI-shaped route both reserve only through `authorize`. Each
+case: exactly one row per actual send, and provider and global totals
+count each row once.
 
 ### 5.5 Category exclusion
 
@@ -1088,20 +1150,32 @@ account, two keys with different plans on one app). No copy of `data/`.
 - Daisy and open-webui moved to the owner keep kind `service`;
   `person_for_app_credential` returns no person for their keys.
 - A stored unrepresentable value: apply refuses and names it.
-- Crash injected before and after each §4.2 step and each restore step,
-  including a torn temporary marker and a backup with a missing or changed
-  file: each row of the §4.2 interruption table holds; restore refuses a
-  backup that does not match `backup.json`; the result is all migrated and
-  verified, or all restored, for every file in `data/` [RT2 M4].
+- Crash injected before and after each §4.2 step and after each restore
+  step for each manifest entry, including after `-wal` moved and before
+  the main file did, and after the databases are restored and before the
+  config is, a torn control record, and a backup
+  with a missing or changed file: each interruption row holds; running
+  restore again finishes it; the result is every manifest file migrated
+  and verified, or every one byte-equal to the backup; neither release
+  starts in between [RT2 M4; R3-M3].
+- Layout fixtures [R3-M4]: the admin database and the ledger each outside
+  `data/`, a store reached through a symlink, and the two ledger resolvers
+  disagreeing. External stores are backed up and restored at their real
+  paths; a disagreement refuses before any change. A stale `-wal` beside a
+  restored database is moved aside, not replayed.
+- Store inventory: every SQLite store the gateway opens is in the
+  manifest.
 - Serve traffic after accept (a paid charge, a new key, a revocation, a
   reconciliation, an audit event), then run restore: it refuses and changes
   nothing [RT2 B2].
-- The previous release started against a migrated `admin.db` refuses to
-  open it.
-- Unattributed ledger rows [RT2 M3]: a plan whose holder moved before the
-  cut-over, a plan with no holders, two apps of one person and apps of two
-  people, each with and without a receipt match: in-window unmatched rows
-  are `pending`; provider and global totals are unchanged; no row is
+- The new release with a migrated `admin.db` and no control record
+  refuses to start.
+- The predecessor release started against a migrated `admin.db` refuses
+  it, and the file's SHA-256 is unchanged afterwards; started while the
+  control record says `migrating`, `verified` or `restoring`, it refuses
+  [R3-m1].
+- Unattributed ledger rows [RT2 M3], with and without a receipt match:
+  in-window unmatched rows are `pending`; totals unchanged; no row
   copied.
 - Wrong-owner adversarial pairs (an app evaluated with a person who does
   not own it) deny in the oracle fixtures.
@@ -1129,19 +1203,19 @@ preview.
 | The gate is now the only authority on the hot path | It caches by `PRAGMA data_version` (`category_enforcement.py:47-55`); measure overhead before release |
 | Consumers of `person_for_app_credential` are not traced | Trace before changing ownership (§2.4) |
 | Assignment writes contend on the snapshot store | Compare-and-swap with retry; assignment changes are small |
-| Any revocation, and any settings revision (an unrelated tag or assignment), makes every in-flight Permit stale | One extra run of steps 1-6 per in-flight request; capacity and reservation are kept (§2.13). Measure before release |
+| `authorize` runs at every external effect: one `admin.db` `SELECT`, a cached settings lookup and, for paid calls, the ledger transaction | Same cost order as today's per-request auth and cap check; a workflow pays it per helper. Measure before release |
+| A browser-started job stops after sign-out or session expiry (§2.13) | Expected for revocation. If session lifetime cuts real jobs short, the job page says why; measured in the build |
 | The owner restores the backup by hand after accept | Restore after accept is refused by the tool; §4.2 lists exactly what a manual restore loses |
-| The full backup of `data/` is large | D11 reports size and free space; apply refuses without the space |
+| The backup of every store is large (receipts) | D10 reports sizes and free space per filesystem; apply refuses without the space |
 | A crash between app row and assignment | The app denies and shows "Choose a plan" (§2.4); never a widening |
 
 ## 7. Owner decisions
 
-Each row has a recommended default. Everything else is decided above. The
-recommended defaults add no paid or direct engine access to automated apps
-(A10 and A11 gain smaller things, listed in §8). Decision 1 adds paid
-models to your own browser use; decisions 3 and 4 remove access from apps
-that have not used it, except Paid provider proof, whose one use you
-confirm was a test. §8 lists every gain and loss.
+Each row has a recommended default; everything else is decided above. The
+defaults add no paid or direct engine access to automated apps. Decision 1
+adds paid models to your own browser use; decisions 3 and 4 remove access
+from apps that have not used it (Paid provider proof: confirm its one use
+was a test). §8 lists every gain and loss.
 
 | # | Decision | Recommended | Why | Alternatives |
 |---|---|---|---|---|
@@ -1178,17 +1252,14 @@ People:
 
 | # | Person | Today | After | Change |
 |---|---|---|---|---|
-| P1 | Tim Nunamaker | no plan → built-in default | Everything | His person plan now bounds his apps (they all fit inside Everything) |
+| P1 | Tim Nunamaker | no plan → built-in default | Everything | Tim's person plan now bounds Tim's apps (they all fit inside Everything) |
 | P2 | Simon Agent | no plan → built-in default | Local only | None |
 | P3 | Tim ODL | Assistant | Chat | None |
 
-Apps. "Owner after" is the accountable person. Rows marked **UNVERIFIED**
-are confirmed by D7, which also prints person ∩ app for each row; if the
-owner turns out to be Simon (Local only), an app on Local and paid would lose
-paid access, and D3 lists that as an unapproved difference. N7 applies to
-every row, whether or not the Loses column names it (no stored plan lists
-models today, §4.3). Approve each row or pick its
-alternative.
+Apps. "Owner after" is the accountable person. D7 confirms rows marked
+**UNVERIFIED** and prints person ∩ app; a different owner that narrows
+access shows in D3 as an unapproved difference. N7 applies to every row.
+Approve each row or pick its alternative.
 
 | # | App | Owner after | Today | After | Gains | Loses | Keys | Alternative |
 |---|---|---|---|---|---|---|---|---|
@@ -1217,73 +1288,54 @@ Not apps:
 | N1 | Any device that reaches the gateway from the LAN with no key or a placeholder key; any client of public Ollama discovery; any setup that ran with auth off | **Loses all access** (401). Devices from D4 need keys first |
 | N2 | Any client that sends a LiteLLM virtual key | **Loses access** (401). Clients from D5 need Azizam keys |
 | N3 | People created later through OIDC without an invitation | No plan until the owner chooses one (today: built-in default) |
-| N4 | Signed creation links | Stop working if the creator's app or person is disabled or the plan no longer allows the work; links to creations without a recorded creator per D9 |
+| N4 | Files already made and their signed links | No change from this design; [OV §3.1, §3.4] governs them. A later block or plan change does not hide them (v3 did; v4 does not, §2.13) |
 | N5 | Any request that asks for more file metadata than its plans allow | Gets the plan's level (today a request may override) |
 | N6 | Settings and Providers pages | "Default plan" gone; "Allowed plans" read-only |
 | N7 | Every app and person | Models, workflows and new revisions added after the cut-over are not usable until the owner grants them (the "Who can use it?" step preselects plans with offer new on). Today the built-in default and plans without model lists include them at once |
 
 ## 9. Red-team resolution
 
-### 9.1 Round 1 (v1), with round 2's status
+**Rounds 1 and 2.** Round 3 rated these resolved at design level: RT2 B2
+(no rollback after accept), RT2 M3 (one historic row per charge), RT2 M5
+(app row first), RT2 m1, RT2 m2, and the round-1 findings they carry
+(B2 bounded direct access, B3 accountable person, M3-M5, M7-M9, m1-m3).
+It rated four partial; v4 closes each through a round-3 row: RT2 B1
+(action binding) and RT2 M2 (revocation) through R3-B1 and R3-M1; RT2 M1
+(attempt consumption) through R3-B2; RT2 M4 (crash durability) through
+R3-M3 and R3-M4. Where each lives: plans and composition §2.1-§2.6; direct
+access §2.7; deny by default §2.8; spending §2.11; migration §4; tests §5.
+The per-finding text of earlier rounds is in git history (`e6e4965b`,
+`b81a9a5c`).
 
-Round 2 rated B1, M1, M2, M6, m2 and m3 partial or open in v2; the v3 text
-below says what closes each. Round 2 rated M3, M4, M5, M7, M8, M9 and m1
-resolved at design level, B3 sound at the inspected seam, and accepted B2's
-rejection.
-
-| ID | Finding | Resolution | Where |
-|---|---|---|---|
-| B1 | The gate authorizes a service stem, not the executed graph; unconfigured gate passes | **Applied.** v2: every pass case denies; negative tests; code confirms `category_enforcement.py:43-44`, `:135`, `:153-173`. v3 replaces the v2 contract (closure digest and phases) with `evaluate` plus one Permit checked again at every point of effect (RT2 B1, M1, M2) | §2.13, §2.8, §5.2 |
-| B2 | Direct engine access as a boolean loses backend and operation bounds | **Applied in part.** Bounded grant (exact engines and operations; empty grants nothing); engine is the category subject; session identities denied; migration enumerates engines; tests for ungranted engine, operation, category and Azizam management routes. Rejected: "only checkable native adapters" and keeping engine-side management out of grants, because both need a parser per engine API (AGENTS.md binding principle; operation scopes are generic, `policy.py:326-366`). Azizam's own management routes stay never grantable (501); engine-side management is disclosed in the editor | §2.7, §4.3, §5.3 |
-| B3 | Moving service apps to a person can make keys act as that person | **Applied** with existing fields: `apps.owner_user_id` is the policy and spending subject only; `person_for_app_credential` unchanged and still needs kind `personal` (`admin_runtime.py:1562-1572`); migrated apps keep kind `service`; missing owner row denies. A new `policy_account_id` field is not needed | §2.4, D7 |
-| M1 | Spend ledger keyed by plan id; migration omitted it | **Applied.** Ledger by person, app, provider, attempt; reconcile first. Code `providers.py:303-316`, `:1060-1073`. v3: the ledger is in the full backup; history keeps one row each, unmatched rows are unattributed or owner-assigned (RT2 M3); no rollback after accept (RT2 B2) | §2.11, §4.2, §4.3, D8 |
-| M2 | Per-request cap, periods, reservation lifecycle missing | **Applied.** `usd_per_request` kept per paid attempt; rolling day and UTC month kept with honest copy; reconciliation kept; `spending_unavailable` separate. v3 adds attempt identity, one reservation owner and the state table (RT2 M1) | §2.11, §3.3 |
-| M3 | Provider ACL removal must translate the intersection | **Applied.** D2 matrix with absent/null/empty semantics; display-name wording fixed | §1.4, §4.3, D2 |
-| M4 | Plan shape cannot express v3 rules or old axes | **Applied.** Normative schema with `op`, `values`, `waive_missing`; capability id table; field-by-field conversion; unrepresentable values block | §2.2, §3.1, §4.3 |
-| M5 | Key-level and multi-plan collapse; richer oracle | **Applied.** Key groups per app need a decision; oracle over routes, engines, settings and reasons; scope stated as known subjects only | §2.4, D1, D3 |
-| M6 | No cross-store commit protocol; approval defaults to accept | **Applied, simplified in v3.** Rows start `pending` (kept). v2's staged swap is replaced by stop, full backup, migrate in place, verify, owner accept; restore only before accept; crash table (RT2 B2, M4) | §4.1, §4.2, §5.6 |
-| M7 | Session apps exist; a global Azizam app is wrong | **Applied.** Reuse each surface's existing app; no global app; triggers kept | §2.4 |
-| M8 | Keyless LAN should not be an owner decision; finish the cut-over | **Applied.** Removal mandatory; the v1 keyless option is gone from the owner decisions; all five `legacy-` keys are rotated or revoked and apply enforces it | §2.8, §4.5 |
-| M9 | Non-grant settings have no composition rule | **Applied.** Composition table; metadata becomes a bound (listed as N5) | §2.6 |
-| m1 | Reason order differs from the kernel | **Applied.** Total step order across both plans; kernel loop change named (`category_policy.py:421-443`) | §2.5 |
-| m2 | No-plan app states and cap copy incomplete | **Applied.** No operation clears an assignment (the clear path `admin_store.py:1337-1354` is removed); member errors name the next step; cap copy built from scope and period. v3 corrects the v2 claim "cannot be created": a crash between app row and assignment leaves an app that denies and shows "Choose a plan" (RT2 M5) | §2.4, §3.1, §3.3 |
-| m3 | Purge scope and string-ban static guard | **Applied.** Purge removed (decision 4 v1 deleted); rotation done through Apps, not migration code. v3: the AST guard also catches string-key use of `allowed_plans` (RT2 m2); history is safe because restore is refused after accept (RT2 B2) | §4.5, §4.6, §5.3 |
-| — | v1 said unlisted identities skip the gate | **Corrected**: both must be unlisted (`category_enforcement.py:116-117`) | §1.3 |
-| — | v1 cut for simplicity | Per-person and per-app cap pairs collapsed to one cap set; purge operation, global Azizam app and keyless option removed; no operation leaves an app without an assignment | §2.11, §2.4, §2.8 |
-
-### 9.2 Round 2 (v2)
+**Round 3** [R3]:
 
 | ID | Finding | Resolution | Where |
 |---|---|---|---|
-| RT2 B1 | The contract cannot tell apart actions that need different decisions | **Applied, minimal.** The Permit binds subjects (person, app, auth kind) and action (capability, members, `METHOD /path`, route); `check` compares it with the real effect at engine and provider boundaries; the provider boundary recomputes the cost bound from the body (`providers.py:790-815`). No engine parser; scopes stay generic (`policy.py:326-366`) | §2.13, §2.7, §5.2 |
-| RT2 B2 | Post-commit rollback can erase spending, keys, revocations and audit | **Applied by removal.** Restore only before the owner accepts, when no traffic has run; after accept the tool refuses and §4.2 lists what a manual restore loses. The backup is all of `data/`, so receipts cannot outlive the restored stores | §4.2, §5.6 |
-| RT2 M1 | Attempt ownership and Permit consumption undefined | **Applied.** Server-numbered attempts; `UNIQUE (request_id, attempt)` in the cap transaction; `authorize` is the only reserver (TypeSafe `providers.py:848-873`, OpenAI callers `:1754-1767`); re-authorization keeps the row; state table. Per-attempt `usd_per_request` kept (`:406-408`). **Rejected:** retry parentage; no counter or decision reads it | §2.11, §2.13, §5.4 |
-| RT2 M2 | Permits survive revocation and disable | **Applied through the same freshness check.** `access_epoch`, bumped by triggers on every column step 1 reads (trigger pattern exists, `admin_store.py:177-188`), plus `not_after`; `check` runs after capacity waits, right before each send; linearization point stated | §2.13, §5.2 |
-| RT2 M3 | Historic spend fallback undercounts and does not fit one row | **Applied.** One row per charge, never copied. App from the receipt join, person = that app's accountable person; no match = unattributed (provider and global only), or owner-assigned via a `pending` row when inside the current day or month. Never inferred from today's plan holders | §4.3, D8, §5.6 |
-| RT2 M4 | Crash protocol lacks durability | **Applied by replacing the protocol.** Durability is needed at two points only: a fsynced, hash-listed backup and an atomically written marker before the first live change; all changes fsynced before `verified`. Interruption table covers restore, torn marker and bad backups | §4.2, §5.6 |
-| RT2 M5 | Assignment-first creation races orphan cleanup | **Applied by removal.** App row first, then assignment; no cleanup exists. No code deletes app rows (no `DELETE FROM apps` in `gateway/`, `proxy.py`, `scripts/`), so the existence check cannot go stale | §2.4, §5.3 |
-| RT2 m1 | A7 claims paperless is owner-independent | **Applied.** A7: owner's plan ∩ Chat | §8 |
-| RT2 m2 | AST guard misses the string-key ACL | **Applied.** String-key use of `"allowed_plans"` fails; `providers.py:1288-1290` is the failing fixture; one exempt file | §5.3 |
-| RT2 notes | Placeholder code; tie-break; opaque-engine pin; `evaluate` apart from admission; D3 pairs; MCP discovery; output check is not authentication; A3 "exactly" | **Applied** in §2.8, §2.5, §2.7, §2.13, D3, §5.3, §7 and §8. Owner decisions unchanged; decision 2's wording changed only because "today's rules exactly" was false for new items (N7) | as listed |
+| R3-B1 | Re-authorization cannot revalidate the original key or session; reads are not one snapshot | **By removal**: no re-authorization, no epoch. Each effect resolves the exact key hash or session (id, expiry, revocation, registration) in one `SELECT`. Sessions never switch person | §2.13, §5.2 |
+| R3-B2 | A unique index does not make a send single-use | One row per `authorize`, random `attempt_id`, conditional `reserved → sending` claim; uncertain sends reconcile | §2.11, §5.4 |
+| R3-M1 | "Same action" omits capability; activation uncovered | **By removal** of the comparison: the effect is derived from the typed outbound request and checked directly; `load` is its own effect | §2.13, §5.2 |
+| R3-M2 | Output re-evaluation lacks provenance | **By removal**: plans govern effects; stored files follow [OV §3.1, §3.4]; disclosed in §2.10 and N4 | §2.13, §8 |
+| R3-M3 | Restore destroys its recovery marker | Control record beside the gateway lock; per-file idempotent restore, WAL moved first; start rules | §4.2, §5.6 |
+| R3-M4 | `data/` backup misses external stores | Manifest at resolved real paths; resolver disagreement refuses (`proxy.py:12956` against `providers.py:35`); space per filesystem | §4.2, D10, §5.6 |
+| R3-m1 | Predecessor writes schema before its version check | Version check before DDL; file unchanged on refusal | §4.2, §5.6 |
+| Routes, ownership | One boundary for every route; constructors and triggers change together | One `dispatch` path with inventory and AST checks; [OV §3.5] triggers with `create_app`; order with OV stated | §2.13, §5.3, §2.4, §4.5 |
 
-## 10. What we cut (v2 → v3)
+## 10. What we cut in v4
 
-| Removed from v2 | Replaced by |
+| Removed from v3 | Why it could go |
 |---|---|
-| Staged `before/` and `after/` copies, per-file rename swap | Migrate the stopped gateway in place after one full backup |
-| Manifest states `staged`, `committed`, `rolled_back` and the `recover` command that compared digests | One marker (`migrating`, `verified`, `accepted`) and `restore` |
-| Rollback after commit (`before/` plus the previous release) | None. Restore only before accept; forward fixes after |
-| `data/.access-migration.lock` held only by the tool | The gateway's own lock, taken by the tool too |
-| Four phases (`list`, `dispatch`, `attempt`, `output`) as kinds of authorization request | Pure `evaluate` for everything that does not spend; `authorize` only before an effect |
-| `closure_digest` and its canonical hashing | The member list, which the output check needs anyway (a digest cannot be re-evaluated against current plans) |
-| Assignment-first creation and orphan cleanup on apply | App row first; nothing to clean up |
-| Historic spend charged to every holder of the old plan | One row each; receipt join, else unattributed or owner-assigned |
-| Exhaustive person × app oracle | Valid owner/app pairs plus fixed wrong-owner fixtures |
-| Reservations inside provider helpers and in callers | One reserver: `authorize` |
+| The Permit and `check` | Nothing is carried from decision to effect |
+| `access_epoch` and its triggers | Current rows are read at each effect |
+| Re-authorization of an attempt; `UNIQUE (request_id, attempt)` | One `authorize` and one row per send, with a single-use claim |
+| Cost-bound recomputation against `reserved_usd` | The reservation is made from the body about to be sent |
+| Re-checking files at download, and v3's D9 | [OV] governs stored files; the check needed provenance that does not exist |
+| Replacing `data/` as a directory | Per-file restore at real paths |
 
-Added, each because a finding needs it and nothing smaller covers it: the
-`access_epoch` row and its triggers; `UNIQUE (request_id, attempt)`; the
-gateway lock; the `accept` step.
+Added, each because a finding needs it: the `sending` status and claim;
+the store manifest; control states `restoring` and `restored`; the
+predecessor's two startup checks; the typed outbound request. v3's cuts
+(staged swap, post-accept rollback, closure digest, phases, orphan
+cleanup, copied spend) stay cut.
 
 ## Appendix: research to decision trace
 
