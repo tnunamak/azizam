@@ -510,3 +510,16 @@ class TestToolcallStreamDetector:
         detector = ToolcallStreamDetector(had_tools=True, backend_hint="vllm")
         asyncio.run(_collect_advisory(detector, chunks))
         assert detector.detected_family == "mistral"
+
+
+def test_marker_followed_by_structured_tool_call_suppresses_advisory():
+    """Content marker plus a real delta.tool_calls frame is not an unlifted call."""
+    calls = [{"id": "c1", "type": "function",
+              "function": {"name": "f", "arguments": "{}"}}]
+    chunks = [
+        _sse_chunk(_payload(_delta_choice(content="<tool_call>"))),
+        _sse_chunk(_payload(_delta_choice(tool_calls=calls))),
+        b"data: [DONE]\n\n",
+    ]
+    detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
+    assert asyncio.run(_collect_advisory(detector, chunks)) is None
