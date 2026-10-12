@@ -17,6 +17,7 @@
    },
    "engines": {
     "omnivoice": {
+     "display_name": "OmniVoice speech",
      "service": "tts",
      "model": "k2-fsa/OmniVoice",
      "custom_voices": true,
@@ -392,6 +393,7 @@
      }
     },
     "chatterbox": {
+     "display_name": "Chatterbox speech",
      "service": "tts-chatterbox",
      "model": "chatterbox-turbo",
      "streaming": true,
@@ -471,6 +473,7 @@
      "description": "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
     },
     "supertonic": {
+     "display_name": "Supertonic speech",
      "service": "tts-supertonic",
      "model": "supertonic",
      "streaming": true,
@@ -507,6 +510,7 @@
      "description": "Supertonic realtime engine (bake-off: 49 ms first audio)"
     },
     "kokoro": {
+     "display_name": "Kokoro speech",
      "service": "tts-kokoro",
      "model": "kokoro",
      "streaming": true,
