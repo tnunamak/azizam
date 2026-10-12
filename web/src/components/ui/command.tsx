@@ -499,7 +499,7 @@ export function CommandPalette({
           </CommandList>
         </Command>
         {copyAddress !== null && (
-          <div ref={addressRecovery} className="space-y-3 border-t p-4">
+          <div ref={addressRecovery} data-testid="gateway-address-recovery" className="space-y-3 border-t p-4">
             <p role="alert" className="text-destructive text-sm">
               Copy failed. Select the gateway address and copy it manually.
             </p>
