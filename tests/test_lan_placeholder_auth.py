@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import ipaddress
-
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 import traceback
 
 import anyio
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.testclient import WebSocketDenialResponse
