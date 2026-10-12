@@ -14783,6 +14783,1278 @@
    "upstream": []
   }
  },
+ "stt": {
+  "stt plain x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt plain x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt segments x2": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt segments x3": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing x1": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:cdf15d1e4d3599d0726ca670425b4600b9c0e99dc4c06ed5fc97f7bcda6984e4 (32282 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing+usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing+usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing-only-some x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt timing-only-some x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:5092/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary plain x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary plain x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary segments x2": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary segments x3": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing x1": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:e4e19cbeda09c4cfeb63d67a0dddd1021f3bc7293ebdf6fea938a8866ba07ac8 (32279 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing+usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing+usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing-only-some x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary timing-only-some x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-canary usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncanary-180m-flash\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8013/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize plain x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize plain x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize segments x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"segments\": []}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize segments x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"segments\": []}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing x1": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing+usage x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}, \"usage\": {\"type\": \"duration\", \"seconds\": 60}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing+usage x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}, \"usage\": {\"type\": \"duration\", \"seconds\": 60}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing-only-some x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize timing-only-some x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize usage x2": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"usage\": {\"type\": \"duration\", \"seconds\": 60}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-diarize usage x3": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"usage\": {\"type\": \"duration\", \"seconds\": 60}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:03219cc118ab0788f5910994693d3322ba6b1827cba75ff50b31600f9e2ff5b9 (32284 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8014/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron plain x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron plain x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron segments x2": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron segments x3": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing x1": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:8f9f71e6c99c572f1e2aeee6402f21b37807f4c70ba8ff5a167779ea12d66dc2 (32293 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing+usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing+usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing-only-some x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron timing-only-some x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-nemotron usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8012/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu plain x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu plain x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu segments x2": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu segments x3": {
+   "response": {
+    "body": "{\"error\": {\"message\": \"STT backend returned a chunk response that cannot be merged.\", \"type\": \"api_error\", \"param\": null, \"code\": \"invalid_stt_chunk_response\"}}",
+    "status": 502
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing x1": {
+   "response": {
+    "body": "{\"text\": \" chunk 0 words. \", \"timing\": {\"wall_ms\": 10.5, \"rtf\": 0.01}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "sha256:cdf15d1e4d3599d0726ca670425b4600b9c0e99dc4c06ed5fc97f7bcda6984e4 (32282 bytes)",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing+usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing+usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing-only-some x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu timing-only-some x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\"}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu usage x2": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 121}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  },
+  "stt-parakeet-gpu usage x3": {
+   "response": {
+    "body": "{\"text\": \"chunk 0 words. chunk 1 words. chunk 2 words.\", \"usage\": {\"type\": \"duration\", \"seconds\": 183}}",
+    "status": 200
+   },
+   "upstream": [
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk000.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-000.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk001.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-001.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    },
+    {
+     "body": "--BOUNDARY\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nparakeet-tdt-0.6b-v3\r\n--BOUNDARY\r\nContent-Disposition: form-data; name=\"file\"; filename=\"talk.chunk002.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF-segment-002.wav\r\n--BOUNDARY--\r\n",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8017/v1/audio/transcriptions"
+    }
+   ]
+  }
+ },
  "voice_design": {
   "bad model": {
    "response": {

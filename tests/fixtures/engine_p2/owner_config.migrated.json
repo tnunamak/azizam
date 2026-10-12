@@ -868,7 +868,16 @@
    },
    "priority": 100,
    "role": "required",
-   "native_passthrough": true
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
   },
   "stt-canary": {
    "enabled": true,
@@ -894,7 +903,16 @@
    },
    "priority": 200,
    "role": "standby",
-   "native_passthrough": true
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
   },
   "stt-diarize": {
    "enabled": true,
@@ -917,7 +935,16 @@
    },
    "priority": 200,
    "role": "standby",
-   "native_passthrough": true
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
   },
   "stt-nemotron": {
    "enabled": true,
@@ -943,7 +970,16 @@
    },
    "priority": 200,
    "role": "standby",
-   "native_passthrough": true
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
   },
   "stt-parakeet-gpu": {
    "enabled": true,
@@ -969,7 +1005,16 @@
    },
    "priority": 200,
    "role": "standby",
-   "native_passthrough": true
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
   },
   "tts": {
    "enabled": true,

@@ -41,6 +41,7 @@ from starlette.formparsers import (
 )
 from starlette.requests import ClientDisconnect
 
+from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
     AdmissionRequest,
@@ -49,6 +50,7 @@ from gateway.resource_claims import (
     ResourceClaim,
     evaluate_admission,
 )
+from gateway.transforms import run_response_pipeline
 
 
 _T = TypeVar("_T")
@@ -89,9 +91,6 @@ _DECODED_RESPONSE_REPRESENTATION_HEADERS = frozenset(
 # not safely mergeable without response-specific timestamp semantics.
 _SDK_TRANSCRIPTION_FIELDS = frozenset(Transcription.__annotations__)
 _MERGEABLE_TRANSCRIPTION_FIELDS = frozenset({"text", "usage"})
-# Per-request diagnostics some engines add beside the text (audio.cpp sends
-# {"timing": ...}). They describe one chunk, so a merge drops them.
-_ENGINE_DIAGNOSTIC_FIELDS = frozenset({"timing"})
 _SDK_DURATION_USAGE_FIELDS = frozenset(UsageDuration.__annotations__)
 _SDK_TOKEN_USAGE_FIELDS = frozenset(UsageTokens.__annotations__)
 _SDK_TOKEN_DETAIL_FIELDS = frozenset(UsageTokensInputTokenDetails.__annotations__)
@@ -1086,6 +1085,17 @@ async def execute_chunking(
     if len(segments) > config.max_segments:
         raise SttResourceLimitExceeded("Audio requires more STT segments than configured")
 
+    # A service declares per-chunk fields its engine adds beside the text (such as
+    # a {"timing": ...} diagnostic) as response transform rows; they run on each
+    # chunk before the merge check. A row that cannot run is a setup failure,
+    # found by a trial run before any chunk is uploaded.
+    response_transforms = transform_specs(_thaw(config.backend_config.get("transforms")))
+    try:
+        run_response_pipeline(response_transforms, {"text": ""})
+    except (KeyError, TypeError, ValueError) as error:
+        if config.setup_failure_policy == "passthrough":
+            return ChunkingOutcome("passthrough", 0, "setup_failed_before_attempt")
+        raise SttSetupFailure("STT service response transforms cannot run") from error
     payloads: list[Mapping[str, Any]] = []
     attempts_started = 0
     for index, (start, end) in enumerate(segments):
@@ -1133,7 +1143,7 @@ async def execute_chunking(
                     attempts_started,
                     upstream_response=response,
                 )
-            payloads.append(_parse_mergeable_chunk_payload(response.body))
+            payloads.append(_parse_mergeable_chunk_payload(response.body, response_transforms))
         finally:
             if cleanup is None:
                 _unlink_chunk_path(chunk_path)
@@ -1158,14 +1168,14 @@ def merge_transcription_payloads(payloads: Sequence[Mapping[str, Any]]) -> dict[
     return merged
 
 
-def _parse_mergeable_chunk_payload(body: bytes) -> Mapping[str, Any]:
+def _parse_mergeable_chunk_payload(body: bytes, response_transforms: Sequence[Any] = ()) -> Mapping[str, Any]:
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise SttChunkResponseError("STT chunk returned non-JSON output") from error
     if not isinstance(payload, Mapping) or not isinstance(payload.get("text"), str):
         raise SttChunkResponseError("STT chunk returned no text")
-    payload = {name: value for name, value in payload.items() if name not in _ENGINE_DIAGNOSTIC_FIELDS}
+    payload = run_response_pipeline(list(response_transforms), dict(payload))
     unknown = set(payload) - _SDK_TRANSCRIPTION_FIELDS
     unsupported = set(payload) - _MERGEABLE_TRANSCRIPTION_FIELDS
     if unknown or unsupported:
@@ -1443,6 +1453,15 @@ def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
     for key, item in value.items():
         frozen[str(key)] = _freeze_value(item)
     return MappingProxyType(frozen)
+
+
+def _thaw(value: Any) -> Any:
+    """A plain copy of a frozen config value, for code that expects dicts and lists."""
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
 
 
 def _freeze_value(value: Any) -> Any:

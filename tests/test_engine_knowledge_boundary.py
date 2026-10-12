@@ -392,9 +392,6 @@ _SEMANTIC_POLICY_ANCHORS: dict[str, dict[str, set[str]]] = {
         "gateway/voice_audio.py": {"SampleLimits", "process_sample"},
         "proxy.py": {"_probe_voice_quality"},
     },
-    "P2-6 STT diagnostics": {
-        "gateway/stt_chunking.py": {"_ENGINE_DIAGNOSTIC_FIELDS", "_parse_mergeable_chunk_payload"},
-    },
     "P2-8 public design alias": {"gateway/voices_api.py": {"register_voice_routes"}},
     "P2-9 generic STT planning": {
         "gateway/stt_chunking.py": {"SttExecutionConfig", "plan_silence_only_segments"},
@@ -418,6 +415,7 @@ _MIGRATED_POLICY_SYMBOLS: dict[str, dict[str, set[str]]] = {
         "gateway/custom_voices.py": {"RESERVED_NAMES"},
         "proxy.py": {"_voxtral_voice_map", "_voice_metadata", "_engine_voice", "_LANG_NAMES"},
     },
+    "P2-6 STT diagnostics": {"gateway/stt_chunking.py": {"_ENGINE_DIAGNOSTIC_FIELDS"}},
 }
 
 

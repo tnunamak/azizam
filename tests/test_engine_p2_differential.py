@@ -39,6 +39,104 @@ class MigratedConfigurationTests(unittest.TestCase):
         self.assertEqual(migrated["voices"], shipped["voices"])
 
 
+class SttChunkMigrationTests(unittest.TestCase):
+    def test_the_migrated_backends_are_the_schema_6_migration_of_the_owner_registry(self) -> None:
+        import sqlite3
+
+        from gateway import stt_chunk_transform_migration as migration
+
+        owner, migrated = load_fixture("owner_config.json"), load_fixture("owner_config.migrated.json")
+        self.assertEqual(migrated["backends"], migration.migrated_backends(owner["backends"]))
+        # The registry migration attaches the same rows to registry-shaped records, once.
+        registry = {"services": {sid: {"enabled": cfg["enabled"], "capabilities": cfg["capabilities"],
+                                       "config": {k: v for k, v in cfg.items() if k != "capabilities"}}
+                                 for sid, cfg in owner["backends"].items()}}
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE operator_settings (key TEXT, value_json TEXT)")
+        conn.execute("CREATE TABLE operator_settings_generations (setting_key TEXT, operator_settings_generation INT)")
+        conn.execute("INSERT INTO operator_settings VALUES ('service_registry', ?)", (json.dumps(registry),))
+        conn.execute("INSERT INTO operator_settings_generations VALUES ('service_registry', 1)")
+        changed = migration.migrate_registry(conn)
+        self.assertEqual(sorted(changed), sorted(sid for sid in owner["backends"] if sid.startswith("stt")))
+        self.assertEqual(migration.migrate_registry(conn), [])
+        stored = json.loads(conn.execute("SELECT value_json FROM operator_settings").fetchone()[0])
+        for sid, service in stored["services"].items():
+            self.assertEqual(service["config"].get("transforms"), migrated["backends"][sid].get("transforms"), sid)
+
+    def test_every_speech_to_text_spelling_gets_the_row_and_chat_services_do_not(self) -> None:
+        from gateway.stt_chunk_transform_migration import migrated_backends
+
+        backends = {
+            "compound": {"capabilities": ["audio.transcriptions"]},
+            "stt-word": {"capabilities": ["stt"]},
+            "translate": {"capabilities": ["audio", "translations"]},
+            "chunked-only": {"chunking": {"enabled": True}},
+            "dual": {"capabilities": ["chat", "transcriptions"]},
+            "speech": {"capabilities": ["audio", "speech"]},
+            "kept": {"capabilities": ["transcriptions"], "transforms": ["llamacpp-cache-prompt"]},
+        }
+        rows = {sid: cfg.get("transforms") for sid, cfg in migrated_backends(backends).items()}
+        row = {"kind": "drop-params", "phase": "response", "drop": ["timing"]}
+        self.assertEqual(rows, {
+            "compound": [row], "stt-word": [row], "translate": [row], "chunked-only": [row],
+            "dual": None, "speech": None, "kept": ["llamacpp-cache-prompt", row],
+        })
+
+    def test_a_schema_5_store_gains_the_rows_once_and_keeps_a_later_removal(self) -> None:
+        import sqlite3
+        import tempfile
+
+        from gateway import admin_store
+
+        owner = load_fixture("owner_config.json")
+        registry = {"services": {"stt-canary": {"enabled": True, "capabilities": ["audio", "transcriptions"],
+                                                "config": {"host": "127.0.0.1", "port": 8013}},
+                                 "tts": {"enabled": True, "capabilities": ["audio", "speech"],
+                                         "config": {"host": "127.0.0.1", "port": 8002}}}}
+        self.assertIn("stt-canary", owner["backends"])
+        with tempfile.TemporaryDirectory() as temp:
+            db = Path(temp) / "admin.db"
+            admin_store.init_db(db)
+            with sqlite3.connect(db) as conn:
+                conn.execute("UPDATE schema_version SET version=5")
+                conn.execute("INSERT INTO operator_settings VALUES ('service_registry', ?, 123, 'fixture')", (json.dumps(registry),))
+                conn.execute("INSERT INTO operator_settings_generations VALUES ('service_registry', 7)")
+
+            def stored() -> tuple[dict, int]:
+                with sqlite3.connect(db) as conn:
+                    raw = conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0]
+                    generation = conn.execute("SELECT operator_settings_generation FROM operator_settings_generations").fetchone()[0]
+                return json.loads(raw), generation
+
+            admin_store.init_db(db)
+            upgraded, generation = stored()
+            self.assertEqual(upgraded["services"]["stt-canary"]["config"]["transforms"],
+                             [{"kind": "drop-params", "phase": "response", "drop": ["timing"]}])
+            self.assertNotIn("transforms", upgraded["services"]["tts"]["config"])
+            self.assertEqual((generation, admin_store.schema_version(db)), (8, admin_store.SCHEMA_VERSION))
+            # The operator removes the row; a restart does not restore it.
+            upgraded["services"]["stt-canary"]["config"]["transforms"] = []
+            with sqlite3.connect(db) as conn:
+                conn.execute("UPDATE operator_settings SET value_json=?", (json.dumps(upgraded),))
+            admin_store.init_db(db)
+            self.assertEqual(stored()[0]["services"]["stt-canary"]["config"]["transforms"], [])
+
+    def test_owner_configuration_merges_byte_identical_transcripts(self) -> None:
+        observed = observe(load_fixture("owner_config.migrated.json"), ("stt",))["stt"]
+        problems = _mismatches("stt", observed)
+        self.assertFalse(problems, "\n".join(problems[:20]))
+        # Direct (single-request) answers keep the diagnostic; only chunk merging drops it.
+        self.assertIn('"timing"', observed["stt-canary timing x1"]["response"]["body"])
+
+    def test_without_the_row_a_timing_chunk_cannot_be_merged(self) -> None:
+        fixture = copy.deepcopy(load_fixture("owner_config.migrated.json"))
+        fixture["backends"]["stt-canary"]["transforms"] = []
+        observed = observe(fixture, ("stt",))["stt"]
+        self.assertEqual(observed["stt-canary timing x2"]["response"]["status"], 502)
+        self.assertEqual(observed["stt-canary plain x2"], _GOLDEN["stt"]["stt-canary plain x2"])
+        self.assertEqual(observed["stt timing x2"], _GOLDEN["stt"]["stt timing x2"])
+
+
 class VoiceDesignDifferentialTests(unittest.TestCase):
     def test_owner_configuration_designs_byte_identical_requests(self) -> None:
         observed = observe(load_fixture("owner_config.migrated.json"), ("voice_design",))["voice_design"]

@@ -46,7 +46,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -339,6 +339,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway.reasoning_transform_migration import migrate_registry
 
         migrate_registry(conn)
+    if row is not None and int(row[0]) < 6:
+        from gateway import stt_chunk_transform_migration
+
+        stt_chunk_transform_migration.migrate_registry(conn)
     conn.commit()
     _backfill_credential_creators(conn)
 

@@ -287,6 +287,8 @@ backends:
     host: 127.0.0.1
     port: 5092
     default_model: parakeet-tdt-0.6b-v3
+    # Per-chunk fields the engine adds beside the text; dropped before chunked transcripts merge.
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     health_endpoint: /health
     timeout: 120
     # Generic long-audio protection. This storage root must be on a durable
@@ -429,6 +431,7 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3.5-asr-streaming-0.6b
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Offline mode handles about 120 s per request, so longer audio is cut at silences.
     # (stream=true uses streaming mode, which has no length limit.)
     chunking:
@@ -464,6 +467,7 @@ backends:
       - transcriptions
     managed: false
     default_model: canary-180m-flash
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at silences.
     chunking:
       enabled: true
@@ -498,6 +502,7 @@ backends:
       - transcriptions
     managed: false
     default_model: parakeet-tdt-0.6b-v3
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured on 313 s and 1576 s read speech (WER): 15 s 1.7/3.3%, 20 s 1.5/3.8%, 30 s 1.5/3.3%, 45 s -/3.8%,
     # 60 s 2.0/4.8%, 90 s 2.0/5.4%, 200 s 6.0%; one 313 s request fails outright. Shorter than the 60 s the CPU
     # service needs: cut at silences into about 30 s pieces.
@@ -536,6 +541,7 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3-diarization
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Gateway chunking would split speakers across chunks; the service chunks the audio itself.
     # known_speaker_references[] are base64 data URLs, so the field limit is raised from 64 KiB.
     chunking:
