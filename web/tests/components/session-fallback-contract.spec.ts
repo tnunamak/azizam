@@ -97,6 +97,7 @@ describe("viewer fallback contract", () => {
   it.each([
     ["service_account", true, "Fixture automation"],
     ["user", false, "Gateway owner"],
+    [undefined, false, "Gateway owner"],
   ] as const)("distinguishes fallback actor kind %s", async (kind, serviceAdmin, name) => {
     memberSnapshot({ authenticated: false });
     vi.mocked(api.session).mockResolvedValue({

@@ -116,6 +116,10 @@ it("uses the admin fallback token when the member snapshot has none", async () =
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
   expect(api.session).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledWith("/me/api/session", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
   expect(fetch).toHaveBeenCalledWith("/logout", {
     method: "POST",
     credentials: "same-origin",

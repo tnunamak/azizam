@@ -83,3 +83,14 @@ it("keeps empty examples explicit and never writes to the clipboard", async () =
   await user.click(copy);
   expect(write).not.toHaveBeenCalled();
 });
+
+it("tells the user to copy by hand when the clipboard rejects", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("denied"));
+  render(<CodeBlock code="fixture" language="Text" />);
+  await user.click(screen.getByRole("button", { name: "Copy Text code" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't copy. Select the text and copy it yourself.",
+  );
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+});
