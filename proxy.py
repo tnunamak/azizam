@@ -12930,16 +12930,26 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _initialize_stores() -> None:
+    """Initialize the independent store files side by side on worker threads.
+
+    Startup waits for the slowest store, and the event loop stays free.
+    """
+    await asyncio.gather(
+        asyncio.to_thread(ADMIN_STORE.init_db),
+        asyncio.to_thread(responses_store.init_db),
+        asyncio.to_thread(receipt_store.init_db),
+        asyncio.to_thread(media_jobs.init_db),
+        asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db"),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
-    ADMIN_STORE.init_db()
-    responses_store.init_db()
-    receipt_store.init_db()
-    media_jobs.init_db()
-    providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
+    await _initialize_stores()
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
@@ -12964,7 +12974,7 @@ async def lifespan(app: FastAPI):
     # timeline survive proxy restarts. The window stays bounded at 24h; older
     # records are filtered out at replay time.
     try:
-        replay_stats = firehose_metrics.replay_persisted()
+        replay_stats = await asyncio.to_thread(firehose_metrics.replay_persisted)
         print(
             f"[proxy] firehose replay: requests={replay_stats.get('requests_replayed')} "
             f"events={replay_stats.get('events_replayed')} skipped={replay_stats.get('skipped')}",

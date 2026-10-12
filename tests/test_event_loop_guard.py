@@ -191,3 +191,39 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
     with patches[0], patches[1], patches[2], patches[3]:
         asyncio.run(call())
     assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
+
+
+def test_startup_initializes_the_stores_in_parallel_off_the_loop():
+    slow = 0.2
+    names = ("ADMIN_STORE.init_db", "responses_store.init_db", "receipt_store.init_db", "media_jobs.init_db")
+
+    def sleeper(*args, **kwargs):
+        time.sleep(slow)
+
+    async def run() -> tuple[float, float]:
+        worst, stop = 0.0, False
+
+        async def ticker():
+            nonlocal worst
+            last = time.perf_counter()
+            while not stop:
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                worst, last = max(worst, now - last), now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        started = time.perf_counter()
+        await proxy._initialize_stores()
+        elapsed = time.perf_counter() - started
+        stop = True
+        await task
+        return worst, elapsed
+
+    from gateway import providers
+    with patch.object(proxy.ADMIN_STORE, "init_db", sleeper), patch.object(proxy.responses_store, "init_db", sleeper), \
+            patch.object(proxy.receipt_store, "init_db", sleeper), patch.object(proxy.media_jobs, "init_db", sleeper), \
+            patch.object(providers, "recover_provider_spend", sleeper):
+        worst, elapsed = asyncio.run(run())
+    assert worst < STALL_LIMIT_S, f"startup stalled the event loop for {worst:.3f}s"
+    assert elapsed < slow * 2.5, f"the five stores initialized one after another ({elapsed:.2f}s)"
