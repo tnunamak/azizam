@@ -97,7 +97,8 @@ def test_owned_tcp_listener():
 # Hypothesis profiles (docs/design/TEST_STRATEGY.md 4.3). The hermetic runner
 # forwards HYPOTHESIS_PROFILE into the sandbox; the gate uses "gate". Both
 # profiles derandomize, so a run at one commit always tries the same examples
-# (a property failure is never a flake), and keep no example database:
+# (generation adds no flake; a property over timing or shared state still can),
+# and keep no example database:
 # shrunk counterexamples live in the test file as explicit @example cases.
 os.environ.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", str(_STATE_DIR / "hypothesis"))
 from hypothesis import HealthCheck, settings as _hypothesis_settings  # noqa: E402
