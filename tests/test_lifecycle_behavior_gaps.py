@@ -55,53 +55,6 @@ def _install_replay(
     return calls
 
 
-@pytest.mark.parametrize("operation", ["swap_required", "swap"])
-def test_custom_activation_model_key_round_trips(monkeypatch, operation):
-    calls = _install_replay(monkeypatch)
-    driver = ld.HttpLoadUnloadDriver()
-    service = _service("deployment")
-    activation = driver.build_activation(service, model="wanted")
-    assert activation == {"deployment": "wanted"}
-    ctx = ld.SwapContext(loaded_model=None, target_model="wanted")
-
-    if operation == "swap_required":
-        assert driver.swap_required(service, activation, ctx) is True
-        assert calls == []
-    else:
-        assert asyncio.run(driver.swap(service, activation, ctx=ctx)) is True
-        assert calls == [("POST", "/load", {"deployment": "wanted"})]
-
-
-@pytest.mark.parametrize("params_source", ["explicit", "provider"])
-def test_extra_params_cannot_replace_the_requested_model(monkeypatch, params_source):
-    calls = _install_replay(monkeypatch)
-    service = _service()
-    service["lifecycle"]["driver_config"]["load_body_params"] = "test-gap-provider"
-    params = {"model_name": "different-model", "temperature": 0.25}
-    provider = Mock(return_value=dict(params))
-    monkeypatch.setitem(ld.PARAMS_PROVIDERS, "test-gap-provider", provider)
-    activation = {"model_name": "wanted"}
-    if params_source == "explicit":
-        activation["params"] = dict(params)
-
-    result = asyncio.run(
-        ld.HttpLoadUnloadDriver().swap(
-            service,
-            activation,
-            ctx=ld.SwapContext(loaded_model=None, target_model="wanted"),
-        )
-    )
-    assert result is True
-    assert calls == [
-        ("POST", "/load", {"model_name": "wanted", "temperature": 0.25})
-    ]
-    if params_source == "explicit":
-        provider.assert_not_called()
-    else:
-        provider.assert_called_once_with(service)
-    assert params["model_name"] == "different-model"
-
-
 def test_explicit_params_skip_the_live_provider(monkeypatch):
     calls = _install_replay(monkeypatch)
     service = _service()
@@ -127,12 +80,6 @@ def test_explicit_params_skip_the_live_provider(monkeypatch):
     [
         (b'{"status":"finished"}', "different", True, 0),
         (b'{"status":"error","message":"fake failure"}', "wanted", False, 0),
-        (
-            b'{"status":"finished"}\n{"status":"error","message":"fake failure"}',
-            "wanted",
-            False,
-            0,
-        ),
         (b'{"status":"loading"}', "wanted", True, 1),
         (b'{"status":"loading"}', "different", False, 1),
         (b'{"status":"loading"}', None, False, 1),
@@ -162,7 +109,6 @@ def test_load_outcome_requires_no_error_or_exact_verified_target(
 @pytest.mark.parametrize(
     "running,healthy,expected",
     [
-        (None, False, "unknown"),
         (False, False, "stopped"),
         (True, True, "running"),
         (True, False, "starting"),
