@@ -122,8 +122,10 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
         _FakeSTTAsyncClient.requests = []
+        # By default the caller holds a key of an App whose plans allow everything.
+        self.auth = authenticated()
         self.patches = [
-            authenticated(),
+            self.auth,
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             # tts-1 resolves to an on-demand engine; never start a real unit from a test.
@@ -266,15 +268,15 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["param"], "prompt")
 
     def test_image_variations_missing_auth_returns_auth_error(self) -> None:
-        with nullcontext():
-            resp = self.client.post(
-                "/v1/images/variations",
-                files={"image": ("source.png", b"not-used", "image/png")},
-                data={"model": "dall-e-2"},
-            )
+        self.auth.stop()  # the real key check, with no key on the request
+        resp = self.client.post(
+            "/v1/images/variations",
+            files={"image": ("source.png", b"not-used", "image/png")},
+            data={"model": "dall-e-2"},
+        )
 
         self.assertEqual(resp.status_code, 401)
-        self.assertEqual(resp.json()["error"]["type"], "authentication_error")
+        self.assertEqual(resp.json()["error"]["code"], "key_required")
 
     def test_image_variations_policy_denied_stays_403(self) -> None:
         denied = proxy.PolicyDecision(
@@ -298,7 +300,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 403)
         body = resp.json()
-        self.assertEqual(body["error"]["type"], "permission_error")
+        self.assertEqual(body["error"]["type"], "access_error")
         self.assertEqual(body["error"]["code"], "policy_denied")
 
     def test_advertised_unsupported_openai_api_stubs_do_not_404(self) -> None:
@@ -330,11 +332,11 @@ class OpenAICompatValidationTests(unittest.TestCase):
             self.assertIn("not implemented", body["error"]["message"])
 
     def test_unsupported_openai_api_stubs_still_require_auth(self) -> None:
-        with nullcontext():
-            resp = self.client.get("/v1/files")
+        self.auth.stop()
+        resp = self.client.get("/v1/files")
 
         self.assertEqual(resp.status_code, 401)
-        self.assertEqual(resp.json()["error"]["type"], "authentication_error")
+        self.assertEqual(resp.json()["error"]["code"], "key_required")
 
     def test_translation_route_forwards_to_backend_when_capability_declared(self) -> None:
         with stt_translation_capability_enabled(), patch.object(proxy.httpx, "AsyncClient", _FakeSTTAsyncClient):

@@ -733,7 +733,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
 
             with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
-                 patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
+                 patch.object(proxy, "_session_catalog_auth_contexts", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
                      Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")
                  ]), \
@@ -780,7 +780,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
 
             with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
-                 patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
+                 patch.object(proxy, "_session_catalog_auth_contexts", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
                      Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")
                  ]), \
@@ -804,7 +804,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
 
         with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
              patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
-             patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
+             patch.object(proxy, "_session_catalog_auth_contexts", return_value=[object()]), \
              patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
                  Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")
              ]), \
