@@ -1,4 +1,8 @@
+import re
 import sys
+from html.parser import HTMLParser
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -6,6 +10,67 @@ sys.path.insert(0, str(ROOT))
 
 import firehose_render
 from firehose_render import render_html
+
+
+class _Document(HTMLParser):
+    """Small semantic HTML oracle; serialized HTML remains the privacy boundary."""
+
+    _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+             "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self, html):
+        super().__init__(convert_charrefs=True)
+        self.nodes = []
+        self.stack = []
+        self.feed(html)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        node = {"tag": tag, "attrs": dict(attrs), "text": [],
+                "parent": self.stack[-1] if self.stack else None}
+        self.nodes.append(node)
+        if tag not in self._VOID:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self._VOID:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                break
+
+    def handle_data(self, data):
+        for node in self.stack:
+            node["text"].append(data)
+
+    def find(self, tag):
+        return [node for node in self.nodes if node["tag"] == tag]
+
+
+def _text(node):
+    return "".join(node["text"]).strip()
+
+
+def _assert_shell(html, *, actor=False):
+    document = _Document(html)
+    main, = document.find("main")
+    footer, = document.find("footer")
+    assert main["attrs"]["class"].split() == ["shell-main", "status-firehose"]
+    assert footer["parent"] is main, "Status footer must belong to the main landmark"
+    navigation = [
+        (_text(node), node["attrs"].get("href"), node["attrs"].get("aria-current"))
+        for node in document.find("a")
+        if _text(node) in {"Home", "Status", "Sign out"}
+    ]
+    expected = [("Home", "/", None), ("Status", "/status/", "page")]
+    if actor:
+        expected.append(("Sign out", "/auth/logout-confirm", None))
+    assert sorted(navigation) == sorted(expected)
+    assert all(node["attrs"].get("href") != "/admin" for node in document.find("a"))
 
 
 def _payload() -> dict:
@@ -24,6 +89,7 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
         logout_url="/auth/logout-confirm",
     )
 
+    _assert_shell(html, actor=True)
     assert 'class="shell-header"' in html
     assert 'class="shell-main status-firehose"' in html
     assert 'aria-label="Azizam home"' in html
@@ -44,6 +110,7 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
 def test_render_default_status_nav_keeps_status_page_chrome() -> None:
     html = render_html(_payload())
 
+    _assert_shell(html)
     assert 'class="shell-header"' in html
     assert 'href="/status/" aria-current="page">Status</a>' in html
     assert 'href="/admin"' not in html
@@ -70,6 +137,15 @@ def test_status_css_uses_shell_tokens_without_legacy_dive_palette_or_stripes() -
 def test_empty_status_sections_are_hidden_until_they_have_signal() -> None:
     html = render_html(_payload(), host="gateway.local")
 
+    document = _Document(html)
+    headings = {_text(node) for tag in ("h1", "h2", "h3") for node in document.find(tag)}
+    assert headings.isdisjoint({
+        "Live activity", "Health", "Resources", "Capabilities", "Recent output",
+        "Identity", "Diagnostics", "Errors during status build",
+    })
+    assert any(node["attrs"].get("href") == "/v1/status"
+               and _text(node) == "/v1/status (raw JSON)" for node in document.find("a"))
+
     assert "Live activity" not in html
     # "Health" now appears in vendored brand CSS comments (SystemHealthBand,
     # ServiceHealthRow) — check rendered section headings are absent instead.
@@ -86,11 +162,16 @@ def test_empty_status_sections_are_hidden_until_they_have_signal() -> None:
 def test_quick_test_snippets_use_ai_azizam_host() -> None:
     html = firehose_render._render_quick_test()
 
-    assert "https://ai.vivid.fish/openai/v1/chat/completions" in html
-    assert "https://ai.vivid.fish/openai/v1/images/generations" in html
-    assert "https://ai.vivid.fish/openai/v1/audio/speech" in html
-    assert "https://ai.vivid.fish/openai/v1/audio/transcriptions" in html
-    assert "https://ai.vivid.fish/openai/v1/videos" in html
+    snippets = [_text(node) for node in _Document(html).find("pre")]
+    # Six snippets cover five endpoints: both video workflows must use this host.
+    assert [re.findall(r"https://[^\s]+", snippet) for snippet in snippets] == [
+        ["https://ai.vivid.fish/openai/v1/chat/completions"],
+        ["https://ai.vivid.fish/openai/v1/images/generations"],
+        ["https://ai.vivid.fish/openai/v1/audio/speech"],
+        ["https://ai.vivid.fish/openai/v1/audio/transcriptions"],
+        ["https://ai.vivid.fish/openai/v1/videos"],
+        ["https://ai.vivid.fish/openai/v1/videos"],
+    ]
     assert "openai.vivid.fish" not in html
 
 
@@ -111,21 +192,28 @@ def test_live_video_jobs_renderer_has_no_prompt_column() -> None:
         }
     ])
 
+    cells = [_text(node) for node in _Document(html).find("td")]
+    assert cells[0:2] == ["running", "50%"]
+    assert cells[11] == "pid-1"
+    assert len(cells) == 13
     assert "Prompt" not in html
     assert "prompt_truncated" not in html
     assert secret not in html
 
 
-def test_recent_media_renderers_have_no_prompt_column() -> None:
-    secret = "SECRET recent media prompt should not appear"
+@pytest.mark.parametrize("renderer,filename", [
+    (firehose_render._render_recent_videos, "video.mp4"),
+    (firehose_render._render_recent_images, "image.png"),
+], ids=["recent_video", "recent_image"])
+def test_recent_media_renderers_have_no_prompt_column(renderer, filename) -> None:
+    secret = f"SECRET {filename} prompt should not appear"
+    html = renderer([{"filename": filename, "prompt": secret}])
 
-    videos_html = firehose_render._render_recent_videos([{"filename": "video.mp4", "prompt": secret}])
-    images_html = firehose_render._render_recent_images([{"filename": "image.png", "prompt": secret}])
-
-    assert "Prompt" not in videos_html
-    assert secret not in videos_html
-    assert "Prompt" not in images_html
-    assert secret not in images_html
+    document = _Document(html)
+    assert _text(document.find("td")[0]) == filename
+    assert _text(document.find("th")[0]) == "Filename"
+    assert "Prompt" not in html
+    assert secret not in html
 
 
 def test_recent_events_renderer_drops_prompt_shaped_extras() -> None:
@@ -139,5 +227,8 @@ def test_recent_events_renderer_drops_prompt_shaped_extras() -> None:
         }
     ])
 
+    cells = [_text(node) for node in _Document(html).find("td")]
+    assert cells[1:] == ["image_route_receipt", "image request", ""]
+    assert len(cells) == 4
     assert "prompt_preview" not in html
     assert secret not in html
