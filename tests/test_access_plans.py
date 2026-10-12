@@ -243,6 +243,11 @@ def _emitted_intents() -> set[str]:
             intents.add(str(policy["intent"]))
     for _, intent in route_registry.azizam_policy(proxy_config=config).values():
         intents.add(intent)
+    # Workflows carry their own intent, and a plan grants them by capability.
+    for path in sorted((ROOT / "manifests" / "workflows").glob("*.yml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(document, dict) and document.get("intent"):
+            intents.add(str(document["intent"]))
     return intents
 
 

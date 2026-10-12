@@ -39,6 +39,8 @@ INTENT_CAPABILITIES = {
     "audio.transcriptions": "transcribe",
     "image.variation": "image",
     "video.remix": "video",
+    "video.edit": "video",
+    "image.analyze": "image",
     # Route spellings protocol frontends use for the same work.
     "embedding": "embed",
     "images.generate": "image",
