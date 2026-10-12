@@ -61,6 +61,21 @@ def _set_driver_config(service: dict, key: str, value) -> bool:
     return changed
 
 
+def _set_config(service: dict, key: str, value) -> bool:
+    config = service.setdefault("config", {})
+    if config.get(key) == value:
+        return False
+    config[key] = value
+    return True
+
+
+def seed_loaded_model_identity(registry: dict) -> list[str]:
+    service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
+    if service is None or not _set_config(service, "loaded_model_identity", "path"):
+        return []
+    return [f"{OWNER_LOCAL_SERVICE_ID}: config.loaded_model_identity = path"]
+
+
 def seed_activation_absolute_path(registry: dict) -> list[str]:
     service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
     if service is None or not _set_driver_config(service, "activation_requires_absolute_path", True):
@@ -85,6 +100,7 @@ def remove_disabled_tabby(registry: dict) -> list[str]:
 STEPS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("remove-disabled-tabby", remove_disabled_tabby),
     ("activation-absolute-path", seed_activation_absolute_path),
+    ("loaded-model-identity", seed_loaded_model_identity),
 ]
 
 

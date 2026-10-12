@@ -312,14 +312,12 @@ def _check_engine_flag_literals() -> list[str]:
 # explicit; adding a capability must be reviewed as a service-data migration.
 _QUARANTINE_TABLES: dict[str, frozenset[str]] = {
     "_HAS_AUX_MMPROJ": frozenset({"kobold"}),
-    "_LOADED_MODEL_IS_PATH": frozenset({"kobold"}),
     "_VISION_VIA_AUX": frozenset({"kobold"}),
     "_CONTEXT_WINDOW_FROM_LIVE_PROBE": frozenset({"kobold"}),
 }
 
 _QUARANTINE_PREDICATES: dict[str, str] = {
     "has_aux_mmproj": "_HAS_AUX_MMPROJ",
-    "loaded_model_is_path": "_LOADED_MODEL_IS_PATH",
     "vision_via_aux": "_VISION_VIA_AUX",
     "context_window_from_live_probe": "_CONTEXT_WINDOW_FROM_LIVE_PROBE",
 }

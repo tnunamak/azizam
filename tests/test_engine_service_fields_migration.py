@@ -96,6 +96,16 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         self.assertNotIn("lifecycle", registry["services"]["llm"])
         self.assertEqual(migration.migrate_registry(registry), [])
 
+    def test_seeds_the_loaded_model_identity_on_the_owner_service_only(self):
+        registry = registry_with()
+        registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}
+        changes = migration.migrate_registry(registry)
+        self.assertIn("kobold: config.loaded_model_identity = path", changes)
+        self.assertEqual(registry["services"]["kobold"]["config"],
+                         {"port": 5051, "loaded_model_identity": "path"})
+        self.assertNotIn("loaded_model_identity", registry["services"]["llm"]["config"])
+        self.assertEqual(migration.migrate_registry(registry), [])
+
 
 if __name__ == "__main__":
     unittest.main()

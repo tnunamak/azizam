@@ -50,11 +50,6 @@ from __future__ import annotations
 # the model) and probe it via process inspection.
 _HAS_AUX_MMPROJ: frozenset[str] = frozenset({"kobold"})
 
-# Backends whose loaded model is reported as a filesystem PATH (compared against
-# the GGUF path being activated), via the cached local probe — rather than an
-# http model-id read.
-_LOADED_MODEL_IS_PATH: frozenset[str] = frozenset({"kobold"})
-
 # Backends that are vision-capable only when an mmproj/aux is loaded at runtime
 # (as opposed to statically vision-capable via their `capabilities` list). The
 # caller still checks the runtime mmproj presence; this just says "this backend
@@ -75,11 +70,6 @@ _CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
 def has_aux_mmproj(backend: str) -> bool:
     """True if `backend` carries an aux/mmproj (vision projector) concept."""
     return backend in _HAS_AUX_MMPROJ
-
-
-def loaded_model_is_path(backend: str) -> bool:
-    """True if `backend` reports its loaded model as a filesystem path."""
-    return backend in _LOADED_MODEL_IS_PATH
 
 
 def vision_via_aux(backend: str) -> bool:

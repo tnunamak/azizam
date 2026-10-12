@@ -18,11 +18,6 @@ sys.path.insert(0, str(ROOT))
 from gateway import engine_quarantine as eq  # noqa: E402
 
 
-def test_loaded_model_is_a_path_for_kobold_only():
-    assert eq.loaded_model_is_path("kobold")
-    assert not eq.loaded_model_is_path("vllm")
-
-
 def test_aux_mmproj_and_vision_via_aux_kobold_only():
     assert eq.has_aux_mmproj("kobold")
     assert not eq.has_aux_mmproj("vllm")
@@ -50,7 +45,6 @@ def test_unknown_backend_is_false_everywhere():
     # behaviour until explicitly given a property here (or a config field).
     for pred in (
         eq.has_aux_mmproj,
-        eq.loaded_model_is_path,
         eq.vision_via_aux,
         eq.context_window_from_live_probe,
     ):

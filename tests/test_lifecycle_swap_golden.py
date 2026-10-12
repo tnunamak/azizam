@@ -825,8 +825,8 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
              patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True), \
              patch.object(proxy, "is_literal_gguf_path", return_value=True), \
-             patch.object(proxy, "currently_loaded_kobold_model", return_value="/old.gguf"), \
-             patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None):
+             patch.object(proxy, "currently_loaded_model", return_value="/old.gguf"), \
+             patch.object(proxy, "currently_loaded_aux", return_value=None):
             result = _run(proxy.ensure_target("kobold", _GGUF, _MMPROJ))
 
         self.assertTrue(result)

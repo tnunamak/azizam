@@ -829,7 +829,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
             proxy, "_kobold_context_window", AsyncMock(return_value=8192)
         ):
@@ -848,7 +848,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ):
             denied = self.client.post(
                 "/v1/chat/completions",
@@ -875,7 +875,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         with authenticated_profile(current_loaded), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
-        ), patch.object(proxy, "currently_loaded_kobold_model", lambda: None):
+        ), patch.object(proxy, "currently_loaded_model", lambda _backend: None):
             response = self.client.post(
                 "/v1/embeddings",
                 headers=AUTH_HEADERS,
@@ -946,7 +946,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "currently_loaded_kobold_model", lambda: loaded_path
+            proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
             proxy, "send_llm_execution_request", forbidden_send
         ):
@@ -1087,7 +1087,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
-            proxy, "kobold_has_mmproj", return_value=True
+            proxy, "loaded_aux_present", return_value=True
         ), patch.object(
             proxy, "ensure_target", AsyncMock(return_value=True)
         ) as ensure_target, patch.object(

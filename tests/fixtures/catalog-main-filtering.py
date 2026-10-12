@@ -1,4 +1,5 @@
-# Frozen main baseline (f18ef653ae3b7817e60b71f6148b2cdb5b78ce3d), minus the removed Tabby loaded-model branch.
+# Frozen main baseline (f18ef653ae3b7817e60b71f6148b2cdb5b78ce3d), minus the removed Tabby loaded-model branch;
+# loaded-state readers are called by their per-service names.
 # Executed with test-owned proxy globals; no gateway import or state initialization.
 # Compare visible IDs and real probe calls, not the intentionally fixed ID leaks.
 from __future__ import annotations
@@ -11,7 +12,7 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
         active = None
 
     ids: set[str] = set()
-    loaded_path = currently_loaded_kobold_model()
+    loaded_path = currently_loaded_model("kobold")
     if loaded_path:
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)

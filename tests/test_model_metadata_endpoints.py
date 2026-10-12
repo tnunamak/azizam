@@ -343,6 +343,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.backends = {
             "kobold": {"base_url": "http://kobold.test", "health_endpoint": "/health",
                        "priority": 1, "state_type": "llama_cpp",
+                       "loaded_model_identity": "path",
                        "protocol": "openai-compatible",
                        "capabilities": ["chat", "openai"], "models": [
                            {"id": "private-public", "upstream_model": "loaded-kobold",
@@ -370,7 +371,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                 name: record["base_url"] for name, record in self.backends.items()}),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
             patch.object(proxy, "KOBOLD_HOST", "http://kobold.test"),
-            patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH),
+            patch.object(proxy, "currently_loaded_model", return_value=QWEN_PATH),
             patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}),
             patch.object(proxy, "_profile_target_visibility", return_value="available"),
             patch.object(proxy, "_profile_model_allowlist", return_value=None),
@@ -444,7 +445,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.backends["engine"] = {"base_url": "http://engine.test", "health_endpoint": "/health",
                                    "protocol": "openai-compatible", "capabilities": ["chat"]}
         with patch.dict(proxy.LLM_BACKEND_HOSTS, {"engine": "http://engine.test"}, clear=True), \
-                patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH) as legacy:
+                patch.object(proxy, "currently_loaded_model", return_value=QWEN_PATH) as legacy:
             target = self._route_current()
             listed = self._list()
         self.assertEqual((target.backend, target.model), ("engine", "loaded-engine"))
@@ -457,7 +458,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.backends["engine"] = {"base_url": "http://engine.test", "health_endpoint": "/health",
                                    "protocol": "openai-compatible", "capabilities": ["chat"]}
         with patch.dict(proxy.LLM_BACKEND_HOSTS, {"engine": "http://engine.test"}, clear=True), \
-                patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH):
+                patch.object(proxy, "currently_loaded_model", return_value=QWEN_PATH):
             baseline_ids, baseline_calls = self._observe(baseline=True)
             ids, calls = self._observe()
             listed = self._list()

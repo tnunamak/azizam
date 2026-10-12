@@ -10,7 +10,7 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8416  # +6: engine-data S2 step 2 (service-field tests under two ids, migration seed test; -1 quarantine test); +6: engine-data S2 step 1 (migration, role-shape, background-removal gate tests; -1 quarantine test); +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
+pytest = 8426  # +10: engine-data S2 step 3 (loaded-model-identity tests under two ids, migration seed test; -1 quarantine test); +6: engine-data S2 step 2 (service-field tests under two ids, migration seed test; -1 quarantine test); +6: engine-data S2 step 1 (migration, role-shape, background-removal gate tests; -1 quarantine test); +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
 vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
 

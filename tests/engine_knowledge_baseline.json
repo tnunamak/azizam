@@ -6,7 +6,7 @@
     "gateway/comfy_workflow_catalog.py": 4,
     "gateway/comfyui_workflow_validation.py": 1,
     "gateway/config_sources.py": 2,
-    "gateway/engine_quarantine.py": 7,
+    "gateway/engine_quarantine.py": 6,
     "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/local_capabilities.py": 17,
@@ -27,7 +27,7 @@
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 703,
+    "proxy.py": 661,
     "status_endpoint.py": 143
   }
 }

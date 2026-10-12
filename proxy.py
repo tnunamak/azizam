@@ -1089,11 +1089,12 @@ def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
     return SwapDrainSettings.from_llm_config(config.get("llm"))
 
-# Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
-# after startup, then updated authoritatively after every swap. TTL guards against
-# the server being restarted out-of-band (e.g. manual systemctl restart).
-_kobold_state: dict = {"model": None, "mmproj": None, "ts": 0.0}
-_KOBOLD_STATE_TTL = 5.0
+# Loaded-state cache, one entry per swap-managed backend. Seeded from the
+# backend's state endpoint on first read after startup, then reset after every
+# swap. TTL guards against the server being restarted out-of-band (e.g. manual
+# systemctl restart).
+_loaded_state: dict[str, dict] = {}
+_LOADED_STATE_TTL = 5.0
 
 # Per-state_type seed strategies.  Each entry describes how to ask a live backend
 # what model it has loaded.  Add a new entry here when wiring up a new backend type
@@ -1147,13 +1148,39 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
     return str(cur) if cur is not None else None
 
 
-def _kobold_mmproj_from_pgrep() -> Optional[str]:
-    """Read --mmproj from the llama-server process on the kobold port.
+def _backend_base_url(backend: str) -> str:
+    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    if backend in LLM_BACKEND_HOSTS:
+        return LLM_BACKEND_HOSTS[backend]
+    cfg = (config.get("backends") or {}).get(backend) or {}
+    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
+
+
+def _backend_reports_loaded_model_as_path(backend: str) -> bool:
+    """True if the service record declares ``loaded_model_identity: path``.
+
+    Such a service reports its loaded model as a filesystem path, compared with
+    the path being activated, via the cached local probe instead of an HTTP
+    model-id read.
+    """
+    cfg = (config.get("backends") or {}).get(backend)
+    return isinstance(cfg, Mapping) and cfg.get("loaded_model_identity") == "path"
+
+
+def _path_identity_backends() -> list[str]:
+    return [
+        backend for backend in (config.get("backends") or {})
+        if _backend_reports_loaded_model_as_path(backend)
+    ]
+
+
+def _mmproj_from_pgrep(backend: str) -> Optional[str]:
+    """Read --mmproj from the llama-server process on the backend's port.
 
     /props does not expose the mmproj path, so pgrep is the fallback source.
-    Scoped to the kobold port to avoid matching other llama-server instances.
+    Scoped to the backend's port to avoid matching other llama-server instances.
     """
-    kobold_port = str(kobold_cfg.get("port", 5051))
+    port = str(((config.get("backends") or {}).get(backend) or {}).get("port"))
     try:
         result = subprocess.run(
             ["pgrep", "-af", "llama-server"],
@@ -1162,7 +1189,7 @@ def _kobold_mmproj_from_pgrep() -> Optional[str]:
             timeout=2,
         )
         for line in result.stdout.splitlines():
-            if f"--port {kobold_port}" not in line:
+            if f"--port {port}" not in line:
                 continue
             idx = line.find("--mmproj ")
             if idx == -1:
@@ -1173,21 +1200,21 @@ def _kobold_mmproj_from_pgrep() -> Optional[str]:
                 tail = tail[:end]
             return tail.strip() or None
     except Exception as e:
-        print(f"[proxy] _kobold_mmproj_from_pgrep: pgrep failed: {e}", flush=True)
+        print(f"[proxy] _mmproj_from_pgrep: pgrep failed: {e}", flush=True)
     return None
 
 
-def _seed_kobold_state() -> None:
-    """Populate _kobold_state by querying the live backend.
+def _seed_loaded_state(backend: str) -> None:
+    """Populate the backend's loaded-state entry by querying the live backend.
 
-    Strategy is selected by `state_type` in the kobold backend config
-    (proxy_config.yml).  Falls back to pgrep-only if the HTTP query fails or
-    the state_type is unrecognised.  Called when the cache is cold (startup or
-    TTL expiry) — synchronous but cheap relative to a model swap.
+    Strategy is selected by `state_type` in the service config. Falls back to
+    pgrep-only if the HTTP query fails or the state_type is unrecognised.
+    Called when the cache is cold (startup or TTL expiry) — synchronous but
+    cheap relative to a model swap.
     """
     import urllib.request as _urlreq
 
-    state_type = kobold_cfg.get("state_type", "llama_cpp")
+    state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
     model: Optional[str] = None
@@ -1195,7 +1222,7 @@ def _seed_kobold_state() -> None:
 
     if strategy:
         try:
-            url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+            url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
             with _urlreq.urlopen(url, timeout=2) as resp:
                 data = json.loads(resp.read())
                 model = _resolve_dot_path(data, strategy["model_key"])
@@ -1204,59 +1231,55 @@ def _seed_kobold_state() -> None:
 
         if strategy.get("mmproj_key"):
             try:
-                url = f"{KOBOLD_HOST}{strategy['endpoint']}"
+                url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
                 with _urlreq.urlopen(url, timeout=2) as resp:
                     data = json.loads(resp.read())
                     mmproj = _resolve_dot_path(data, strategy["mmproj_key"])
             except Exception:
                 pass
         elif strategy.get("mmproj_pgrep"):
-            mmproj = _kobold_mmproj_from_pgrep()
+            mmproj = _mmproj_from_pgrep(backend)
     else:
         # Unknown state_type — best-effort pgrep only.
         print(
-            f"[proxy] _seed_kobold_state: unknown state_type={state_type!r}; "
+            f"[proxy] _seed_loaded_state: unknown state_type={state_type!r}; "
             "falling back to pgrep (add an entry to _BACKEND_STATE_STRATEGIES to fix this)",
             flush=True,
         )
-        mmproj = _kobold_mmproj_from_pgrep()
+        mmproj = _mmproj_from_pgrep(backend)
 
-    _kobold_state["model"] = model
-    _kobold_state["mmproj"] = mmproj
-    _kobold_state["ts"] = time.time()
+    _loaded_state[backend] = {"model": model, "mmproj": mmproj, "ts": time.time()}
 
 
-def _kobold_state_fresh() -> bool:
-    return (time.time() - _kobold_state["ts"]) < _KOBOLD_STATE_TTL
+def _loaded_state_for(backend: str) -> dict:
+    entry = _loaded_state.get(backend)
+    if entry is None or (time.time() - entry["ts"]) >= _LOADED_STATE_TTL:
+        _seed_loaded_state(backend)
+        entry = _loaded_state[backend]
+    return entry
 
 
-def kobold_has_mmproj() -> Optional[bool]:
-    """Return True iff the running kobold llama-server has an mmproj loaded.
+def loaded_aux_present(backend: str) -> Optional[bool]:
+    """Return True iff the backend's running server has an aux (mmproj) loaded.
 
-    Used by Fix 3 (vision routing): if mmproj is loaded, the kobold backend is
-    natively vision-capable and we don't need to switch backends. Returns None
-    if we couldn't determine (server not running, seed failed).
+    Used by vision routing: if an aux is loaded, the backend is natively
+    vision-capable and we don't need to switch backends. Returns None if we
+    couldn't determine (server not running, seed failed).
     """
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    model = _kobold_state["model"]
-    if model is None:
+    entry = _loaded_state_for(backend)
+    if entry["model"] is None:
         return None
-    return _kobold_state["mmproj"] is not None
+    return entry["mmproj"] is not None
 
 
-def currently_loaded_kobold_mmproj() -> Optional[str]:
-    """Return the mmproj path the kobold llama-server has loaded, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["mmproj"]
+def currently_loaded_aux(backend: str) -> Optional[str]:
+    """Return the aux (mmproj) path the backend's server has loaded, or None."""
+    return _loaded_state_for(backend)["mmproj"]
 
 
-def currently_loaded_kobold_model() -> Optional[str]:
-    """Return the model path the kobold llama-server is currently serving, or None."""
-    if not _kobold_state_fresh():
-        _seed_kobold_state()
-    return _kobold_state["model"]
+def currently_loaded_model(backend: str) -> Optional[str]:
+    """Return the model path the backend's server is currently serving, or None."""
+    return _loaded_state_for(backend)["model"]
 
 
 def is_literal_gguf_path(value: str) -> bool:
@@ -1277,8 +1300,8 @@ async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     themselves are engine-shaped state introspection; this keeps that knowledge
     in one lookup rather than scattered through the swap logic.)
     """
-    if engine_quarantine.loaded_model_is_path(backend):
-        return currently_loaded_kobold_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        return currently_loaded_model(backend)
     return None
 
 
@@ -1290,7 +1313,7 @@ def _currently_loaded_aux_for(backend: str) -> Optional[str]:
     aux/mmproj concept (per the quarantine) probe it; all others return None.
     """
     if engine_quarantine.has_aux_mmproj(backend):
-        return currently_loaded_kobold_mmproj()
+        return currently_loaded_aux(backend)
     return None
 
 
@@ -1409,7 +1432,7 @@ async def _ensure_target(
         finally:
             if swapping:
                 # The loaded-state cache predates the swap; re-probe on next read.
-                _kobold_state["ts"] = 0.0
+                _loaded_state.pop(backend, None)
         return ready, (_swap_drain.lease(backend) if ready and take_lease else None)
 
 
@@ -3245,7 +3268,7 @@ async def _prepare_litellm_local_llm_request(
         ) or (
             engine_quarantine.vision_via_aux(active)
             and profile_allows_backend(auth_context, active)
-            and kobold_has_mmproj() is True
+            and loaded_aux_present(active) is True
         )
         if active_can_serve_vision:
             return None, body
@@ -3344,10 +3367,11 @@ async def _activate_prepared_litellm_local_target(
     )
 
 
-async def get_kobold_model_id() -> str:
+async def get_served_model_id(base_url: str) -> str:
+    """The first model id an OpenAI-compatible server lists at ``base_url``."""
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
+            resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
             if resp.status_code != 200:
                 return ""
             data = resp.json().get("data", [])
@@ -3359,8 +3383,8 @@ async def get_kobold_model_id() -> str:
 
 
 async def effective_llm_model_for_host(target_host: str) -> str:
-    if target_host == KOBOLD_HOST:
-        return await get_kobold_model_id()
+    if any(_backend_base_url(backend) == target_host for backend in _path_identity_backends()):
+        return await get_served_model_id(target_host)
     return ""
 
 
@@ -3381,11 +3405,11 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
 async def current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
-    if engine_quarantine.loaded_model_is_path(backend):
-        loaded_path = currently_loaded_kobold_model()
+    if _backend_reports_loaded_model_as_path(backend):
+        loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             return ""
-        loaded_id = await get_kobold_model_id()
+        loaded_id = await get_served_model_id(_backend_base_url(backend))
         return loaded_id or os.path.basename(loaded_path) or loaded_path
 
     host = LLM_BACKEND_HOSTS.get(backend)
@@ -13266,8 +13290,12 @@ async def _current_loaded_llm_model_ids(
         active = None
 
     ids: set[str] = set()
-    loaded_path = currently_loaded_kobold_model()
-    if loaded_path:
+    loaded_paths: dict[str, str] = {}
+    for backend in _path_identity_backends():
+        loaded_path = currently_loaded_model(backend)
+        if not loaded_path:
+            continue
+        loaded_paths[backend] = loaded_path
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
@@ -13275,14 +13303,13 @@ async def _current_loaded_llm_model_ids(
             ids.add(basename)
         ids.update(
             _role_catalog_ids_for_loaded_path(
-                backend="kobold",
+                backend=backend,
                 loaded_path=loaded_path,
                 loaded_model_id=basename,
             )
         )
-    if (loaded_path and active and engine_quarantine.loaded_model_is_path(active)
-            and metadata_ids is not None):
-        metadata_ids.update(_declarations_for_loaded_model(active, loaded_path))
+    if active in loaded_paths and metadata_ids is not None:
+        metadata_ids.update(_declarations_for_loaded_model(active, loaded_paths[active]))
     return {item for item in ids if item}
 
 

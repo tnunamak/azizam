@@ -43,6 +43,9 @@ backends:
     host: 127.0.0.1
     port: 5051
     state_type: llama_cpp
+    # The server reports its loaded model as a filesystem path, which is
+    # compared with the path being activated (instead of an HTTP model id).
+    loaded_model_identity: path
     health_endpoint: /v1/models
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.
