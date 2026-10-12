@@ -43,6 +43,12 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+# The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
+# mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
+ACCESS_PLAN_API_PREFIXES = (
+    "/admin/api/access-plans", "/admin/api/access/", "/admin/api/profiles", "/admin/api/runtime-profile-mappings",
+    "/admin/api/policy/", "/admin/api/settings/lan-placeholder-keys", "/admin/api/operator/user-access-defaults",
+)
 SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
 DOCS_ROUTES = {"/showcase/docs": "/showcase/docs docs_root", "/showcase/docs/sample/x": "/showcase/docs/{path:path} docs_page"}
 
@@ -59,7 +65,7 @@ def _now_needs_a_key(old: str | None, new: str | None) -> bool:
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
-    if path == "/admin/api/access-plans" or path.startswith("/admin/api/access-plans/"):
+    if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"
     if ui_routes.classify(path) is not None:
         return "ui"
