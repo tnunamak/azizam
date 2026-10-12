@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ViewerContext } from "@/components/shell/session";
 import {
@@ -26,7 +26,18 @@ const job: LongJob = {
   assets: [],
 };
 const clients: QueryClient[] = [];
+// The component floors Date.now() to whole seconds when it mounts and then
+// treats a job older than that as history. A test that reads the wall clock
+// for a job timestamp and mounts later can cross a second boundary on a
+// loaded machine. Freeze only Date (timers and promises stay real) at a
+// mid-second instant so the ordering is the same on every run.
+const FROZEN_NOW_MS = 1_800_000_000_500;
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW_MS);
+});
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   clients.forEach((client) => client.clear());
   clients.length = 0;
