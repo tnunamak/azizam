@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { chatAlias } from "../src/app/_home/recipes";
 
@@ -6,6 +6,51 @@ const homePath = "/";
 const homeApi = "**/me/api/home";
 const mediaApi = "**/me/api/media?limit=50";
 const setupApi = "**/admin/api/setup-progress";
+
+
+type PlanDocument = Record<string, unknown>;
+
+/**
+ * Give the signed-in person a plan for one test, through the same admin API an
+ * owner uses. Returns what to run afterwards to hand back the previous plan.
+ */
+async function holdPlan(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  email: string,
+  document: PlanDocument,
+) {
+  const created = await request.post("/admin/api/access-plans", {
+    headers,
+    data: {
+      direct_engine_access: { engines: [], operations: [] },
+      paid_providers: [],
+      provider_fallback: false,
+      caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+      can_load_models: true,
+      receipt_detail: "basic",
+      media_metadata: "none",
+      ...document,
+    },
+  });
+  expect(created.status()).toBe(201);
+  const { access_plan: plan } = await created.json();
+  const { people } = await (await request.get("/admin/api/people")).json();
+  const me = people.find((person: { email: string }) => person.email === email);
+  const original: string | null = me.plan_id;
+  const assign = (planId: string | null) =>
+    request.patch(`/admin/api/people/${me.id}`, {
+      headers,
+      data: { access_plan: planId },
+    });
+  expect((await assign(plan.id)).ok()).toBe(true);
+  return async () => {
+    expect((await assign(original)).ok()).toBe(true);
+    expect(
+      (await request.delete(`/admin/api/access-plans/${plan.id}`, { headers })).ok(),
+    ).toBe(true);
+  };
+}
 
 test("Home names a freshly checked on-demand task as ready to start", async ({
   page,
@@ -591,35 +636,12 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     "x-azizam-admin-action": "1",
     "x-azizam-csrf": session.actor.csrf_token,
   };
-  // Set the person's inherited plan before they create a key, through the
-  // same admin mapping interface an operator uses to grant access.
-  const profileResponse = await request.post("/admin/api/profiles", {
-    headers,
-    data: {
-      name: "Home connection acceptance",
-      profile: {
-        id: "home-connection-acceptance",
-        protocols: ["openai"],
-        backends: ["capture-engine"],
-        models: ["demo-chat"],
-      },
-    },
+  // Set the person's plan before they create a key, through the same admin
+  // interface an operator uses to grant access.
+  const release = await holdPlan(request, headers, session.actor.email, {
+    name: "Home connection acceptance",
+    can_use: { chat: { items: [{ model: "demo-chat" }] } },
   });
-  expect(profileResponse.status()).toBe(201);
-  const { profile } = await profileResponse.json();
-  const mappingResponse = await request.post(
-    "/admin/api/runtime-profile-mappings",
-    {
-      headers,
-      data: {
-        source_kind: "email",
-        source_value: session.actor.email,
-        profile_id: profile.id,
-      },
-    },
-  );
-  expect(mappingResponse.status()).toBe(201);
-  const { mapping } = await mappingResponse.json();
   try {
     const registryResponse = await request.get(
       "/admin/api/operator/service-registry",
@@ -789,14 +811,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     await sheet.getByText("Technical details", { exact: true }).click();
     await expect(sheet).toContainText(`Request ID: ${connection.request_id}`);
   } finally {
-    expect(
-      (
-        await request.delete(
-          `/admin/api/runtime-profile-mappings/${mapping.id}`,
-          { headers },
-        )
-      ).ok(),
-    ).toBe(true);
+    await release();
   }
 });
 
@@ -809,34 +824,11 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     "x-azizam-admin-action": "1",
     "x-azizam-csrf": session.actor.csrf_token,
   };
-  const profileResponse = await request.post("/admin/api/profiles", {
-    headers,
-    data: {
-      name: "Home inherited no chat",
-      profile: {
-        id: "home-inherited-no-chat",
-        protocols: ["openai"],
-        backends: ["capture-engine"],
-        // Empty model lists permit every model. Use an explicit non-chat model.
-        models: ["demo-image"],
-      },
-    },
+  const release = await holdPlan(request, headers, session.actor.email, {
+    name: "Home inherited no chat",
+    // A plan lists what it grants: use an explicit non-chat model.
+    can_use: { image: { items: [{ model: "demo-image" }] } },
   });
-  expect(profileResponse.status()).toBe(201);
-  const { profile } = await profileResponse.json();
-  const mappingResponse = await request.post(
-    "/admin/api/runtime-profile-mappings",
-    {
-      headers,
-      data: {
-        source_kind: "email",
-        source_value: session.actor.email,
-        profile_id: profile.id,
-      },
-    },
-  );
-  expect(mappingResponse.status()).toBe(201);
-  const { mapping } = await mappingResponse.json();
   try {
     const snapshot = await (await request.get("/me/api/home")).json();
     const broader = snapshot.apps.find(
@@ -910,13 +902,6 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
       .click();
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
   } finally {
-    expect(
-      (
-        await request.delete(
-          `/admin/api/runtime-profile-mappings/${mapping.id}`,
-          { headers },
-        )
-      ).ok(),
-    ).toBe(true);
+    await release();
   }
 });

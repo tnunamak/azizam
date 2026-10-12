@@ -714,15 +714,15 @@ test("people lane real invitation creates an account, app and working key, then 
   try {
     const session = await (await request.get("/admin/api/session")).json();
     const headers = { "x-azizam-csrf": session.actor.csrf_token };
-    const profiles = await (await request.get("/admin/api/profiles")).json();
-    const local = profiles.profiles.find(
+    const plans = await (await request.get("/admin/api/access-plans")).json();
+    const local = plans.access_plans.find(
       (p: { name: string }) => p.name === "Local chat",
     );
     expect(local).toBeTruthy();
     const result = await request.post("/admin/api/invites", {
       headers,
       data: {
-        profile_id: local.id,
+        access_plan: local.id,
         email: "real-browser-member@example.test",
         expires_in: 86400,
       },

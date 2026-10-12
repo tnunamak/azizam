@@ -6,14 +6,14 @@ test("invited member creates a password account and signs in again", async ({
   baseURL,
 }) => {
   const session = await (await page.request.get("/admin/api/session")).json();
-  const profiles = await (await page.request.get("/admin/api/profiles")).json();
-  const profile = profiles.profiles.find(
+  const plans = await (await page.request.get("/admin/api/access-plans")).json();
+  const plan = plans.access_plans.find(
     (item: { name: string }) => item.name === "Local chat",
   );
-  expect(profile).toBeDefined();
+  expect(plan).toBeDefined();
   const inviteResponse = await page.request.post("/admin/api/invites", {
     headers: { "x-azizam-csrf": session.actor.csrf_token },
-    data: { profile_id: profile.id, email: "invited@example.test" },
+    data: { access_plan: plan.id, email: "invited@example.test" },
   });
   expect(inviteResponse.ok()).toBe(true);
   const invite = await inviteResponse.json();

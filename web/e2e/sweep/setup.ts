@@ -86,12 +86,12 @@ export default async function setup() {
   } else {
     const session = await (await owner.get("/admin/api/session")).json();
     const csrf = session?.actor?.csrf_token;
-    const listing = await owner.get("/admin/api/profiles");
-    const profiles = listing.ok() ? (await listing.json()).profiles ?? [] : [];
-    if (csrf && profiles[0]?.id) {
+    const listing = await owner.get("/admin/api/access-plans");
+    const plans = listing.ok() ? (await listing.json()).access_plans ?? [] : [];
+    if (csrf && plans[0]?.id) {
       const created = await owner.post("/admin/api/invites", {
         headers: { "x-azizam-csrf": csrf, "x-azizam-admin-action": "1" },
-        data: { profile_id: profiles[0].id, email: "sweep-invitee@example.test", expires_in: 86_400 },
+        data: { access_plan: plans[0].id, email: "sweep-invitee@example.test", expires_in: 86_400 },
       });
       if (created.ok()) {
         const { url } = await created.json();

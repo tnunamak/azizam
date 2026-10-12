@@ -45,23 +45,23 @@ export default async function seed(config: FullConfig) {
     { "if-match": registry.headers().etag },
   );
   await post("/admin/api/config/reload", {});
-  const { profile } = await post("/admin/api/profiles", {
+  const { access_plan: plan } = await post("/admin/api/access-plans", {
     name: "Local chat",
-    description: "Chat through the isolated test engine",
-    profile: {
-      id: "local-chat",
-      protocols: ["openai"],
-      backends: ["capture-engine"],
-      models: ["demo-chat"],
-      status_visibility: { level: "full" },
-    },
+    can_use: { chat: { items: [{ model: "demo-chat" }] } },
+    direct_engine_access: { engines: [], operations: [] },
+    paid_providers: [],
+    provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+    can_load_models: true,
+    receipt_detail: "full",
+    media_metadata: "none",
   });
   const { users } = await (await api.get("/admin/api/users")).json();
   const { app } = await post("/admin/api/apps", {
     name: "Browser test app",
     kind: "personal",
     owner_user_id: users[0].id,
-    profile_id: profile.id,
+    access_plan: plan.id,
   });
   const { credential } = await post(`/admin/api/apps/${app.id}/keys`, {
     label: "Seeded desktop key",

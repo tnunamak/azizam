@@ -198,20 +198,23 @@ for (const theme of ["light", "dark"]) {
         },
       });
       expect(added.ok()).toBe(true);
-      const { profile } = await (
-        await page.request.post("/admin/api/profiles", {
+      const { access_plan: plan } = await (
+        await page.request.post("/admin/api/access-plans", {
           headers,
           data: {
             name: `Restricted ${suffix}`,
-            profile: {
-              protocols: ["openai"],
-              backends: [serviceId],
-              models: [publicName],
-            },
+            can_use: { chat: { items: [{ model: publicName }] } },
+            direct_engine_access: { engines: [], operations: [] },
+            paid_providers: [],
+            provider_fallback: false,
+            caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+            can_load_models: true,
+            receipt_detail: "basic",
+            media_metadata: "none",
           },
         })
       ).json();
-      expect(profile.id).toBeTruthy();
+      expect(plan.id).toBeTruthy();
       const { users } = await (
         await page.request.get("/admin/api/users")
       ).json();
@@ -222,7 +225,7 @@ for (const theme of ["light", "dark"]) {
             name: `Strict app ${suffix}`,
             kind: "personal",
             owner_user_id: users[0].id,
-            profile_id: profile.id,
+            access_plan: plan.id,
           },
         })
       ).json();
@@ -365,9 +368,9 @@ for (const theme of ["light", "dark"]) {
       );
       expect(registry.services[serviceId].enabled).toBe(true);
       const unchanged = (
-        await (await page.request.get("/admin/api/profiles")).json()
-      ).profiles.find((row: { id: string }) => row.id === profile.id);
-      expect(unchanged.profile.models).toEqual([publicName]);
+        await (await page.request.get("/admin/api/access-plans")).json()
+      ).access_plans.find((row: { id: string }) => row.id === plan.id);
+      expect(unchanged.plan.can_use.chat.items).toEqual([{ model: publicName }]);
       const generated = await page.request.get(
         "/admin/api/operator/litellm-config",
       );
