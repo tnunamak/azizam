@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from gateway import request_connections
 from gateway.compat import get_env
-from gateway.sqlite_startup import connect, store_startup
+from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
 import json
 import os
@@ -161,6 +161,20 @@ def init_db(path: Path = DB_PATH) -> None:
             conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
             _apply_pragmas(conn)
             _exec_schema(conn)
+        finally:
+            conn.close()
+
+
+@contextmanager
+def reader(path: Path = DB_PATH):
+    """Read-only receipt access; inside a request it shares the request's receipt connection."""
+    if request_connections.active() and Path(path).exists():
+        with _conn(Path(path)) as conn:
+            yield conn
+    else:
+        conn = connect_readonly(path)
+        try:
+            yield conn
         finally:
             conn.close()
 

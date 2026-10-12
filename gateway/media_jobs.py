@@ -419,7 +419,10 @@ def init_db(path: Path = DB_PATH) -> None:
 @contextmanager
 def _conn(path: Path = DB_PATH):
     def open_connection() -> sqlite3.Connection:
-        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        scoped = request_connections.active()
+        conn = connect(path, timeout=5.0, check_same_thread=not scoped)
+        if scoped:
+            conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
         try:
             _apply_pragmas(conn)
         except BaseException:

@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
-from gateway import admin_store, media_jobs, media_metadata
+import os
+
+from gateway import admin_store, media_jobs, media_metadata, request_connections
 from gateway.sqlite_startup import connect
 
 DB_PATH = media_jobs.DB_PATH
@@ -311,6 +313,33 @@ def _connect(path: Path | None) -> sqlite3.Connection:
     return conn
 
 
+_PREPARED: set[tuple[str, int]] = set()
+
+
+@contextmanager
+def _read_connection(path: Path | None) -> Iterator[sqlite3.Connection]:
+    """A connection for prompt reads; inside a request it is the request's media-job connection."""
+    if not request_connections.active():
+        conn = _connect(path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+    target = Path(path or media_jobs.DB_PATH)
+    with media_jobs._conn(target) as conn:
+        try:
+            stamp = (str(target), os.stat(target).st_ino)
+        except OSError:
+            stamp = None
+        if stamp is None or stamp not in _PREPARED:
+            conn.execute("PRAGMA secure_delete=ON")
+            conn.executescript(_DDL)
+            if stamp is not None:
+                _PREPARED.add(stamp)
+        yield conn
+
+
 def init_db(*, path: Path | None = None) -> None:
     conn = _connect(path)
     conn.close()
@@ -392,8 +421,7 @@ def tighten_retention(period: str, *, person_id: str | None = None,
 def get(asset_id: str, person_id: str | None, *, path: Path | None = None) -> dict[str, Any] | None:
     if not person_id:
         return None
-    conn = _connect(path)
-    try:
+    with _read_connection(path) as conn:
         row = conn.execute(
             "SELECT asset_id,person_id,prompt_text,metadata_json,created_at,kept_until "
             "FROM asset_prompts WHERE asset_id=? AND person_id=? AND "
@@ -405,8 +433,6 @@ def get(asset_id: str, person_id: str | None, *, path: Path | None = None) -> di
         data = dict(row)
         data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
         return data
-    finally:
-        conn.close()
 
 
 def get_person_prompts(person_id: str, *, path: Path | None = None,
@@ -414,21 +440,18 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
     """Load one maker's unexpired prompt rows with one query."""
     if not person_id:
         return {}
-    conn = _connect(path)
-    try:
+    with _read_connection(path) as conn:
         rows = conn.execute(
             "SELECT asset_id,person_id,prompt_text,metadata_json,created_at,kept_until "
             "FROM asset_prompts WHERE person_id=? AND (kept_until IS NULL OR kept_until>?)",
             (person_id, int(time.time()) if now is None else now),
         ).fetchall()
-        records: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            data = dict(row)
-            data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
-            records[data["asset_id"]] = data
-        return records
-    finally:
-        conn.close()
+    records: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        data = dict(row)
+        data["metadata"] = json.loads(data.pop("metadata_json") or "{}")
+        records[data["asset_id"]] = data
+    return records
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:

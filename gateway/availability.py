@@ -14,9 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from contextlib import contextmanager
-
-from gateway import receipt_store, request_connections, sqlite_startup
+from gateway import receipt_store
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
 from gateway.model_presentation import starts_on_demand
@@ -309,17 +307,6 @@ def evidence_from_receipts(
     return out
 
 
-@contextmanager
-def _receipt_reader(path: Path):
-    """Read-only receipt access; inside a request, share the request's receipt connection."""
-    if request_connections.active() and Path(path).exists():
-        with receipt_store._conn(Path(path)) as conn:
-            yield conn
-    else:
-        with sqlite_startup.connect_readonly(path) as conn:
-            yield conn
-
-
 def evidence_from_receipt_store(
     path: Path,
     *,
@@ -331,7 +318,7 @@ def evidence_from_receipt_store(
 
     now_s = int(time.time() if now_s is None else now_s)
     rows: list[dict[str, Any]] = []
-    with _receipt_reader(path) as conn:
+    with receipt_store.reader(path) as conn:
         for receipt_json, created_at in conn.execute(
             "SELECT receipt_json, created_at FROM receipts "
             "WHERE parent_request_id IS NULL "
