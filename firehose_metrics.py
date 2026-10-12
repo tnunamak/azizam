@@ -105,7 +105,8 @@ def _append_record(path: Path, record: dict[str, Any]) -> None:
 def _write_loop() -> None:
     global _writes_pending
     while True:
-        _append_record(*_WRITES.get())
+        item = _WRITES.get()
+        _append_record(*item)
         with _WRITES_DONE:
             _writes_pending -= 1
             _WRITES_DONE.notify_all()
