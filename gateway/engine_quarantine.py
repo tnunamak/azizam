@@ -46,10 +46,6 @@ from __future__ import annotations
 # and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
-# Backends whose activation model MUST be an absolute on-disk path (a GGUF file);
-# a non-absolute value is rejected (cleared) before activation.
-_ACTIVATION_REQUIRES_ABS_PATH: frozenset[str] = frozenset({"kobold"})
-
 # Backends that carry an aux/mmproj concept (vision projector loaded alongside
 # the model) and probe it via process inspection.
 _HAS_AUX_MMPROJ: frozenset[str] = frozenset({"kobold"})
@@ -75,11 +71,6 @@ _CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
 # Predicates. proxy.py calls these instead of inlining `if backend == "..."`.
 # Each is a one-line lookup; the engine knowledge is the table it reads.
 # ---------------------------------------------------------------------------
-
-def activation_requires_abs_path(backend: str) -> bool:
-    """True if the activation model must be an absolute on-disk path."""
-    return backend in _ACTIVATION_REQUIRES_ABS_PATH
-
 
 def has_aux_mmproj(backend: str) -> bool:
     """True if `backend` carries an aux/mmproj (vision projector) concept."""

@@ -3022,6 +3022,13 @@ class LocalModelActivation:
     backend_model: Optional[str] = None
 
 
+def _lifecycle_driver_config(service_cfg: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """The service's lifecycle ``driver_config`` (service data), or an empty mapping."""
+    lifecycle = service_cfg.get("lifecycle") if isinstance(service_cfg, Mapping) else None
+    driver_config = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+    return driver_config if isinstance(driver_config, Mapping) else {}
+
+
 def _backend_default_model_to_load(backend: str) -> Optional[str]:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(backend_cfg, Mapping):
@@ -3093,7 +3100,11 @@ def _configured_litellm_local_model_target(
                 or ""
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
-            if engine_quarantine.activation_requires_abs_path(backend) and activation_model and not os.path.isabs(activation_model):
+            if (
+                _lifecycle_driver_config(service_cfg).get("activation_requires_absolute_path") is True
+                and activation_model
+                and not os.path.isabs(activation_model)
+            ):
                 activation_model = ""
             return LocalModelActivation(
                 backend=backend,

@@ -6,7 +6,7 @@
     "gateway/comfy_workflow_catalog.py": 4,
     "gateway/comfyui_workflow_validation.py": 1,
     "gateway/config_sources.py": 2,
-    "gateway/engine_quarantine.py": 8,
+    "gateway/engine_quarantine.py": 7,
     "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/local_capabilities.py": 17,

@@ -208,6 +208,8 @@ backends:
         # activation cannot change the selected engine.
         dropin: 95-activation.conf
         swap_strategy: dropin-env-restart
+        # A relative activation model path is cleared before activation.
+        activation_requires_absolute_path: true
         health_endpoint: /v1/models
         health_timeout_s: 180
         # LLAMA_BEE_* is the retained compatibility API for the local service.

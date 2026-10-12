@@ -56,7 +56,7 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         before = registry_with()
         self.write_db(before)
         changes, backup = migration.apply_changes(self.db, allow_running=True)
-        self.assertEqual(changes, ["remove disabled service row 'tabby'"])
+        self.assertEqual(changes, ["remove disabled service row 'tabby'"])  # no owner service in this registry
         after = self.read(self.db)
         expected = copy.deepcopy(before)
         del expected["services"]["tabby"]
@@ -78,6 +78,23 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         self.write_db(registry_with())
         self.assertEqual(migration.main(["--db", str(self.db), "--allow-running"]), 0)
         self.assertIn("tabby", self.read(self.db)["services"])
+
+    def test_seeds_the_absolute_path_rule_on_both_lifecycle_copies_only_for_the_owner_service(self):
+        lifecycle = {"driver": "systemd", "driver_config": {"unit": "u.service", "precheck": "gguf_path"}}
+        registry = registry_with()
+        registry["services"]["kobold"] = {
+            "id": "kobold", "enabled": True, "lifecycle": copy.deepcopy(lifecycle),
+            "config": {"lifecycle": copy.deepcopy(lifecycle)},
+        }
+        changes = migration.migrate_registry(registry)
+        self.assertIn(
+            "kobold: lifecycle.driver_config.activation_requires_absolute_path = true", changes)
+        kobold = registry["services"]["kobold"]
+        for holder in (kobold["lifecycle"], kobold["config"]["lifecycle"]):
+            self.assertEqual(holder["driver_config"], {
+                "unit": "u.service", "precheck": "gguf_path", "activation_requires_absolute_path": True})
+        self.assertNotIn("lifecycle", registry["services"]["llm"])
+        self.assertEqual(migration.migrate_registry(registry), [])
 
 
 if __name__ == "__main__":

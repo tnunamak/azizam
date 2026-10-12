@@ -311,7 +311,6 @@ def _check_engine_flag_literals() -> list[str]:
 # P2-3 transitional inventory. Every table and its consumer predicate is
 # explicit; adding a capability must be reviewed as a service-data migration.
 _QUARANTINE_TABLES: dict[str, frozenset[str]] = {
-    "_ACTIVATION_REQUIRES_ABS_PATH": frozenset({"kobold"}),
     "_HAS_AUX_MMPROJ": frozenset({"kobold"}),
     "_LOADED_MODEL_IS_PATH": frozenset({"kobold"}),
     "_VISION_VIA_AUX": frozenset({"kobold"}),
@@ -319,7 +318,6 @@ _QUARANTINE_TABLES: dict[str, frozenset[str]] = {
 }
 
 _QUARANTINE_PREDICATES: dict[str, str] = {
-    "activation_requires_abs_path": "_ACTIVATION_REQUIRES_ABS_PATH",
     "has_aux_mmproj": "_HAS_AUX_MMPROJ",
     "loaded_model_is_path": "_LOADED_MODEL_IS_PATH",
     "vision_via_aux": "_VISION_VIA_AUX",
@@ -789,7 +787,7 @@ class TestEngineKnowledgeBoundary:
         synthetic_lines = [
             # An engine-agnostic line (calls the quarantine predicate, no engine
             # literal) — must NOT be flagged.
-            'if engine_quarantine.activation_requires_abs_path(backend): pass',
+            'if engine_quarantine.has_aux_mmproj(backend): pass',
             # A synthetic new inline engine branch — must BE flagged.
             'if backend == "vllm": pass',            # not in allowlist → violation
         ]
@@ -797,7 +795,7 @@ class TestEngineKnowledgeBoundary:
             _source_lines=[("proxy.py", synthetic_lines)]
         )
         # The quarantine-predicate line must NOT appear in violations
-        agnostic_reported = [v for v in violations if "activation_requires_abs_path" in v]
+        agnostic_reported = [v for v in violations if "has_aux_mmproj" in v]
         assert not agnostic_reported, (
             "Guard incorrectly flagged an engine-agnostic predicate call: "
             + "\n".join(agnostic_reported)
@@ -870,7 +868,7 @@ class TestEngineKnowledgeBoundary:
             assert any(name in violation for violation in _check_quarantine_frozen(changed)), name
         assert _check_quarantine_frozen(source + '\n_NEW_BACKENDS = frozenset({"vllm"})\n')
         assert _check_quarantine_frozen(source.replace(
-            "return backend in _ACTIVATION_REQUIRES_ABS_PATH",
+            "return backend in _HAS_AUX_MMPROJ",
             "return True",
         ))
 

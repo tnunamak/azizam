@@ -39,6 +39,35 @@ def _services(registry: dict) -> dict:
     return services if isinstance(services, dict) else {}
 
 
+# The owner's current local chat service. The fields below are written to this
+# service record only; the gateway reads them from whichever service declares them.
+OWNER_LOCAL_SERVICE_ID = "kobold"
+
+
+def _set_driver_config(service: dict, key: str, value) -> bool:
+    """Set a lifecycle driver_config field on both copies of the service's lifecycle block."""
+    changed = False
+    holders = [service.get("lifecycle")]
+    config = service.get("config")
+    if isinstance(config, dict):
+        holders.append(config.get("lifecycle"))
+    for holder in holders:
+        if not isinstance(holder, dict):
+            continue
+        driver_config = holder.setdefault("driver_config", {})
+        if driver_config.get(key) != value:
+            driver_config[key] = value
+            changed = True
+    return changed
+
+
+def seed_activation_absolute_path(registry: dict) -> list[str]:
+    service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
+    if service is None or not _set_driver_config(service, "activation_requires_absolute_path", True):
+        return []
+    return [f"{OWNER_LOCAL_SERVICE_ID}: lifecycle.driver_config.activation_requires_absolute_path = true"]
+
+
 def remove_disabled_tabby(registry: dict) -> list[str]:
     """Delete the disabled `tabby` service row. An enabled row is never touched."""
     services = _services(registry)
@@ -55,6 +84,7 @@ def remove_disabled_tabby(registry: dict) -> list[str]:
 # returns human-readable change lines (empty when there is nothing to do).
 STEPS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("remove-disabled-tabby", remove_disabled_tabby),
+    ("activation-absolute-path", seed_activation_absolute_path),
 ]
 
 
