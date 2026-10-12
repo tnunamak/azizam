@@ -39,8 +39,9 @@ FAKE_PROXY = textwrap.dedent(
 FAKE_LITELLM = textwrap.dedent(
     """\
     #!/bin/bash
-    echo "litellm started" >> "$FAKE_LOG"
+    # The handler must exist before the marker the harness waits for.
     trap 'echo "litellm terminated" >> "$FAKE_LOG"; exit 0' TERM
+    echo "litellm started" >> "$FAKE_LOG"
     while true; do sleep 0.1; done
     """
 )
@@ -58,16 +59,17 @@ FAKE_LITELLM_RECORD_ENV = textwrap.dedent(
     env_name = os.environ["EXPECTED_PROVIDER_ENV"]
     value = os.environ.get(env_name)
     digest = hashlib.sha256(value.encode()).hexdigest() if value else "missing"
-    with open(log, "a", encoding="utf-8") as handle:
-        handle.write(f"litellm started {digest} argv={' '.join(sys.argv)}\\n")
-        handle.flush()
 
     def on_term(*_):
         with open(log, "a", encoding="utf-8") as handle:
             handle.write("litellm terminated\\n")
         raise SystemExit(0)
 
+    # The handler must exist before the marker the harness waits for.
     signal.signal(signal.SIGTERM, on_term)
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(f"litellm started {digest} argv={' '.join(sys.argv)}\\n")
+        handle.flush()
     while True:
         time.sleep(0.1)
     """
