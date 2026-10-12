@@ -17,7 +17,7 @@ import httpx
 from starlette.requests import Request
 
 from gateway import provider_execution, providers, receipt_store
-from tests.support.access import plan_for  # noqa: E402
+from tests.support.access import access as access_of, plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig, sanitize_litellm_execution_request
 from gateway.providers import ProviderRef
 
@@ -190,7 +190,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 request_path="/v1/chat/completions",
                 body=self.body,
                 provider=self.provider,
-                profile=self.profile,
+                access=access_of(self.profile),
                 runtime=self.runtime,
                 ledger_path=self.ledger,
                 **kwargs,
