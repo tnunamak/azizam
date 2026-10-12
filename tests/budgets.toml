@@ -10,8 +10,8 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8216
-vitest = 1641  # +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
+pytest = 8380  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded)
+vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
 node = 5
 
