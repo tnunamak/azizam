@@ -68,7 +68,7 @@ def browser_gateway(tmp_path, monkeypatch):
         {"base_url": "https://openai.vivid.fish"},
         path=path,
     )
-    proxy.ADMIN_OIDC_STATES.clear()
+    monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
     # Auth handlers need the initialized temporary store, not engine listeners.
     # Match the route integration fixtures and leave process lifespan to its own tests.
     client = TestClient(
@@ -80,7 +80,6 @@ def browser_gateway(tmp_path, monkeypatch):
         yield proxy, client, path
     finally:
         client.close()
-        proxy.ADMIN_OIDC_STATES.clear()
 
 
 @pytest.mark.parametrize("public_origin", ["", "https://ai.vivid.fish"])

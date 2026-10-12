@@ -46,52 +46,44 @@ def assert_authenticated_admin_dashboard(
     test_case.assertEqual(session.status_code, 200, session.text)
 
 
+def _patch(case: unittest.TestCase, patcher):
+    """Start a patcher and register its undo before anything else can fail."""
+    started = patcher.start()
+    case.addCleanup(patcher.stop)
+    return started
+
+
 class ProxyAdminIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Every mutation registers its undo at acquisition, so a failure part-way
+        # through setUp still restores the process-wide proxy state.
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        self.old_oidc = proxy.ADMIN_OIDC_CONFIG
-        self.old_signing_key = proxy.ADMIN_AUTH.signing_key
-        self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
-        self.env_patcher = patch.dict(os.environ, {}, clear=False)
-        self.env_patcher.start()
+        _patch(self, patch.dict(os.environ, {}, clear=False))
         os.environ.pop("AZIZAM_USER_SELF_SERVICE", None)
         os.environ.pop("AZIZAM_AUTO_CREATE_PERSONAL_APP", None)
-        proxy.ADMIN_STORE.path = self.db
-        proxy.ADMIN_OIDC_STATES.clear()
-        proxy.AUTH_ENABLED = True
-        self._status_projection = patch.object(
+        _patch(self, patch.object(proxy.ADMIN_STORE, "path", self.db))
+        _patch(self, patch.object(proxy, "ADMIN_OIDC_CONFIG", proxy.ADMIN_OIDC_CONFIG))
+        _patch(self, patch.object(proxy.ADMIN_AUTH, "signing_key", proxy.ADMIN_AUTH.signing_key))
+        _patch(self, patch.object(proxy.ADMIN_AUTH, "cookie", proxy.ADMIN_AUTH.cookie))
+        _patch(self, patch.object(proxy, "ADMIN_OIDC_STATES", {}))
+        _patch(self, patch.object(proxy, "AUTH_ENABLED", True))
+        _patch(self, patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
-        )
-        self._status_projection.start()
-        self._backend_grid = patch.object(
-            proxy.status_endpoint, "_backend_grid", _test_backend_grid
-        )
-        self._backend_grid.start()
-        self._loaded_model_projection = patch.object(
-            proxy, "currently_loaded_kobold_model", return_value=None
-        )
-        self._loaded_model_projection.start()
+        ))
+        _patch(self, patch.object(proxy.status_endpoint, "_backend_grid", _test_backend_grid))
+        _patch(self, patch.object(proxy, "currently_loaded_kobold_model", return_value=None))
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
+        self.addCleanup(self.client.close)
 
     def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        proxy.ADMIN_OIDC_CONFIG = self.old_oidc
-        proxy.ADMIN_AUTH.signing_key = self.old_signing_key
-        proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
-        self._status_projection.stop()
-        self._backend_grid.stop()
-        self._loaded_model_projection.stop()
-        self.env_patcher.stop()
-        proxy.ADMIN_OIDC_STATES.clear()
-        self.tmp.cleanup()
+        # Fixtures that drive setUp/tearDown by hand rely on this running the undos.
+        self.doCleanups()
 
     def _auth(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.admin_key}"}
@@ -2127,25 +2119,18 @@ class SetupRouteIntegrationTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        self.old_oidc = proxy.ADMIN_OIDC_CONFIG
-        self.old_signing_key = proxy.ADMIN_AUTH.signing_key
-        self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
-        proxy.ADMIN_STORE.path = self.db
-        proxy.ADMIN_OIDC_STATES.clear()
-        proxy.AUTH_ENABLED = True
-        proxy.ADMIN_AUTH.signing_key = b"s" * 32
-        proxy.ADMIN_AUTH.cookie = CookieConfig(secure=False)
-        self._status_projection = patch.object(
+        _patch(self, patch.object(proxy.ADMIN_STORE, "path", self.db))
+        _patch(self, patch.object(proxy, "ADMIN_OIDC_CONFIG", proxy.ADMIN_OIDC_CONFIG))
+        _patch(self, patch.object(proxy.ADMIN_AUTH, "signing_key", b"s" * 32))
+        _patch(self, patch.object(proxy.ADMIN_AUTH, "cookie", CookieConfig(secure=False)))
+        _patch(self, patch.object(proxy, "ADMIN_OIDC_STATES", {}))
+        _patch(self, patch.object(proxy, "AUTH_ENABLED", True))
+        _patch(self, patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
-        )
-        self._status_projection.start()
-        self._loaded_model_projection = patch.object(
-            proxy, "currently_loaded_kobold_model", return_value=None
-        )
-        self._loaded_model_projection.start()
+        ))
+        _patch(self, patch.object(proxy, "currently_loaded_kobold_model", return_value=None))
         admin_store.init_db(self.db)
         # No service-account admin key here -> no owner/admin exists yet.
         self.client = TestClient(
@@ -2153,17 +2138,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             base_url="http://localhost",
             client=("127.0.0.1", 50000),
         )
-
-    def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        proxy.ADMIN_OIDC_CONFIG = self.old_oidc
-        proxy.ADMIN_AUTH.signing_key = self.old_signing_key
-        proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
-        self._status_projection.stop()
-        self._loaded_model_projection.stop()
-        proxy.ADMIN_OIDC_STATES.clear()
-        self.tmp.cleanup()
+        self.addCleanup(self.client.close)
 
     def _enable_oidc(self) -> OIDCConfig:
         cfg = OIDCConfig(
@@ -2737,18 +2712,16 @@ class AdminEffectiveProfileTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        proxy.ADMIN_STORE.path = self.db
+        patcher = patch.object(proxy.ADMIN_STORE, "path", self.db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
-
-    def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        self.tmp.cleanup()
 
     def _auth(self):
         return {"Authorization": f"Bearer {self.admin_key}"}
@@ -2794,18 +2767,16 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        proxy.ADMIN_STORE.path = self.db
+        patcher = patch.object(proxy.ADMIN_STORE, "path", self.db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
-
-    def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        self.tmp.cleanup()
 
     def _auth(self):
         return {"Authorization": f"Bearer {self.admin_key}"}
@@ -2858,18 +2829,16 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        proxy.ADMIN_STORE.path = self.db
+        patcher = patch.object(proxy.ADMIN_STORE, "path", self.db)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
-
-    def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        self.tmp.cleanup()
 
     def _auth(self):
         return {"Authorization": f"Bearer {self.admin_key}"}
@@ -2958,13 +2927,17 @@ class ConfigExportTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.db = Path(self.tmp.name) / "admin.db"
-        self.old_path = proxy.ADMIN_STORE.path
-        self.old_signing_key = proxy.ADMIN_AUTH.signing_key
-        self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
-        proxy.ADMIN_STORE.path = self.db
-        proxy.AUTH_ENABLED = True
+        for target, name, value in (
+            (proxy.ADMIN_STORE, "path", self.db),
+            (proxy.ADMIN_AUTH, "signing_key", proxy.ADMIN_AUTH.signing_key),
+            (proxy.ADMIN_AUTH, "cookie", proxy.ADMIN_AUTH.cookie),
+            (proxy, "AUTH_ENABLED", True),
+        ):
+            patcher = patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         admin_store.init_db(self.db)
         admin_store.write_service_registry(
             {
@@ -2981,13 +2954,6 @@ class ConfigExportTests(unittest.TestCase):
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
-
-    def tearDown(self) -> None:
-        proxy.ADMIN_STORE.path = self.old_path
-        proxy.ADMIN_AUTH.signing_key = self.old_signing_key
-        proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
-        self.tmp.cleanup()
 
     def _auth(self) -> dict:
         return {"Authorization": f"Bearer {self.admin_key}"}

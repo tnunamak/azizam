@@ -118,6 +118,20 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(comfy_object_info, "lookup", lambda _host, _class_type: None)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_media_delivery_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`media_delivery.begin` sets a ContextVar on the calling thread. A test that
+    begins a delivery without a request scope would otherwise leak that context
+    into every later test run on the same thread."""
+    import contextvars
+
+    from gateway import media_delivery
+
+    monkeypatch.setattr(
+        media_delivery, "_CONTEXT", contextvars.ContextVar("test_media_delivery", default=None)
+    )
+
+
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR

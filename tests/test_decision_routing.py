@@ -15,6 +15,15 @@ from gateway.receipts import RouteReceipt
 from gateway.stable_aliases import resolve_alias, validate_aliases
 
 
+@pytest.fixture(autouse=True)
+def _isolated_decision_observations(monkeypatch):
+    """A successful dispatch through the process runtime caches the answering
+    engine; tests that read the discovery tags must start from an empty cache."""
+    import proxy
+
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
+
 def config():
     return {
         "backends": {
@@ -291,6 +300,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "restricted",
         "hash",
@@ -319,6 +329,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "cpu",
         "hash",
@@ -351,6 +362,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     auth = proxy.AuthContext(RuntimeIdentity(
         "gpu",
         "hash",
@@ -466,6 +478,7 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy, "HEALTH_CHECK_TIMEOUT", .01)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+
     monkeypatch.setattr(lifecycle, "_poll_health", AsyncMock(return_value=False))
     starts = []
 

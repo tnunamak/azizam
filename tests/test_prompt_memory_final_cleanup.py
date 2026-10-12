@@ -27,6 +27,7 @@ def household(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path / 'cache')
     monkeypatch.setattr(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', tmp_path / 'payloads')
     monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOADS', {})
+    monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES', {})
     people = [admin_store.upsert_oidc_user('test', name, path=admin) for name in ('owner', 'robin', 'other')]
     apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], path=admin)
             for name, user in zip(('owner', 'robin', 'other'), people)]
