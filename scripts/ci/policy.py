@@ -7,16 +7,20 @@ CHECKOUT is the clean tree the gate ran; cases.jsonl comes from
 merge_cases.py. Rules, each failing the step with one line per violation:
 
 - retries: no rerun plugin in tests/requirements-hermetic.lock; no flaky or
-  rerun marker in a Python test; no --retries/--retry/--reruns flag in the
-  gate scripts; no nonzero retry in a web test or test config; `retries: 0`
-  in every Playwright config the run used and `retry: 0` in the vitest
-  config; no attempt index above 0 in cases.jsonl.
+  rerun marker in Python test code; no --retries/--retry/--reruns flag in
+  the gate scripts; in web test code and test configs every retry, retries
+  or repeats value is the literal 0 (or false), so a computed value fails;
+  `retries: 0` in every Playwright config the run used and `retry: 0` in the
+  vitest config; no attempt index above 0 in cases.jsonl, which also
+  catches a second run into the same receipts.
 - discovery: every test file under CHECKOUT ran in this gate, or is an
   [[orphan]] in tests/suites.toml whose expires_on has not passed. An entry
   for a file that ran or no longer exists is stale and fails too.
 - skips: every skipped (xfailed) case is a [[skip]] ([[xfail]]) entry in
-  tests/suites.toml, and every entry was skipped (xfailed) in this run.
-- quarantine: no quarantine manifest file and no quarantine marker.
+  tests/suites.toml for its framework, config and project, and every entry
+  was skipped (xfailed) in this run.
+- quarantine: no quarantine manifest file and no quarantine marker in test
+  code (test files, conftest.py, tests/**/*.py, test configs).
 - counts: first-attempt cases per framework stay within tests/budgets.toml
   [ceilings], in the units of TEST_STRATEGY.md 6.
 """
@@ -43,7 +47,9 @@ RERUN_PACKAGES = {"pytest-rerunfailures", "pytest-retry", "flaky", "pytest-flaky
 PYTHON_RETRY_MARKER = re.compile(r"\bmark\.flaky\b|@flaky\b|\breruns\s*=")
 RETRY_FLAG = re.compile(r"--(retries|retry|reruns)\b")
 RETRY_FLAG_FILES = ("scripts/ci-local", "scripts/test-affected", "web/package.json")
-NONZERO_RETRY = re.compile(r"\bretr(?:y|ies)\s*:\s*[1-9]")
+RETRY_SETTING = re.compile(r"\b(retry|retries|repeats)\s*:\s*([^,}\n]*)")
+# An object-literal shorthand ({ retries }); `={retry}` is a JSX prop, not one.
+RETRY_SHORTHAND = re.compile(r"(?:(?<!=)\{|,)\s*(retry|retries|repeats)\s*[,}]")
 QUARANTINE_MANIFEST = re.compile(r"^quarantine.*\.(json|toml|ya?ml|txt)$", re.IGNORECASE)
 QUARANTINE_MARKER = re.compile(r"\bmark\.quarantine\b|@quarantine\b|\btest(\.describe)?\.quarantine\b")
 
@@ -62,6 +68,14 @@ def discover(files: list[str]) -> list[str]:
     return [path for path in files if PYTHON_TEST.match(Path(path).name) or WEB_TEST.match(Path(path).name)]
 
 
+def test_code(files: list[str]) -> list[str]:
+    """Files whose text can configure retries or markers: test files, test
+    configs, conftest.py files and Python support code under tests/."""
+    tests = set(discover(files))
+    return [path for path in files if path in tests or TEST_CONFIG.match(Path(path).name)
+            or Path(path).name == "conftest.py" or (path.startswith("tests/") and path.endswith(".py"))]
+
+
 def load_cases(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
@@ -71,7 +85,7 @@ def read(root: Path, relative: str) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
-def check_retries(root: Path, files: list[str], tests: list[str], cases: list[dict]) -> list[str]:
+def check_retries(root: Path, code: list[str], cases: list[dict]) -> list[str]:
     problems = []
     for line in read(root, "tests/requirements-hermetic.lock").splitlines():
         package = re.split(r"[=<>~!\[ ;]", line.strip(), maxsplit=1)[0].lower().replace("_", "-")
@@ -80,14 +94,17 @@ def check_retries(root: Path, files: list[str], tests: list[str], cases: list[di
     for relative in RETRY_FLAG_FILES:
         if match := RETRY_FLAG.search(read(root, relative)):
             problems.append(f"retries: {relative} passes {match.group(0)}")
-    configs = [path for path in files if TEST_CONFIG.match(Path(path).name)]
-    for relative in tests + configs:
+    for relative in code:
         text = read(root, relative)
         if relative.endswith(".py"):
             if match := PYTHON_RETRY_MARKER.search(text):
                 problems.append(f"retries: {relative} uses {match.group(0)}")
-        elif match := NONZERO_RETRY.search(text):
-            problems.append(f"retries: {relative} sets {match.group(0)}")
+            continue
+        for match in RETRY_SETTING.finditer(text):
+            if match.group(2).strip() not in ("0", "false"):
+                problems.append(f"retries: {relative} sets {match.group(0).strip()}; only a literal 0 is allowed")
+        if match := RETRY_SHORTHAND.search(text):
+            problems.append(f"retries: {relative} passes {match.group(1)} by shorthand; only a literal 0 is allowed")
     used = {f"web/{row['config']}" for row in cases if row["framework"] == "playwright"}
     for relative in sorted(used):
         if not re.search(r"\bretries\s*:\s*0\b", read(root, relative)):
@@ -123,23 +140,28 @@ def check_discovery(tests: list[str], cases: list[dict], suites: dict, today: da
 
 
 def check_skips(cases: list[dict], suites: dict) -> list[str]:
+    def name(key: tuple[str, str, str, str]) -> str:
+        return " ".join(part for part in key if part)
+
     problems = []
     for outcome, table in (("skipped", "skip"), ("xfailed", "xfail")):
-        allowed = {entry.get("case") for entry in suites.get(table, [])}
-        observed = {row["case"] for row in cases if row["outcome"] == outcome}
-        for case in sorted(observed - allowed):
-            problems.append(f"skips: {case} was {outcome} but is not a [[{table}]] entry in tests/suites.toml")
-        for case in sorted(allowed - observed):
-            problems.append(f"skips: [[{table}]] {case} was not {outcome} in this run; remove the entry")
+        allowed = {(entry.get("framework", ""), entry.get("config", ""), entry.get("project", ""),
+                    entry.get("case", "")) for entry in suites.get(table, [])}
+        observed = {(row["framework"], row["config"], row["project"], row["case"])
+                    for row in cases if row["outcome"] == outcome}
+        for key in sorted(observed - allowed):
+            problems.append(f"skips: {name(key)} was {outcome} but is not a [[{table}]] entry in tests/suites.toml")
+        for key in sorted(allowed - observed):
+            problems.append(f"skips: [[{table}]] {name(key)} was not {outcome} in this run; remove the entry")
     return problems
 
 
-def check_quarantine(root: Path, files: list[str], tests: list[str]) -> list[str]:
+def check_quarantine(root: Path, files: list[str], code: list[str]) -> list[str]:
     problems = []
     for relative in files:
         if QUARANTINE_MANIFEST.match(Path(relative).name):
             problems.append(f"quarantine: manifest {relative} exists; fix or revert the flake (TEST_STRATEGY.md 3.2)")
-    for relative in tests:
+    for relative in code:
         if match := QUARANTINE_MARKER.search(read(root, relative)):
             problems.append(f"quarantine: {relative} uses {match.group(0)}")
     return problems
@@ -175,9 +197,10 @@ def main() -> None:
     cases = load_cases(args.cases)
     files = all_files(root)
     tests = discover(files)
+    code = test_code(files)
     count_problems, counts = check_counts(cases, budgets)
-    problems = (check_retries(root, files, tests, cases) + check_discovery(tests, cases, suites, args.today)
-                + check_skips(cases, suites) + check_quarantine(root, files, tests) + count_problems)
+    problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
+                + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems)
     for problem in problems:
         print(f"policy: {problem}")
     summary = ", ".join(f"{framework} {count}" for framework, count in counts.items())

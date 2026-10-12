@@ -167,22 +167,27 @@ reason = "node:test source check (.mjs) outside every vitest and Playwright incl
 
 # Gate cases that skip. A new skip fails the gate.
 [[skip]]
+framework = "pytest"
 case = "tests/test_admin_api.py::AdminProfileTests::test_update_profile_name_conflict_returns_409"
 reason = "the fixture has fewer than 2 profiles, so the body skips"
 
 [[skip]]
+framework = "pytest"
 case = "tests/test_decisions_api.py::test_official_typesafe_sdk_works_offline_against_facade"
 reason = "typesafe_sdk is not in the hermetic lock"
 
 [[skip]]
+framework = "pytest"
 case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
 reason = "the sandbox hides the live database by design"
 
 [[skip]]
+framework = "pytest"
 case = "tests/test_showcase.py::ShowcaseCoreJsTests::test_node_suite_passes"
 reason = "node is not on the sandbox PATH"
 
 # Gate cases that xfail. A new xfail fails the gate.
 [[xfail]]
+framework = "pytest"
 case = "tests/test_comfy_workflow_metadata_catalog.py::test_workflow_derives_a_complete_ui_graph[workflows/audio/tangoflux.json]"
 reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when the gap closes"
