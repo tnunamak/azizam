@@ -1825,7 +1825,7 @@ it("keeps a secondary profile in All models when its server capability has no se
   expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name future-model" })).toBeVisible();
 });
 
-describe("catalog loading, retry, in-flight status labels and role actions", () => {
+describe("catalog loading, reload, in-flight status labels and role actions", () => {
   function availability(overrides: Partial<CatalogRow["availability"]>): CatalogRow["availability"] {
     return { ...row().availability, ...overrides };
   }
