@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-
 import asyncio
 import time
 import unittest
@@ -73,10 +71,13 @@ class RealtimeRouteCase(unittest.TestCase):
             patch.object(proxy, "ws_connect", self.connect),
             patch.object(proxy, "_ensure_speech_service_ready", self.ensure),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
-            authenticated(),
         ):
             p.start()
             self.addCleanup(p.stop)
+        # By default the caller holds a key of an App whose plans allow everything.
+        self.auth = authenticated()
+        self.auth.start()
+        self.addCleanup(self.auth.stop)
         self.client = TestClient(proxy.app)
 
 
@@ -137,8 +138,17 @@ class RefusalTests(RealtimeRouteCase):
         return getattr(exc, "status_code", None) or getattr(exc, "code", None)
 
     def test_missing_key_is_a_401_before_any_upstream_connection(self) -> None:
-        with nullcontext():
-            self.assertEqual(self._refused(), 401)
+        self.auth.stop()  # the real key check, with no key on the request
+        self.assertEqual(self._refused(), 401)
+
+    def test_a_placeholder_key_from_the_lan_is_a_401_before_any_upstream_connection(self) -> None:
+        self.auth.stop()
+        client = TestClient(proxy.app, client=("192.168.1.50", 4000))
+        with self.assertRaises(Exception) as caught:
+            with client.websocket_connect("/v1/realtime", subprotocols=["realtime", "openai-insecure-api-key.lan"]):
+                self.fail("the upgrade was accepted")
+        self.assertEqual(getattr(caught.exception, "status_code", None), 401)
+        self.connect.assert_not_called()
 
     def test_a_key_in_the_subprotocol_is_checked_like_a_bearer_header(self) -> None:
         seen = {}
