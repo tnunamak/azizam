@@ -87,7 +87,7 @@ def test_list_accepts_the_string_only_key_shape(sidecar) -> None:
 
     response = sidecar.gateway().get(KEYS, headers=ADMIN)
 
-    assert response.json() == {"keys": [{"token": "sk-...wxyz", "key_name": "sk-...wxyz"}]}
+    assert response.json() == {"keys": [{"token": "sk-..…wxyz", "key_name": "sk-...wxyz"}]}
 
 
 def test_create_mints_key_and_returns_secret_once(sidecar) -> None:
