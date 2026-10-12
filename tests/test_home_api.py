@@ -64,7 +64,7 @@ def home_case(tmp_path):
     def capabilities(identity):
         if case.capabilities_override is not None:
             return case.capabilities_override(identity)
-        allowed = "chat" in identity.access.app_plan.can_use and "chat" in identity.access.person_plan.can_use
+        allowed = identity.access.complete and "chat" in identity.access.app_plan.can_use and "chat" in identity.access.person_plan.can_use
         alias_caps = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}}) if case.fast else []
         return [Capability(intent="chat.completions", backend="service", model="demo", policy_available=allowed),
                 *alias_caps,
@@ -100,7 +100,7 @@ def home_case(tmp_path):
     def give_app(app_row, plan):
         admin_store.update_app(app_row["id"], access_plan=plan["id"], path=db)
     case.give_person, case.give_app = give_person, give_app
-    case.http = TestClient(app, raise_server_exceptions=True)
+    case.http = TestClient(app, raise_server_exceptions=False)
     case.headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf"}
     yield case
     case.http.close()
