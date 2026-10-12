@@ -177,7 +177,6 @@ export interface GatewayFacts {
 export interface HomeProjection {
   gateway?: GatewayFacts;
   has_access_plan: boolean;
-  /** The member's own spending against their plan's caps; null without a plan. */
   plan_spend?: Array<PlanSpend> | null;
   csrf_token: string;
   public_base_url: string;
