@@ -56,6 +56,11 @@ expires_on = 2026-11-12
 reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
 
 [[orphan]]
+path = "tests/compat/node/probe-gates.test.mjs"
+expires_on = 2026-11-12
+reason = "Offline check that the opted-out Node probes start no provider work (cb2325ae); it calls itself a gate test, but no gate step runs it (`node --test`, not installed in the hermetic lock)"
+
+[[orphan]]
 path = "tests/compat/node/vercel-ai-sdk.test.mjs"
 expires_on = 2026-11-12
 reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
