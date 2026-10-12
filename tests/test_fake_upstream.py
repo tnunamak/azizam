@@ -76,9 +76,8 @@ def _with(path: tuple, value: object) -> dict:
         (_with(("exchanges", 0, "response", "body"), []), "either json or body, not both"),
         (_with(("exchanges", 0, "times"), 0), "times must be a positive integer"),
         (_with(("exchanges", 0, "match", "json"), {"model": "{{model}}"}), "placeholder {{model}} has no value"),
-        (_with(("exchanges",), []), "at least one exchange"),
     ],
-    ids=["protocol", "source", "reference", "path", "match-key", "part", "json-and-body", "times", "placeholder", "empty"],
+    ids=["protocol", "source", "reference", "path", "match-key", "part", "json-and-body", "times", "placeholder"],
 )
 def test_invalid_scenarios_fail_at_load(data: dict, message: str) -> None:
     with pytest.raises(ScenarioError) as error:

@@ -67,8 +67,6 @@ def scenario_from_data(data: Mapping[str, Any], *, source: str = "<memory>", **v
     if not str(provenance.get("reference") or "").strip():
         raise ScenarioError(f"{source}: provenance.reference must name the document or transcript")
     exchanges = tuple(_exchange(raw, protocol, source) for raw in data["exchanges"])
-    if not exchanges:
-        raise ScenarioError(f"{source}: a scenario needs at least one exchange")
     ids = [exchange.id for exchange in exchanges]
     if len(set(ids)) != len(ids):
         raise ScenarioError(f"{source}: exchange ids must be unique")
