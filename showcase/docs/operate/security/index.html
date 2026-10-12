@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Security · Azizam docs</title>
+<meta name="description" content="Control who can set up the gateway, protect keys, and open it safely to other devices.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/operate/security/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Security</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/" aria-current="page">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/" aria-current="page">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Run a gateway</p>
+      <h1 id="security">Security</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#who-can-create-the-owner-account">Who can create the owner account</a></li><li class="toc-l2"><a href="#keys">Keys</a></li><li class="toc-l2"><a href="#open-the-gateway-to-other-devices">Open the gateway to other devices</a></li><li class="toc-l2"><a href="#what-the-gateway-sends-to-engines">What the gateway sends to engines</a></li><li class="toc-l2"><a href="#fetching-media-from-urls">Fetching media from URLs</a></li><li class="toc-l2"><a href="#single-sign-on-button-label">Single sign-on button label</a></li><li class="toc-l2"><a href="#check-that-denial-works">Check that denial works</a></li><li class="toc-l2"><a href="#report-a-problem-safely">Report a problem safely</a></li></ul></nav></details><p>Keep access closed until you have decided who may use the gateway. A reachable page, a home network address or a healthy engine is not permission to run requests.</p>
+<h2 id="who-can-create-the-owner-account">Who can create the owner account <a class="anchor" href="#who-can-create-the-owner-account" aria-label="Link to Who can create the owner account">#</a></h2>
+<p>Setup creates the owner account. It works only while the gateway has no owner or admin, and only from allowed networks:</p>
+<ul>
+<li>Loopback is always allowed.</li>
+<li><code>AZIZAM_SETUP_ALLOWED_CIDRS</code> lists more networks. It overrides <code>auth.setup_allowed_cidrs</code> in the configuration file. If neither is set, setup uses <code>auth.lan_bypass_cidrs</code>.</li>
+<li>In Docker Compose, setup is allowed only from the computer that runs the containers. Compose sets <code>AZIZAM_SETUP_ALLOWED_CIDRS</code> itself.</li>
+</ul>
+<p>Setup permission does not allow anyone to run requests without a key.</p>
+<h2 id="keys">Keys <a class="anchor" href="#keys" aria-label="Link to Keys">#</a></h2>
+<ul>
+<li><strong>App keys</strong> run requests. Give each app its own key, so you can revoke one without breaking the others.</li>
+<li><strong>Admin keys</strong> change the gateway's configuration. Keep them out of apps.</li>
+</ul>
+<p>Protect every key as you would a password. Do not put keys in URLs, screenshots, shared logs or support reports.</p>
+<h2 id="open-the-gateway-to-other-devices">Open the gateway to other devices <a class="anchor" href="#open-the-gateway-to-other-devices" aria-label="Link to Open the gateway to other devices">#</a></h2>
+<p>The default installation listens only on the computer's loopback address. Before other devices connect:</p>
+<ol>
+<li>Put HTTPS in front of the gateway, for example with a reverse proxy.</li>
+<li>Turn on secure cookies: in the configuration file, set <code>admin.oidc.cookie.secure</code> to <code>true</code>. In Docker Compose, the configuration file is <code>first-run.yml</code> in the repository, and the change needs a rebuild with <code>docker compose up -d --build</code>.</li>
+<li>Keep the gateway's own port and your engines' ports closed to the outside.</li>
+<li>Test access through the public address, not only through loopback. A healthy local check does not prove that the reverse proxy reaches the gateway.</li>
+</ol>
+<h2 id="what-the-gateway-sends-to-engines">What the gateway sends to engines <a class="anchor" href="#what-the-gateway-sends-to-engines" aria-label="Link to What the gateway sends to engines">#</a></h2>
+<p>The gateway forwards only <code>Content-Type</code>, <code>Accept</code> and <code>User-Agent</code> from the client, with <code>Accept-Encoding: identity</code>. It does not forward gateway cookies, CSRF tokens, internal headers or credentials in query parameters.</p>
+<p>To authenticate the gateway to an engine, put the engine's key in an environment variable of the gateway, and enter the variable's name in <strong>Key environment variable</strong> for that engine. Do not write keys into the configuration file.</p>
+<h2 id="fetching-media-from-urls">Fetching media from URLs <a class="anchor" href="#fetching-media-from-urls" aria-label="Link to Fetching media from URLs">#</a></h2>
+<p>When a request gives a media URL, the gateway fetches it with limits. It does not fetch from private network addresses unless you list the exact host in <code>AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS</code>. Even then, it does not fetch from loopback, link-local or cloud metadata addresses. See <a href="/showcase/docs/reference/configuration/#media-downloads">Configuration</a>.</p>
+<h2 id="single-sign-on-button-label">Single sign-on button label <a class="anchor" href="#single-sign-on-button-label" aria-label="Link to Single sign-on button label">#</a></h2>
+<p>In <strong>Settings → Sign-in</strong>, the owner can set the name of the identity provider. It appears on the sign-in button. A saved value takes precedence over <code>AZIZAM_ADMIN_OIDC_DISPLAY_NAME</code>. An empty value shows the generic single sign-on label. The name can have up to 80 characters, with no angle brackets or control characters.</p>
+<h2 id="check-that-denial-works">Check that denial works <a class="anchor" href="#check-that-denial-works" aria-label="Link to Check that denial works">#</a></h2>
+<p>Before you open the gateway to other people:</p>
+<ul>
+<li>Send a request without a key, and check that it is refused.</li>
+<li>Sign in as a member, and check that they see only their own work.</li>
+</ul>
+<h2 id="report-a-problem-safely">Report a problem safely <a class="anchor" href="#report-a-problem-safely" aria-label="Link to Report a problem safely">#</a></h2>
+<p>When you report a failure, include the error code, the message and the layer. Remove keys, cookies, private addresses, prompts and personal data first.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/operate/invite-people/" rel="prev"><span>Previous</span>Invite people</a><a class="pager-next" href="/showcase/docs/operate/upgrade-and-backup/" rel="next"><span>Next</span>Upgrade and back up</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#who-can-create-the-owner-account">Who can create the owner account</a></li><li class="toc-l2"><a href="#keys">Keys</a></li><li class="toc-l2"><a href="#open-the-gateway-to-other-devices">Open the gateway to other devices</a></li><li class="toc-l2"><a href="#what-the-gateway-sends-to-engines">What the gateway sends to engines</a></li><li class="toc-l2"><a href="#fetching-media-from-urls">Fetching media from URLs</a></li><li class="toc-l2"><a href="#single-sign-on-button-label">Single sign-on button label</a></li><li class="toc-l2"><a href="#check-that-denial-works">Check that denial works</a></li><li class="toc-l2"><a href="#report-a-problem-safely">Report a problem safely</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Media jobs · Azizam docs</title>
+<meta name="description" content="Submit picture work as a job, check its progress, and download the result.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/api/media-jobs/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Media jobs</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/" aria-current="page">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/" aria-current="page">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Build with the API</p>
+      <h1 id="media-jobs">Media jobs</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#submit-a-job">Submit a job</a></li><li class="toc-l2"><a href="#check-the-job">Check the job</a></li><li class="toc-l2"><a href="#read-progress-events">Read progress events</a></li><li class="toc-l2"><a href="#retry-safely">Retry safely</a></li><li class="toc-l2"><a href="#download-the-result">Download the result</a></li></ul></nav></details><p>A job keeps working when your connection drops. Save its <code>job_id</code> and check the job. Do not start a new job only because a connection closed.</p>
+<p><code>POST /gateway/v1/media/jobs</code> takes an <code>intent</code> and a <code>request</code>. This page uses <code>image.generate</code>, whose <code>request</code> is an OpenAI image request. The route also accepts <code>image.edit</code>, <code>audio.generate</code>, <code>music.generate</code>, <code>sfx.generate</code> and <code>video.generate</code>. Other intents return <code>unsupported_media_job</code>.</p>
+<p>Set the environment variables in the <a href="/showcase/docs/api/#set-up-your-environment">API overview</a> first, and set <code>AZIZAM_IMAGE_MODEL</code> to an image model your key can use.</p>
+<h2 id="submit-a-job">Submit a job <a class="anchor" href="#submit-a-job" aria-label="Link to Submit a job">#</a></h2>
+<p>Choose an idempotency key for this request. Use the same key if you retry this exact request, and a new key for new work.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_IDEMPOTENCY_KEY</span><span class="o">=</span><span class="s1">'blue-bowl-001'</span>
+curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Idempotency-Key: </span><span class="nv">$AZIZAM_IDEMPOTENCY_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>job.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data<span class="w"> </span>@-<span class="w"> </span><span class="s">&lt;&lt;EOF</span>
+<span class="s">{"intent": "image.generate",</span>
+<span class="s"> "request": {"model": "$AZIZAM_IMAGE_MODEL",</span>
+<span class="s">             "prompt": "A blue ceramic bowl on a plain table.", "n": 1}}</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<h2 id="check-the-job">Check the job <a class="anchor" href="#check-the-job" aria-label="Link to Check the job">#</a></h2>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nv">JOB_ID</span><span class="o">=</span><span class="k">$(</span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import json; print(json.load(open("job.json"))["job_id"])'</span><span class="k">)</span>
+curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs/</span><span class="nv">$JOB_ID</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
+</code></pre></div>
+<p>Check again every few seconds.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queued</code>, <code>running</code></td>
+<td>The job is active.</td>
+</tr>
+<tr>
+<td><code>succeeded</code>, <code>failed</code>, <code>canceled</code></td>
+<td>The job is finished.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Treat any other state as not finished.</p>
+<p>To cancel, send <code>POST /gateway/v1/media/jobs/{job_id}/cancel</code>. HTTP 202 means that the cancel was requested. Keep checking the job: it is not finished until it reaches a finished state.</p>
+<h2 id="read-progress-events">Read progress events <a class="anchor" href="#read-progress-events" aria-label="Link to Read progress events">#</a></h2>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs/</span><span class="nv">$JOB_ID</span><span class="s2">/events"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
+</code></pre></div>
+<p>Each job numbers its events with its own <code>sequence</code>. Keep the highest <code>sequence</code> you processed for each job, so that repeated events do not update your interface twice. Do not compare sequence numbers between jobs. An event's payload holds only progress fields, such as <code>progress</code>, <code>step</code>, <code>total</code>, <code>phase</code> and <code>status</code>.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Query parameter</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>after_sequence</code></td>
+<td>Return only events after this sequence number.</td>
+</tr>
+<tr>
+<td><code>limit</code></td>
+<td>Events per page. Default 50, at most 200.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>To read only new events, pass the highest <code>sequence</code> you have as <code>after_sequence</code>.</p>
+<h2 id="retry-safely">Retry safely <a class="anchor" href="#retry-safely" aria-label="Link to Retry safely">#</a></h2>
+<p>If you lose the response, send the same request again with the same idempotency key. The gateway returns the job it already has and does not start new work.</p>
+<p>Use a new idempotency key for new work. A request that reuses an idempotency key gets the original job back, even if its body is different.</p>
+<p>The gateway remembers idempotency keys for active jobs, and for 14 days after a job's last update. After that, a repeat can start new work.</p>
+<h2 id="download-the-result">Download the result <a class="anchor" href="#download-the-result" aria-label="Link to Download the result">#</a></h2>
+<p>When the job has succeeded, read its content. Before that, this route returns HTTP 409 with <code>media_job_not_ready</code>.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/media/jobs/</span><span class="nv">$JOB_ID</span><span class="s2">/content"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
+</code></pre></div>
+<p>Job results are signed URLs, not base64 data. Anyone with a signed URL can download the file until the URL expires, without a key. Share it as carefully as a key, and do not change its query parameters.</p>
+<p>Keep the asset ID if you want to use the result as an input later. Any key of the app that created an asset can reuse it by ID. Other apps get HTTP 403. To get a fresh signed URL for an asset your app owns:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/gateway/v1/assets/</span><span class="nv">$ASSET_ID</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
+</code></pre></div>
+<p>Agents can run media workflows with the <a href="/showcase/docs/api/mcp/">MCP</a> <code>run</code> and <code>job</code> tools.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/api/a1111/" rel="prev"><span>Previous</span>A1111-compatible API</a><a class="pager-next" href="/showcase/docs/api/mcp/" rel="next"><span>Next</span>MCP for agents</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#submit-a-job">Submit a job</a></li><li class="toc-l2"><a href="#check-the-job">Check the job</a></li><li class="toc-l2"><a href="#read-progress-events">Read progress events</a></li><li class="toc-l2"><a href="#retry-safely">Retry safely</a></li><li class="toc-l2"><a href="#download-the-result">Download the result</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

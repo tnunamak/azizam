@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Configuration · Azizam docs</title>
+<meta name="description" content="Settings for the listener, setup, request limits, media downloads and monitoring.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/reference/configuration/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Configuration</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/" aria-current="page">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/" aria-current="page">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Reference</p>
+      <h1 id="configuration">Configuration</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#listener-and-network">Listener and network</a></li><li class="toc-l2"><a href="#request-limits">Request limits</a></li><li class="toc-l2"><a href="#media-downloads">Media downloads</a></li><li class="toc-l2"><a href="#monitoring">Monitoring</a></li><li class="toc-l2"><a href="#transcription-concurrency">Transcription concurrency</a></li></ul></nav></details><p>The gateway reads its settings from a configuration file and from environment variables. An environment variable overrides the matching field in the file. Most settings take effect when the gateway starts.</p>
+<p>Relative paths in the configuration file resolve from the gateway's working directory. In the Docker image, that is the root of the repository.</p>
+<p>Do not write secret values into the configuration file. Settings that need a secret take the name of an environment variable instead, for example <code>api_key_env: NAME</code>.</p>
+<h2 id="listener-and-network">Listener and network <a class="anchor" href="#listener-and-network" aria-label="Link to Listener and network">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AZIZAM_PORT</code></td>
+<td><code>5000</code></td>
+<td>The port the gateway listens on. In Docker Compose, the host port.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_DOCKER_SUBNET</code></td>
+<td><code>172.30.251.0/24</code></td>
+<td>The Compose network's subnet.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_DOCKER_GATEWAY</code></td>
+<td><code>172.30.251.1</code></td>
+<td>The Compose network's gateway address. Change it together with the subnet.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_SETUP_ALLOWED_CIDRS</code></td>
+<td>none; Docker Compose sets it to the Compose gateway address</td>
+<td>Networks that may create the owner account. Overrides <code>auth.setup_allowed_cidrs</code>. Loopback is always allowed.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="request-limits">Request limits <a class="anchor" href="#request-limits" aria-label="Link to Request limits">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Configuration field</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AZIZAM_REQUEST_BODY_JSON_BYTES</code></td>
+<td><code>request_body_limits.json_bytes</code></td>
+<td>33,554,432 bytes (32 MiB)</td>
+</tr>
+<tr>
+<td><code>AZIZAM_REQUEST_BODY_MEDIA_BYTES</code></td>
+<td><code>request_body_limits.media_bytes</code></td>
+<td>537,919,488 bytes (513 MiB)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Values must be positive byte counts. Changes take effect when the gateway starts.</p>
+<p>The media limit applies to image, audio, video, face, media job, workflow and <code>/sdapi/v1</code> routes, and to the media routes under <code>/openai/v1</code>. All other routes use the JSON limit, whatever their <code>Content-Type</code>. A single file or field can have a smaller limit. A request over the limit gets HTTP 413 with the code <code>request_too_large</code>.</p>
+<h2 id="media-downloads">Media downloads <a class="anchor" href="#media-downloads" aria-label="Link to Media downloads">#</a></h2>
+<p>When a request gives a media URL, the gateway downloads it with these limits:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AZIZAM_MEDIA_FETCH_MAX_BYTES</code></td>
+<td>Largest download, in bytes. Default 268,435,456 (256 MiB).</td>
+</tr>
+<tr>
+<td><code>AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS</code></td>
+<td>Comma-separated exact host names or IP addresses that may resolve to private network addresses. No wildcards. Empty by default.</td>
+</tr>
+<tr>
+<td>Redirects</td>
+<td>At most three. Each one is checked again.</td>
+</tr>
+<tr>
+<td>Timeouts</td>
+<td>10 seconds to resolve and connect, 30 seconds per read, 60 seconds in total.</td>
+</tr>
+<tr>
+<td>Encoding</td>
+<td>The server must send the media uncompressed.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The allow list cannot open loopback, link-local or cloud metadata addresses.</p>
+<h2 id="monitoring">Monitoring <a class="anchor" href="#monitoring" aria-label="Link to Monitoring">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AZIZAM_GPU_BUDGET_PATH</code></td>
+<td>none</td>
+<td>Shell script that sets GPU memory budget variables. Without it, status shows no budgets.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_VRAM_ESTIMATES_PATH</code></td>
+<td><code>&lt;repo&gt;/cache/vram_estimates.json</code></td>
+<td>Cache of memory estimates for workflows.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_DRIFT_REPORT_PATH</code></td>
+<td><code>&lt;repo&gt;/cache/drift_status.json</code></td>
+<td>Workflow drift report.</td>
+</tr>
+<tr>
+<td><code>AZIZAM_IMAGE_CACHE_DIR</code></td>
+<td><code>&lt;repo&gt;/cache/images</code></td>
+<td>Folder measured for the image storage figure in status.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code>AZIZAM_IMAGE_CACHE_DIR</code> only changes what status measures. To change where creations are stored, set <code>images.cache_dir</code> in the configuration file. The default is <code>cache/images</code> under the gateway's working directory.</p>
+<p>An engine record can name a budget variable with <code>vram_budget_key</code>. Status compares the engine's memory use on the GPU where it uses the most memory with that budget. Memory on other GPUs shows as spillover.</p>
+<h2 id="transcription-concurrency">Transcription concurrency <a class="anchor" href="#transcription-concurrency" aria-label="Link to Transcription concurrency">#</a></h2>
+<p><code>backends.&lt;engine&gt;.chunking.global_concurrency</code> applies per gateway process, despite its name. If you run more than one gateway process, each one allows that many uploads and reserves its own disk budget.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/concepts/prompt-saving/" rel="prev"><span>Previous</span>Prompt saving</a><a class="pager-next" href="/showcase/docs/reference/errors/" rel="next"><span>Next</span>Error codes</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#listener-and-network">Listener and network</a></li><li class="toc-l2"><a href="#request-limits">Request limits</a></li><li class="toc-l2"><a href="#media-downloads">Media downloads</a></li><li class="toc-l2"><a href="#monitoring">Monitoring</a></li><li class="toc-l2"><a href="#transcription-concurrency">Transcription concurrency</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Troubleshooting · Azizam docs</title>
+<meta name="description" content="Find where a request stopped, then take the next step for its error code.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/operate/troubleshooting/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Troubleshooting</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/" aria-current="page">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/" aria-current="page">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Run a gateway</p>
+      <h1 id="troubleshooting">Troubleshooting</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#find-where-the-request-stopped">Find where the request stopped</a></li><li class="toc-l2"><a href="#the-gateway-does-not-start">The gateway does not start</a></li><li class="toc-l2"><a href="#an-app-cannot-connect">An app cannot connect</a></li><li class="toc-l2"><a href="#a-request-is-refused">A request is refused</a></li><li class="toc-l2"><a href="#a-model-is-unavailable">A model is unavailable</a></li><li class="toc-l2"><a href="#a-job-or-restart-fails">A job or restart fails</a></li><li class="toc-l2"><a href="#ask-for-help">Ask for help</a></li></ul></nav></details><p>Start with the error code and message in the response, not the HTTP status alone. For example, HTTP 503 can mean that the gateway is draining (<code>gateway_draining</code>) or that the engines are busy (<code>resource_admission_denied</code>). The <a href="/showcase/docs/reference/errors/">error reference</a> lists the codes and the next step for each.</p>
+<h2 id="find-where-the-request-stopped">Find where the request stopped <a class="anchor" href="#find-where-the-request-stopped" aria-label="Link to Find where the request stopped">#</a></h2>
+<p>Errors from the browser interface's routes include a layer in <code>error.details.layer</code>:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Where the request stopped</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>request</code></td>
+<td>The request itself is invalid or incomplete.</td>
+</tr>
+<tr>
+<td><code>account</code></td>
+<td>Sign-in or account permissions.</td>
+</tr>
+<tr>
+<td><code>library</code></td>
+<td>A creation, file or job in Library.</td>
+</tr>
+<tr>
+<td><code>gateway</code></td>
+<td>The gateway is draining, busy or misconfigured.</td>
+</tr>
+<tr>
+<td><code>engine</code></td>
+<td>The engine cannot serve the model.</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>The model ran but did not produce a result.</td>
+</tr>
+<tr>
+<td><code>workflow</code></td>
+<td>The workflow's input mapping.</td>
+</tr>
+<tr>
+<td><code>unknown</code></td>
+<td>The gateway cannot tell where it stopped.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="the-gateway-does-not-start">The gateway does not start <a class="anchor" href="#the-gateway-does-not-start" aria-label="Link to The gateway does not start">#</a></h2>
+<ul>
+<li>Run <code>docker compose ps</code> and check that the containers are running.</li>
+<li>Run <code>docker compose logs gateway</code> and read the last lines.</li>
+<li>Check that nothing else uses the port. To use another port, see <a href="/showcase/docs/start/install/#use-a-different-port">Install Azizam</a>.</li>
+</ul>
+<h2 id="an-app-cannot-connect">An app cannot connect <a class="anchor" href="#an-app-cannot-connect" aria-label="Link to An app cannot connect">#</a></h2>
+<ul>
+<li>Check the base URL. Do not add a second <code>/v1</code> or <code>/api</code>.</li>
+<li>Check that the key is an app key, not an admin key or a provider key.</li>
+<li>A <code>127.0.0.1</code> address points to the device or container that sends the request. Use an address that reaches the gateway from there.</li>
+</ul>
+<h2 id="a-request-is-refused">A request is refused <a class="anchor" href="#a-request-is-refused" aria-label="Link to A request is refused">#</a></h2>
+<ul>
+<li>Sign in again if the code is <code>not_authenticated</code> or <code>session_user_not_found</code>.</li>
+<li>Check the app's access plan if a model or protocol is missing. Changing the plan does not need a new key.</li>
+</ul>
+<h2 id="a-model-is-unavailable">A model is unavailable <a class="anchor" href="#a-model-is-unavailable" aria-label="Link to A model is unavailable">#</a></h2>
+<ul>
+<li>Open <strong>Models</strong> and use a model name that your key can see.</li>
+<li>Check the engine's status. If the status is unknown, check its health settings in <a href="/showcase/docs/operate/engines/#read-health-status">Connect engines</a>.</li>
+</ul>
+<h2 id="a-job-or-restart-fails">A job or restart fails <a class="anchor" href="#a-job-or-restart-fails" aria-label="Link to A job or restart fails">#</a></h2>
+<ul>
+<li>Do not assume that an interrupted job resumes. Follow the error for that job.</li>
+<li>If a safe restart reports busy, wait for the work to finish. If it reports that the drain endpoint is unavailable, check the local address and the admin key. Do not use <code>--force</code>. See <a href="/showcase/docs/operate/upgrade-and-backup/#restart-a-gateway-that-runs-as-a-systemd-service">Upgrade and back up</a>.</li>
+<li>If local health passes but the public address fails, check the reverse proxy's route to the gateway.</li>
+</ul>
+<h2 id="ask-for-help">Ask for help <a class="anchor" href="#ask-for-help" aria-label="Link to Ask for help">#</a></h2>
+<p>Collect the error code, the layer and a short description of the request. Remove keys, cookies, private addresses, prompts and private media first.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/operate/upgrade-and-backup/" rel="prev"><span>Previous</span>Upgrade and back up</a><a class="pager-next" href="/showcase/docs/api/" rel="next"><span>Next</span>API overview</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#find-where-the-request-stopped">Find where the request stopped</a></li><li class="toc-l2"><a href="#the-gateway-does-not-start">The gateway does not start</a></li><li class="toc-l2"><a href="#an-app-cannot-connect">An app cannot connect</a></li><li class="toc-l2"><a href="#a-request-is-refused">A request is refused</a></li><li class="toc-l2"><a href="#a-model-is-unavailable">A model is unavailable</a></li><li class="toc-l2"><a href="#a-job-or-restart-fails">A job or restart fails</a></li><li class="toc-l2"><a href="#ask-for-help">Ask for help</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

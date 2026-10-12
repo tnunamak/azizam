@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Access plans · Azizam docs</title>
+<meta name="description" content="How an app&#x27;s access plan allows or refuses each request.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/concepts/access-plans/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Access plans</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/" aria-current="page">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/" aria-current="page">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Concepts</p>
+      <h1 id="access-plans">Access plans</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li></ul></nav></details><p>An access plan is a named set of rules that decides which requests an app may make. The API calls it a profile.</p>
+<p>A plan can limit protocols, workflows, models, engines and capabilities. It also sets rules for remote providers, fallback, status visibility and whether a request may start a model that is not loaded.</p>
+<h2 id="which-plan-applies">Which plan applies <a class="anchor" href="#which-plan-applies" aria-label="Link to Which plan applies">#</a></h2>
+<p>For a request with an app key, the gateway uses the first of these that is set:</p>
+<ol>
+<li>The plan set on the key.</li>
+<li>The app's default plan.</li>
+<li>For an app that belongs to a person, that person's plan. If the person has no plan, the default plan for their role or sign-in group.</li>
+<li>The built-in default plan.</li>
+</ol>
+<p>If the selected plan is missing or invalid, the request is refused. A turned-off app cannot run requests.</p>
+<p>You can change an app's plan at any time. The app does not need a new key.</p>
+<h2 id="how-a-request-is-checked">How a request is checked <a class="anchor" href="#how-a-request-is-checked" aria-label="Link to How a request is checked">#</a></h2>
+<p>The gateway checks the rules in order. The first refusal wins.</p>
+<ul>
+<li>A list that is not set does not restrict anything.</li>
+<li>An empty list refuses everything.</li>
+<li>Protocol, workflow, model and engine lists apply when the request names that value.</li>
+</ul>
+<p>Capability rules use the labels that describe each model. A label is not proof of what a model or its output contains.</p>
+<p>Cloud fallback and paid fallback are separate permissions. Allowing a provider does not, by itself, allow paid fallback.</p>
+<h2 id="seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it <a class="anchor" href="#seeing-a-model-is-not-the-same-as-running-it" aria-label="Link to Seeing a model is not the same as running it">#</a></h2>
+<p>A plan can show every configured model, or only the models available now. It can also allow or refuse starting a model that is not loaded. Seeing a model in the list does not mean that it is loaded.</p>
+<p><a href="/showcase/docs/concepts/categories/">Categories</a> can add more restrictions to a request that a plan allows. They cannot allow a request that the plan refuses.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/concepts/apps-and-keys/" rel="prev"><span>Previous</span>Apps and keys</a><a class="pager-next" href="/showcase/docs/concepts/categories/" rel="next"><span>Next</span>Categories</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#which-plan-applies">Which plan applies</a></li><li class="toc-l2"><a href="#how-a-request-is-checked">How a request is checked</a></li><li class="toc-l2"><a href="#seeing-a-model-is-not-the-same-as-running-it">Seeing a model is not the same as running it</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

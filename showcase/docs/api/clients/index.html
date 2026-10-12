@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Client setup examples · Azizam docs</title>
+<meta name="description" content="Connect common chat apps, editors and image tools to your gateway.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/api/clients/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Client setup examples</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/" aria-current="page">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/" aria-current="page">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Build with the API</p>
+      <h1 id="client-setup-examples">Client setup examples</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#check-the-connection-first">Check the connection first</a></li><li class="toc-l2"><a href="#open-webui">Open WebUI</a></li><li class="toc-l2"><a href="#librechat">LibreChat</a></li><li class="toc-l2"><a href="#editors-with-an-openai-compatible-provider">Editors with an OpenAI Compatible provider</a></li><li class="toc-l2"><a href="#continue">Continue</a></li><li class="toc-l2"><a href="#sillytavern-pictures">SillyTavern pictures</a></li><li class="toc-l2"><a href="#when-setup-fails">When setup fails</a></li></ul></nav></details><p>Every client needs three things: the gateway address with the right base path, an app key, and a model name that the key can use. Menus and file formats change between client versions, so treat these as examples.</p>
+<p>For most chat apps and editors, use the OpenAI-compatible base URL. Use the Anthropic or Ollama routes only when a client requires them.</p>
+<h2 id="check-the-connection-first">Check the connection first <a class="anchor" href="#check-the-connection-first" aria-label="Link to Check the connection first">#</a></h2>
+<p>Run this on the same computer, or in the same container, as the client:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/openai/v1/models"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span>
+</code></pre></div>
+<p><code>127.0.0.1</code> reaches the computer or container that sends the request. If the gateway runs somewhere else, use its address.</p>
+<h2 id="open-webui">Open WebUI <a class="anchor" href="#open-webui" aria-label="Link to Open WebUI">#</a></h2>
+<p>In <strong>Settings → Connections → OpenAI</strong>:</p>
+<ul>
+<li>Base URL: your gateway address followed by <code>/openai/v1</code></li>
+<li>API key: your app key</li>
+</ul>
+<p>Refresh the model list. Model file management through Ollama panels does not work through the gateway. Picture making needs an image engine on the gateway.</p>
+<h2 id="librechat">LibreChat <a class="anchor" href="#librechat" aria-label="Link to LibreChat">#</a></h2>
+<p>Add a custom endpoint to <code>librechat.yaml</code>. Replace <code>my-chat</code> with a model name from your gateway.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">YAML</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nt">endpoints</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">custom</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"Azizam"</span>
+<span class="w">      </span><span class="nt">apiKey</span><span class="p">:</span><span class="w"> </span><span class="s">"${AZIZAM_API_KEY}"</span>
+<span class="w">      </span><span class="nt">baseURL</span><span class="p">:</span><span class="w"> </span><span class="s">"http://127.0.0.1:5000/openai/v1"</span>
+<span class="w">      </span><span class="nt">models</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"my-chat"</span><span class="p p-Indicator">]</span>
+<span class="w">        </span><span class="nt">fetch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p>Set <code>AZIZAM_API_KEY</code> in LibreChat's environment. Do not write the key into the file. Features that need the OpenAI Assistants API do not work.</p>
+<h2 id="editors-with-an-openai-compatible-provider">Editors with an OpenAI Compatible provider <a class="anchor" href="#editors-with-an-openai-compatible-provider" aria-label="Link to Editors with an OpenAI Compatible provider">#</a></h2>
+<p>For editor extensions such as Cline:</p>
+<ul>
+<li>API provider: OpenAI Compatible</li>
+<li>Base URL: your gateway address followed by <code>/openai/v1</code></li>
+<li>API key: your app key</li>
+<li>Model ID: a chat model from the gateway's model list</li>
+</ul>
+<p>Tool calls use the OpenAI tool format. The model must support tool calls.</p>
+<h2 id="continue">Continue <a class="anchor" href="#continue" aria-label="Link to Continue">#</a></h2>
+<p>Use an OpenAI provider with the <code>/openai/v1</code> base URL. Choose a chat model for chat and autocomplete, and a model that supports embeddings for embeddings. One model may not do both. Set context size and other runtime options on the engine, not in the editor.</p>
+<h2 id="sillytavern-pictures">SillyTavern pictures <a class="anchor" href="#sillytavern-pictures" aria-label="Link to SillyTavern pictures">#</a></h2>
+<p>Choose <strong>Stable Diffusion Web UI (AUTOMATIC1111)</strong> as the image source.</p>
+<ul>
+<li>SD WebUI URL: the gateway address, without <code>/v1</code> or <code>/sdapi/v1</code></li>
+<li>Authentication: <code>gateway:</code> followed by your app key</li>
+</ul>
+<p>Connect and choose an image model. Turn off Hires fix, Restore faces and scripts. Read the <a href="/showcase/docs/api/a1111/#limits">A1111 limits</a> before you turn on other settings.</p>
+<h2 id="when-setup-fails">When setup fails <a class="anchor" href="#when-setup-fails" aria-label="Link to When setup fails">#</a></h2>
+<ul>
+<li>Check the base URL. Do not add a second <code>/v1</code> or <code>/api</code>.</li>
+<li>Check that the key is an app key.</li>
+<li>Refresh the model list, and choose a name that this gateway returns.</li>
+<li>If a protocol or model is missing, ask the owner to check the app's access plan.</li>
+<li>Keep keys and signed URLs out of anything you share.</li>
+</ul>
+<p>For an agent, see <a href="/showcase/docs/api/mcp/">MCP for agents</a>.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/api/mcp/" rel="prev"><span>Previous</span>MCP for agents</a><a class="pager-next" href="/showcase/docs/concepts/people-and-roles/" rel="next"><span>Next</span>People and roles</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#check-the-connection-first">Check the connection first</a></li><li class="toc-l2"><a href="#open-webui">Open WebUI</a></li><li class="toc-l2"><a href="#librechat">LibreChat</a></li><li class="toc-l2"><a href="#editors-with-an-openai-compatible-provider">Editors with an OpenAI Compatible provider</a></li><li class="toc-l2"><a href="#continue">Continue</a></li><li class="toc-l2"><a href="#sillytavern-pictures">SillyTavern pictures</a></li><li class="toc-l2"><a href="#when-setup-fails">When setup fails</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

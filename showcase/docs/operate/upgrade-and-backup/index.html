@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Upgrade and back up · Azizam docs</title>
+<meta name="description" content="Back up the gateway&#x27;s state, upgrade it, restart it safely, and check the result.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/operate/upgrade-and-backup/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Upgrade and back up</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/" aria-current="page">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/" aria-current="page">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Run a gateway</p>
+      <h1 id="upgrade-and-back-up">Upgrade and back up</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#what-to-back-up">What to back up</a></li><li class="toc-l2"><a href="#before-you-upgrade">Before you upgrade</a></li><li class="toc-l2"><a href="#upgrade-a-docker-compose-installation">Upgrade a Docker Compose installation</a></li><li class="toc-l2"><a href="#check-the-result">Check the result</a></li><li class="toc-l2"><a href="#restart-a-gateway-that-runs-as-a-systemd-service">Restart a gateway that runs as a systemd service</a></li></ul></nav></details><p>Treat an upgrade as maintenance. Make a backup first, and write down the version you are replacing.</p>
+<h2 id="what-to-back-up">What to back up <a class="anchor" href="#what-to-back-up" aria-label="Link to What to back up">#</a></h2>
+<ul>
+<li><strong>The data volume.</strong> In Docker Compose, accounts, apps, keys, settings and receipts are in the <code>gateway-data</code> volume, mounted at <code>/app/data</code>. The gateway and the execution sidecar both use it.</li>
+<li><strong>Creations.</strong> Creations and the key that signs download links are in <code>/app/cache</code> inside the gateway container, not in the volume. Rebuilding the container deletes them. Download the creations you want to keep first.</li>
+<li><strong>Your start-up settings.</strong> Keep your Compose changes, <code>first-run.yml</code> changes and your <code>.env</code> file, if you use one.</li>
+</ul>
+<p>Store backups privately. A container image is not a backup of its data.</p>
+<h2 id="before-you-upgrade">Before you upgrade <a class="anchor" href="#before-you-upgrade" aria-label="Link to Before you upgrade">#</a></h2>
+<ol>
+<li>Write down the current version and your deployment settings.</li>
+<li>Choose a time when few people use the gateway.</li>
+<li>Let replies and media jobs that are running finish.</li>
+<li>Stop the containers, so nothing writes to the data while you copy it.</li>
+<li>Back up the data volume and your settings.</li>
+<li>Check that you can read the backup.</li>
+</ol>
+<h2 id="upgrade-a-docker-compose-installation">Upgrade a Docker Compose installation <a class="anchor" href="#upgrade-a-docker-compose-installation" aria-label="Link to Upgrade a Docker Compose installation">#</a></h2>
+<p>Get the new version of the repository. Then, from the root of the repository:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
+docker<span class="w"> </span>compose<span class="w"> </span>ps
+</code></pre></div>
+<p>Use the same settings as before. For example, set the same <code>AZIZAM_PORT</code> if you changed it. This command rebuilds the gateway image, including the browser interface, and can recreate the containers. Work that is running when the gateway stops is cut off.</p>
+<h2 id="check-the-result">Check the result <a class="anchor" href="#check-the-result" aria-label="Link to Check the result">#</a></h2>
+<ol>
+<li>
+<p>Check the local health endpoint:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail<span class="w"> </span>--silent<span class="w"> </span>--show-error<span class="w"> </span>http://127.0.0.1:5000/health
+</code></pre></div>
+</li>
+<li>
+<p>If you use a reverse proxy, check the public address too.</p>
+</li>
+<li>
+<p>Sign in as the owner, and check your engines and model names.</p>
+</li>
+<li>
+<p>On <strong>Home</strong>, select <strong>Check connection</strong>.</p>
+</li>
+<li>
+<p>Send a request from an app with an app key.</p>
+</li>
+</ol>
+<p>A healthy endpoint alone does not prove that an app's engine, model and key work. Keep the backup until you have checked the new version. If a check fails, keep the logs and the backup. Do not overwrite your only copy of the old data.</p>
+<h2 id="restart-a-gateway-that-runs-as-a-systemd-service">Restart a gateway that runs as a systemd service <a class="anchor" href="#restart-a-gateway-that-runs-as-a-systemd-service" aria-label="Link to Restart a gateway that runs as a systemd service">#</a></h2>
+<p>If you run the gateway outside Docker, as a user systemd service, restart it with <code>scripts/safe-restart</code> from the root of the repository. A plain service restart can cut off streamed replies and media jobs.</p>
+<p>The script needs:</p>
+<ul>
+<li>Python 3, and <code>systemctl --user</code> with a unit for the gateway. The default unit name is <code>azizam</code>; change it with <code>--unit</code>.</li>
+<li>Node.js and npm, when the browser interface needs a rebuild.</li>
+<li>An admin key in <code>AZIZAM_ADMIN_KEY</code>, or in the file named by <code>AZIZAM_ADMIN_KEY_FILE</code>. The default key file is <code>~/.config/azizam/admin-key</code>. Allow only your user to read it.</li>
+<li>A loopback <code>--url</code>: <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code>.</li>
+</ul>
+<p>First, see what is running without restarting:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>scripts/safe-restart<span class="w"> </span>--dry-run<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:5000<span class="w"> </span>--public-url<span class="w"> </span><span class="s1">''</span>
+</code></pre></div>
+<p>Then restart:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>scripts/safe-restart<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:5000<span class="w"> </span>--public-url<span class="w"> </span>https://gateway.example.com
+</code></pre></div>
+<p>Replace the example public address with your own, or pass <code>--public-url ''</code> if the gateway has no public address. Always set it: the script's built-in default does not match your installation.</p>
+<p>The script:</p>
+<ol>
+<li>Builds the browser interface if it is missing or out of date. If the build fails, it stops and does not restart anything.</li>
+<li>Waits until chat has been quiet for 300 seconds. Use <code>--quiet-seconds</code> to change this.</li>
+<li>Drains the gateway: new <code>POST</code>, <code>PUT</code> and <code>PATCH</code> requests get HTTP 503 with the code <code>gateway_draining</code> and a <code>Retry-After</code> header. Reads, job checks, cancels, sign-in, administration and health checks still work. It waits for running work to finish.</li>
+<li>Restarts the service and checks local health and, if you set it, the public address.</li>
+</ol>
+<p>Read every warning, even when the script exits with 0. A failed public check is reported as a warning. Do not use <code>--force</code> for a routine restart: it skips the waits and can cut off running work.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Exit code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Restarted. Read the printed health and drain results.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Health was not confirmed.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>The command options are wrong.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Work was still running at the deadline. Nothing restarted.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>The drain endpoint was unavailable or refused. Nothing restarted.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>The service restart failed.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Another safe restart is running.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>The browser interface build or publication failed.</td>
+</tr>
+<tr>
+<td>130</td>
+<td>Interrupted. Read the drain cleanup message.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/operate/security/" rel="prev"><span>Previous</span>Security</a><a class="pager-next" href="/showcase/docs/operate/troubleshooting/" rel="next"><span>Next</span>Troubleshooting</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#what-to-back-up">What to back up</a></li><li class="toc-l2"><a href="#before-you-upgrade">Before you upgrade</a></li><li class="toc-l2"><a href="#upgrade-a-docker-compose-installation">Upgrade a Docker Compose installation</a></li><li class="toc-l2"><a href="#check-the-result">Check the result</a></li><li class="toc-l2"><a href="#restart-a-gateway-that-runs-as-a-systemd-service">Restart a gateway that runs as a systemd service</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

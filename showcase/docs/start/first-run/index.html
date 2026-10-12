@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>First run · Azizam docs</title>
+<meta name="description" content="Create the owner account, connect a chat engine, and get a first reply in your app.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/start/first-run/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">First run</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/" aria-current="page">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/" aria-current="page">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Start here</p>
+      <h1 id="first-run">First run</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#1-create-the-owner-account">1. Create the owner account</a></li><li class="toc-l2"><a href="#2-connect-your-engine">2. Connect your engine</a></li><li class="toc-l2"><a href="#3-create-an-app-key">3. Create an app key</a></li><li class="toc-l2"><a href="#4-get-a-first-reply">4. Get a first reply</a></li><li class="toc-l3"><a href="#send-the-same-request-with-curl">Send the same request with curl</a></li><li class="toc-l3"><a href="#if-there-is-no-reply">If there is no reply</a></li><li class="toc-l2"><a href="#next-steps">Next steps</a></li></ul></nav></details><p>This tutorial takes a new gateway to its first reply. You create the owner account, connect one chat engine, create an app key and send a message.</p>
+<p>Before you start, <a href="/showcase/docs/start/install/">install Azizam</a> and make sure your chat engine is running with a model loaded.</p>
+<h2 id="1-create-the-owner-account">1. Create the owner account <a class="anchor" href="#1-create-the-owner-account" aria-label="Link to 1. Create the owner account">#</a></h2>
+<p>On the computer that runs the gateway, open:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Text</span><button class="copy js-only" type="button">Copy</button></div><pre><code>http://127.0.0.1:5000/setup
+</code></pre></div>
+<p>Create the owner account. The owner can configure the gateway and invite other people.</p>
+<h2 id="2-connect-your-engine">2. Connect your engine <a class="anchor" href="#2-connect-your-engine" aria-label="Link to 2. Connect your engine">#</a></h2>
+<ol>
+<li>Open <strong>Engines</strong>, in the <strong>Gateway</strong> group of the menu, and select <strong>Add engine</strong>.</li>
+<li>Enter a name and your engine's OpenAI-compatible base URL. Use an <code>http://</code> address that the gateway can reach. For an engine on the same computer, see <a href="/showcase/docs/start/install/#connect-to-an-engine-on-the-same-computer">Connect to an engine on the same computer</a>.</li>
+<li>If the engine needs a key, enter the name of the environment variable that holds it in <strong>Key environment variable</strong>. Do not paste the key itself.</li>
+<li>Select <strong>Test connection</strong>, then add the engine.</li>
+<li>On the engine, select <strong>Detect models</strong> to read the engine's models, and give the chat model a model name.</li>
+</ol>
+<p>This tutorial uses <code>my-chat</code> as the model name. It is an example, not a built-in model. Use your own name in the steps below if you chose a different one.</p>
+<p>The engine and its model names are settings. You can change or replace them later without changing the gateway.</p>
+<h2 id="3-create-an-app-key">3. Create an app key <a class="anchor" href="#3-create-an-app-key" aria-label="Link to 3. Create an app key">#</a></h2>
+<p>Open <strong>Home</strong>. Choose the app you want to connect, then select <strong>Create key for</strong> that app.</p>
+<p>Save the key when it appears. It is shown only once.</p>
+<p>Use app keys in apps. Do not put an admin key in an app.</p>
+<h2 id="4-get-a-first-reply">4. Get a first reply <a class="anchor" href="#4-get-a-first-reply" aria-label="Link to 4. Get a first reply">#</a></h2>
+<p>In your app, use these settings:</p>
+<ul>
+<li>Base URL: <code>http://127.0.0.1:5000/openai/v1</code></li>
+<li>API key: the app key you saved</li>
+<li>Model: <code>my-chat</code></li>
+</ul>
+<p>On <strong>Home</strong>, select <strong>Check connection</strong> to check the key against the gateway. Then send a short message from your app. A reply in your app means that the app, the key, the gateway and the engine all work.</p>
+<h3 id="send-the-same-request-with-curl">Send the same request with curl <a class="anchor" href="#send-the-same-request-with-curl" aria-label="Link to Send the same request with curl">#</a></h3>
+<p>This example reads the key without showing it on screen. It asks for a streamed reply.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="s1">'App key: '</span><span class="w"> </span>AZIZAM_API_KEY<span class="p">;</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'\n'</span>
+curl<span class="w"> </span>--no-buffer<span class="w"> </span>--fail-with-body<span class="w"> </span>--silent<span class="w"> </span>--show-error<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>http://127.0.0.1:5000/openai/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data<span class="w"> </span><span class="s1">'{"model":"my-chat","stream":true,"messages":[{"role":"user","content":"Say hello in one sentence."}]}'</span>
+<span class="nb">unset</span><span class="w"> </span>AZIZAM_API_KEY
+</code></pre></div>
+<p>The reply arrives as a stream of events. The text is in <code>choices[0].delta.content</code>. The stream ends with <code>data: [DONE]</code>.</p>
+<h3 id="if-there-is-no-reply">If there is no reply <a class="anchor" href="#if-there-is-no-reply" aria-label="Link to If there is no reply">#</a></h3>
+<ul>
+<li><strong>The request is refused.</strong> Check that you used an app key, not an admin key, and that you copied all of it.</li>
+<li><strong>The model is not found.</strong> Open <strong>Models</strong> to see the model names your key can use.</li>
+<li><strong>The engine is busy or starting.</strong> Check <strong>Status</strong>, then try again.</li>
+</ul>
+<p>See <a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a> for error codes.</p>
+<h2 id="next-steps">Next steps <a class="anchor" href="#next-steps" aria-label="Link to Next steps">#</a></h2>
+<ul>
+<li><a href="/showcase/docs/operate/invite-people/">Invite people</a> to use your gateway.</li>
+<li><a href="/showcase/docs/operate/engines/">Connect more engines</a> for images, video or audio.</li>
+<li>Before other devices connect, read <a href="/showcase/docs/operate/security/">Security</a>.</li>
+<li>Before you upgrade, read <a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a>.</li>
+</ul>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-prev" href="/showcase/docs/start/install/" rel="prev"><span>Previous</span>Install Azizam</a><a class="pager-next" href="/showcase/docs/use/" rel="next"><span>Next</span>Use a gateway</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#1-create-the-owner-account">1. Create the owner account</a></li><li class="toc-l2"><a href="#2-connect-your-engine">2. Connect your engine</a></li><li class="toc-l2"><a href="#3-create-an-app-key">3. Create an app key</a></li><li class="toc-l2"><a href="#4-get-a-first-reply">4. Get a first reply</a></li><li class="toc-l3"><a href="#send-the-same-request-with-curl">Send the same request with curl</a></li><li class="toc-l3"><a href="#if-there-is-no-reply">If there is no reply</a></li><li class="toc-l2"><a href="#next-steps">Next steps</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

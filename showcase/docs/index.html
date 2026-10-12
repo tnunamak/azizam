@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Azizam docs</title>
+<meta name="description" content="Install a gateway, connect your apps, and give each person their own access.">
+<link rel="stylesheet" href="/showcase/static/showcase.css">
+<link rel="stylesheet" href="/showcase/static/docs.css">
+<script src="/showcase/static/docs.js" defer></script>
+<noscript><style>.js-only { display: none !important; }</style></noscript>
+</head>
+<body class="docs" data-page="/showcase/docs/">
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="docs-top">
+  <div class="docs-top-inner">
+    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="docs-home" href="/showcase/docs/">Docs</a>
+    <div class="docs-top-actions">
+      <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <span>Search</span><kbd aria-hidden="true">/</kbd>
+      </button>
+      <a class="api-link" href="/openapi.json">API reference</a>
+    </div>
+  </div>
+</header>
+<details class="docs-menu">
+  <summary><span class="docs-menu-label">Menu</span> <span class="docs-menu-here">Azizam documentation</span></summary>
+  <nav aria-label="Documentation (menu)"><ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/" aria-current="page">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul></nav>
+</details>
+<div class="docs-shell">
+  <nav class="docs-nav" aria-label="Documentation">
+    <ul class="nav-list"><li class="nav-section"><p class="nav-heading">Start here</p><ul><li><a href="/showcase/docs/" aria-current="page">Azizam documentation</a></li><li><a href="/showcase/docs/start/install/">Install Azizam</a></li><li><a href="/showcase/docs/start/first-run/">First run</a></li></ul></li><li class="nav-section"><p class="nav-heading">Use a gateway</p><ul><li><a href="/showcase/docs/use/">Use a gateway</a></li><li><a href="/showcase/docs/use/try/">Try</a></li><li><a href="/showcase/docs/use/library/">Library</a></li><li><a href="/showcase/docs/use/apps-and-keys/">Apps &amp; keys</a></li><li><a href="/showcase/docs/use/usage/">Usage and receipts</a></li><li><a href="/showcase/docs/use/when-something-fails/">When something fails</a></li></ul></li><li class="nav-section"><p class="nav-heading">Run a gateway</p><ul><li><a href="/showcase/docs/operate/engines/">Connect engines</a></li><li><a href="/showcase/docs/operate/invite-people/">Invite people</a></li><li><a href="/showcase/docs/operate/security/">Security</a></li><li><a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a></li><li><a href="/showcase/docs/operate/troubleshooting/">Troubleshooting</a></li></ul></li><li class="nav-section"><p class="nav-heading">Build with the API</p><ul><li><a href="/showcase/docs/api/">API overview</a></li><li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a></li><li><a href="/showcase/docs/api/anthropic/">Anthropic-compatible API</a></li><li><a href="/showcase/docs/api/ollama/">Ollama-compatible API</a></li><li><a href="/showcase/docs/api/a1111/">A1111-compatible API</a></li><li><a href="/showcase/docs/api/media-jobs/">Media jobs</a></li><li><a href="/showcase/docs/api/mcp/">MCP for agents</a></li><li><a href="/showcase/docs/api/clients/">Client setup examples</a></li></ul></li><li class="nav-section"><p class="nav-heading">Concepts</p><ul><li><a href="/showcase/docs/concepts/people-and-roles/">People and roles</a></li><li><a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a></li><li><a href="/showcase/docs/concepts/access-plans/">Access plans</a></li><li><a href="/showcase/docs/concepts/categories/">Categories</a></li><li><a href="/showcase/docs/concepts/engines-and-models/">Engines and models</a></li><li><a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a></li><li><a href="/showcase/docs/concepts/receipts-and-usage/">Receipts and usage</a></li><li><a href="/showcase/docs/concepts/library-and-retention/">Library and retention</a></li><li><a href="/showcase/docs/concepts/privacy/">Privacy and the owner</a></li><li><a href="/showcase/docs/concepts/prompt-saving/">Prompt saving</a></li></ul></li><li class="nav-section"><p class="nav-heading">Reference</p><ul><li><a href="/showcase/docs/reference/configuration/">Configuration</a></li><li><a href="/showcase/docs/reference/errors/">Error codes</a></li><li><a href="/showcase/docs/reference/glossary/">Glossary</a></li></ul></li></ul>
+  </nav>
+  <main id="content" class="docs-main" tabindex="-1">
+    <article class="prose">
+      <p class="eyebrow">Start here</p>
+      <h1 id="azizam-documentation">Azizam documentation</h1>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#choose-where-to-start">Choose where to start</a></li><li class="toc-l2"><a href="#what-azizam-does">What Azizam does</a></li><li class="toc-l2"><a href="#what-you-need-to-bring">What you need to bring</a></li><li class="toc-l2"><a href="#before-you-rely-on-it">Before you rely on it</a></li><li class="toc-l2"><a href="#find-your-way-around">Find your way around</a></li></ul></nav></details><p>Azizam is an AI gateway that you run on a computer you control. It puts the engines you run, and any paid providers you choose, behind one OpenAI-compatible address. Each person and each app gets its own key and access plan.</p>
+<h2 id="choose-where-to-start">Choose where to start <a class="anchor" href="#choose-where-to-start" aria-label="Link to Choose where to start">#</a></h2>
+<ul>
+<li><strong>I want to run a gateway.</strong> <a href="/showcase/docs/start/install/">Install Azizam</a>, then follow <a href="/showcase/docs/start/first-run/">First run</a> to create the owner account, connect an engine and get a first reply.</li>
+<li><strong>Someone invited me.</strong> Read <a href="/showcase/docs/use/">Use a gateway</a>. It covers Try, Library, Apps &amp; keys and Usage.</li>
+<li><strong>I want to connect an app or write code.</strong> Start with the <a href="/showcase/docs/api/">API overview</a>. It lists the base URL for each protocol and how to authenticate.</li>
+</ul>
+<h2 id="what-azizam-does">What Azizam does <a class="anchor" href="#what-azizam-does" aria-label="Link to What Azizam does">#</a></h2>
+<p>The gateway sits between your apps and the engines that do the model work.</p>
+<ol>
+<li>An app sends a request with its app key.</li>
+<li>The gateway checks the key and the app's access plan.</li>
+<li>The gateway sends the request to the engine or provider that serves the chosen model.</li>
+<li>The gateway records a receipt for the request, on routes that record receipts.</li>
+</ol>
+<p>You choose the engines. Engine addresses and model names are settings, not code. You can replace an engine without changing the gateway.</p>
+<h2 id="what-you-need-to-bring">What you need to bring <a class="anchor" href="#what-you-need-to-bring" aria-label="Link to What you need to bring">#</a></h2>
+<ul>
+<li>A computer to run the gateway, with Docker and Docker Compose.</li>
+<li>At least one engine that serves an OpenAI-compatible chat API, with a model already loaded.</li>
+<li>Model files for any image, video or audio work you want to do.</li>
+</ul>
+<p>Azizam does not download or install models. What you can do depends on the engines and model files you connect.</p>
+<h2 id="before-you-rely-on-it">Before you rely on it <a class="anchor" href="#before-you-rely-on-it" aria-label="Link to Before you rely on it">#</a></h2>
+<ul>
+<li>A route that accepts a vendor's API format does not mean that every feature of that API works. Each page under <a href="/showcase/docs/api/">Build with the API</a> lists its limits.</li>
+<li>A local model that is down does not silently become a paid request. Paid providers need explicit setup and permission. See <a href="/showcase/docs/concepts/providers-and-spend/">Providers and spend</a>.</li>
+<li>You run the computer. Updates, backups and HTTPS for other devices are your responsibility. See <a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a> and <a href="/showcase/docs/operate/security/">Security</a>.</li>
+</ul>
+<h2 id="find-your-way-around">Find your way around <a class="anchor" href="#find-your-way-around" aria-label="Link to Find your way around">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table">
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Use it to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Start here</td>
+<td>Install a gateway and get a first reply.</td>
+</tr>
+<tr>
+<td>Use a gateway</td>
+<td>Do everyday tasks as a member.</td>
+</tr>
+<tr>
+<td>Run a gateway</td>
+<td>Connect engines, invite people, keep the gateway safe and up to date.</td>
+</tr>
+<tr>
+<td>Build with the API</td>
+<td>Connect apps, SDKs and agents.</td>
+</tr>
+<tr>
+<td>Concepts</td>
+<td>Understand how access, keys, receipts and privacy work.</td>
+</tr>
+<tr>
+<td>Reference</td>
+<td>Look up settings, error codes and terms.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Use <strong>Search</strong> at the top of any page, or press <kbd>/</kbd>.</p>
+
+    </article>
+    <nav class="pager" aria-label="Previous and next page"><a class="pager-next" href="/showcase/docs/start/install/" rel="next"><span>Next</span>Install Azizam</a></nav>
+  </main>
+  <aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p><ul><li class="toc-l2"><a href="#choose-where-to-start">Choose where to start</a></li><li class="toc-l2"><a href="#what-azizam-does">What Azizam does</a></li><li class="toc-l2"><a href="#what-you-need-to-bring">What you need to bring</a></li><li class="toc-l2"><a href="#before-you-rely-on-it">Before you rely on it</a></li><li class="toc-l2"><a href="#find-your-way-around">Find your way around</a></li></ul></nav></aside>
+</div>
+<dialog id="search" class="search" aria-labelledby="search-title">
+  <form method="dialog" class="search-form" role="search">
+    <h2 id="search-title" class="visually-hidden">Search the docs</h2>
+    <label class="visually-hidden" for="search-input">Search the docs</label>
+    <input id="search-input" type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false" aria-describedby="search-count" aria-controls="search-results">
+    <button class="search-close" type="submit" value="close">Close</button>
+  </form>
+  <p id="search-count" class="search-count" role="status" aria-live="polite"></p>
+  <ul id="search-results" class="search-results"></ul>
+</dialog>
+<p id="copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+</body>
+</html>

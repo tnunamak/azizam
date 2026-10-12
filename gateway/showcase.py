@@ -15,6 +15,9 @@ Access rules:
   secrets and no private data; the example script uses only benign prompts.
 * ``GET /showcase/api/status`` goes through the normal gateway authentication,
   like every other data route, because it reports backend state.
+
+The product docs are static HTML under ``showcase/docs``, built from Markdown
+by ``scripts/build-docs`` and served at ``/showcase/docs/``. They are public too.
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ SHOWCASE_CSP = (
 )
 
 _STATIC_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+_DOCS_PREFIX = f"{SHOWCASE_PREFIX}/docs"
+_DOCS_SEGMENT = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _EXAMPLE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,95}$")
 _MEDIA_TYPES = {
     ".png": "image/png",
@@ -137,6 +142,34 @@ def build_showcase_router(
         if not _STATIC_NAME.match(name) or name == "index.html" or not path.is_file():
             return JSONResponse({"error": {"code": "not_found"}}, status_code=404)
         return _file_response(path, cache="no-cache")
+
+    docs_dir = static_dir / "docs"
+
+    @router.get(_DOCS_PREFIX, include_in_schema=False)
+    async def docs_root() -> Response:
+        return RedirectResponse(_DOCS_PREFIX + "/", status_code=308)
+
+    @router.get(_DOCS_PREFIX + "/{path:path}", include_in_schema=False)
+    async def docs_page(path: str) -> Response:
+        if path == "search-index.json":
+            return _file_response(docs_dir / path, cache="no-cache") if (docs_dir / path).is_file() else _docs_404()
+        segments = path.rstrip("/").split("/") if path else []
+        if not all(_DOCS_SEGMENT.match(seg) for seg in segments):
+            return _docs_404()
+        page = docs_dir.joinpath(*segments, "index.html")
+        if not page.is_file():
+            return _docs_404()
+        if path and not path.endswith("/"):
+            return RedirectResponse(f"{_DOCS_PREFIX}/{path}/", status_code=308)
+        return _file_response(page, cache="no-cache")
+
+    def _docs_404() -> Response:
+        missing = docs_dir / "404.html"
+        if not missing.is_file():
+            return JSONResponse({"error": {"code": "not_found"}}, status_code=404)
+        response = _file_response(missing, cache="no-cache")
+        response.status_code = 404
+        return response
 
     @router.get(SHOWCASE_PREFIX + "/examples/index.json", include_in_schema=False)
     async def showcase_examples_index() -> Response:
