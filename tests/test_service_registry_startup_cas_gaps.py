@@ -59,16 +59,19 @@ def test_startup_lost_seed_race_keeps_the_winner_and_audits_one_seed(monkeypatch
     durable = admin_store.get_service_registry_with_generation(path=path)
     assert result == durable["value"]
     assert result["services"]["operator-service"]["config"]["operator_value"] == "must survive"
-    print("GEN", durable["operator_settings_generation"], [(e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)])
-    assert False
+    assert durable["operator_settings_generation"] == 2
+    assert [(e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)] == [
+        ("operator.service_registry.backfill", "test-boot"),
+        ("operator.service_registry.seed", "other-boot"),
+    ]
 
 
 def test_startup_conflicts_stop_after_three_fresh_attempts(monkeypatch, tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     _write_winner(path)
-    reads = _stale_first_reads(monkeypatch, 99)
     before = admin_store.get_service_registry_with_generation(path=path)
+    reads = _stale_first_reads(monkeypatch, 99)
 
     with pytest.raises(RuntimeError, match="bounded startup retry"):
         sr.ensure_service_registry({"backends": {}}, path=path, actor="test-boot")
