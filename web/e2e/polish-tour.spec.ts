@@ -3,6 +3,7 @@ import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir, copyFile } from "node:fs/promises";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 // Screenshots go to the test's own output path inside the run directory. Only
 // an explicit UI_POLISH_SCREEN_DIR publishes copies outside it.
@@ -160,40 +161,39 @@ for (const theme of ["light", "dark"] as const) {
         theme,
       );
       await page.route("**/me/api/media?**", (route) =>
-        route.fulfill({
-          json: new URL(route.request().url()).searchParams.has("workflow")
+        fulfilJson(
+          route,
+          new URL(route.request().url()).searchParams.has("workflow")
             ? { assets: [], models: [], next_cursor: null }
             : media,
-        }),
+        ),
       );
       await page.route("**/me/api/workflows", (route) =>
-        route.fulfill({ json: workflowsPolishCatalog }),
+        fulfilJson(route, workflowsPolishCatalog),
       );
       await page.route("**/test-polish-audio.wav", (route) =>
-        route.fulfill({ contentType: "audio/wav", body: wav }),
+        fulfilBytes(route, { contentType: "audio/wav", body: wav }),
       );
       // Show the established Home presentation rather than the first-run
       // guide. Home tests separately exercise genuine setup-progress states.
       await page.route("**/admin/api/setup-progress", (route) =>
-        route.fulfill({ json: { complete: true, steps: [] } }),
+        fulfilJson(route, { complete: true, steps: [] }),
       );
       // Providers are optional in this build. This existing API fixture has no
       // spend or measurements, so the screenshot retains honest unknown states.
       await page.route("**/admin/api/providers", (route) =>
-        route.fulfill({
-          json: {
-            providers: [
-              {
-                id: "openrouter",
-                name: "OpenRouter",
-                enabled: true,
-                reachable: null,
-                key_set: true,
-                spend_usd: null,
-                cap_usd: null,
-              },
-            ],
-          },
+        fulfilJson(route, {
+          providers: [
+            {
+              id: "openrouter",
+              name: "OpenRouter",
+              enabled: true,
+              reachable: null,
+              key_status: { state: "set" },
+              spend: { status: "unknown" },
+              caps: {},
+            },
+          ],
         }),
       );
       for (const name of [

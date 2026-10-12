@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const themes = ["light", "dark"] as const;
 const widths = [1440, 390] as const;
@@ -61,32 +62,31 @@ async function inspect(page: Page, file: string) {
 
 async function mockAppsSessionFailure(page: Page) {
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(
+      route,
+      { error: { message: "Unavailable for this test" } },
+      { status: 503 },
+    ),
   );
 }
 
 async function mockProviders(page: Page, state: "seeded" | "empty") {
   await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      json: {
-        providers:
-          state === "empty"
-            ? []
-            : [
-                {
-                  id: "openrouter",
-                  name: "OpenRouter",
-                  enabled: true,
-                  reachable: true,
-                  key_set: true,
-                  spend_usd: 1.25,
-                  cap_usd: 10,
-                },
-              ],
-      },
+    fulfilJson(route, {
+      providers:
+        state === "empty"
+          ? []
+          : [
+              {
+                id: "openrouter",
+                name: "OpenRouter",
+                enabled: true,
+                reachable: true,
+                key_status: { state: "set" },
+                spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "known" },
+                caps: { daily_usd: 10 },
+              },
+            ],
     }),
   );
 }
@@ -112,7 +112,9 @@ async function openApps(
     ).toBeVisible();
   } else {
     await expect(
-      page.getByText("We couldn't tell why your account didn't load. Try again."),
+      page.getByText(
+        "We couldn't tell why your account didn't load. Try again.",
+      ),
     ).toBeVisible();
   }
   await inspect(page, `apps-${state}-${theme}-${width}`);

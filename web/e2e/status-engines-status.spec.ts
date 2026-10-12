@@ -1,6 +1,7 @@
 import { type Page, type Route } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const registry = {
   schema_version: 1,
@@ -143,78 +144,80 @@ async function mockStatusApis(
   { empty = false, statusError = false, providers = 404 } = {},
 ) {
   await page.route("**/me/api/session", (route: Route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user: {
-          id: "owner",
-          name: "Owner",
-          email: "owner@example.test",
-          role: "owner",
-        },
-        apps: [],
+    fulfilJson(route, {
+      authenticated: true,
+      user: {
+        id: "owner",
+        name: "Owner",
+        email: "owner@example.test",
+        role: "owner",
       },
+      apps: [],
     }),
   );
   await page.route("**/admin/api/status", (route: Route) => {
     if (statusError) {
-      return route.fulfill({
-        status: 503,
-        json: {
+      return fulfilJson(
+        route,
+        {
           error: { code: "status_unavailable", message: "Status probe failed" },
         },
-      });
+        { status: 503 },
+      );
     }
-    return route.fulfill({
-      json: {
-        status: empty
-          ? {
-              current_health: {
-                state: "empty",
-                tone: "neutral",
-                label: "No engines configured",
-                detail: "Add an engine to start routing.",
-                observation_available: false,
-                services: [],
-              },
-              backends: [],
-            }
-          : currentStatus,
-      },
+    return fulfilJson(route, {
+      status: empty
+        ? {
+            current_health: {
+              state: "empty",
+              tone: "neutral",
+              label: "No engines configured",
+              detail: "Add an engine to start routing.",
+              observation_available: false,
+              services: [],
+            },
+            backends: [],
+          }
+        : currentStatus,
     });
   });
   await page.route("**/admin/api/operator/service-registry", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(
+      route,
+      {
         service_registry: empty
           ? { schema_version: 1, services: {} }
           : registry,
       },
-      headers: { etag: "test-etag" },
-    }),
+      { headers: { etag: "test-etag" } },
+    ),
   );
   await page.route("**/admin/api/providers", (route: Route) => {
     if (providers === 404)
-      return route.fulfill({
-        status: 404,
-        json: { error: { message: "not found" } },
-      });
-    return route.fulfill({
-      status: providers,
-      json: {
-        providers: empty ? [] : [
-          {
-            id: "openrouter",
-            name: "OpenRouter",
-            enabled: true,
-            reachable: true,
-            key_set: true,
-            spend_usd: 1.25,
-            cap_usd: 10,
-          },
-        ],
+      return fulfilJson(
+        route,
+        { error: { message: "not found" } },
+        { status: 404 },
+      );
+    return fulfilJson(
+      route,
+      {
+        providers: empty
+          ? []
+          : [
+              {
+                id: "openrouter",
+                name: "OpenRouter",
+                enabled: true,
+                reachable: true,
+                key_status: { state: "set" },
+                spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "known" },
+                caps: { daily_usd: 10 },
+              },
+            ],
       },
-    });
+      { status: providers },
+    );
   });
 }
 

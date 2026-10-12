@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const seededCatalog = {
   schema_version: 1,
@@ -287,7 +288,7 @@ const emptyCatalog = {
 
 async function routeCatalog(page: Page, payload: unknown, status = 200) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ status, json: payload }),
+    fulfilJson(route, payload, { status }),
   );
 }
 

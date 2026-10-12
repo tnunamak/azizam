@@ -1,6 +1,7 @@
 import { type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const catalog = {
   providers: [
@@ -115,16 +116,15 @@ async function setViewport(
 // real layout at 390 px, axe per state and the real-gateway journey.
 async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/profiles", (route: Route) =>
-    route.fulfill({ json: plans }),
+    fulfilJson(route, plans),
   );
   await page.route("**/admin/api/providers**", (route: Route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/admin/api/providers/-/catalog") {
-      return route.fulfill({ json: catalog });
+      return fulfilJson(route, catalog);
     }
     if (path === "/admin/api/providers/openrouter/reconciliation") {
-      return route.fulfill({
-        json: {
+      return fulfilJson(route, {
           reconciliations: [
             {
               id: 42,
@@ -140,19 +140,13 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
               generation_id: "gen_pending_42_abcdefghijklmnopqrstuvwxyz",
             },
           ],
-        },
-      });
+        });
     }
     if (path !== "/admin/api/providers") return route.continue();
     if (state === "error") {
-      return route.fulfill({
-        status: 503,
-        json: { error: { message: "Provider API unavailable" } },
-      });
+      return fulfilJson(route, { error: { message: "Provider API unavailable" } }, { status: 503 });
     }
-    return route.fulfill({
-      json: state === "seeded" ? seededProviders : { providers: [] },
-    });
+    return fulfilJson(route, state === "seeded" ? seededProviders : { providers: [] });
   });
 }
 
@@ -602,8 +596,7 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
   await setViewport(page, "light", 390);
   await routeProviders(page, "empty");
   await page.route("**/admin/api/providers/-/catalog", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         providers: [
           // The longest real preset name, URL and billing labels.
           {
@@ -620,8 +613,7 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
             ],
           },
         ],
-      },
-    }),
+      }),
   );
   await page.goto("/providers/");
   await page.getByRole("button", { name: "Add provider" }).first().click();

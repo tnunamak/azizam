@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures/isolation";
 import type { Page } from "@playwright/test";
+import { fulfilJson } from "./fixtures/intercept";
 
 // The shell health pill must say what its dot says (DESIGN.md, Status model
 // rule 3). Phone width, as the owner saw it. Pill label, dot colour, popover
@@ -52,25 +53,21 @@ async function installMember(
 ) {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         csrf_token: "fixture",
         apps: [],
         user: member,
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/home", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         user: member,
         aliases: [],
         receipts: [],
         capabilities: rows,
-      },
-    }),
+      }),
   );
 }
 
