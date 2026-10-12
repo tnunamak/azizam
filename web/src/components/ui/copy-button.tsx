@@ -48,13 +48,19 @@ export function useCopied(value?: string): {
   const [failed, setFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generation = useRef(0);
+  const [shownValue, setShownValue] = useState(value);
+  if (shownValue !== value) {
+    // New content was never copied; clear the old result during render.
+    setShownValue(value);
+    setCopied(false);
+    setFailed(false);
+  }
 
   useEffect(() => {
+    // A late result or pending reset belongs to the old content.
     generation.current += 1;
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
-    setCopied(false);
-    setFailed(false);
   }, [value]);
 
   useEffect(() => {

@@ -237,7 +237,12 @@ export function CommandPalette({
     input?.focus();
     input?.select();
   }, [copyAddress]);
-  const appsQuery = useQuery({
+  const {
+    data: appData,
+    isPending: appsPending,
+    isError: appsFailed,
+    refetch: refetchApps,
+  } = useQuery({
     queryKey: ["foundation", "command-apps"],
     queryFn: async () => {
       const r = await fetch("/me/api/session");
@@ -251,12 +256,22 @@ export function CommandPalette({
     },
     enabled: open && viewer.authenticated && !viewer.serviceAdmin,
   });
-  const peopleQuery = useQuery({
+  const {
+    data: peopleData,
+    isPending: peoplePending,
+    isError: peopleFailed,
+    refetch: refetchPeople,
+  } = useQuery({
     queryKey: queryKeys.users,
     queryFn: api.users.list,
     enabled: open && viewer.admin && !viewer.serviceAdmin,
   });
-  const modelsQuery = useQuery({
+  const {
+    data: modelData,
+    isPending: modelsPending,
+    isError: modelsFailed,
+    refetch: refetchModels,
+  } = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
     select: (registry) => {
@@ -273,11 +288,10 @@ export function CommandPalette({
     },
     enabled: open && viewer.admin,
   });
-  const appData = appsQuery.data;
   const matches = (value: string) => value.toLowerCase().includes(search.trim().toLowerCase());
   const apps = (appData?.apps ?? []).filter((app) => matches(formatAppName(app.name, appData?.user?.email)));
-  const models = Object.keys(modelsQuery.data?.aliases ?? {}).filter(matches);
-  const people = (peopleQuery.data ?? []).filter((person) => matches([
+  const models = Object.keys(modelData?.aliases ?? {}).filter(matches);
+  const people = (peopleData ?? []).filter((person) => matches([
     person.display_name, person.name, person.email,
   ].filter(Boolean).join(" ")));
   const go = (href: string) => {
@@ -402,7 +416,7 @@ export function CommandPalette({
               )}
             </CommandGroup>
             {viewer.authenticated && !viewer.serviceAdmin && (
-              <RemoteCommandGroup heading="Apps" pending={appsQuery.isPending} failed={appsQuery.isError} count={apps.length} retry={() => void appsQuery.refetch()}>
+              <RemoteCommandGroup heading="Apps" pending={appsPending} failed={appsFailed} count={apps.length} retry={() => void refetchApps()}>
                 {apps.map((app) => (
                   <CommandItem
                     key={app.id}
@@ -418,7 +432,7 @@ export function CommandPalette({
               </RemoteCommandGroup>
             )}
             {viewer.admin && (
-              <RemoteCommandGroup heading="Models" pending={modelsQuery.isPending} failed={modelsQuery.isError} count={models.length} retry={() => void modelsQuery.refetch()}>
+              <RemoteCommandGroup heading="Models" pending={modelsPending} failed={modelsFailed} count={models.length} retry={() => void refetchModels()}>
                 {models.map((name) => (
                   <CommandItem
                     key={name}
@@ -434,7 +448,7 @@ export function CommandPalette({
               </RemoteCommandGroup>
             )}
             {viewer.admin && !viewer.serviceAdmin && (
-              <RemoteCommandGroup heading="People" pending={peopleQuery.isPending} failed={peopleQuery.isError} count={people.length} retry={() => void peopleQuery.refetch()}>
+              <RemoteCommandGroup heading="People" pending={peoplePending} failed={peopleFailed} count={people.length} retry={() => void refetchPeople()}>
                 {people.map((person) => (
                   <CommandItem
                     key={person.id}
