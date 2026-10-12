@@ -165,9 +165,9 @@ async def _read_until(chunks, received: bytearray, suffix: bytes) -> None:
         received += await chunks.__anext__()
 
 
-EVENT_A = b'{"message":{"content":"a"},"done":false}\n'
-CUT = b'{"message":{"content":"caf\xc3'
-REST = b'\xa9"},"done":false}\n'
+EVENT_A = b'data: {"content":"a"}\n\n'
+CUT = b'data: {"content":"caf\xc3'
+REST = b'\xa9"}\n\n'
 
 
 def test_loopback_sends_nothing_past_a_cut_until_the_clock_moves_then_drops(monkeypatch) -> None:
@@ -177,8 +177,8 @@ def test_loopback_sends_nothing_past_a_cut_until_the_clock_moves_then_drops(monk
 
     async def scenario() -> None:
         async with httpx.AsyncClient(base_url=fake.base_url) as client:
-            async with client.stream("POST", "/api/chat", json={}) as response:
-                assert response.headers["content-type"] == "application/x-ndjson"
+            async with client.stream("POST", "/v1/chat/completions", json={}) as response:
+                assert response.headers["content-type"] == "text/event-stream"
                 assert response.headers["transfer-encoding"] == "chunked"
                 chunks = response.aiter_raw().__aiter__()
                 received = bytearray()
@@ -186,14 +186,14 @@ def test_loopback_sends_nothing_past_a_cut_until_the_clock_moves_then_drops(monk
                 await clock.until_waiting()
                 assert bytes(received) == EVENT_A + CUT
                 clock.advance(1)
-                await _read_until(chunks, received, b"\n")
+                await _read_until(chunks, received, b"\n\n")
                 await clock.until_waiting()
                 assert bytes(received).decode("utf-8") == (EVENT_A + CUT + REST).decode("utf-8")
                 clock.advance(1)
                 with pytest.raises(httpx.RemoteProtocolError):
                     await chunks.__anext__()
             with pytest.raises(httpx.RemoteProtocolError, match="Server disconnected without sending a response"):
-                await client.post("/api/generate", json={})
+                await client.post("/v1/completions", json={})
 
     try:
         asyncio.run(scenario())
@@ -210,22 +210,22 @@ def test_in_process_mode_delivers_each_body_part_as_one_chunk(monkeypatch) -> No
     async def scenario() -> list[bytes]:
         received: list[bytes] = []
         async with httpx.AsyncClient(base_url=fake.base_url) as client:
-            async with client.stream("POST", "/api/chat", json={}) as response:
+            async with client.stream("POST", "/v1/chat/completions", json={}) as response:
                 with pytest.raises(httpx.RemoteProtocolError):
                     async for chunk in response.aiter_raw():
                         received.append(chunk)
-                        if chunk in (b"\xc3", b'"},"done":false}\n'):
+                        if chunk in (b"\xc3", b'"}\n\n'):
                             await clock.until_waiting()
                             clock.advance(1)
             with pytest.raises(httpx.RemoteProtocolError, match="Server disconnected without sending a response"):
-                await client.post("/api/generate", json={})
+                await client.post("/v1/completions", json={})
         return received
 
     try:
         received = asyncio.run(scenario())
     finally:
         fakes.close()
-    assert received == [EVENT_A, b'{"message":{"content":"caf', b"\xc3", b"\xa9", b'"},"done":false}\n']
+    assert received == [EVENT_A, b'data: {"content":"caf', b"\xc3", b"\xa9", b'"}\n\n']
     assert fakes.problems() == []
 
 

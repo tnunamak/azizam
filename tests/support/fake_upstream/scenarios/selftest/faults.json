@@ -1,25 +1,58 @@
 {
-  "protocol": "ollama",
+  "protocol": "openai-compatible",
   "name": "faults",
-  "description": "Self-test: an NDJSON stream cut inside a UTF-8 character, then a drop; and a drop before headers.",
-  "provenance": {"source": "hand-written", "reference": "tests/test_fake_upstream.py"},
+  "description": "Self-test: an SSE stream cut inside a UTF-8 character, then a drop; and a drop before headers.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "tests/test_fake_upstream.py"
+  },
   "exchanges": [
     {
       "id": "stream",
-      "match": {"method": "POST", "path": "/api/chat"},
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
       "response": {
         "body": [
-          {"event": {"message": {"content": "a"}, "done": false}},
-          {"text": "{\"message\":{\"content\":\"caf"},
-          {"hex": "c3"},
-          {"wait": 1},
-          {"hex": "a9"},
-          {"text": "\"},\"done\":false}\n"},
-          {"wait": 1},
-          {"disconnect": true}
+          {
+            "event": {
+              "content": "a"
+            }
+          },
+          {
+            "text": "data: {\"content\":\"caf"
+          },
+          {
+            "hex": "c3"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "hex": "a9"
+          },
+          {
+            "text": "\"}\n\n"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "disconnect": true
+          }
         ]
       }
     },
-    {"id": "drop", "match": {"method": "POST", "path": "/api/generate"}, "response": {"disconnect_before_headers": true}}
+    {
+      "id": "drop",
+      "match": {
+        "method": "POST",
+        "path": "/v1/completions"
+      },
+      "response": {
+        "disconnect_before_headers": true
+      }
+    }
   ]
 }

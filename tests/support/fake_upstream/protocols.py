@@ -21,7 +21,7 @@ class Protocol:
     # Path templates; ``{name}`` matches one non-empty path segment.
     paths: tuple[str, ...]
     # How an ``{"event": ...}`` body part is framed on the wire.
-    framing: str  # "sse-data" | "sse-typed" | "ndjson" | "none"
+    framing: str  # "sse-data" | "none"
     stream_media_type: str = ""
     # Bytes a ``{"done": true}`` part writes, when the protocol has a terminator.
     stream_end: bytes = b""
@@ -33,10 +33,6 @@ class Protocol:
         payload = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
         if self.framing == "sse-data":
             return f"data: {payload}\n\n".encode()
-        if self.framing == "sse-typed":
-            return f"event: {event['type']}\ndata: {payload}\n\n".encode()
-        if self.framing == "ndjson":
-            return f"{payload}\n".encode()
         raise ValueError(f"protocol {self.name!r} has no event framing")
 
 
