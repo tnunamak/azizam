@@ -33,8 +33,9 @@ import tomllib
 from collections import defaultdict
 from pathlib import Path
 
+# Dependencies and tool output only: a pruned name hides any test file below it.
 PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fresh-venv",
-               ".next", "out", "test-results", "cache"}
+               ".next", "test-results"}
 PYTHON_TEST = re.compile(r"^(test_.*|.*_test)\.py$")
 WEB_TEST = re.compile(r"^.*\.(spec|test|e2e)\.[cm]?[jt]sx?$|^.*\.household\.ts$")
 TEST_CONFIG = re.compile(r"^(playwright|vitest)\b.*\.config\.[cm]?[jt]s$")
