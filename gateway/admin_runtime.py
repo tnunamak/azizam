@@ -1604,7 +1604,7 @@ def _credential_active(record: Mapping[str, Any]) -> bool:
 def person_for_app_credential(app: Mapping[str, Any], credential: Mapping[str, Any]) -> str | None:
     """Personal keys represent their own App owner; shared/service keys do not.
 
-    An unresolved legacy creator cannot prove ownership. Such keys keep App
+    An unresolved creator cannot prove ownership. Such keys keep App
     access but do not inherit a person or their saved prompts.
     """
     owner = app.get("owner_user_id")

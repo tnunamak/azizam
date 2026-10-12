@@ -244,7 +244,7 @@ def decide_for_person(
         member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
         household = household_settings(admin_path=path)
     except sqlite3.OperationalError:
-        # Missing legacy preference or a busy database cannot fail inference.
+        # If storage is unavailable, validate the request and disable memory.
         requested_mode(body)
         return Decision(person_id, False, "storage_unavailable")
     return decide(
