@@ -231,3 +231,26 @@ def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upst
         if frontend == "anthropic" else {"error": "LiteLLM execution timed out."}
     )
     assert json.loads(raw) == expected
+
+
+@pytest.mark.xfail(strict=True, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-frontend-sse-bytes)")
+def test_frontend_sse_reader_reassembles_a_cut_utf8_character(fake_upstreams) -> None:
+    """The frontends' SSE reader on its own, against the wire, without the chat hop's event alignment."""
+    fake = fake_upstreams.loopback(load_scenario("openai-compatible/stream-split-event", model=MODEL))
+
+    async def read() -> list[dict]:
+        events: list[dict] = []
+        async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
+            async with client.stream("POST", f"{fake.base_url}/v1/chat/completions", json={"model": MODEL, "stream": True}) as response:
+                async for event in proxy._iter_openai_sse_json(response):
+                    events.append(event)
+                    if len(events) in (1, 2, 4):
+                        await fake_upstreams.clock.until_waiting()
+                        fake_upstreams.clock.advance(1)
+        return events
+
+    events = asyncio.run(read())
+
+    assert [event["choices"][0]["delta"] for event in events] == [
+        {"role": "assistant", "content": ""}, {"content": "Hello"}, {"content": " café"}, {},
+    ]
