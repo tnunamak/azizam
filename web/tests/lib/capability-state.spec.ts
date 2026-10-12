@@ -115,6 +115,53 @@ describe("capabilityView: one state word from recorded evidence", () => {
     );
     expect(view.state).toBe("ready");
   });
+  it("does not count an on-demand engine that is not running as failing", () => {
+    const view = capabilityView(
+      { ...chat, evidence: fresh },
+      {
+        now,
+        engines: [
+          engine({
+            observation: "down",
+            tone: "warn",
+            inUse: true,
+            startsOnDemand: true,
+            lastError: "connect refused",
+          }),
+        ],
+      },
+    );
+    expect(view.state).toBe("ready");
+  });
+  it("still counts an on-demand engine that times out as failing", () => {
+    const view = capabilityView(
+      { ...chat, evidence: fresh },
+      {
+        now,
+        engines: [
+          engine({
+            observation: "down",
+            tone: "warn",
+            inUse: true,
+            startsOnDemand: true,
+            lastError: "timeout",
+          }),
+        ],
+      },
+    );
+    expect(view.state).toBe("down");
+  });
+  it("counts a refused engine that does not start on demand as failing", () => {
+    const view = capabilityView(
+      { ...chat, evidence: fresh },
+      {
+        now,
+        engines: [engine({ observation: "down", tone: "bad", inUse: true, lastError: "connect refused" })],
+      },
+    );
+    expect(view.state).toBe("down");
+    expect(view.detail).toBe("Local chat is not accepting connections.");
+  });
   it("does not report Busy beside a failed request", () => {
     const failed: RequestSignal = { capability: "chat", status: "failed", at: now - 120 };
     const view = capabilityView(

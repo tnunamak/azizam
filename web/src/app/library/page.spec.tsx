@@ -211,6 +211,33 @@ describe("LibraryPage batch J provenance", () => {
     },
   );
 
+  test("keeps a playing audio tile mounted when a refetch re-signs its URL", async () => {
+    const signed = (sig: string) => ({
+      ...audioAsset,
+      prompt: "Signed audio",
+      download_url: `/media/audio_1.wav?sig=${sig}`,
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ assets: [signed("one")], models: [], next_cursor: null }),
+    );
+    const { queryClient, container } = renderLibrary();
+    await screen.findByRole("button", { name: "Play Signed audio" });
+    const audio = container.querySelector("audio")!;
+    fireEvent.play(audio);
+    expect(screen.getByRole("button", { name: "Pause Signed audio" })).toBeVisible();
+    act(() => {
+      queryClient.setQueriesData(
+        { predicate: (query) => query.queryKey[0] === "library" && typeof query.queryKey[1] === "object" },
+        { pages: [{ assets: [signed("two")], models: [], next_cursor: null }], pageParams: [null] },
+      );
+    });
+    await waitFor(() =>
+      expect(container.querySelector("audio")).toBe(audio),
+    );
+    expect(audio.isConnected).toBe(true);
+    expect(screen.getByRole("button", { name: "Pause Signed audio" })).toBeVisible();
+  });
+
   test("links the request receipt and omits an absent prompt", async () => {
     renderLibrary();
 
