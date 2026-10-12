@@ -192,6 +192,7 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
     plan = admin_store.create_access_plan({
         "name": fixture["plan_name"], "can_use": {"chat": {"items": "all"}},
         "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False,
+        "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
         "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none",
     }, path=db)
     for label in ("user_a", "user_b"):
