@@ -1,3 +1,4 @@
+import "./test-priority"; // first: nice 19 + idle I/O for the runner and everything it starts
 import { defineConfig } from "@playwright/test";
 import base from "./playwright.config";
 
