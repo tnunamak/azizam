@@ -69,7 +69,27 @@ class _ThreadedServer:
         self.thread.join(timeout=5)
 
 
-def _handler_for(scorer):
+class _CountingSemaphore(threading.BoundedSemaphore):
+    """Reports when `target` admissions are held, so a test can wait on that fact."""
+
+    def __init__(self, value: int, target: int) -> None:
+        super().__init__(value)
+        self.target = target
+        self.at_target = threading.Event()
+        self._held = 0
+        self._count_lock = threading.Lock()
+
+    def acquire(self, blocking=True, timeout=None):
+        got = super().acquire(blocking, timeout)
+        if got:
+            with self._count_lock:
+                self._held += 1
+                if self._held >= self.target:
+                    self.at_target.set()
+        return got
+
+
+def _handler_for(scorer, admission=None):
     class TestHandler(server.Handler):
         pass
 
@@ -79,7 +99,7 @@ def _handler_for(scorer):
     TestHandler.placement = "cpu"
     TestHandler.residency = "on_demand"
     TestHandler.request_lock = threading.Lock()
-    TestHandler.admission = threading.BoundedSemaphore(5)
+    TestHandler.admission = admission or threading.BoundedSemaphore(5)
     return TestHandler
 
 
@@ -106,11 +126,13 @@ class BlockingScorer:
 
 def test_handler_admits_five_requests_and_rejects_sixth_when_queue_full():
     scorer = BlockingScorer()
-    with _ThreadedServer(_handler_for(scorer)) as base_url:
+    admission = _CountingSemaphore(5, target=5)
+    with _ThreadedServer(_handler_for(scorer, admission)) as base_url:
         with ThreadPoolExecutor(max_workers=6) as pool:
             pending = [pool.submit(_post_json, base_url, "/v1/systemone", _systemone_body(str(i))) for i in range(5)]
             assert scorer.entered.wait(timeout=5)
-            time.sleep(0.2)
+            # The sixth request may only overflow once all five hold a slot.
+            assert admission.at_target.wait(timeout=5)
 
             status, headers, body = _post_json(base_url, "/v1/systemone", _systemone_body("overflow"))
             assert status == 529
