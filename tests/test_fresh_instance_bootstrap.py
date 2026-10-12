@@ -76,32 +76,13 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
         admin_store.init_db(self.db)
         self.assertEqual(admin_store.schema_version(self.db), admin_store.SCHEMA_VERSION)
 
-    # -- 2. default profiles seeded -------------------------------------------
+    # -- 2. no plan is seeded for anyone ----------------------------------------
 
-    def test_seed_default_profiles_populates_blank_db(self) -> None:
-        from gateway import admin_store, default_profiles
-
-        admin_store.init_db(self.db)
-        seeded = default_profiles.seed_default_profiles(path=self.db)
-        profiles = admin_store.list_profiles(path=self.db)
-        self.assertGreater(
-            len(profiles), 0,
-            "At least one default profile should be present after seeding",
-        )
-        # seeded returns the rows that were actually inserted (empty if already present)
-        self.assertIsInstance(seeded, list)
-
-    def test_seed_default_profiles_is_idempotent(self) -> None:
-        from gateway import admin_store, default_profiles
+    def test_a_fresh_database_has_no_access_plans(self) -> None:
+        from gateway import admin_store
 
         admin_store.init_db(self.db)
-        default_profiles.seed_default_profiles(path=self.db)
-        second = default_profiles.seed_default_profiles(path=self.db)
-        # Second call should not raise and should return empty (nothing new to insert)
-        self.assertIsInstance(second, list)
-        count_after_first = len(admin_store.list_profiles(path=self.db))
-        count_after_second = len(admin_store.list_profiles(path=self.db))
-        self.assertEqual(count_after_first, count_after_second)
+        self.assertEqual(admin_store.list_access_plans(path=self.db), [])
 
     # -- 3. service_registry with minimal config -------------------------------
 
