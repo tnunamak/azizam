@@ -180,40 +180,14 @@ type Result = {
 const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
 /** "Don't keep this prompt", remembered for the browser session. */
 const FORGET_SESSION_KEY = "azizam.try.forget";
-/** This browser's Try key. It works only for the sign-in that made it. */
+/** Remove secrets persisted by older versions; new keys stay in page memory. */
 const TRY_KEY_STORAGE_KEY = "azizam.try.key";
-type StoredTryKey = { id: string; secret: string; appName: string };
-
-function readStoredTryKey(): StoredTryKey | null {
-  try {
-    const value: unknown = JSON.parse(
-      localStorage.getItem(TRY_KEY_STORAGE_KEY) ?? "null",
-    );
-    if (!value || typeof value !== "object") return null;
-    const { id, secret, appName } = value as Record<string, unknown>;
-    return typeof id === "string" &&
-      typeof secret === "string" &&
-      typeof appName === "string"
-      ? { id, secret, appName }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeTryKey(key: StoredTryKey) {
-  try {
-    localStorage.setItem(TRY_KEY_STORAGE_KEY, JSON.stringify(key));
-  } catch {
-    // A blocked store only means the next visit makes a new key.
-  }
-}
 
 function forgetStoredTryKey() {
   try {
     localStorage.removeItem(TRY_KEY_STORAGE_KEY);
   } catch {
-    // Nothing was stored.
+    // Storage may be blocked; never fall back to persisting a secret.
   }
 }
 
@@ -1030,6 +1004,7 @@ export default function TryPage() {
   const requestedModel = searchParams.get("model") ?? searchParams.get("alias");
   const requestedCapabilityKey = requestedCapability?.toLowerCase().trim();
   const [key, setKey] = useState<TryKey | null>(null);
+  const keyGeneration = useRef(0);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
@@ -1139,11 +1114,25 @@ export default function TryPage() {
     const urls = objectUrls.current;
     return () => {
       mounted.current = false;
+      keyGeneration.current += 1;
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  useEffect(() => {
+    forgetStoredTryKey();
+  }, []);
+
+  useEffect(() => {
+    keyGeneration.current += 1;
+    if (!viewer.authenticated) {
+      setKey(null);
+      setKeyBusy(false);
+      setKeyError(null);
+    }
+  }, [viewer.authenticated]);
 
   useEffect(() => {
     const tab =
@@ -1255,16 +1244,22 @@ export default function TryPage() {
   }
 
   async function prepareKey() {
+    const generation = keyGeneration.current;
+    const current = () => mounted.current && generation === keyGeneration.current;
     setKeyBusy(true);
     setKeyError(null);
     try {
       const account = await accountApi.session();
-      if (!account.authenticated)
+      if (!current()) return null;
+      if (!account.authenticated) {
+        setKey(null);
         throw new Error("Sign in to create a Try key.");
-      // The gateway shows a secret once, so this browser keeps it until the
-      // key ends with the sign-in. The gateway decides whether it is reusable.
-      const cached = readStoredTryKey();
+      }
+      // Only reuse a key whose secret this page still holds. A reload or
+      // another tab asks for a fresh key without touching other tabs' keys.
+      const cached = key;
       const credential = await accountApi.tryKey(cached?.id ?? null);
+      if (!current()) return null;
       const secret = credential.reused ? cached?.secret : credential.api_key;
       if (!secret || (credential.reused && cached?.id !== credential.id))
         throw new Error("Could not prepare a Try key. Try again.");
@@ -1273,19 +1268,18 @@ export default function TryPage() {
         secret,
         appName: credential.app_name,
       };
-      if (!credential.reused) storeTryKey(prepared);
       setKey(prepared);
       const preparedCatalog = await loadCatalog(secret);
-      return { ...prepared, catalog: preparedCatalog };
+      return current() ? { ...prepared, catalog: preparedCatalog } : null;
     } catch (error) {
-      setKeyError(
+      if (current()) setKeyError(
         error instanceof Error
           ? error.message
           : "Could not prepare a Try key. Try again.",
       );
       return null;
     } finally {
-      setKeyBusy(false);
+      if (current()) setKeyBusy(false);
     }
   }
 

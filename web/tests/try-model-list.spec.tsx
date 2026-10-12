@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TryPage from "@/app/try/page";
@@ -8,9 +8,11 @@ const account = vi.hoisted(() => ({
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   params: new URLSearchParams(),
+  viewer: { authenticated: true, serviceAdmin: true, admin: false },
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => account.params }));
 vi.mock("@/lib/account-api", () => ({ accountApi: account }));
+vi.mock("@/components/shell/session", () => ({ useViewer: () => account.viewer }));
 
 // Rows shaped like gateway/models_catalog.py `_base_row`: capability intents
 // and input modalities under `capabilities`, `alias` and `use_names` on
@@ -353,5 +355,137 @@ describe("fallback capabilities and catalog envelopes", () => {
     render(<TryPage />);
     await screen.findByText("No models are listed");
     expect(screen.queryByRole("button", { name: "Retry model catalog" })).toBeNull();
+  });
+});
+
+describe("Try keys stay in page memory", () => {
+  const storageKey = "azizam.try.key";
+  const credential = (id: string, secret: string) => ({
+    id, api_key: secret, reused: false, app_name: "Try", expires_at: 0,
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    account.viewer = { authenticated: true, serviceAdmin: true, admin: false };
+    account.params = new URLSearchParams("capability=chat");
+    account.tryKey.mockReset();
+    account.revokeKey.mockReset();
+    account.tryKey.mockResolvedValue(credential("fixture-key-a", "fixture-secret-a"));
+    account.revokeKey.mockResolvedValue({});
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("workflows")) return json({ workflows: [] });
+      if (url.includes("/models/catalog")) return json(catalog);
+      return json({ choices: [{ message: { content: "Fixture reply" } }] });
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  async function runPage(container: HTMLElement) {
+    const page = within(container);
+    await waitFor(() => expect(page.getByRole("combobox")).toHaveTextContent("Chat model"));
+    await userEvent.setup().click(page.getByRole("button", { name: "Run" }));
+    await page.findByText("Fixture reply");
+    await waitFor(() => expect(page.getByRole("button", { name: "Run" })).toBeEnabled());
+  }
+
+  it("uses the in-memory key repeatedly without persisting its secret", async () => {
+    const writes = vi.spyOn(Storage.prototype, "setItem");
+    const view = render(<TryPage />);
+    await runPage(view.container);
+    await runPage(view.container);
+    expect(account.tryKey).toHaveBeenCalledTimes(1);
+    expect(account.tryKey).toHaveBeenCalledWith(null);
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/openai/v1/chat/completions",
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer fixture-secret-a" }) }),
+    );
+    expect(writes.mock.calls.some(([name, value]) => name === storageKey || value.includes("fixture-secret-a"))).toBe(false);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it("removes a legacy secret on load without reading or reusing it", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({
+      id: "legacy-fixture", secret: "legacy-fixture-secret", appName: "Try",
+    }));
+    const reads = vi.spyOn(Storage.prototype, "getItem");
+    const view = render(<TryPage />);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    // The assertion above is the only read of this key.
+    expect(reads.mock.calls.filter(([name]) => name === storageKey)).toHaveLength(1);
+    expect(account.tryKey).not.toHaveBeenCalled();
+    await runPage(view.container);
+    expect(account.tryKey).toHaveBeenCalledWith(null);
+  });
+
+  it("re-acquires a key after a page reload", async () => {
+    const first = render(<TryPage />);
+    await runPage(first.container);
+    first.unmount();
+    account.tryKey.mockResolvedValue(credential("fixture-key-b", "fixture-secret-b"));
+    const reloaded = render(<TryPage />);
+    await runPage(reloaded.container);
+    expect(account.tryKey.mock.calls).toEqual([[null], [null]]);
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "/openai/v1/chat/completions",
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer fixture-secret-b" }) }),
+    );
+    expect(account.revokeKey).not.toHaveBeenCalled();
+  });
+
+  it("keeps independent tab instances usable when one tab revokes its key", async () => {
+    account.tryKey
+      .mockResolvedValueOnce(credential("fixture-key-a", "fixture-secret-a"))
+      .mockResolvedValueOnce(credential("fixture-key-b", "fixture-secret-b"));
+    const first = render(<TryPage />);
+    const second = render(<TryPage />);
+    await runPage(first.container);
+    await runPage(second.container);
+    expect(account.tryKey.mock.calls).toEqual([[null], [null]]);
+    await userEvent.setup().click(within(first.container).getByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(within(first.container).queryByRole("button", { name: "Revoke" })).toBeNull());
+    expect(account.revokeKey).toHaveBeenCalledWith("fixture-key-a");
+    await runPage(second.container);
+    expect(account.tryKey).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch)).toHaveBeenLastCalledWith(
+      "/openai/v1/chat/completions",
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer fixture-secret-b" }) }),
+    );
+  });
+
+  it("clears the key on sign-out and re-acquires on the next sign-in", async () => {
+    const view = render(<TryPage />);
+    await runPage(view.container);
+    account.viewer = { ...account.viewer, authenticated: false };
+    view.rerender(<TryPage />);
+    expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+    account.viewer = { ...account.viewer, authenticated: true };
+    account.tryKey.mockResolvedValue(credential("fixture-key-b", "fixture-secret-b"));
+    view.rerender(<TryPage />);
+    await runPage(view.container);
+    expect(account.tryKey.mock.calls).toEqual([[null], [null]]);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it("discards a key response that arrives after sign-out", async () => {
+    let finish!: (value: ReturnType<typeof credential>) => void;
+    account.tryKey.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = render(<TryPage />);
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(account.tryKey).toHaveBeenCalledTimes(1));
+    account.viewer = { ...account.viewer, authenticated: false };
+    view.rerender(<TryPage />);
+    await act(async () => { finish(credential("fixture-key-a", "fixture-secret-a")); });
+    expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/chat/completions"))).toBe(false);
+    expect(localStorage.getItem(storageKey)).toBeNull();
   });
 });

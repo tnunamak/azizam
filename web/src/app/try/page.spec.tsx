@@ -404,7 +404,7 @@ function bearerOfLastRun() {
   );
   return new Headers(call?.[1]?.headers).get("authorization");
 }
-test("a later visit reuses this sign-in's Try key instead of minting", async () => {
+test("a later visit mints a fresh Try key because the secret stays in page memory", async () => {
   const first = render(<TryPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
   await screen.findByText(
@@ -413,31 +413,27 @@ test("a later visit reuses this sign-in's Try key instead of minting", async () 
   expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
   first.unmount();
+  expect(localStorage.getItem("azizam.try.key")).toBeNull();
 
-  mocks.tryKey.mockResolvedValue({ id: "key", reused: true, app_name: "Try" });
   fetchMock.mockClear();
   render(<TryPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
   await screen.findByText(/Try uses a temporary key/);
-  expect(mocks.tryKey).toHaveBeenLastCalledWith("key");
+  expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
 });
-test("a new key replaces the stored one and Revoke forgets it", async () => {
+test("an old stored secret is removed unused and Revoke ends the page key", async () => {
   localStorage.setItem(
     "azizam.try.key",
     JSON.stringify({ id: "old", secret: "old-secret", appName: "Try" }),
   );
   render(<TryPage />);
+  expect(localStorage.getItem("azizam.try.key")).toBeNull();
   fireEvent.click(await screen.findByRole("button", { name: "Run" }));
   await screen.findByText(/Try uses a temporary key/);
-  expect(mocks.tryKey).toHaveBeenLastCalledWith("old");
-  expect(JSON.parse(localStorage.getItem("azizam.try.key")!)).toMatchObject({
-    id: "key",
-    secret: "test-secret",
-  });
+  expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
+  await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
   fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
   await waitFor(() => expect(mocks.revokeKey).toHaveBeenCalledWith("key"));
-  await waitFor(() =>
-    expect(localStorage.getItem("azizam.try.key")).toBeNull(),
-  );
+  expect(localStorage.getItem("azizam.try.key")).toBeNull();
 });
