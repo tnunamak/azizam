@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from hypothesis import example, given, strategies as st
 
 from gateway import category_enforcement, category_policy as kernel
@@ -123,7 +124,7 @@ def grant(draw, svc: kernel.Service) -> kernel.Grant:
 def plan(draw, svc: kernel.Service, pid: str) -> kernel.Plan:
     grants = draw(st.lists(grant(svc), min_size=draw(st.sampled_from([0, 1, 1, 1])), max_size=2))
     require = [draw(row(f"r{i}", ("in", "exists", "missing"))) for i in range(draw(st.integers(0, 2)))]
-    deny = [draw(row(f"d{i}", ("in", "missing"))) for i in range(draw(st.sampled_from([0, 0, 0, 1])))]
+    deny = [draw(row(f"d{i}", ("in", "missing"))) for i in range(draw(st.sampled_from([0, 0, 0, 1, 2, 2])))]
     waived = draw(st.lists(st.sampled_from([r.id for r in require]), unique=True)) if require else []
     return kernel.Plan(pid, tuple(grants), tuple(require), tuple(deny), {rid: "allow" for rid in waived})
 
@@ -213,14 +214,16 @@ def model_decide(cats, person_plans, app_plans, svc, capability=CAPABILITY):
                 faults.append(((1, pi, 1 + ri, si), "REQUIRE_MISSING" if not values else "REQUIRE_MISMATCH",
                                f"{p.id}:{r.id}", r.category, s.id))
     if faults:
-        _key, reason, rule, category, member = min(faults)
-        return ("deny", reason, rule, category, member, None)
+        key, reason, rule, category, member = min(faults)
+        # A denial reports the waivers granted before the fault in evaluation
+        # order (none when a deny row fires, which precedes every requirement).
+        return ("deny", reason, rule, category, member, tuple(w for k, w in sorted(waivers) if k < key))
     return ("allow", "ALLOW", "", "", "", tuple(w for _k, w in sorted(waivers)))
 
 
-def as_tuple(decision: kernel.Decision, with_waivers: bool):
+def as_tuple(decision: kernel.Decision):
     return (decision.outcome, decision.reason, decision.rule, decision.category, decision.member,
-            decision.waivers if with_waivers else None)
+            decision.waivers)
 
 
 def decide(cats, people, apps, svc, capability=CAPABILITY):
@@ -250,11 +253,36 @@ _GRANT_ALL = kernel.Grant(CAPABILITY, "svc@r1")
     (kernel.Plan("ap0", (_GRANT_ALL,)),),
     kernel.Service("svc@r1", (kernel.Subject("s0@1", "release", (_accepted("aud", "a"),)),)),
 ))
+@example((  # A waiver granted before a later plan's missing grant travels with that denial.
+    _EXAMPLE_CATS,
+    (kernel.Plan("pp0", (_GRANT_ALL,), (kernel.Row("r0", "aud", "exists"),), (), {"r0": "allow"}),),
+    (kernel.Plan("ap0", ()),),
+    kernel.Service("svc@r1", (kernel.Subject("s0@1", "release"),)),
+))
+@example((  # Of two firing deny rows in one plan, the first one decides.
+    _EXAMPLE_CATS,
+    (kernel.Plan("pp0", (_GRANT_ALL,), (), (kernel.Row("d0", "aud", "in", ("a",)),
+                                            kernel.Row("d1", "aud", "in", ("a", "g")))),),
+    (kernel.Plan("ap0", (_GRANT_ALL,)),),
+    kernel.Service("svc@r1", (kernel.Subject("s0@1", "release", (_accepted("aud", "a"),)),)),
+))
 def test_kernel_matches_the_fault_model(case):
     cats, people, apps, svc = case
     expected = model_decide(cats, people, apps, svc)
     actual = decide(cats, people, apps, svc)
-    assert as_tuple(actual, expected[0] == "allow") == expected
+    assert as_tuple(actual) == expected
+
+
+@pytest.mark.parametrize("people, apps", [
+    ((), (kernel.Plan("ap0", (_GRANT_ALL,)),)),
+    ((kernel.Plan("pp0", (_GRANT_ALL,)),), ()),
+    ((), ()),
+])
+def test_a_side_with_no_plans_denies_before_any_grant_is_read(people, apps):
+    svc = kernel.Service("svc@r1", (kernel.Subject("s0@1", "release"),))
+    actual = decide(_EXAMPLE_CATS, people, apps, svc)
+    assert as_tuple(actual) == model_decide(_EXAMPLE_CATS, people, apps, svc)
+    assert (actual.outcome, actual.reason, actual.rule) == ("deny", "NO_PLANS", "identity")
 
 
 @given(
@@ -429,18 +457,27 @@ def enforcement_case(draw):
     return state, version, identity, request, prior
 
 
-def _model_allows(version, person, app, svc, capability):
-    """decision_for's identity rule, then the kernel fault model."""
+def _model_kernel(version, person, app, svc, capability):
+    """decision_for's identity rule, then the kernel fault model: (outcome, reason, rule, category, member)."""
     if not person or not app or person not in version.people or app not in version.apps:
-        return False
+        return ("deny", "IDENTITY_UNAVAILABLE", "identity", "", "")
     if not capability:
-        return False  # An empty capability is invalid input: POLICY_UNAVAILABLE.
+        return ("deny", "POLICY_UNAVAILABLE", "evaluation", "", "")  # Invalid input fails closed.
     return model_decide(version.categories, version.people[person], version.apps[app], svc,
-                        capability)[0] == "allow"
+                        capability)[:5]
+
+
+def _model_allows(version, person, app, svc, capability):
+    return _model_kernel(version, person, app, svc, capability)[0] == "allow"
+
+
+def _kernel_denial_text(version, person, app, svc, capability):
+    _outcome, reason, *detail = _model_kernel(version, person, app, svc, capability)
+    return f"category rules: {reason} {' '.join(part for part in detail if part)}".strip()
 
 
 def expected_gate(state, version, identity, request, prior):
-    """Return ("unchanged",) or ("denied", reason prefix)."""
+    """Return ("unchanged",) or ("denied", the complete reason)."""
     if not prior.allowed or state in {"no-gate", "none"}:
         return ("unchanged",)
     if state == "unavailable":
@@ -455,13 +492,13 @@ def expected_gate(state, version, identity, request, prior):
             return ("unchanged",)
         if not version.services:
             return ("denied", f"category rules: NO_GRANT (no service grants {capability or 'this request'})")
-        return ("denied", "category rules: ")
+        return ("denied", _kernel_denial_text(version, person, app, next(iter(version.services.values())), capability))
     matches = [svc for key, svc in version.services.items() if key.rsplit("@", 1)[0] == target]
     if not matches:
         return ("denied", f"category rules: NO_GRANT (no service for {target})")
     if _model_allows(version, person, app, matches[0], capability):
         return ("unchanged",)
-    return ("denied", "category rules: ")
+    return ("denied", _kernel_denial_text(version, person, app, matches[0], capability))
 
 
 def _apply(state, version, identity, request, prior):
@@ -512,7 +549,7 @@ def test_category_gate_follows_its_truth_table(case):
         assert result is prior
     else:
         assert result.decision == DENIED
-        assert result.reasons[0].startswith(expected[1]), (result.reasons, expected)
+        assert result.reasons == (expected[1],)
     # Discovery shows an entry exactly when an allowed request would stay allowed.
     allowed = replace(prior, decision=ALLOWED)
     assert visible == (expected_gate(state, version, identity, request, allowed) == ("unchanged",))
