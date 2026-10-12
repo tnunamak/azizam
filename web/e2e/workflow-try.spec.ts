@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const emptyModelsCatalog = {
@@ -682,87 +683,103 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
   ).toHaveAttribute("href", /^blob:/);
 });
 
-test("workflow async video jobs can complete with byte outputs or fail from Check job", async ({
-  page,
-}) => {
+test("successive video runs poll their own jobs and never reuse old output", async ({ page }) => {
+  const clip = await readFile("src/app/library/preview-test.mp4");
+  const firstId = "job_async_try";
+  const secondId = "job_async_failed";
+  const firstPrompt = "First recorded video.";
+  const secondPrompt = "Second video must use a new job.";
+  const failure = "The second renderer ran out of memory.";
+  let submissions = 0;
+  const seen: string[] = [];
+  const posted: unknown[] = [];
+
+  await page.route("**/v1/videos**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    seen.push(request.method() + " " + path);
+
+    if (request.method() === "POST" && path === "/v1/videos") {
+      submissions += 1;
+      posted.push(request.postDataJSON());
+      return route.fulfill({
+        status: 202,
+        json: {
+          id: submissions === 1 ? firstId : secondId,
+          object: "video",
+          status: "queued",
+        },
+      });
+    }
+    if (request.method() === "GET" && path === "/v1/videos/" + firstId) {
+      return route.fulfill({
+        json: submissions === 1
+          ? { id: firstId, object: "video", status: "completed" }
+          : {
+              id: firstId,
+              object: "video",
+              status: "failed",
+              error: { message: "WRONG: polled the previous job" },
+            },
+      });
+    }
+    if (request.method() === "GET" && path === "/v1/videos/" + firstId + "/content") {
+      return route.fulfill({ contentType: "video/mp4", body: clip });
+    }
+    if (request.method() === "GET" && path === "/v1/videos/" + secondId) {
+      return route.fulfill({
+        json: {
+          id: secondId,
+          object: "video",
+          status: "failed",
+          error: { message: failure },
+        },
+      });
+    }
+    return route.fulfill({
+      status: 404,
+      json: { error: { message: "Unexpected video route: " + path } },
+    });
+  });
+
   await prepareTryKey(page, "video.generate.async");
-
-  await page.route("**/v1/videos", (route) =>
-    route.fulfill({
-      json: {
-        id: "job_async_try",
-        object: "video",
-        status: "queued",
-        request_id: "receipt_async_try",
-      },
-    }),
-  );
-  await page.route("**/v1/videos/job_async_try", (route) =>
-    route.fulfill({
-      json: {
-        id: "job_async_try",
-        object: "video",
-        status: "completed",
-      },
-    }),
-  );
-  await page.route("**/v1/videos/job_async_try/content", (route) =>
-    route.fulfill({
-      headers: { "content-type": "video/mp4" },
-      body: Buffer.from("fake completed video bytes"),
-    }),
-  );
-  await page.route("**/me/api/receipts/receipt_async_try", (route) =>
-    route.fulfill({ json: { request_id: "receipt_async_try" } }),
-  );
-
-  await fillRequiredPrompt(page);
+  await fillRequiredPrompt(page, firstPrompt);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
-  await expectTechnicalCollapsed(page);
-  await openTechnicalDetails(page);
-  await expect(page.getByText('"status": "queued"')).toBeVisible();
-  await page.getByRole("button", { name: "Check again" }).click();
-  await expect(
-    page.getByRole("link", { name: "Download video" }),
-  ).toHaveAttribute("href", /^blob:/);
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
 
-  await page.route("**/v1/videos", (route) =>
-    route.fulfill({
-      json: {
-        id: "job_async_failed",
-        object: "video",
-        status: "queued",
-      },
-    }),
-  );
-  await page.route("**/v1/videos/job_async_failed", (route) =>
-    route.fulfill({
-      json: {
-        id: "job_async_failed",
-        object: "video",
-        status: "failed",
-        error: { message: "Renderer ran out of memory." },
-      },
-    }),
-  );
-  await fillRequiredPrompt(page);
+  await expect(page.getByRole("link", { name: "Download video", exact: true }))
+    .toHaveAttribute("href", /^blob:/);
+  const video = page.locator("video");
+  await expect(video).toHaveCount(1);
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) =>
+    Number.isFinite(element.duration) && element.duration > 0 && element.readyState >= 1,
+  )).toBe(true);
+  expect(await video.evaluate((element: HTMLVideoElement) => element.error)).toBeNull();
+
+  await fillRequiredPrompt(page, secondPrompt);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
-  await page.route("**/v1/videos/job_async_try", (route) =>
-    route.fulfill({
-      json: {
-        id: "job_async_try",
-        object: "video",
-        status: "failed",
-        error: { message: "Renderer ran out of memory." },
-      },
-    }),
-  );
-  await page.getByRole("button", { name: "Check again" }).click();
-  await expect(
-    page.getByText("Renderer ran out of memory.", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download video", exact: true }))
+    .toHaveCount(0);
+  await page.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(page.getByText(failure, { exact: true })).toBeVisible();
+  await expect(page.getByText("WRONG: polled the previous job", { exact: true }))
+    .toHaveCount(0);
+  await expect(video).toHaveCount(0);
+
+  expect(submissions).toBe(2);
+  expect(posted).toEqual([
+    expect.objectContaining({ model: "async", prompt: firstPrompt }),
+    expect.objectContaining({ model: "async", prompt: secondPrompt }),
+  ]);
+  expect(seen).toEqual([
+    "POST /v1/videos",
+    "GET /v1/videos/" + firstId,
+    "GET /v1/videos/" + firstId + "/content",
+    "POST /v1/videos",
+    "GET /v1/videos/" + secondId,
+  ]);
 });
 
 test("workflow denied receipt does not create a link, while verified receipt links to its Usage receipt", async ({
@@ -990,20 +1007,92 @@ async function openComposed(page: Page, workflowId: string, member = false) {
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
 }
 
-test("Try runs a ready composed workflow without an availability note", async ({ page }) => {
-  await openComposed(page, "image.edit.image-identity");
-  await expect(page.getByRole("combobox").first()).toHaveText(/^Identity Scene$/);
-  await expect(page.getByTestId("workflow-availability-note")).toHaveCount(0);
-});
+for (const scenario of [
+  {
+    id: "image.edit.image-identity",
+    title: "Identity Scene",
+    note: null,
+  },
+  {
+    id: "image.analyze.face-likeness",
+    title: "Face Likeness Check",
+    note: "Face service starts when you make a request.",
+  },
+] as const) {
+  test("Try submits " + scenario.title + " and renders its response", async ({ page }) => {
+    const runPath = "/gateway/v1/workflows/" + scenario.id + "/run";
+    const prompt = "A deterministic composed-workflow request.";
+    const proof = "response-for-" + scenario.id;
+    const posts: Array<{ method: string; body: unknown }> = [];
 
-test("Try reads a stopped on-demand engine as Ready to start and lets it run", async ({ page }) => {
-  await openComposed(page, "image.analyze.face-likeness");
-  await expect(page.getByRole("combobox").first()).toContainText("Face Likeness Check · Ready to start");
-  await expect(page.getByTestId("workflow-availability-note")).toHaveText(
-    "Face service starts when you make a request.",
-  );
-  await expect(page.getByText("Unavailable")).toHaveCount(0);
-});
+    await page.route("**/me/api/models/catalog", (route) =>
+      route.fulfill({ json: emptyModelsCatalog }),
+    );
+    await page.route("**/me/api/workflows", (route) =>
+      route.fulfill({
+        json: {
+          ...composedCatalog,
+          workflows: composedCatalog.workflows.map((workflow) => ({
+            ...workflow,
+            example_request: {
+              method: "POST",
+              path: "/gateway/v1/workflows/" + workflow.id + "/run",
+              content_type: "application/json",
+              body: { model: workflow.id, prompt: "" },
+            },
+          })),
+        },
+      }),
+    );
+    await page.route("**" + runPath, (route) => {
+      posts.push({
+        method: route.request().method(),
+        body: route.request().postDataJSON(),
+      });
+      return route.fulfill({ json: { proof } });
+    });
+
+    await page.goto("/try/?workflow=" + encodeURIComponent(scenario.id));
+    await expect(page.getByRole("tab", { name: "Workflow", exact: true }))
+      .toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("combobox").first()).toContainText(scenario.title);
+
+    const note = page.getByTestId("workflow-availability-note");
+    if (scenario.note === null) {
+      await expect(note).toHaveCount(0);
+    } else {
+      await expect(note).toHaveText(scenario.note);
+    }
+
+    await fillRequiredPrompt(page, prompt);
+    const run = page.getByRole("button", { name: "Run", exact: true });
+    await expect(run).toBeEnabled();
+    const submitted = page.waitForRequest((request) =>
+      new URL(request.url()).pathname === runPath &&
+      request.method() === "POST",
+    );
+    await run.click();
+    const request = await submitted;
+    expect(request.postDataJSON()).toMatchObject({ model: scenario.id, prompt });
+
+    await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "Workflow returned a response. Open Technical details to inspect it.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const technical = page.locator("details").filter({ hasText: "Technical details" });
+    await expect(technical.locator("pre")).toBeHidden();
+    await technical.locator("summary").click();
+    await expect(technical.locator("pre")).toContainText(JSON.stringify(proof));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({
+      method: "POST",
+      body: { model: scenario.id, prompt },
+    });
+  });
+}
 
 for (const viewer of ["owner", "member"] as const) {
   test(`Try explains a down engine by name to the ${viewer}`, async ({ page }) => {
