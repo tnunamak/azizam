@@ -56,7 +56,7 @@ def _path_service(port: int, **fields) -> dict:
 
 
 def _seed_from_name(backend: str) -> None:
-    proxy._loaded_state[backend] = {"model": f"/models/{backend}.gguf", "mmproj": None, "ts": proxy.time.time()}
+    proxy._loaded_state[backend] = {"model": f"/models/{backend}.gguf", "aux": None, "ts": proxy.time.time()}
 
 
 @pytest.mark.parametrize("service_id", SERVICE_IDS)
@@ -86,7 +86,7 @@ class TestLoadedModelIdentity:
         cfg, seed = self._patched(service_id, loaded_model_identity="path")
         with cfg, seed:
             proxy._loaded_state.clear()
-            proxy._loaded_state["plain"] = {"model": "/models/other.gguf", "mmproj": None, "ts": proxy.time.time()}
+            proxy._loaded_state["plain"] = {"model": "/models/other.gguf", "aux": None, "ts": proxy.time.time()}
             assert proxy.currently_loaded_model(service_id) == f"/models/{service_id}.gguf"
             assert proxy.currently_loaded_model("plain") == "/models/other.gguf"
 
@@ -107,3 +107,50 @@ class TestLoadedModelIdentity:
             proxy._loaded_state.clear()
             ids = asyncio.run(proxy._current_loaded_llm_model_ids(service_id))
         assert {f"/models/{service_id}.gguf", f"{service_id}.gguf"} <= ids
+
+
+PGREP_OUTPUT = (
+    "111 /usr/bin/other-server --port 5099 --mmproj /models/wrong.gguf\n"
+    "222 /usr/bin/model-server --model /models/m.gguf --port 5051 --mmproj /models/proj.gguf --jinja\n"
+)
+AUX_FIELD = {"probe": "process-cmdline", "process": "model-server", "flag": "--mmproj"}
+
+
+class _Pgrep:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, **_kwargs):
+        self.calls.append(argv)
+        return type("Result", (), {"stdout": PGREP_OUTPUT})()
+
+
+@pytest.mark.parametrize("service_id", SERVICE_IDS)
+class TestAuxProbe:
+    """The `aux` field says how to read a service's loaded aux file."""
+
+    def _run(self, service_id: str, **fields):
+        pgrep = _Pgrep()
+        backends = {service_id: _path_service(5051, **fields)}
+        proxy._loaded_state.clear()
+        with patch.object(proxy, "config", {"backends": backends}), patch.object(
+            proxy, "_BACKEND_STATE_STRATEGIES", {"llama_cpp": {"endpoint": "/props", "model_key": "model_path"}}
+        ), patch.object(proxy, "_seed_loaded_state", wraps=proxy._seed_loaded_state), patch.object(
+            proxy.subprocess, "run", pgrep
+        ), patch("urllib.request.urlopen", side_effect=OSError("no server")):
+            return proxy._currently_loaded_aux_for(service_id), pgrep
+
+    def test_aux_is_read_from_the_process_on_the_service_port(self, service_id):
+        aux, pgrep = self._run(service_id, aux=AUX_FIELD)
+        assert aux == "/models/proj.gguf"
+        assert pgrep.calls == [["pgrep", "-af", "model-server"]]
+
+    def test_no_aux_probe_without_the_field_whatever_the_id(self, service_id):
+        aux, pgrep = self._run(service_id)
+        assert aux is None
+        assert pgrep.calls == []
+
+    def test_a_probe_missing_its_process_or_flag_reads_nothing(self, service_id):
+        for broken in ({**AUX_FIELD, "process": ""}, {**AUX_FIELD, "flag": ""}):
+            aux, _pgrep = self._run(service_id, aux=broken)
+            assert aux is None

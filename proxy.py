@@ -1103,32 +1103,25 @@ _LOADED_STATE_TTL = 5.0
 # Keys:
 #   endpoint     – path to GET; response must be JSON
 #   model_key    – dot-path into the JSON to the loaded model identifier
-#   mmproj_key   – dot-path to the mmproj path, or None if the backend has no mmproj
-#   mmproj_pgrep – if True, fall back to pgrep --mmproj parsing when mmproj_key is None
-#                  (llama.cpp exposes mmproj only in the process cmdline, not in /props)
+#
+# The aux (vision projector) file is not probed here: a service that has one
+# declares it in its `aux` field (see _aux_from_process).
 #
 # Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
 _BACKEND_STATE_STRATEGIES: dict = {
     "llama_cpp": {
         "endpoint": "/props",
         "model_key": "model_path",
-        "mmproj_key": None,
-        "mmproj_pgrep": True,
     },
     # vllm exposes /v1/models (list); take the first model id.
-    # Set mmproj_pgrep: False — vllm has no mmproj concept.
     "vllm": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
     # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
     "openai_compatible": {
         "endpoint": "/v1/models",
         "model_key": "data.0.id",
-        "mmproj_key": None,
-        "mmproj_pgrep": False,
     },
 }
 
@@ -1174,16 +1167,27 @@ def _path_identity_backends() -> list[str]:
     ]
 
 
-def _mmproj_from_pgrep(backend: str) -> Optional[str]:
-    """Read --mmproj from the llama-server process on the backend's port.
+def _aux_probe_config(backend: str) -> Mapping[str, Any] | None:
+    """The service's ``aux`` field (how to read its loaded aux file), or None."""
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    return aux if isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline" else None
 
-    /props does not expose the mmproj path, so pgrep is the fallback source.
-    Scoped to the backend's port to avoid matching other llama-server instances.
+
+def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
+    """Read the aux file path from the command line of the backend's server process.
+
+    The server does not report its aux file over HTTP, so the process command
+    line is the source: the process named by ``aux.process``, scoped to the
+    service's port, with the file following ``aux.flag``.
     """
     port = str(((config.get("backends") or {}).get(backend) or {}).get("port"))
+    process, flag = str(aux.get("process") or ""), str(aux.get("flag") or "")
+    if not process or not flag:
+        return None
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "llama-server"],
+            ["pgrep", "-af", process],
             capture_output=True,
             text=True,
             timeout=2,
@@ -1191,26 +1195,26 @@ def _mmproj_from_pgrep(backend: str) -> Optional[str]:
         for line in result.stdout.splitlines():
             if f"--port {port}" not in line:
                 continue
-            idx = line.find("--mmproj ")
+            idx = line.find(f"{flag} ")
             if idx == -1:
                 return None
-            tail = line[idx + len("--mmproj "):]
+            tail = line[idx + len(flag) + 1:]
             end = tail.find(" --")
             if end != -1:
                 tail = tail[:end]
             return tail.strip() or None
     except Exception as e:
-        print(f"[proxy] _mmproj_from_pgrep: pgrep failed: {e}", flush=True)
+        print(f"[proxy] _aux_from_process: pgrep failed: {e}", flush=True)
     return None
 
 
 def _seed_loaded_state(backend: str) -> None:
     """Populate the backend's loaded-state entry by querying the live backend.
 
-    Strategy is selected by `state_type` in the service config. Falls back to
-    pgrep-only if the HTTP query fails or the state_type is unrecognised.
-    Called when the cache is cold (startup or TTL expiry) — synchronous but
-    cheap relative to a model swap.
+    The model strategy is selected by `state_type` in the service config; the
+    aux file is read as the service's `aux` field says. Called when the cache
+    is cold (startup or TTL expiry) — synchronous but cheap relative to a model
+    swap.
     """
     import urllib.request as _urlreq
 
@@ -1218,7 +1222,7 @@ def _seed_loaded_state(backend: str) -> None:
     strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
 
     model: Optional[str] = None
-    mmproj: Optional[str] = None
+    aux_file: Optional[str] = None
 
     if strategy:
         try:
@@ -1228,27 +1232,18 @@ def _seed_loaded_state(backend: str) -> None:
                 model = _resolve_dot_path(data, strategy["model_key"])
         except Exception:
             pass  # server not up yet, or wrong endpoint — state stays None
-
-        if strategy.get("mmproj_key"):
-            try:
-                url = f"{_backend_base_url(backend)}{strategy['endpoint']}"
-                with _urlreq.urlopen(url, timeout=2) as resp:
-                    data = json.loads(resp.read())
-                    mmproj = _resolve_dot_path(data, strategy["mmproj_key"])
-            except Exception:
-                pass
-        elif strategy.get("mmproj_pgrep"):
-            mmproj = _mmproj_from_pgrep(backend)
     else:
-        # Unknown state_type — best-effort pgrep only.
         print(
             f"[proxy] _seed_loaded_state: unknown state_type={state_type!r}; "
-            "falling back to pgrep (add an entry to _BACKEND_STATE_STRATEGIES to fix this)",
+            "add an entry to _BACKEND_STATE_STRATEGIES to fix this",
             flush=True,
         )
-        mmproj = _mmproj_from_pgrep(backend)
 
-    _loaded_state[backend] = {"model": model, "mmproj": mmproj, "ts": time.time()}
+    aux = _aux_probe_config(backend)
+    if aux is not None:
+        aux_file = _aux_from_process(backend, aux)
+
+    _loaded_state[backend] = {"model": model, "aux": aux_file, "ts": time.time()}
 
 
 def _loaded_state_for(backend: str) -> dict:
@@ -1260,7 +1255,7 @@ def _loaded_state_for(backend: str) -> dict:
 
 
 def loaded_aux_present(backend: str) -> Optional[bool]:
-    """Return True iff the backend's running server has an aux (mmproj) loaded.
+    """Return True iff the backend's running server has an aux file loaded.
 
     Used by vision routing: if an aux is loaded, the backend is natively
     vision-capable and we don't need to switch backends. Returns None if we
@@ -1269,12 +1264,12 @@ def loaded_aux_present(backend: str) -> Optional[bool]:
     entry = _loaded_state_for(backend)
     if entry["model"] is None:
         return None
-    return entry["mmproj"] is not None
+    return entry["aux"] is not None
 
 
 def currently_loaded_aux(backend: str) -> Optional[str]:
-    """Return the aux (mmproj) path the backend's server has loaded, or None."""
-    return _loaded_state_for(backend)["mmproj"]
+    """Return the aux file path the backend's server has loaded, or None."""
+    return _loaded_state_for(backend)["aux"]
 
 
 def currently_loaded_model(backend: str) -> Optional[str]:
@@ -1306,13 +1301,12 @@ async def _currently_loaded_model_for(backend: str) -> Optional[str]:
 
 
 def _currently_loaded_aux_for(backend: str) -> Optional[str]:
-    """Return the aux (mmproj) file a swap-managed backend currently has loaded.
+    """Return the aux file a swap-managed backend currently has loaded.
 
-    Contained dispatch from backend id to the aux-probe; used by the
-    driver-swap path to populate SwapContext.loaded_aux. Only backends with an
-    aux/mmproj concept (per the quarantine) probe it; all others return None.
+    Used by the driver-swap path to populate SwapContext.loaded_aux. Only a
+    service whose record declares an ``aux`` probe reads it; all others return None.
     """
-    if engine_quarantine.has_aux_mmproj(backend):
+    if _aux_probe_config(backend) is not None:
         return currently_loaded_aux(backend)
     return None
 

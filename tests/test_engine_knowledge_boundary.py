@@ -311,13 +311,11 @@ def _check_engine_flag_literals() -> list[str]:
 # P2-3 transitional inventory. Every table and its consumer predicate is
 # explicit; adding a capability must be reviewed as a service-data migration.
 _QUARANTINE_TABLES: dict[str, frozenset[str]] = {
-    "_HAS_AUX_MMPROJ": frozenset({"kobold"}),
     "_VISION_VIA_AUX": frozenset({"kobold"}),
     "_CONTEXT_WINDOW_FROM_LIVE_PROBE": frozenset({"kobold"}),
 }
 
 _QUARANTINE_PREDICATES: dict[str, str] = {
-    "has_aux_mmproj": "_HAS_AUX_MMPROJ",
     "vision_via_aux": "_VISION_VIA_AUX",
     "context_window_from_live_probe": "_CONTEXT_WINDOW_FROM_LIVE_PROBE",
 }
@@ -785,7 +783,7 @@ class TestEngineKnowledgeBoundary:
         synthetic_lines = [
             # An engine-agnostic line (calls the quarantine predicate, no engine
             # literal) — must NOT be flagged.
-            'if engine_quarantine.has_aux_mmproj(backend): pass',
+            'if engine_quarantine.vision_via_aux(backend): pass',
             # A synthetic new inline engine branch — must BE flagged.
             'if backend == "vllm": pass',            # not in allowlist → violation
         ]
@@ -793,7 +791,7 @@ class TestEngineKnowledgeBoundary:
             _source_lines=[("proxy.py", synthetic_lines)]
         )
         # The quarantine-predicate line must NOT appear in violations
-        agnostic_reported = [v for v in violations if "has_aux_mmproj" in v]
+        agnostic_reported = [v for v in violations if "vision_via_aux" in v]
         assert not agnostic_reported, (
             "Guard incorrectly flagged an engine-agnostic predicate call: "
             + "\n".join(agnostic_reported)
@@ -866,7 +864,7 @@ class TestEngineKnowledgeBoundary:
             assert any(name in violation for violation in _check_quarantine_frozen(changed)), name
         assert _check_quarantine_frozen(source + '\n_NEW_BACKENDS = frozenset({"vllm"})\n')
         assert _check_quarantine_frozen(source.replace(
-            "return backend in _HAS_AUX_MMPROJ",
+            "return backend in _VISION_VIA_AUX",
             "return True",
         ))
 

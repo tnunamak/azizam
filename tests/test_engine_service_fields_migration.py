@@ -96,13 +96,21 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         self.assertNotIn("lifecycle", registry["services"]["llm"])
         self.assertEqual(migration.migrate_registry(registry), [])
 
+    def test_seeds_the_aux_probe_on_the_owner_service_only(self):
+        registry = registry_with()
+        registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}
+        migration.migrate_registry(registry)
+        self.assertEqual(registry["services"]["kobold"]["config"]["aux"], {
+            "probe": "process-cmdline", "process": "llama-server", "flag": "--mmproj"})
+        self.assertNotIn("aux", registry["services"]["llm"]["config"])
+        self.assertEqual(migration.migrate_registry(registry), [])
+
     def test_seeds_the_loaded_model_identity_on_the_owner_service_only(self):
         registry = registry_with()
         registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}
         changes = migration.migrate_registry(registry)
         self.assertIn("kobold: config.loaded_model_identity = path", changes)
-        self.assertEqual(registry["services"]["kobold"]["config"],
-                         {"port": 5051, "loaded_model_identity": "path"})
+        self.assertEqual(registry["services"]["kobold"]["config"]["loaded_model_identity"], "path")
         self.assertNotIn("loaded_model_identity", registry["services"]["llm"]["config"])
         self.assertEqual(migration.migrate_registry(registry), [])
 

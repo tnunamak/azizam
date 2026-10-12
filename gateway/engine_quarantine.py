@@ -46,10 +46,6 @@ from __future__ import annotations
 # and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
-# Backends that carry an aux/mmproj concept (vision projector loaded alongside
-# the model) and probe it via process inspection.
-_HAS_AUX_MMPROJ: frozenset[str] = frozenset({"kobold"})
-
 # Backends that are vision-capable only when an mmproj/aux is loaded at runtime
 # (as opposed to statically vision-capable via their `capabilities` list). The
 # caller still checks the runtime mmproj presence; this just says "this backend
@@ -66,11 +62,6 @@ _CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
 # Predicates. proxy.py calls these instead of inlining `if backend == "..."`.
 # Each is a one-line lookup; the engine knowledge is the table it reads.
 # ---------------------------------------------------------------------------
-
-def has_aux_mmproj(backend: str) -> bool:
-    """True if `backend` carries an aux/mmproj (vision projector) concept."""
-    return backend in _HAS_AUX_MMPROJ
-
 
 def vision_via_aux(backend: str) -> bool:
     """True if `backend` becomes vision-capable via a runtime-loaded aux/mmproj.

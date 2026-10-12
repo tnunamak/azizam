@@ -46,6 +46,12 @@ backends:
     # The server reports its loaded model as a filesystem path, which is
     # compared with the path being activated (instead of an HTTP model id).
     loaded_model_identity: path
+    # The vision projector file is not reported over HTTP; read it from the
+    # server's command line (the process on this service's port).
+    aux:
+      probe: process-cmdline
+      process: llama-server
+      flag: --mmproj
     health_endpoint: /v1/models
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.

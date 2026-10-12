@@ -18,9 +18,7 @@ sys.path.insert(0, str(ROOT))
 from gateway import engine_quarantine as eq  # noqa: E402
 
 
-def test_aux_mmproj_and_vision_via_aux_kobold_only():
-    assert eq.has_aux_mmproj("kobold")
-    assert not eq.has_aux_mmproj("vllm")
+def test_vision_via_aux_kobold_only():
     assert eq.vision_via_aux("kobold")
     assert not eq.vision_via_aux("vllm")
 
@@ -44,7 +42,6 @@ def test_unknown_backend_is_false_everywhere():
     # (False) from every predicate — so an added engine inherits no hidden
     # behaviour until explicitly given a property here (or a config field).
     for pred in (
-        eq.has_aux_mmproj,
         eq.vision_via_aux,
         eq.context_window_from_live_probe,
     ):
