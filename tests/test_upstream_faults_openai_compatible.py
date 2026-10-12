@@ -151,7 +151,6 @@ def test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event(fake_
     expect_fixed("FK-B1", events[1:-2], expected[1:-2])
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B2: an upstream drop mid-stream ends the client stream as if complete (fix/fk-upstream-faults)")
 def test_upstream_drop_mid_stream_ends_with_an_error_event(fake_upstreams, monkeypatch, tmp_path) -> None:
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "stream-disconnect", wire=True)
 

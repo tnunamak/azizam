@@ -28094,6 +28094,13 @@ async def _forward_litellm_proxy_request(
                 except asyncio.CancelledError:
                     cancellation_span.mark_stream_cancelled()
                     raise
+                except httpx.TransportError:
+                    # The upstream dropped mid-stream. The headers already went
+                    # out, so say it in-band: ending the body cleanly would make
+                    # a truncated answer look complete. Bytes of a cut event
+                    # stay unsent.
+                    owner.report(status="failed", reason="read_error")
+                    yield _CHAT_STREAM_INTERRUPTED_EVENT
                 else:
                     owner.report(
                         status="succeeded" if 200 <= resp.status_code < 400 else "failed",
@@ -28847,6 +28854,16 @@ async def openai_realtime_unsupported(request: Request, rest: str = "") -> Respo
 
 
 _SSE_EVENT_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+_CHAT_STREAM_INTERRUPTED_EVENT = b"data: " + json.dumps({
+    "error": {
+        "message": "The LLM execution stream ended before the response was complete.",
+        "type": "api_error",
+        "param": None,
+        "code": "upstream_stream_interrupted",
+    },
+}).encode() + b"\n\n"
 
 
 class _ChatCompletionSseRepair:
