@@ -45,6 +45,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import receipt_store  # noqa: E402
+from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
 from gateway.policy import AppProfile, StatusVisibilityPolicy  # noqa: E402
 
 
@@ -2336,6 +2337,44 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertEqual(len(result), len(seen))
+
+
+class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
+    """A client must never be told it may use what its profile denies."""
+
+    def _client_listing(self, profile: AppProfile) -> list[dict[str, Any]]:
+        identity = proxy.AuthIdentity(
+            name="listing-key", key_hash="sha256:listing", downstream={}, profile=profile,
+        )
+
+        class _Request:
+            scope = {"auth_context": proxy.AuthContext(identity=identity)}
+
+        local = [
+            Capability(intent="chat.completion", backend="llm-a", model="m-a", lifecycle="warm", health="healthy"),
+            Capability(intent="image.generation", backend="img-b", workflow="w-b", lifecycle="warm", health="healthy"),
+        ]
+        with patch.object(proxy, "build_local_capabilities", lambda cfg, **kwargs: local), \
+             patch.object(proxy, "project_capabilities", lambda caps, **kwargs: list(caps)), \
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+            capabilities = asyncio.run(proxy._gateway_capabilities_provider(_Request()))  # type: ignore[arg-type]
+        return summarize_capabilities(capabilities, "client")["capabilities"]
+
+    def test_denied_profile_sees_nothing_available_while_open_profile_sees_something(self) -> None:
+        open_listing = self._client_listing(AppProfile(id="open"))
+        denied_listing = self._client_listing(AppProfile(id="denied", backends=frozenset()))
+
+        # Non-vacuity: the same catalogue offers something to an open profile.
+        self.assertTrue(any(row["available"] for row in open_listing))
+        self.assertTrue(denied_listing)
+        self.assertEqual([row for row in denied_listing if row["available"]], [])
+
+    def test_partial_profile_sees_only_its_own_backend_available(self) -> None:
+        listing = self._client_listing(AppProfile(id="llm-only", backends=frozenset({"llm-a"})))
+
+        ours = {row["intent"]: row["available"] for row in listing
+                if row["intent"] in {"chat.completion", "image.generation"}}
+        self.assertEqual(ours, {"chat.completion": True, "image.generation": False})
 
 
 if __name__ == "__main__":
