@@ -187,10 +187,10 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
                     continue
                 try:
                     rec = json.loads(line)
+                    ts = float(rec.get("ts") or 0)
                 except Exception:
                     stats["skipped"] += 1
                     continue
-                ts = float(rec.get("ts") or 0)
                 if ts < cutoff:
                     continue
                 kind = rec.get("kind")
@@ -199,14 +199,20 @@ def replay_persisted(window_s: int = _WINDOW_S, path: Optional[Path] = None) -> 
                     p = rec.get("path") or ""
                     if not p:
                         continue
-                    status = int(rec.get("status") or 0)
-                    latency = rec.get("latency_ms")
+                    # Convert before touching shared state so a bad row leaves no trace.
+                    try:
+                        status = int(rec.get("status") or 0)
+                        latency = rec.get("latency_ms")
+                        latency = float(latency) if latency is not None else None
+                    except (TypeError, ValueError, OverflowError):
+                        stats["skipped"] += 1
+                        continue
                     with _lock:
                         keyrec = _KEY_ACTIVITY[name]
                         keyrec["endpoints"][p] = keyrec["endpoints"].get(p, 0) + 1
                         if ts > keyrec["last_seen"]:
                             keyrec["last_seen"] = ts
-                        keyrec["events"].append((ts, status, float(latency) if latency is not None else None))
+                        keyrec["events"].append((ts, status, latency))
                     stats["requests_replayed"] += 1
                     oldest_kept = ts if oldest_kept is None else min(oldest_kept, ts)
                 elif kind == "event":
