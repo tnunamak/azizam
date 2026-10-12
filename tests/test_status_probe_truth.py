@@ -1,0 +1,52 @@
+"""The Status probe must not report a slow or sleeping engine as refusing connections."""
+
+from __future__ import annotations
+
+import asyncio
+import socket
+import unittest
+from unittest.mock import patch
+
+import httpx
+
+import status_endpoint as status
+
+
+def _raising(exc: Exception) -> httpx.AsyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise exc
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def _probe(client: httpx.AsyncClient, service: dict | None = None) -> dict:
+    async with client:
+        return await status._probe(client, "svc", "Svc", "http://127.0.0.1:1/health", "required", None, service=service)
+
+
+class ProbeTruthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connect_timeout_is_a_slow_answer_not_a_refusal(self):
+        row = await _probe(_raising(httpx.ConnectTimeout("slow host")))
+        self.assertEqual(row["last_error"], "timeout")
+        self.assertNotIn("refused", str(row["last_error"]))
+        self.assertEqual(row["live_status"], "degraded")
+
+    async def test_connect_budget_tolerates_a_loaded_host(self):
+        self.assertGreaterEqual(status._HTTP_TIMEOUT.connect, 3.0)
+
+    async def test_refused_connection_still_reads_as_refused(self):
+        row = await _probe(_raising(httpx.ConnectError("refused")))
+        self.assertEqual(row["last_error"], "connect refused")
+        self.assertEqual(row["live_status"], "down")
+
+    async def test_really_closed_port_is_refused(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        async with httpx.AsyncClient(timeout=status._HTTP_TIMEOUT) as client:
+            row = await status._probe(client, "svc", "Svc", f"http://127.0.0.1:{port}/health", "required", None)
+        self.assertEqual(row["last_error"], "connect refused")
+        self.assertEqual(row["live_status"], "down")
+
+
+if __name__ == "__main__":
+    unittest.main()
