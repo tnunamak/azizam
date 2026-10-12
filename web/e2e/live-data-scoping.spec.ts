@@ -73,7 +73,7 @@ test("owner sees keyless LAN and service app media and usage", async ({
     ),
   ).toBe(true);
 
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
   // Model, date and app live in the "Filters" popover since D1.
@@ -98,7 +98,7 @@ test("owner sees keyless LAN and service app media and usage", async ({
   ).toEqual([data.owner_asset]);
   await expect(page.getByText("No media yet")).toHaveCount(0);
   await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
   // The seeded audio.speech request, under its task name from lib/terms
   // (taskNames.speech), then its model after a "·" (one line since craft
@@ -147,7 +147,7 @@ test("member cannot see local/service media or mint signed URLs for them", async
   ).toBe(403);
 
   const page = await context.newPage();
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
   await context.close();

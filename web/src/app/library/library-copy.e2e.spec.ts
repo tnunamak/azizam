@@ -73,7 +73,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeLibrary(page, "seeded");
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(
         page.getByRole("heading", { name: "Library" }),
       ).toBeVisible();
@@ -100,7 +100,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeLibrary(page, "seeded");
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       if (width === 390) {
         await page.getByText("Filter", { exact: true }).click();
         await page.getByRole("button", { name: "Filter kind Video" }).click();
@@ -121,7 +121,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeLibrary(page, "empty");
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(page.getByText("No media yet")).toBeVisible();
       await expect(
         page.getByRole("link", { name: "Make something" }),
@@ -136,7 +136,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeLibrary(page, "error");
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(
         page.getByText("Your library could not be loaded. Try again."),
       ).toBeVisible();
@@ -153,7 +153,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await page.route("**/me/api/media?**", () => undefined);
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(
         page.getByRole("status", { name: "Loading library" }),
       ).toBeVisible();
@@ -192,7 +192,7 @@ test("library delete cancel retains filters and successful delete clears the ass
     });
   });
 
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await page.getByRole("combobox", { name: "Owner" }).click();
   await page.getByRole("option", { name: "Mine" }).click();
   await page.getByRole("button", { name: "Images" }).click();
@@ -249,7 +249,7 @@ test("library missing asset deep link keeps a retryable target", async ({
     });
   });
 
-  await page.goto("/ui/library/?asset=asset_recovered");
+  await page.goto("/library/?asset=asset_recovered");
   await expect(
     page.getByText(
       "The gateway couldn’t open this creation. Try again or return to your library.",
@@ -291,7 +291,7 @@ for (const width of [1440, 390] as const) {
         contentType: "video/mp4",
       }),
     );
-    await page.goto("/ui/library/");
+    await page.goto("/library/");
     const preview = page.locator("article video");
     await expect(preview).toBeVisible();
     await expect
@@ -340,7 +340,7 @@ for (const width of [1440, 390] as const) {
     await page.route("**/broken-preview.png", (route) =>
       route.fulfill({ status: 503, body: "Unavailable" }),
     );
-    await page.goto("/ui/library/");
+    await page.goto("/library/");
     await expect(
       page.getByRole("img", { name: "Image preview unavailable" }),
     ).toBeVisible();
@@ -367,7 +367,7 @@ for (const width of [1440, 390] as const) {
         },
       });
     });
-    await page.goto("/ui/library/");
+    await page.goto("/library/");
     await expect(
       page.getByRole("button", { name: "Refresh library" }),
     ).toBeVisible();

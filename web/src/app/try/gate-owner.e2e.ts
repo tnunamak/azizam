@@ -33,7 +33,7 @@ for (const theme of ["light", "dark"]) {
             },
           }),
         );
-        await page.goto("/ui/try/?capability=decide");
+        await page.goto("/try/?capability=decide");
         await expect(
           page.getByRole("heading", { name: "Try", exact: true }),
         ).toBeVisible();
@@ -82,7 +82,7 @@ for (const theme of ["light", "dark"]) {
             ).toBeVisible();
             await expect(
               page.getByRole("link", { name: "Open receipt request-…" }),
-            ).toHaveAttribute("href", `/r/${id}`);
+            ).toHaveAttribute("href", `/usage/?receipt=${id}`);
             await page
               .context()
               .grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -128,7 +128,7 @@ for (const theme of ["light", "dark"]) {
 test("Try prepares a key and links a real public chat receipt", async ({
   page,
 }) => {
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
@@ -147,7 +147,7 @@ test("Try prepares a key and links a real public chat receipt", async ({
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(page.locator(`a[href="/r/${id}"]`)).toBeVisible();
+  await expect(page.locator(`a[href="/usage/?receipt=${id}"]`)).toBeVisible();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.getByRole("button", { name: "Copy receipt ID" }).click();
   await expect

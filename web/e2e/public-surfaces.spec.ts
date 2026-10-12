@@ -54,7 +54,7 @@ for (const theme of ["light", "dark"] as const) {
                         built_in: state === "seeded",
                         oidc: false,
                         oidc_label: "",
-                        oidc_url: "/admin/login?return_to=/ui/",
+                        oidc_url: "/login?return_to=/",
                         instance_name: "Browser test gateway",
                         owner_name: "Gateway owner",
                       },
@@ -92,7 +92,7 @@ for (const theme of ["light", "dark"] as const) {
               }),
             );
           }
-          await page.goto(`/ui/${surface}/`);
+          await page.goto(`/${surface}/`);
           await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
           await expect(
             page.getByRole("navigation", { name: "Main navigation" }),
@@ -187,7 +187,7 @@ test("setup uses configured single sign-on without a password form", async ({
       json: { owner_exists: false, oidc_enabled: true, can_recover: false },
     }),
   );
-  await page.goto("/ui/setup/");
+  await page.goto("/setup/");
   await expect(
     page.getByRole("link", { name: "Continue with single sign-on" }),
   ).toHaveAttribute("href", "/login?return_to=/setup");
@@ -205,13 +205,13 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
         built_in: true,
         oidc: false,
         oidc_label: "",
-        oidc_url: "/admin/login?return_to=/ui/",
+        oidc_url: "/login?return_to=/",
         instance_name: "Browser test gateway",
         owner_name: "Gateway owner",
       },
     }),
   );
-  await page.goto("/ui/sign-in/");
+  await page.goto("/sign-in/");
   await page.getByLabel("Email", { exact: true }).fill("unknown@example.test");
   await page
     .getByLabel("Password", { exact: true })
@@ -227,9 +227,9 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
   expect(response.request().postDataJSON()).toEqual({
     email: "unknown@example.test",
     password: "Invalid browser test password",
-    return_to: "/ui/home/",
+    return_to: "/",
   });
-  await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
+  await expect(page).toHaveURL(/\/sign-in\/$/);
   await expect(
     page
       .getByRole("alert")
@@ -255,7 +255,7 @@ test("expired invite links ask for a new invitation without retry", async ({
         built_in: true,
         oidc: false,
         oidc_label: "",
-        oidc_url: "/admin/login?return_to=/ui/",
+        oidc_url: "/login?return_to=/",
         instance_name: "Browser test gateway",
         owner_name: "Gateway owner",
       },
@@ -272,7 +272,7 @@ test("expired invite links ask for a new invitation without retry", async ({
       },
     }),
   );
-  await page.goto("/ui/invite/#token=expired-browser-token");
+  await page.goto("/invite/#token=expired-browser-token");
   const alert = page
     .getByRole("alert")
     .filter({ hasText: "Couldn’t use this invitation" });
@@ -302,7 +302,7 @@ for (const theme of ["light", "dark"] as const) {
         json: { owner_exists: true, oidc_enabled: false, can_recover: true },
       }),
     );
-    await page.goto("/ui/setup/");
+    await page.goto("/setup/");
     await page
       .getByText("Recovery and advanced setup", { exact: true })
       .click();
@@ -346,7 +346,7 @@ test("Gallery retry recovers from a failed recorded-example request", async ({
   await page.route("**/showcase/examples/index.json", (route) =>
     route.fulfill({ status: unavailable ? 503 : 200, json: { data: [] } }),
   );
-  await page.goto("/ui/showcase/");
+  await page.goto("/showcase/");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   unavailable = false;
   await page.getByRole("button", { name: "Try again" }).click();

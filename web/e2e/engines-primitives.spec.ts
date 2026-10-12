@@ -6,7 +6,7 @@ test.use({ contextOptions: { reducedMotion: "reduce" } });
 for (const width of [1440, 390]) {
   test(`engine controls and dialog layout at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto("/ui/engines/");
+    await page.goto("/engines/");
     const trigger = page
       .getByRole("button", { name: "Add engine", exact: true })
       .first();
@@ -39,7 +39,7 @@ for (const scale of [1, 2]) {
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/ui/engines/?service=capture-engine");
+    await page.goto("/engines/?service=capture-engine");
     await page.evaluate((factor) => {
       document.documentElement.style.fontSize = `${16 * factor}px`;
     }, scale);
@@ -137,7 +137,7 @@ for (const scale of [1, 2]) {
 test("a stale apply ETag is rejected by the fixture registry and retry preserves mappings", async ({
   page,
 }) => {
-  await page.goto("/ui/engines/?service=capture-engine");
+  await page.goto("/engines/?service=capture-engine");
   await page
     .locator('[data-engine-id="capture-engine"]')
     .getByRole("button", { name: /Actions/ })

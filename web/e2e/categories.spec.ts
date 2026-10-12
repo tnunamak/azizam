@@ -163,7 +163,7 @@ test.describe("Categories real fixture journeys", () => {
     await page.route(`**${root}/history`, (route) => route.fulfill({ json: { history: [] } }));
     for (const width of widths) {
       await surface(page, width);
-      await page.goto("/ui/categories/");
+      await page.goto("/categories/");
       await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
       await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
       await expect(page.getByRole("region", { name: "Current rules", exact: true })).toHaveCount(0);
@@ -177,7 +177,7 @@ test.describe("Categories real fixture journeys", () => {
     test(`seed, preview, restore and stale base at ${width}px`, async ({ page, request }) => {
       test.setTimeout(180_000);
       await surface(page, width);
-      await page.goto("/ui/categories/");
+      await page.goto("/categories/");
       const first = await seed(request, `browser-chat-${width}`, "chat");
       await page.reload();
       const current = page.getByRole("region", { name: "Current rules", exact: true });
@@ -286,7 +286,7 @@ test.describe("Categories real fixture journeys", () => {
           user: { id: "member-categories", name: "Member", role: "member", email: "member@example.test" },
         },
       }));
-      await page.goto("/ui/categories/");
+      await page.goto("/categories/");
       // The shell's owner-page guard answers before the page renders.
       await expect(page.getByRole("heading", { name: "Owner access required", exact: true })).toBeVisible();
       await expect(page.getByRole("region", { name: "Current rules", exact: true })).toHaveCount(0);

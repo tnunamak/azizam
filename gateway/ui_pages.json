@@ -1,0 +1,22 @@
+{"pages": {
+  "": "public",
+  "account": "member",
+  "apps": "member",
+  "design": "member",
+  "library": "member",
+  "models": "member",
+  "status": "member",
+  "try": "member",
+  "usage": "member",
+  "workflows": "member",
+  "activity": "admin",
+  "categories": "admin",
+  "engines": "admin",
+  "people": "admin",
+  "providers": "admin",
+  "settings": "admin",
+  "invite": "public",
+  "setup": "public",
+  "showcase": "public",
+  "sign-in": "public"
+}}

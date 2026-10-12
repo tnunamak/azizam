@@ -57,7 +57,7 @@ async function as(browser: Browser, email: string, baseURL: string) {
   if (!states.has(email)) {
     const ctx = await browser.newContext({ baseURL });
     const page = await ctx.newPage();
-    await page.goto("/ui/sign-in/");
+    await page.goto("/sign-in/");
     await page.getByLabel("Email", { exact: true }).fill(email);
     await page.getByLabel("Password", { exact: true }).fill(seed.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -94,7 +94,7 @@ async function media(request: APIRequestContext, id: string, everyone = false) {
 }
 
 async function openViewer(page: Page, id: string) {
-  await page.goto(`/ui/library/?asset=${encodeURIComponent(id)}`);
+  await page.goto(`/library/?asset=${encodeURIComponent(id)}`);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   // The facts load with the viewer; wait for them before reading its text.
@@ -122,9 +122,9 @@ test.describe("Accessibility of the prompt screens", () => {
           theme,
         );
         for (const route of [
-          "/ui/account/",
-          "/ui/try/?capability=speech",
-          `/ui/library/?asset=${robinsKept().asset_id}`,
+          "/account/",
+          "/try/?capability=speech",
+          `/library/?asset=${robinsKept().asset_id}`,
         ]) {
           await page.goto(route);
           await expect(
@@ -302,7 +302,7 @@ test.describe("Try: Don't keep this prompt", () => {
     const audioIds = async () =>
       new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
-    await page.goto("/ui/try/?capability=speech");
+    await page.goto("/try/?capability=speech");
     const toggle = page.getByRole("switch", { name: "Don’t keep this prompt" });
     await expect(toggle).not.toBeChecked();
     await expect(
@@ -383,7 +383,7 @@ test.describe("Keys", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.member_email, baseURL!);
-    await page.goto("/ui/apps/");
+    await page.goto("/apps/");
     await page.getByRole("button", { name: "New app" }).first().click();
     await page.getByLabel("App name").fill("Kitchen tablet");
     await page.getByRole("button", { name: "Create app and key" }).click();
@@ -431,7 +431,7 @@ test.describe("Your settings", () => {
     const before = await (
       await page.request.get("/me/api/media?scope=me&limit=50")
     ).json();
-    await page.goto("/ui/");
+    await page.goto("/");
     await page
       .getByRole("button", { name: /^Account menu/ })
       .first()
@@ -466,7 +466,7 @@ test.describe("Your settings", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.restricted_email, baseURL!);
-    await page.goto("/ui/account/");
+    await page.goto("/account/");
     await page.getByRole("switch", { name: "Remember what I type" }).click();
     await page
       .getByRole("dialog")
@@ -479,13 +479,13 @@ test.describe("Your settings", () => {
       await page.request.get("/me/api/prompt-memory")
     ).json();
     expect(memory.prompt_memory.effective_remember).toBe(false);
-    await page.goto("/ui/try/?capability=image");
+    await page.goto("/try/?capability=image");
     await expect(page.getByText("Prompts aren’t kept")).toBeVisible();
     await expect(page.getByRole("link", { name: "Change" })).toHaveAttribute(
       "href",
-      "/ui/account/",
+      "/account/",
     );
-    await page.goto("/ui/account/");
+    await page.goto("/account/");
     await page.getByRole("switch", { name: "Remember what I type" }).click();
     await expect(
       page.getByRole("switch", { name: "Remember what I type" }),
@@ -500,7 +500,7 @@ test.describe("Settings: the household's rules", () => {
     baseURL,
   }) => {
     const owner = await as(browser, seed.owner_email, baseURL!);
-    await owner.page.goto("/ui/settings/");
+    await owner.page.goto("/settings/");
     const section = owner.page.locator("section", {
       has: owner.page.getByRole("heading", { name: "Prompts" }),
     });
@@ -515,7 +515,7 @@ test.describe("Settings: the household's rules", () => {
     ).toHaveText("3 months");
 
     const member = await as(browser, seed.member_email, baseURL!);
-    await member.page.goto("/ui/account/");
+    await member.page.goto("/account/");
     await expect(member.page.getByText("Up to 3 months here.")).toBeVisible();
     await member.page
       .getByRole("combobox", { name: "Forget prompts after" })
@@ -544,7 +544,7 @@ test.describe("Settings: the household's rules", () => {
     expect(
       robin.assets.every((a: { prompt: string | null }) => a.prompt === null),
     ).toBe(true);
-    await member.page.goto("/ui/try/?capability=image");
+    await member.page.goto("/try/?capability=image");
     await expect(
       member.page.getByText("Turned off for everyone on this gateway."),
     ).toBeVisible();
@@ -576,7 +576,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
     expect(saved.ok()).toBe(true);
   };
   await setMemory(false);
-  await page.goto("/ui/try/?capability=speech");
+  await page.goto("/try/?capability=speech");
   await expect(page.getByText("Prompts aren’t kept")).toBeVisible();
   await setMemory(true);
   const text = "stale off snapshot sentinel " + Date.now();
@@ -598,7 +598,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
     await page.request.get("/me/api/media?scope=me&limit=50")
   ).json();
   expect(JSON.stringify(media)).not.toContain(text);
-  await page.goto("/ui/account/");
+  await page.goto("/account/");
   await expect(
     page.getByText(
       "Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies.",

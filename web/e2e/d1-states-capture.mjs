@@ -32,8 +32,8 @@ const allStates = statesArg === "all";
 const browserLocale = "en-US";
 const browserTimezone = "America/Chicago";
 const baseURL = `http://127.0.0.1:${port}`;
-const surfaces = [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"]];
-const trySurfaces = [["try-image", "/ui/try/?capability=image"], ["try-speech", "/ui/try/?capability=speech"]];
+const surfaces = [["home", "/"], ["status", "/status/"], ["library", "/library/"]];
+const trySurfaces = [["try-image", "/try/?capability=image"], ["try-speech", "/try/?capability=speech"]];
 const widths = [1440, 390];
 const themes = ["light", "dark"];
 const OUTAGE_BODY = { error: { code: "internal_error", message: "The gateway could not load this data. Refresh to try again." } };
@@ -164,7 +164,7 @@ async function newContext(seed, { width, theme }) {
 async function login(context, account, base) {
   const page = await context.newPage();
   try {
-    await page.goto(`${base}/ui/sign-in/`);
+    await page.goto(`${base}/sign-in/`);
     await page.getByLabel("Email", { exact: true }).fill(account.email);
     await page.getByLabel("Password", { exact: true }).fill(account.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -307,7 +307,7 @@ const statePopulated = (ctx, surface, url, state = "populated") => attempt(ctx, 
 
 async function stateLibraryDetail(ctx) {
   await attempt(ctx, "library", "library-detail", async page => {
-    const notes = await gotoSettled(page, ctx, "/ui/library/");
+    const notes = await gotoSettled(page, ctx, "/library/");
     const open = openAsset(page);
     if (!(await open.count())) throw new Skip("No button named \"Open ...\" in main");
     await open.click();
@@ -321,7 +321,7 @@ async function stateLibraryDetail(ctx) {
 async function stateLibraryKind(ctx, kind) {
   const lower = kind.toLowerCase();
   await attempt(ctx, "library", `library-${lower}`, async page => {
-    const notes = await gotoSettled(page, ctx, "/ui/library/");
+    const notes = await gotoSettled(page, ctx, "/library/");
     let group = page.getByRole("group", { name: "Kind" });
     // On a phone the kinds live inside Filters (D1.3).
     let inFilters = false;
@@ -415,7 +415,7 @@ async function captureSignedIn(seed, role, email, themeWidths) {
       for (const [surface, url] of surfaces) await stateLoading(ctx, surface, url);
       for (const [surface, url] of surfaces) await stateError(ctx, surface, url);
       for (const [surface, url] of surfaces) await stateRewritten(ctx, surface, url, "empty");
-      await stateRewritten(ctx, "library", "/ui/library/", "expired");
+      await stateRewritten(ctx, "library", "/library/", "expired");
     }
     await context.close();
   }

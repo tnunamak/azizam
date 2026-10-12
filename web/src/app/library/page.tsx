@@ -1922,7 +1922,7 @@ function CreationViewer({
                 {asset.request_id ? (
                   <Button asChild variant="outline" size="sm">
                     <a
-                      href={`/r/${encodeURIComponent(asset.request_id)}`}
+                      href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}
                       aria-label={`Open receipt ${asset.request_id}`}
                     >
                       <ReceiptText aria-hidden="true" />
@@ -1997,7 +1997,7 @@ function CreationViewer({
                       asset.request_id ? (
                         <a
                           className="text-link text-meta font-mono break-all underline-offset-4 hover:underline"
-                          href={`/r/${encodeURIComponent(asset.request_id)}`}
+                          href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}
                           aria-label={`View receipt ${asset.request_id}`}
                         >
                           {asset.request_id}
@@ -2714,7 +2714,7 @@ export default function LibraryPage() {
                 </Button>
               ) : (
                 <Button asChild>
-                  <a href="/ui/try/?capability=image">Make an image</a>
+                  <a href="/try/?capability=image">Make an image</a>
                 </Button>
               )
             }

@@ -14,8 +14,8 @@ describe("sweep text rules", () => {
     expect(rules("/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Q4_K_M.gguf", "owner")).toContain("path");
     expect(rules("Choose ./source-image.bin", "owner")).toContain("path");
     expect(rules("C:\\Models\\x", "owner")).toContain("path");
-    expect(rules("Open https://ai.household.example/ui/home/", "owner")).not.toContain("path");
-    expect(rules("Go to /ui/home/ to start", "owner")).not.toContain("path");
+    expect(rules("Open https://ai.household.example/", "owner")).not.toContain("path");
+    expect(rules("Go to / to start", "owner")).not.toContain("path");
   });
 
   it("flags raw ids, softly when an owner sees a labelled request id", () => {

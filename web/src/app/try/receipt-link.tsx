@@ -11,7 +11,7 @@ export function ReceiptLink({ id }: { id: string }) {
     <span className="flex min-w-0 flex-wrap items-center gap-2">
       <a
         className="inline-flex min-h-11 items-center font-mono text-xs whitespace-nowrap underline underline-offset-4"
-        href={`/r/${encodeURIComponent(id)}`}
+        href={`/usage/?receipt=${encodeURIComponent(id)}`}
         aria-label={`Open receipt ${shortId}`}
         title={id}
       >

@@ -13,7 +13,7 @@ const defaults = {
   built_in: true,
   oidc: false,
   oidc_label: "",
-  oidc_url: "/login?return_to=%2Fui%2Fusage%2F",
+  oidc_url: "/login?return_to=%2Fusage%2F",
   instance_name: "Azizam",
 };
 let options: typeof defaults;
@@ -24,7 +24,7 @@ const json = (body: unknown, status = 200) =>
 beforeEach(() => {
   options = { ...defaults };
   ownerExists = true;
-  window.history.replaceState(null, "", "/ui/sign-in/");
+  window.history.replaceState(null, "", "/sign-in/");
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -104,12 +104,12 @@ it("sends the original return target to the server and follows its validated nex
   window.history.replaceState(
     null,
     "",
-    "/ui/sign-in/?return_to=%2Fui%2Fusage%2F%3Freceipt%3Done",
+    "/sign-in/?return_to=%2Fusage%2F%3Freceipt%3Done",
   );
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((input, init) =>
     String(input) === "/auth/api/login"
-      ? json({ next: "/ui/usage/?receipt=one" })
+      ? json({ next: "/usage/?receipt=one" })
       : original(input, init),
   );
   mount();
@@ -122,12 +122,12 @@ it("sends the original return target to the server and follows its validated nex
       body: JSON.stringify({
         email: "member@example.test",
         password: "A long test password",
-        return_to: "/ui/usage/?receipt=one",
+        return_to: "/usage/?receipt=one",
       }),
     }),
   );
   await waitFor(() =>
-    expect(continueTo).toHaveBeenCalledWith("/ui/usage/?receipt=one"),
+    expect(continueTo).toHaveBeenCalledWith("/usage/?receipt=one"),
   );
 });
 it.each([
@@ -189,7 +189,7 @@ it("names the pending action and prevents duplicate submissions", async () => {
   expect(screen.getByLabelText("Email")).toBeDisabled();
 });
 it("explains an expired password reset without offering unrelated sign-in methods", async () => {
-  window.history.replaceState(null, "", "/ui/sign-in/#reset=expired-test");
+  window.history.replaceState(null, "", "/sign-in/#reset=expired-test");
   options.oidc = true;
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((input, init) =>
@@ -222,7 +222,7 @@ it("offers setup when there is no owner, and no password form", async () => {
   mount();
   expect(
     await screen.findByRole("link", { name: "Set up your gateway" }),
-  ).toHaveAttribute("href", "/ui/setup/");
+  ).toHaveAttribute("href", "/setup/");
   expect(screen.queryByLabelText("Email")).toBeNull();
 });
 it("explains when the host has disabled all sign-in methods", async () => {
@@ -243,7 +243,7 @@ it("explains provider failure without rendering untrusted error descriptions", a
   window.history.replaceState(
     null,
     "",
-    "/ui/sign-in/?error=provider&error_description=untrusted",
+    "/sign-in/?error=provider&error_description=untrusted",
   );
   options.oidc = true;
   mount();

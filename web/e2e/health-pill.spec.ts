@@ -78,7 +78,7 @@ test("one Unknown capability reads 'Not checked yet' with the grey ring dot", as
     capability("chat", "Chat", "ready"),
     capability("image", "Images", "unknown"),
   ]);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   const pill = page.getByRole("button", {
     name: "Gateway status: Not checked yet",
   });
@@ -99,7 +99,7 @@ test("one Down capability reads '1 issue' with the red dot", async ({
     capability("chat", "Chat", "ready"),
     capability("image", "Images", "down"),
   ]);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   const pill = page.getByRole("button", { name: "Gateway status: 1 issue" });
   await expect(pill).toBeVisible();
   await expect(pill.locator("span[aria-hidden]").first()).toHaveClass(
@@ -114,17 +114,17 @@ test("tapping the pill lists the capability behind the count", async ({
     capability("chat", "Chat", "ready"),
     capability("image", "Images", "unknown"),
   ]);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await page
     .getByRole("button", { name: "Gateway status: Not checked yet" })
     .click();
   const popover = page.getByLabel("Gateway health");
   await expect(popover.getByRole("listitem")).toHaveText(["Images · Unknown"]);
   const action = popover.getByRole("link", { name: "See why" });
-  await expect(action).toHaveAttribute("href", "/ui/status/");
+  await expect(action).toHaveAttribute("href", "/status/");
   // The popover fits the 390 px viewport.
   const box = await popover.boundingBox();
   expect(box && box.x >= 0 && box.x + box.width <= 390).toBe(true);
   await action.click();
-  await expect(page).toHaveURL(/\/ui\/status\/?$/);
+  await expect(page).toHaveURL(/\/status\/?$/);
 });

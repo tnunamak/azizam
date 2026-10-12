@@ -70,7 +70,7 @@ export function loadTermList(file: string): Array<{ term: string; re: RegExp }> 
     });
 }
 
-// Filesystem paths. "/home/" must not match app URLs such as /ui/home/.
+// Filesystem paths, such as /home/sam/model.gguf, but not URL paths.
 export const PATH_PATTERNS: RegExp[] = [
   /(?<![\w.\/:-])\/(?:media|home|mnt|srv|opt|Users|tmp|var\/lib|root)\/[^\s]/,
   /\b[A-Za-z]:\\[^\s]/,

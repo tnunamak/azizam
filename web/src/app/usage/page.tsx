@@ -44,6 +44,7 @@ import {
   CapabilityIcon,
   EmptyState,
   Money,
+  ErrorState,
   PageHeader,
   RelativeTime,
 } from "@/components/product";
@@ -268,6 +269,7 @@ export default function UsagePage() {
           <StatusLine compact tone="busy" text={data ? "Refreshing usage…" : "Loading usage…"} />
         ) : null}
       </PageHeader>
+      <ReceiptDeepLink />
       {isError && data ? (
         <Callout
           severity="attention"
@@ -321,7 +323,7 @@ export default function UsagePage() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <a href="/ui/apps/">Connect an app</a>
+                <a href="/apps/">Connect an app</a>
               </Button>
             )
           }
@@ -781,6 +783,79 @@ function ReceiptsList({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// /usage/?receipt={request_id} opens that receipt (links from Try, Library,
+// Home, Models, Workflows and Status). Closing it drops the query parameter.
+class ReceiptUnavailable extends Error {}
+
+async function fetchReceipt(requestId: string): Promise<UsageReceipt> {
+  const response = await fetch(
+    `/me/api/receipts/${encodeURIComponent(requestId)}`,
+    { credentials: "same-origin", cache: "no-store" },
+  );
+  if (response.status === 404 || response.status === 403)
+    throw new ReceiptUnavailable();
+  if (!response.ok) throw new Error("The receipt could not be loaded.");
+  return normalizeReceipt(await response.json(), `receipt:${requestId}`);
+}
+
+function ReceiptDeepLink() {
+  const [requestId, setRequestId] = useState<string | null>(null);
+  useEffect(() => {
+    setRequestId(new URLSearchParams(window.location.search).get("receipt") || null);
+  }, []);
+  const {
+    data: receipt,
+    error,
+    isPending,
+    isError,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ["usage", "receipt", requestId],
+    queryFn: () => fetchReceipt(requestId!),
+    enabled: requestId !== null,
+    retry: false,
+  });
+  function close() {
+    setRequestId(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("receipt");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }
+  if (requestId === null) return null;
+  return isPending ? (
+    <StatusLine compact tone="busy" text="Opening receipt…" />
+  ) : isError ? (
+    error instanceof ReceiptUnavailable ? (
+      <ErrorState
+        severity="attention"
+        heading="Receipt not available"
+        message="This receipt isn’t available. It may belong to someone else or be deleted."
+        action={{ label: "Dismiss", onClick: close }}
+      />
+    ) : (
+      <ErrorState
+        heading="Couldn’t open this receipt"
+        message="The gateway couldn’t load this receipt. Try again."
+        action={{ label: "Try again", onClick: () => void refetch() }}
+        retrying={isFetching}
+      />
+    )
+  ) : (
+    <ReceiptSheet
+      receipt={receipt}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+    />
   );
 }
 

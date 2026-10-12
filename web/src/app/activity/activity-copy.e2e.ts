@@ -57,7 +57,7 @@ test("owner access views stay out of Activity until revealed", async ({
       },
     });
   });
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await expect(page.getByText("Viewed everyone’s usage")).toHaveCount(0);
   await expect(page.getByText("owner@example.test")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show access audit" })).toBeVisible();
@@ -112,7 +112,7 @@ for (const theme of ["light", "dark"] as const) {
         }),
       );
 
-      await page.goto("/ui/activity/");
+      await page.goto("/activity/");
       await expect(page.getByRole("tab", { name: "Changes" })).toBeVisible();
       await expect(page.getByText("Created an app")).toBeVisible();
       await page.getByRole("tab", { name: "Requests" }).click();
@@ -135,7 +135,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/admin/api/activity/requests?*", (route) =>
         route.fulfill({ json: { records: [], next_cursor: null, people: [] } }),
       );
-      await page.goto("/ui/activity/");
+      await page.goto("/activity/");
       await expect(page.getByText("No changes yet")).toBeVisible();
       await page.getByRole("tab", { name: "Requests" }).click();
       await expect(page.getByText("No request receipts yet")).toBeVisible();
@@ -150,7 +150,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/admin/api/activity/requests?*", (route) =>
         route.fulfill({ status: 503, json: { error: "Unavailable" } }),
       );
-      await page.goto("/ui/activity/");
+      await page.goto("/activity/");
       await expect(page.getByText(/Changes could not be loaded/)).toBeVisible();
       await page.getByRole("tab", { name: "Requests" }).click();
       await expect(
@@ -162,7 +162,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`Activity loading ${theme} ${width}`, async ({ page }) => {
       await setDisplay(page, theme, width);
       await page.route("**/admin/api/audit?*", () => new Promise(() => {}));
-      await page.goto("/ui/activity/");
+      await page.goto("/activity/");
       await expect(page.getByLabel("Loading audit events")).toBeVisible();
       await page.screenshot({
         path: `${reviewRoot}/loading-${theme}-${width}.png`,
@@ -208,7 +208,7 @@ for (const [status, expected, summary] of [
       }),
     );
 
-    await page.goto("/ui/activity/");
+    await page.goto("/activity/");
     await page.getByRole("tab", { name: "Requests" }).click();
     await page.getByRole("button", { name: /Request details:/ }).click();
     const dialog = page.getByRole("dialog");
@@ -244,7 +244,7 @@ test("Activity request filters preserve person and source", async ({
       },
     });
   });
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Requests" }).click();
   await page.getByRole("combobox", { name: "Person" }).click();
   await page.getByRole("option", { name: "Owner" }).click();

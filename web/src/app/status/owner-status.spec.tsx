@@ -30,7 +30,7 @@ vi.mock("@/lib/provider-status", () => ({
 const homeCapabilities = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
 }));
-vi.mock("@/app/home/home-api", () => ({
+vi.mock("@/app/_home/home-api", () => ({
   homeApi: {
     home: async () => ({
       authenticated: true,

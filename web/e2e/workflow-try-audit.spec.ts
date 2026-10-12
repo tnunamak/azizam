@@ -69,7 +69,7 @@ async function routeCatalogs(page: Page, workflows = workflowCatalog) {
 
 async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
   await routeCatalogs(page, workflows);
-  await page.goto("/ui/try/?workflow=image.generate.poster");
+  await page.goto("/try/?workflow=image.generate.poster");
   if (!workflows.workflows.length)
     await expect(page.getByText("No workflows are listed")).toBeVisible();
   await expect(

@@ -130,7 +130,7 @@ async function prepare(
     route.fulfill({ status, json: payload }),
   );
   await routeSession(page, role);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
 }
 
 async function routeSession(page: Page, role = "owner") {
@@ -214,7 +214,7 @@ for (const theme of ["light", "dark"])
       await table.getByRole("row").filter({ hasText: "named-down" }).click();
       await expect(
         page.getByRole("dialog").getByRole("link", { name: "Check status" }),
-      ).toHaveAttribute("href", "/ui/status/");
+      ).toHaveAttribute("href", "/status/");
       await page.keyboard.press("Escape");
       await verify(page, `table-${theme}-${width}`);
     });
@@ -306,7 +306,7 @@ test("member recovery keeps owner controls out of the catalog", async ({
     .click();
   await expect(
     page.getByRole("dialog").getByRole("link", { name: "Check status" }),
-  ).toHaveAttribute("href", "/ui/status/");
+  ).toHaveAttribute("href", "/status/");
   const detailsAxe = await new AxeBuilder({ page }).analyze();
   expect(
     detailsAxe.violations.filter((v) =>
@@ -330,7 +330,7 @@ test("loading finishes with observed models", async ({ page }) => {
     await route.fulfill({ json: seeded });
   });
   await routeSession(page);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(
     page.getByRole("status", { name: "Loading models" }),
   ).toHaveAttribute("aria-busy", "true");

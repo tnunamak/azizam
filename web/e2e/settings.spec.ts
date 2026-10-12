@@ -158,7 +158,7 @@ for (const theme of ["light", "dark"] as const) {
           theme,
         );
         await seed(page, state);
-        await page.goto("/ui/settings/");
+        await page.goto("/settings/");
         await expect(
           page.getByRole("heading", { name: "Settings", exact: true }),
         ).toBeVisible();
@@ -309,7 +309,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
 });
 
 async function settingsJourney(page: Page) {
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await editSection(page, "Instance");
   await expect(page.getByLabel("Instance name")).toBeVisible();
   await page.getByLabel("Instance name").fill("Browser settings journey");
@@ -489,7 +489,7 @@ async function settingsJourney(page: Page) {
 test("a provider draft saves after a real sign-in choice write", async ({
   page,
 }) => {
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await editSection(page, "Sign-in");
   await page
     .getByLabel("Client ID", { exact: true })
@@ -543,7 +543,7 @@ test("settings announces delayed loading states for assistive technology", async
       },
     });
   });
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
   const status = signIn.getByRole("status", {
     name: "Loading sign-in choices",
@@ -577,7 +577,7 @@ test("settings reports save failure and retries a failed load", async ({
           },
     }),
   );
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   const section = page.getByRole("region", { name: "Instance", exact: true });
   await expect(
     section.getByRole("button", { name: "Try again" }),
@@ -616,7 +616,7 @@ test("new visitors use the saved default theme and personal choices persist", as
       },
     }),
   );
-  await page.goto(`${baseURL}/ui/showcase/`);
+  await page.goto(`${baseURL}/showcase/`);
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
@@ -634,7 +634,7 @@ test("built-in default plans remain visible without a database profile row", asy
       json: { defaults: { profile_id: "default-local" }, aliases: {} },
     }),
   );
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await expect(
     page.getByRole("region", { name: "Defaults", exact: true }),
   ).toBeVisible();
@@ -665,7 +665,7 @@ test("extension enable uses the validated source and waits for explicit code tru
   await page.route("**/admin/api/extensions/enable", (route) =>
     route.fulfill({ json: {} }),
   );
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await editSection(page, "Extensions");
   await page.getByRole("button", { name: "Add extension" }).click();
   await page.getByLabel("Directory on the gateway").fill("/extensions/fixture");
@@ -719,7 +719,7 @@ test("403 settings states do not retry and administrator app defaults stay usabl
       json: { error: { code: "owner_required", message: "Owner required" } },
     }),
   );
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   const instance = page.getByRole("region", { name: "Instance", exact: true });
   await expect(instance).toContainText("Only the owner can change this.");
   await expect(instance.getByRole("button", { name: "Try again" })).toHaveCount(
@@ -776,7 +776,7 @@ test("independent sign-in and defaults saves retain the other form's drafts", as
       },
     });
   });
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await editSection(page, "Sign-in");
   await page.getByLabel("Client ID", { exact: true }).fill("unsaved-provider");
   await page.getByRole("button", { name: "Save sign-in choice" }).click();
@@ -857,7 +857,7 @@ for (const width of [390, 1440]) {
         json: { instance: { name, base_url: url, theme_default: "system" } },
       }),
     );
-    await page.goto("/ui/settings/");
+    await page.goto("/settings/");
     const section = page.getByRole("region", { name: "Instance", exact: true });
     for (const text of [name, url]) {
       const field = section.getByText(text, { exact: text === name });
@@ -905,7 +905,7 @@ test("cached owner settings do not expose owner-only forms to administrators", a
       },
     }),
   );
-  await page.goto("/ui/settings/");
+  await page.goto("/settings/");
   await editSection(page, "Sign-in");
   await expect(
     page.getByRole("button", { name: "Save sign-in choice", exact: true }),
@@ -1092,7 +1092,7 @@ for (const form of revisionForms) {
         }
         return route.fulfill({ json: revisionResponse(form, value, revision) });
       });
-    await page.goto("/ui/settings/");
+    await page.goto("/settings/");
     await editSection(page, form.section);
     await changeRevisionField(page, form, form.draft);
     value = form.refreshed;
@@ -1135,7 +1135,7 @@ for (const form of revisionForms) {
           })
         : route.fulfill({ json: revisionResponse(form, form.original, "7") }),
     );
-    await page.goto("/ui/settings/");
+    await page.goto("/settings/");
     await editSection(page, form.section);
     await changeRevisionField(page, form, form.draft);
     await page.getByRole("button", { name: form.save, exact: true }).click();
@@ -1159,7 +1159,7 @@ for (const theme of ["light", "dark"] as const) {
         theme,
       );
       await seed(page, "empty");
-      await page.goto("/ui/settings/");
+      await page.goto("/settings/");
       const defaults = page.getByRole("region", {
         name: "Defaults",
         exact: true,
@@ -1207,7 +1207,7 @@ for (const theme of ["light", "dark"] as const) {
       });
       await expect(
         defaults.getByRole("link", { name: "View and edit access plans" }),
-      ).toHaveAttribute("href", "/ui/people/?tab=plans");
+      ).toHaveAttribute("href", "/people/?tab=plans");
       for (const textSize of ["100%", "200%"]) {
         await page.evaluate((size) => {
           document.documentElement.style.fontSize = size;

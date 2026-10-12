@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -406,7 +407,7 @@ function availabilityAction(
   viewerAdmin: boolean,
 ): { label: string; href: string } | null {
   const configHref =
-    row.locality === "remote" ? "/ui/providers/" : "/ui/engines/";
+    row.locality === "remote" ? "/providers/" : "/engines/";
   if (viewerAdmin) {
     if (row.availability.configured === false) {
       return {
@@ -426,7 +427,7 @@ function availabilityAction(
   }
   const state = availabilityState(row);
   if (["unavailable", "unknown", "not_measured"].includes(state)) {
-    return { label: "Check status", href: "/ui/status/" };
+    return { label: "Check status", href: "/status/" };
   }
   return null;
 }
@@ -587,7 +588,7 @@ function Availability({
   if (state === "unknown" || state === "not_measured") {
     return <span className="text-muted-foreground text-meta whitespace-normal">
       <span>{state === "not_measured" || !row.availability.measured ? "Not checked yet" : "Couldn\'t check"}</span>
-      {!showReason && <> · <a href="/ui/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</a></>}
+      {!showReason && <> · <a href="/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</a></>}
     </span>;
   }
   return (
@@ -910,7 +911,7 @@ function DetailSheet({
                         {readString(receipt.request_id) && (
                           <a
                             className="mt-2 block min-h-8 max-sm:min-h-11 content-center underline underline-offset-4"
-                            href={`/r/${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
+                            href={`/usage/?receipt=${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
                             View receipt
                           </a>
@@ -1045,7 +1046,7 @@ export default function ModelsClient() {
           description="Ask the owner to connect models your access plan allows."
           action={
             <Button variant="outline" asChild>
-              <a href="/ui/home/">Review setup</a>
+              <Link href="/">Review setup</Link>
             </Button>
           }
         />

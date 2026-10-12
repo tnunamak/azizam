@@ -44,7 +44,7 @@ function memory(remember: boolean, neverKeep: boolean) {
 }
 
 async function acceptWith(promptMemory: Response) {
-  window.history.replaceState(null, "", "/ui/invite/#token=invite-token");
+  window.history.replaceState(null, "", "/invite/#token=invite-token");
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status });
   vi.stubGlobal(
@@ -55,7 +55,7 @@ async function acceptWith(promptMemory: Response) {
         return json({ built_in: true, oidc: false });
       if (path === "/auth/api/invite") return json(invitation);
       if (path === "/auth/api/invite/accept")
-        return json({ next: "/ui/", credential: { api_key: "opk_test" } });
+        return json({ next: "/", credential: { api_key: "opk_test" } });
       if (path === "/me/api/prompt-memory") return promptMemory;
       return json({ error: { code: "not_found", message: "Not found" } }, 404);
     }),

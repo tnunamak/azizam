@@ -13,7 +13,6 @@ import { Progress } from "@/components/ui/progress";
 import { Money } from "@/components/product/money";
 import { StatusPill } from "@/components/product/status-pill";
 import { CommandDialog, CommandInput } from "@/components/ui/command";
-import { canonicalDestinationPath } from "@/lib/product";
 
 afterEach(cleanup);
 describe("foundation product contracts", () => {
@@ -144,13 +143,4 @@ describe("foundation product contracts", () => {
       screen.getByRole("heading", { name: "Find a page" }),
     );
   });
-});
-
-describe("legacy destination navigation", () => {
-  it.each(["/services", "/services/", "/ui/services", "/ui/services/"])(
-    "maps %s to the Engines navigation destination",
-    (path) => {
-      expect(canonicalDestinationPath(path)).toBe("/engines");
-    },
-  );
 });

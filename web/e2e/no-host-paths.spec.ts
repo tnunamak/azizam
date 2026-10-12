@@ -36,7 +36,7 @@ test("Usage shows no host path in the table, receipts or details", async ({ page
       },
     }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByText("Top models by requests")).toBeVisible();
   await page.getByRole("button", { name: "View recent requests" }).click();
   await expectNoHostPath(page, "usage");
@@ -74,7 +74,7 @@ test("Activity shows no host path in rows or details", async ({ page }) => {
       },
     }),
   );
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
   const row = page.getByRole("button", { name: /Request details:/ }).first();
   await expect(row).toBeVisible();
@@ -119,7 +119,7 @@ test("Models shows no host path when a model is registered by file path", async 
       },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
   const all = page.getByRole("button", { name: "Show all models" });
   if (await all.count()) await all.click();
@@ -139,7 +139,7 @@ test("Library shows no host path in a creation's details", async ({ page }) => {
       },
     }),
   );
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await page.getByRole("button", { name: /Open A lighthouse/ }).click();
   await expectNoHostPath(page, "library");
 });

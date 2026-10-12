@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   // Minting the temporary key can take a while on a busy machine; wait for
   // it, so a slow mint fails here rather than as missing copy.
   await expect(page.getByText("Creating Try key")).toBeHidden({ timeout: 30_000 });
@@ -88,7 +88,7 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   const catalogResponse = page.waitForResponse((response) =>
     response.url().includes("/me/api/models/catalog"),
   );
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
@@ -121,7 +121,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   page,
 }) => {
   await routeAudioCatalog(page);
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   await prepareTryKey(page);
   await waitForCatalog(page);
 
@@ -332,7 +332,7 @@ test("try query params select capability and preserve requested model", async ({
       },
     }),
   );
-  await page.goto("/ui/try/?capability=decide");
+  await page.goto("/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(
@@ -342,7 +342,7 @@ test("try query params select capability and preserve requested model", async ({
     "decide model",
   );
 
-  await page.goto("/ui/try/?capability=chat&model=fast");
+  await page.goto("/try/?capability=chat&model=fast");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
@@ -351,7 +351,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await expect(page.getByRole("combobox").first()).toContainText("fast");
 
-  await page.goto("/ui/try/?capability=chat&model=chat");
+  await page.goto("/try/?capability=chat&model=chat");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
@@ -474,7 +474,7 @@ for (const theme of ["light", "dark"] as const) {
         localStorage.setItem("theme", value);
       }, theme);
 
-      await page.goto("/ui/try/");
+      await page.goto("/try/");
       await expect(
         page.getByRole("heading", { name: "Try", exact: true }),
       ).toBeVisible();
@@ -553,7 +553,7 @@ test("capability chips keep full labels and never overlap on a phone", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   const tabs = page.getByRole("tablist", { name: "Try capability" });
   await expect(tabs.getByRole("tab")).toHaveCount(7);
   const layout = await tabs.evaluate((list) =>
@@ -611,7 +611,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   await page.route("**/me/api/workflows", (route) =>
     route.fulfill({ json: ltxCatalog }),
   );
-  await page.goto("/ui/try/?workflow=video.generate.ltx-2.5-i2v");
+  await page.goto("/try/?workflow=video.generate.ltx-2.5-i2v");
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -704,7 +704,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 test("a picture survives a dropped connection and never reports the browser's error", async ({
   page,
 }) => {
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   await prepareTryKey(page);
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Make a picture" }).click();
@@ -738,7 +738,7 @@ test("a picture survives a dropped connection and never reports the browser's er
 test("a picture whose connection never returns says it may still be finishing", async ({
   page,
 }) => {
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   await prepareTryKey(page);
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Make a picture" }).click();
@@ -751,7 +751,7 @@ test("a picture whose connection never returns says it may still be finishing", 
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("link", { name: "Open Library" })).toHaveAttribute(
     "href",
-    "/ui/library/",
+    "/library/",
   );
   await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
   await expect(page.getByText("Make a picture request failed")).toHaveCount(0);
@@ -773,7 +773,7 @@ for (const width of [390, 1440]) {
       await ready;
       await route.fulfill({ json: { aliases: [], models: [speechModel("speech-a", "Voice studio", "a-default"), speechModel("speech-b", "Second studio", "b-default")] } });
     });
-    await page.goto("/ui/try/?capability=speech", { waitUntil: "domcontentloaded" });
+    await page.goto("/try/?capability=speech", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
     await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeDisabled();
     await expect(page.getByRole("combobox", { name: "Voice", exact: true })).toBeDisabled();

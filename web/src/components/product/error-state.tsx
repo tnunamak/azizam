@@ -49,7 +49,7 @@ export function ErrorState({
     )
   ) : recovery === "sign-in" ? (
     <Button variant="outline" size="sm" asChild>
-      <a href="/ui/sign-in/">Sign in</a>
+      <a href="/sign-in/">Sign in</a>
     </Button>
   ) : retry ? (
     <Button variant="outline" size="sm" disabled={retrying} onClick={onRetry}>

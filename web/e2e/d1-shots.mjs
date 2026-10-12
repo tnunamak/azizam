@@ -27,7 +27,7 @@ async function contextFor(role, width, theme) {
     return context;
   } catch {}
   const page = await context.newPage();
-  await page.goto(`${base}/ui/sign-in/`);
+  await page.goto(`${base}/sign-in/`);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(manifest.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -44,7 +44,7 @@ for (const spec of specs) {
   const page = await context.newPage();
   const errors = [];
   page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
-  await page.goto(`${base}/ui${route}`);
+  await page.goto(`${base}${route}`);
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(500);

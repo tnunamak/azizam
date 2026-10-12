@@ -16,7 +16,7 @@ function progress(overrides: Partial<SetupProgress> = {}): SetupProgress {
         done: true,
         optional: false,
         reason: "A service is connected.",
-        href: "/ui/engines/",
+        href: "/engines/",
       },
       {
         id: "test_request",

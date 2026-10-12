@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { homeApi } from "@/app/home/home-api";
+import { homeApi } from "@/app/_home/home-api";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("Home session boundary", () => {

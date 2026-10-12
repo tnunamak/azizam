@@ -5,7 +5,7 @@ import {
   type APIRequestContext,
 } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import type { HomeSnapshot } from "../src/app/home/home-api";
+import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";
 
 test("the real seeded registry agrees on chat readiness across Home and Models", async ({
@@ -23,7 +23,7 @@ test("the real seeded registry agrees on chat readiness across Home and Models",
   expect(chat.status).toBe("ready");
   expect(model.availability.measured).toBe(true);
   expect(model.availability.available).toBe(true);
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(
     page.getByText("Health endpoint did not respond", { exact: true }),
   ).toHaveCount(0);
@@ -184,7 +184,7 @@ for (const theme of ["light", "dark"] as const) {
         theme,
       );
       await fixture(page, request);
-      await page.goto("/ui/home/");
+      await page.goto("/");
       await expect(page.locator("main")).not.toContainText("Hello,");
       // D1.1: each task row says its own state. The disabled and unavailable
       // capabilities are named on their rows and are not offered as links.
@@ -253,7 +253,7 @@ test("Home omits greeting when the API display name is an email", async ({
   request,
 }) => {
   await fixture(page, request, "tim@example.test");
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(page.locator("main")).not.toContainText("Hello,");
 });
 
@@ -276,7 +276,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
       },
     });
   });
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
   const select = page.getByRole("combobox", { name: "API key" });
   await select.click();
@@ -368,14 +368,14 @@ test("Home recent media carries content while requests stay in receipts", async 
       },
     }),
   );
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "Recent", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Recent requests", { exact: true })).toHaveCount(
     0,
   );
-  await expect(page.locator('a[href="/r/polish-image-receipt"]')).toHaveCount(
+  await expect(page.locator('a[href="/usage/?receipt=polish-image-receipt"]')).toHaveCount(
     0,
   );
   // D1.5: the audio tile shows a waveform and a play badge; its words are
@@ -445,7 +445,7 @@ test("Home and Library render a frame from posterless video", async ({
   );
 
   for (const route of ["home", "library"]) {
-    await page.goto(`/ui/${route}/`);
+    await page.goto(`/${route}/`);
     const video = page.locator("main video");
     await expect(video).toBeVisible();
     // Home's tile preloads nothing until it plays; Library's posterless tile
@@ -518,7 +518,7 @@ for (const width of [390, 1440]) {
         },
       }),
     );
-    await page.goto("/ui/home/");
+    await page.goto("/");
     await expect(
       page.getByRole("link", { name: "Open Image in Library", exact: true }),
     ).toBeVisible();
@@ -562,7 +562,7 @@ test("Home failed images show a named unavailable preview", async ({
   await page.route("**/azizam-home-broken.png", (route) =>
     route.fulfill({ status: 404, body: "Unavailable" }),
   );
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(
     page.getByRole("img", { name: "Image preview unavailable" }),
   ).toBeVisible();

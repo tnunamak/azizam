@@ -40,7 +40,7 @@ const signIn = {
   built_in: true,
   oidc: true,
   oidc_label: "Example ID",
-  oidc_url: "/admin/login?next=/ui/",
+  oidc_url: "/login?return_to=/",
   instance_name: "Rivera household",
   owner_name: "Alex",
 };
@@ -147,10 +147,10 @@ async function open(page: Page, surface: Surface, state: State) {
   await mock(page, state);
   await page.goto(
     surface === "sign-in"
-      ? "/ui/sign-in/"
+      ? "/sign-in/"
       : surface === "invite"
-        ? `/ui/invite/${state === "empty" ? "" : "#token=browser-test-token"}`
-        : "/ui/people/",
+        ? `/invite/${state === "empty" ? "" : "#token=browser-test-token"}`
+        : "/people/",
   );
   if (surface === "invites")
     await page.getByRole("tab", { name: "Invites", exact: true }).click();
@@ -271,7 +271,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
       await route.fulfill({
         json: {
           invite: invitation,
-          url: "/ui/invite/#token=browser-test-token",
+          url: "/invite/#token=browser-test-token",
         },
       });
     } else
@@ -297,7 +297,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   );
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await page.route(`**/admin/api/invites/${invitation.id}/link`, (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=browser-test-token" } }),
+    route.fulfill({ json: { url: "/invite/#token=browser-test-token" } }),
   );
   await page.reload();
   await page.getByRole("tab", { name: "Invites", exact: true }).click();
@@ -339,7 +339,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   await page.route(`**/admin/api/people/${person.id}/reset`, (route) =>
     route.fulfill({
       json: {
-        url: "/ui/sign-in/#reset=reset-test",
+        url: "/sign-in/#reset=reset-test",
         expires_at: invitation.expires_at,
       },
     }),
@@ -423,7 +423,7 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
       password: "Browser acceptance password",
     });
     return route.fulfill({
-      json: { next: "/ui/", credential: { api_key: "test-key-display-once" } },
+      json: { next: "/", credential: { api_key: "test-key-display-once" } },
     });
   });
   await page.getByLabel("Your name").fill("Sam Rivera");
@@ -453,7 +453,7 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
   ).toBeVisible();
   expect(new URL(page.url()).hash).toBe("");
   await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page).toHaveURL(/\/ui\/$/);
+  await expect(page).toHaveURL(/\/$/);
 });
 
 test("people lane unbound invitation requires an explicit choice", async ({
@@ -488,7 +488,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
     expect(route.request().postDataJSON()).toEqual({
       email: person.email,
       password: "Browser sign in password",
-      return_to: "/ui/home/",
+      return_to: "/",
     });
     return route.fulfill({
       status: failed ? 401 : 200,
@@ -499,7 +499,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
               message: "Email or password is incorrect.",
             },
           }
-        : { next: "/ui/" },
+        : { next: "/" },
     });
   });
   await page.getByLabel("Email", { exact: true }).fill(person.email);
@@ -514,8 +514,8 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
   ).toContainText("Email or password is incorrect.");
   failed = false;
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/$/);
-  await page.goto("/ui/sign-in/#reset=reset-browser-token");
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto("/sign-in/#reset=reset-browser-token");
   await expect(
     page.getByRole("heading", { name: "Choose a new password" }),
   ).toBeVisible();
@@ -524,13 +524,13 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
       token: "reset-browser-token",
       password: "Browser replacement password",
     });
-    return route.fulfill({ json: { next: "/ui/sign-in/" } });
+    return route.fulfill({ json: { next: "/sign-in/" } });
   });
   await page
     .getByLabel("New password", { exact: true })
     .fill("Browser replacement password");
   await page.getByRole("button", { name: "Save password" }).click();
-  await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
+  await expect(page).toHaveURL(/\/sign-in\/$/);
   await expect(
     page.getByRole("heading", {
       name: `Sign in to ${signIn.instance_name}`,
@@ -603,7 +603,7 @@ test("people lane invitation rows distinguish pending, accepted, expired and rev
   await page.route("**/admin/api/invites", (route) =>
     route.fulfill({ json: { invites, profiles: [plan] } }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await page.getByRole("tab", { name: "Invites", exact: true }).click();
   for (const status of ["Pending", "Accepted", "Expired", "Revoked"]) {
     await expect(page.getByText(status, { exact: true })).toBeVisible();
@@ -643,7 +643,7 @@ test("people lane omits unknown monthly usage and keeps known usage", async ({
     }),
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   const unknownRow = page
     .getByRole("listitem")
     .filter({ hasText: "Morgan Rivera" });
@@ -683,10 +683,10 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
     });
     expect(route.request().headers()["x-azizam-csrf"]).toBe("test-oidc-csrf");
     return route.fulfill({
-      json: { next: "/ui/", credential: { api_key: "oidc-test-display-once" } },
+      json: { next: "/", credential: { api_key: "oidc-test-display-once" } },
     });
   });
-  await page.goto("/ui/invite/");
+  await page.goto("/invite/");
   await expect(
     page.getByText("Accept as sam@example.test.", { exact: true }),
   ).toBeVisible();
@@ -760,7 +760,7 @@ test("people lane real invitation creates an account, app and working key, then 
       ).ok(),
     ).toBe(true);
     await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(memberPage).toHaveURL(/\/ui\/$/);
+    await expect(memberPage).toHaveURL(/\/$/);
     const member = await memberContext.request.get("/me/api/session");
     const memberData = await member.json();
     expect(memberData.authenticated).toBe(true);
@@ -813,7 +813,7 @@ test("people lane protects owner actions and explains permanent key revocation",
       },
     }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await expect(
     page.getByText("Protected account", { exact: true }),
   ).toBeVisible();
@@ -900,7 +900,7 @@ test("administrators cannot invite or manage people but can view access plans", 
       },
     }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await expect(
     page.getByRole("button", { name: "Invite someone", exact: true }),
   ).toBeDisabled();
@@ -919,7 +919,7 @@ test("invalid policy shapes stay editable with an inline error", async ({
   page,
 }) => {
   await mock(page, "seeded");
-  await page.goto("/ui/people/?tab=plans");
+  await page.goto("/people/?tab=plans");
   await page.getByRole("button", { name: "Edit plan" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByText("Advanced", { exact: true }).click();
@@ -951,7 +951,7 @@ for (const disabled of [false, true]) {
         json: { people: [{ ...person, disabled }], profiles: [plan] },
       }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     const trigger = page.getByRole("button", {
       name: "Actions for Morgan Rivera",
     });
@@ -980,9 +980,9 @@ test("invitation revoke names the recipient and link dialogs use the public URL"
     }),
   );
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+    route.fulfill({ json: { url: "/invite/#token=fixture" } }),
   );
-  await page.goto("/ui/people/?tab=invites");
+  await page.goto("/people/?tab=invites");
   const trigger = page.getByRole("button", {
     name: "Actions for invitation to sam@example.test",
   });
@@ -998,7 +998,7 @@ test("invitation revoke names the recipient and link dialogs use the public URL"
   await page.getByRole("menuitem", { name: "Copy invite link" }).click();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  ).toHaveValue("https://public.example.test/invite/#token=fixture");
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await expect(trigger).toBeFocused();
 });
@@ -1021,7 +1021,7 @@ for (const width of [390, 1440]) {
         },
       }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     for (const text of ["n".repeat(300), "p".repeat(300)]) {
       // The plan is a column on wider screens and joins the second line on
       // a phone; one copy is visible.
@@ -1065,9 +1065,9 @@ test("relative links wait for public settings while absolute server links are im
     });
   });
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
-    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+    route.fulfill({ json: { url: "/invite/#token=fixture" } }),
   );
-  await page.goto("/ui/people/?tab=invites");
+  await page.goto("/people/?tab=invites");
   await page
     .getByRole("button", { name: "Actions for invitation to sam@example.test" })
     .click();
@@ -1081,14 +1081,14 @@ test("relative links wait for public settings while absolute server links are im
   release();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  ).toHaveValue("https://public.example.test/invite/#token=fixture");
   await expect(
     page.getByRole("button", { name: "Copy link", exact: true }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
   await page.route("**/admin/api/invites/invitation-family/link", (route) =>
     route.fulfill({
-      json: { url: "https://server.example.test/ui/invite/#token=absolute" },
+      json: { url: "https://server.example.test/invite/#token=absolute" },
     }),
   );
   await page
@@ -1097,7 +1097,7 @@ test("relative links wait for public settings while absolute server links are im
   await page.getByRole("menuitem", { name: "Copy invite link" }).click();
   await expect(
     page.getByRole("textbox", { name: "Link", exact: true }),
-  ).toHaveValue("https://server.example.test/ui/invite/#token=absolute");
+  ).toHaveValue("https://server.example.test/invite/#token=absolute");
 });
 
 for (const tab of ["People", "Invites"] as const) {
@@ -1115,7 +1115,7 @@ for (const tab of ["People", "Invites"] as const) {
           },
         }),
     );
-    await page.goto("/ui/people/");
+    await page.goto("/people/");
     if (tab === "Invites")
       await page.getByRole("tab", { name: tab, exact: true }).click();
     await expect(page.getByRole("main").getByRole("alert")).toContainText(

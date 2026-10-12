@@ -116,7 +116,7 @@ for (const theme of themes) {
       }) => {
         await setViewport(page, theme, width);
         if (state !== "seeded") await mockApps(page, state);
-        await page.goto("/ui/apps/");
+        await page.goto("/apps/");
         if (state === "seeded") {
           await expect(
             page.getByRole("heading", { name: "Browser test app" }),
@@ -138,7 +138,7 @@ for (const theme of themes) {
       }) => {
         await setViewport(page, theme, width);
         await mockProviders(page, state);
-        await page.goto("/ui/providers/");
+        await page.goto("/providers/");
         if (state === "seeded") {
           await expect(
             page.getByRole("heading", { name: "OpenRouter" }),

@@ -69,7 +69,7 @@ const catalog = {
       },
       native_route: "/v1/workflows/image.product-render/run",
       discovery_url: "/gateway/v1/workflows/image.product-render",
-      try_url: "/ui/try/?workflow=image.product-render",
+      try_url: "/try/?workflow=image.product-render",
     },
   ],
 };

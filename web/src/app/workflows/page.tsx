@@ -799,7 +799,7 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 </Button>
                 {asset.request_id ? (
                   <Button variant="outline" size="sm" asChild>
-                    <a href={`/r/${encodeURIComponent(asset.request_id)}`}>
+                    <a href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
                       View receipt
                     </a>
                   </Button>

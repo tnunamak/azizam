@@ -155,7 +155,7 @@ describe("Make a picture", () => {
       ).toBeVisible();
       expect(screen.getByRole("link", { name: "Open Library" })).toHaveAttribute(
         "href",
-        "/ui/library/",
+        "/library/",
       );
       expect(screen.queryByText(/Failed to fetch/i)).toBeNull();
       expect(screen.queryByText("Make a picture request failed")).toBeNull();

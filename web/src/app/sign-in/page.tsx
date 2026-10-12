@@ -37,7 +37,7 @@ export default function SignInPage() {
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setReturnTo(params.get("return_to") || "/ui/home/");
+    setReturnTo(params.get("return_to") || "/");
     setProviderError(params.get("error") === "provider");
     setReset(
       new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
@@ -153,7 +153,7 @@ export default function SignInPage() {
                 className="h-auto min-h-11 w-full py-2 whitespace-normal!"
                 asChild
               >
-                <a href="/ui/setup/">Set up your gateway</a>
+                <a href="/setup/">Set up your gateway</a>
               </Button>
             </div>
           ) : (

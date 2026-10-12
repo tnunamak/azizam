@@ -10,7 +10,7 @@ test("requests refresh on focus and keep metadata on one line", async ({
     return route.continue();
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
   const row = page.getByRole("button", { name: /Request details:/ }).first();
   await expect(row).toBeVisible();
@@ -69,7 +69,7 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
     });
   });
 
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(
     page.getByRole("button", { name: /Updated instance settings/ }),
@@ -145,7 +145,7 @@ test("automated changes are grouped by default and use plain wording when shown"
     });
   });
 
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(page.getByText("2 automated changes hidden")).toBeVisible();
   await expect(
@@ -188,7 +188,7 @@ test("system change labels stay generic until event details are opened", async (
     }),
   );
 
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   const change = page.getByRole("button", {
     name: /Updated engine configuration by System/,
@@ -232,7 +232,7 @@ for (const theme of ["light", "dark"] as const) {
             }),
           );
         }
-        await page.goto("/ui/activity/");
+        await page.goto("/activity/");
         await page.getByRole("tab", { name: "Requests", exact: true }).click();
         if (state === "seeded") {
           await expect(
@@ -318,7 +318,7 @@ test("request errors retry and audit details use readable timestamps", async ({
   await page.route("**/admin/api/activity/requests?*", (route) =>
     fail ? route.fulfill({ status: 503, body: "{}" }) : route.continue(),
   );
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   await page
     .getByRole("button", { name: /Details:/ })
@@ -372,7 +372,7 @@ for (const theme of ["light", "dark"] as const) {
             }),
           );
         }
-        await page.goto("/ui/activity/");
+        await page.goto("/activity/");
         await page.getByRole("tab", { name: "Changes", exact: true }).click();
         if (state === "seeded")
           await expect(
@@ -416,7 +416,7 @@ for (const status of ["disconnected", "timed_out", "incomplete"]) {
           stage: "private-stage", error_code: "private-code", warnings: ["private-warning"] } }],
       people: [], next_cursor: null,
     } }));
-    await page.goto("/ui/activity/");
+    await page.goto("/activity/");
     await page.getByRole("tab", { name: "Requests", exact: true }).click();
     await page.getByRole("button", { name: /Request details:/ }).click();
     const sheet = page.getByRole("dialog");

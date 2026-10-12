@@ -23,7 +23,7 @@ test("library mini audio player handles live-data audio playback", async ({
   expect(response.status()).toBe(200);
   const { download_url } = await response.json();
 
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await page.getByRole("button", { name: "Audio", exact: true }).click();
 
   const card = page

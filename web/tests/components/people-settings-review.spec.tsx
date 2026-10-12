@@ -138,10 +138,10 @@ beforeEach(() => {
       revision: "7",
     },
     "/admin/api/people/morgan/reset": {
-      url: "/ui/sign-in/#reset=fixture",
+      url: "/sign-in/#reset=fixture",
       expires_at: invite.expires_at,
     },
-    "/admin/api/invites/sam/link": { url: "/ui/invite/#token=fixture" },
+    "/admin/api/invites/sam/link": { url: "/invite/#token=fixture" },
   };
   vi.mocked(adminFetch).mockImplementation(async (path) => {
     const result = responses[path];
@@ -292,7 +292,7 @@ describe("People and Settings red-team regressions", () => {
     });
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Link" })).toHaveValue(
-        "https://public.example.test/ui/sign-in/#reset=fixture",
+        "https://public.example.test/sign-in/#reset=fixture",
       ),
     );
   });
@@ -613,7 +613,7 @@ describe("People and Settings red-team regressions", () => {
       );
       await screen.findByRole("dialog");
       expect(screen.getByRole("textbox", { name: "Link" })).toHaveValue(
-        `${base || window.location.origin}/ui/sign-in/#reset=fixture`,
+        `${base || window.location.origin}/sign-in/#reset=fixture`,
       );
       await userEvent.click(
         screen.getByRole("button", { name: "I’ve saved the link" }),
@@ -627,7 +627,7 @@ describe("People and Settings red-team regressions", () => {
         return await new Promise(() => {});
       if (path === "/admin/api/invites/sam/link")
         return {
-          url: "https://server.example.test/ui/invite/#token=fixture",
+          url: "https://server.example.test/invite/#token=fixture",
         } as never;
       return responses[path] as never;
     });
@@ -643,7 +643,7 @@ describe("People and Settings red-team regressions", () => {
     );
     await screen.findByRole("dialog");
     expect(screen.getByRole("textbox", { name: "Link" })).toHaveValue(
-      "https://server.example.test/ui/invite/#token=fixture",
+      "https://server.example.test/invite/#token=fixture",
     );
     expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
   });
@@ -669,7 +669,7 @@ describe("People and Settings red-team regressions", () => {
     };
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("textbox", { name: "Link" })).toHaveValue(
-      "https://public.example.test/ui/sign-in/#reset=fixture",
+      "https://public.example.test/sign-in/#reset=fixture",
     );
   });
   it("draws Settings on the settings template (craft PR 2)", async () => {

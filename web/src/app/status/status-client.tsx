@@ -340,7 +340,7 @@ function failedRequestsFact(
               {" · "}
             </span>
             <a
-              href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
+              href={`/usage/?receipt=${encodeURIComponent(latest.receipt.request_id)}`}
               className="text-link font-medium underline-offset-4 hover:underline max-sm:block max-sm:w-fit max-sm:py-3"
             >
               Open receipt

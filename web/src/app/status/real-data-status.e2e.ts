@@ -42,7 +42,7 @@ test("member Status renders copied live-data projection without owner details", 
       width,
       height: width === 390 ? 844 : 1000,
     });
-    await page.goto("/ui/status/");
+    await page.goto("/status/");
     await expect(
       page.getByRole("heading", { name: "Status", level: 1 }),
     ).toBeVisible();

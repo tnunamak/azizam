@@ -25,10 +25,10 @@ const savedApiBaseUrl = `${savedPublicUrl}/v1`;
 const cookiePath = path.join(state, "session-cookies.json");
 
 const pages = [
-  ["home", "/ui/home/"],
-  ["models", "/ui/models/"],
-  ["library", "/ui/library/"],
-  ["usage", "/ui/usage/"],
+  ["home", "/"],
+  ["models", "/models/"],
+  ["library", "/library/"],
+  ["usage", "/usage/"],
 ];
 const viewports = [
   ["1440", { width: 1440, height: 900 }],

@@ -1,16 +1,16 @@
 {
   "title": "Azizam gateway polish review",
-  "url": "http://127.0.0.1:18180/ui/",
-  "start": "/home/",
+  "url": "http://127.0.0.1:18180/",
+  "start": "/",
   "authScript": "./darshana-auth.mjs",
   "crawl": {
     "include": [
-      "^/ui/(home|models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings)/?$"
+      "^/((models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings)/?)?$"
     ],
     "exclude": ["sign-out", "logout", "delete"],
     "maxPages": 13,
     "extraRoutes": [
-      "/home/",
+      "/",
       "/models/",
       "/workflows/",
       "/try/",

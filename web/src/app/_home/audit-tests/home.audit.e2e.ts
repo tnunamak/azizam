@@ -93,7 +93,7 @@ function progress(complete = true) {
         done: true,
         optional: false,
         reason: "A service is connected.",
-        href: "/ui/engines/",
+        href: "/engines/",
       },
       {
         id: "test_request",
@@ -186,7 +186,7 @@ for (const state of ["seeded", "empty", "error"] as const) {
           theme,
         );
         await setupRoutes(page, state);
-        await page.goto("/ui/home/");
+        await page.goto("/");
         if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),
@@ -220,7 +220,7 @@ test("fresh owner sees connection and media without setup progress", async ({
       setupCalls += 1;
     }
   });
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(
     page.getByRole("heading", { name: "Connect an app", exact: true }),
   ).toBeVisible();
@@ -251,7 +251,7 @@ test("member Home keeps owner setup API out and connection task in the first vie
       json: { error: { message: "Owner only" } },
     });
   });
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI" }).click();
   const baseUrl = page.getByText("Base URL", { exact: true });
   await expect(baseUrl).toBeVisible();
@@ -268,7 +268,7 @@ test("setup evidence buttons are not shown on Home", async ({ page }) => {
     posts.push(route.request().postDataJSON());
     await route.fulfill({ json: { recorded: true } });
   });
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI" }).click();
   await expect(
     page.getByRole("button", { name: "I copied the settings" }),
@@ -316,7 +316,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
   const secret = credential.api_key as string;
   expect(typeof secret).toBe("string");
 
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI" }).click();
   await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: /Home audit evidence key/ }).click();

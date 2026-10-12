@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Fish, ArrowRight, ShieldCheck } from "lucide-react";
@@ -136,7 +137,7 @@ export default function InvitePage() {
             <SecretReveal
               secret={accept.data.credential.api_key}
               onSaved={() => {
-                const next = accept.data?.next || "/ui/";
+                const next = accept.data?.next || "/";
                 accept.reset();
                 continueTo(next);
               }}
@@ -158,7 +159,7 @@ export default function InvitePage() {
               description="Ask the owner for a new invitation, then open the complete link."
               action={
                 <Button asChild variant="outline">
-                  <a href="/ui/home/">Return to gateway home</a>
+                  <Link href="/">Return to gateway home</Link>
                 </Button>
               }
             />
@@ -325,7 +326,7 @@ export default function InvitePage() {
                         onClick={() => {
                           sessionStorage.setItem("gateway-invitation", token);
                           window.location.assign(
-                            "/admin/login?return_to=/ui/invite/",
+                            "/login?return_to=/invite/",
                           );
                         }}
                       >
@@ -340,7 +341,7 @@ export default function InvitePage() {
                       description="Ask the gateway owner to enable accounts or an identity provider."
                       action={
                         <Button asChild variant="outline">
-                          <a href="/ui/">Return to gateway home</a>
+                          <Link href="/">Return to gateway home</Link>
                         </Button>
                       }
                     />

@@ -24,7 +24,7 @@ async function context(role, width, theme) {
     await ctx.addCookies(JSON.parse(await readFile(stateFile, "utf8")));
   } catch {
     const page = await ctx.newPage();
-    await page.goto(`${base}/ui/sign-in/`);
+    await page.goto(`${base}/sign-in/`);
     await page.getByLabel("Email", { exact: true }).fill(role === "owner" ? manifest.owner_email : manifest.member_email);
     await page.getByLabel("Password", { exact: true }).fill(manifest.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -87,7 +87,7 @@ for (const role of ["owner", "member"]) {
   for (const theme of ["light", "dark"]) {
     for (const width of [1440, 390]) {
       const ctx = await context(role, width, theme);
-      for (const [surface, route] of [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"]]) {
+      for (const [surface, route] of [["home", "/"], ["status", "/status/"], ["library", "/library/"]]) {
         const page = await ctx.newPage();
         const consoleErrors = [];
         page.on("console", m => { if (m.type() === "error") consoleErrors.push(m.text()); });

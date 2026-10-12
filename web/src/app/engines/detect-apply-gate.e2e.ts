@@ -237,7 +237,7 @@ for (const theme of ["light", "dark"]) {
         theme,
       );
       await page.goto(
-        `/ui/${width === 390 ? "services" : "engines"}/?service=${serviceId}`,
+        `/${width === 390 ? "services" : "engines"}/?service=${serviceId}`,
       );
       const card = page.locator(`tr[data-engine-id="${serviceId}"]`);
       if (width === 390) {
@@ -441,7 +441,7 @@ for (const theme of ["light", "dark"]) {
           },
         }),
       );
-      await page.goto("/ui/engines/?service=capture-engine");
+      await page.goto("/engines/?service=capture-engine");
       const card = page.locator('tr[data-engine-id="capture-engine"]');
       await card.getByRole("button", { name: /Actions|More/ }).click();
       await page
@@ -485,7 +485,7 @@ test("a registry conflict preserves the detected-model preview for retry", async
       },
     });
   });
-  await page.goto("/ui/engines/?service=capture-engine");
+  await page.goto("/engines/?service=capture-engine");
   const card = page.locator('tr[data-engine-id="capture-engine"]');
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page

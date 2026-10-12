@@ -5,7 +5,7 @@ test("remove an app through Apps & keys and invalidate its key", async ({
   request,
 }) => {
   const name = "Removable browser client";
-  await page.goto("/ui/apps/");
+  await page.goto("/apps/");
   await page
     .getByRole("button", { name: "New app", exact: true })
     .first()
@@ -91,7 +91,7 @@ test("Showcase handles real structured request shapes in the browser", async ({
       },
     }),
   );
-  await page.goto("/ui/showcase/");
+  await page.goto("/showcase/");
   await expect(
     page.getByText("Recorded answer", { exact: true }),
   ).toBeVisible();
@@ -121,7 +121,7 @@ test("audio capability never selects an image-only workflow", async ({
       },
     }),
   );
-  await page.goto("/ui/try/?capability=audio&model=audio");
+  await page.goto("/try/?capability=audio&model=audio");
   await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");

@@ -53,7 +53,7 @@ const seededCatalog = {
       recent_receipts: [
         {
           request_id: "req_1",
-          href: "/r/req_1",
+          href: "/usage/?receipt=req_1",
           status: "succeeded",
           latency_ms: 820,
         },
@@ -303,7 +303,7 @@ async function preparePage(
     localStorage.setItem("theme", value);
   }, theme);
   await routeCatalog(page, payload, status);
-  const response = await page.goto("/ui/models/");
+  const response = await page.goto("/models/");
   expect(response?.status()).toBe(200);
   await expect(
     page.getByRole("heading", { name: "Models", exact: true }),

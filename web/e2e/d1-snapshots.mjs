@@ -13,13 +13,13 @@ for (const role of ["owner", "member"]) for (const theme of ["light", "dark"]) {
   await ctx.clock.setFixedTime(new Date(manifest.now * 1000));
   await ctx.addInitScript(value => localStorage.setItem("theme", value), theme);
   await ctx.addCookies(JSON.parse(await readFile(`${process.env.HOME}/.tmp/azizam-redesign/d1-work/cookies-${role}-${manifest.fixture_state}.json`, "utf8")));
-  for (const [name, route, open] of [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"], ["viewer", "/ui/library/", true]]) {
+  for (const [name, route, open] of [["home", "/"], ["status", "/status/"], ["library", "/library/"], ["viewer", "/library/", true]]) {
     const page = await ctx.newPage();
     await page.goto(`${base}${route}`);
     await page.waitForLoadState("networkidle");
     if (open) { await page.getByRole("button", { name: /^Open / }).first().click(); await page.waitForTimeout(800); }
     let html = await page.content();
-    html = html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/(href|src)="\/ui\//g, `$1="${base}/ui/`);
+    html = html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/(href|src)="\//g, `$1="${base}/`);
     await writeFile(`${outdir}/${role}-${name}-${theme}.html`, html);
     await page.close();
   }

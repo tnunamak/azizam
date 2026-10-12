@@ -38,7 +38,7 @@ test("Providers presents the current API shape without inventing readiness or na
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.goto("/ui/providers/");
+      await page.goto("/providers/");
       const provider = page.locator("li").filter({
         has: page.getByRole("heading", {
           name: "Remote provider",
@@ -138,7 +138,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
       },
     }),
   );
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   const unknown = page.locator("li").filter({
     has: page.getByRole("heading", {
       name: "Unchecked provider",
@@ -184,7 +184,7 @@ test("workflow cards keep internal IDs behind an explicit copy or details action
     route.fulfill({ json: { assets: [], models: [], next_cursor: null } }),
   );
 
-  await page.goto("/ui/workflows/");
+  await page.goto("/workflows/");
   const card = page.getByRole("listitem", { name: "Product render" });
   await expect(card.getByText("Product render", { exact: true })).toBeVisible();
   await expect(
@@ -261,7 +261,7 @@ test("an observed-up engine with a bad health tone is shown as unavailable", asy
     }),
   );
 
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   const card = page.locator("tr").filter({ hasText: "Chat engine" });
   await expect(card.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(card.getByText("Ready", { exact: true })).toHaveCount(0);
@@ -292,7 +292,7 @@ test("empty provider status exposes Add provider; a bare 404 is a load failure",
     route.fulfill({ json: { profiles: [] } }),
   );
 
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await expect(
     page.getByText("No providers yet", { exact: true }),
   ).toBeVisible();
@@ -322,13 +322,13 @@ test("Status offers a local action when no remote providers are configured", asy
   await page.route("**/admin/api/providers", (route) =>
     route.fulfill({ json: { providers: [] } }),
   );
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByText("No remote providers are configured.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Review connections", exact: true }),
-  ).toHaveAttribute("href", "/ui/engines/");
+  ).toHaveAttribute("href", "/engines/");
 });
 
 test("legacy email names remain contact details on People and in search", async ({
@@ -352,7 +352,7 @@ test("legacy email names remain contact details on People and in search", async 
       json: { users: [{ ...person, display_name: person.email }] },
     }),
   );
-  await page.goto("/ui/people/");
+  await page.goto("/people/");
   await expect(page.getByText(person.email, { exact: true })).toHaveCount(1);
   await page.keyboard.press("Control+k");
   await page
@@ -404,7 +404,7 @@ test("personal access app hides only its exact generated email-based name", asyn
     route.fulfill({ json: { credential: { api_key: "test-key" } } }),
   );
 
-  await page.goto("/ui/apps/");
+  await page.goto("/apps/");
   // Craft PR 3: each app is a row of the Apps ListCard.
   const card = page.getByRole("listitem").filter({
     has: page.getByRole("heading", { name: "Personal access", exact: true }),

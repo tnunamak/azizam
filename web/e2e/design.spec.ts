@@ -10,7 +10,7 @@ for (const theme of ["light", "dark"] as const) {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.goto("/ui/design/");
+      await page.goto("/design/");
       for (const [triggerName, dialogName] of [
         ["Open dialog", "Create an app"],
         ["Open sheet", "Request details"],

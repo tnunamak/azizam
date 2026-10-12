@@ -77,7 +77,7 @@ test("library loading stays accessible while media is pending", async ({
     await ready;
     await route.fulfill({ json: mediaFixture });
   });
-  await page.goto("/ui/library/", { waitUntil: "domcontentloaded" });
+  await page.goto("/library/", { waitUntil: "domcontentloaded" });
   await expect(
     page.getByRole("status", { name: "Loading library" }),
   ).toBeVisible();
@@ -98,7 +98,7 @@ for (const mode of ["light", "dark"] as const) {
         return route.fulfill({ json: mediaFixture });
       });
       await page.route("**/me/api/media/asset_image_1/download?*", (route) => route.fulfill({ json: { download_url: mediaFixture.assets[0].download_url } }));
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       // Tiles are named by their prompt; the caption shows its subject.
       const tile = page.getByRole("button", {
         name: /Open A clean product render/,
@@ -157,12 +157,12 @@ for (const mode of ["light", "dark"] as const) {
       await page.route("**/me/api/media?**", (route) =>
         route.fulfill({ json: { assets: [], models: [], next_cursor: null } }),
       );
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(page.getByText("No creations yet")).toBeVisible();
       // The empty state names the one action that fills it.
       await expect(
         page.getByRole("link", { name: "Make an image" }),
-      ).toHaveAttribute("href", "/ui/try/?capability=image");
+      ).toHaveAttribute("href", "/try/?capability=image");
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-empty-${mode}-${width}.png`,
@@ -183,7 +183,7 @@ for (const mode of ["light", "dark"] as const) {
         }
         return route.fulfill({ json: mediaFixture });
       });
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
       await expect(
         page.getByText("Couldn’t load your library", { exact: true }),
       ).toBeVisible();
@@ -224,7 +224,7 @@ test("library delete confirms before mutation", async ({ page }) => {
     deleted = true;
     return route.fulfill({ json: { ok: true } });
   });
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
@@ -266,7 +266,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
         : mediaFixture,
     });
   });
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
@@ -355,7 +355,7 @@ test("library audio plays independently and video uses its recorded poster", asy
     posterRequests.push(route.request().url());
     return route.fulfill({ json: { download_url: posterUrl } });
   });
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   const audio = page.locator("article audio");
   await expect(audio).not.toHaveAttribute("controls", "");
   await expect(audio).toHaveAttribute("preload", "none");
@@ -457,7 +457,7 @@ for (const width of [390, 1440]) {
         },
       });
     });
-    await page.goto("/ui/library/");
+    await page.goto("/library/");
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await expect(
       page.getByRole("alert").filter({
@@ -508,7 +508,7 @@ test("Library failed preview retries in place with the same URL", async ({
           contentType: "image/svg+xml",
         }),
   );
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(
     page.getByRole("img", { name: "Image preview unavailable" }),
   ).toBeVisible();
@@ -556,7 +556,7 @@ test("Library waits for posters and exposes recovery after both candidates fail"
     videoRequests++;
     return route.fulfill({ status: 404, body: "Unavailable" });
   });
-  await page.goto("/ui/library/", { waitUntil: "domcontentloaded" });
+  await page.goto("/library/", { waitUntil: "domcontentloaded" });
   await expect(
     page.getByRole("button", { name: /Open Gateway status/ }),
   ).toBeVisible();

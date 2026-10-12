@@ -251,7 +251,7 @@ for (const theme of ["light", "dark"] as const) {
           (value) => localStorage.setItem("theme", value),
           theme,
         );
-        await page.goto("/ui/status/");
+        await page.goto("/status/");
         await expect(
           page.getByRole("heading", { name: "Status", level: 1 }),
         ).toBeVisible();
@@ -305,7 +305,7 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           await expect(
             main.getByRole("link", { name: "Add an engine", exact: true }),
-          ).toHaveAttribute("href", "/ui/engines/");
+          ).toHaveAttribute("href", "/engines/");
         } else {
           // D1 copy: the verdict and a card for the failed status check.
           // The page verdict is the first status; the owner's own requests follow.
@@ -365,7 +365,7 @@ for (const theme of ["light", "dark"] as const) {
 
 test("provider failures are visible and retryable", async ({ page }) => {
   await mockStatusApis(page, { providers: 503 });
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   const main = page.locator("main");
   // D1: engines and providers share one layer section, folded while a card
   // is open; the provider failure stays visible outside the fold.
@@ -389,7 +389,7 @@ test("failed refresh removes stale green engine observations", async ({
   page,
 }) => {
   await mockStatusApis(page);
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   const main = page.locator("main");
   // Open the folded layer table so the engines' green states are on screen.
   await openLayerTable(main, "Engines: 2 ready, 1 turned off. Show all");

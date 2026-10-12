@@ -8,7 +8,7 @@ const options = {
   built_in: true,
   oidc: true,
   oidc_label: "Household accounts",
-  oidc_url: "/login?return_to=%2Fui%2Fhome%2F",
+  oidc_url: "/login?return_to=%2F",
   instance_name: "Azizam",
 };
 const screenshotDir = path.join(os.homedir(), ".tmp/signin-shots/after");
@@ -19,10 +19,7 @@ test.beforeEach(async ({ context }) => {
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
-    for (const [name, url] of [
-      ["home", "/ui/"],
-      ["signin", "/ui/sign-in/"],
-    ]) {
+    for (const [name, url] of [["signin", "/sign-in/"]]) {
       test(`signed out ${name}: ${theme}, ${width}px`, async ({ page }) => {
         await page.setViewportSize({
           width,
@@ -55,7 +52,7 @@ for (const theme of ["light", "dark"] as const) {
           }).observe(document, { childList: true, subtree: true });
         });
         await page.goto(url);
-        await expect(page).toHaveURL(/\/ui\/sign-in\//);
+        await expect(page).toHaveURL(/\/sign-in\//);
         await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
         await expect(page.getByRole("navigation")).toHaveCount(0);
         expect(
@@ -105,6 +102,21 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
+test("signed-out root shows the landing, not a sign-in redirect", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(
+    page.getByText("Your own AI, in the apps you use", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("navigation")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Sign in", exact: true })).toHaveAttribute(
+    "href",
+    "/sign-in/?return_to=%2F",
+  );
+});
+
 test("slow session checks never mount the app shell and retain filters and fragments", async ({
   page,
 }) => {
@@ -116,14 +128,14 @@ test("slow session checks never mount the app shell and retain filters and fragm
     await gate;
     await route.continue();
   });
-  await page.goto("/ui/models/?capability=chat#selection");
+  await page.goto("/models/?capability=chat#selection");
   await expect(page.getByRole("status")).toHaveText("Checking your session…");
   await expect(page.getByRole("navigation")).toHaveCount(0);
   await expect(page.locator("[data-slot=skeleton]")).toHaveCount(0);
   release();
-  await expect(page).toHaveURL(/\/ui\/sign-in\//);
+  await expect(page).toHaveURL(/\/sign-in\//);
   expect(new URL(page.url()).searchParams.get("return_to")).toBe(
-    "/ui/models/?capability=chat#selection",
+    "/models/?capability=chat#selection",
   );
 });
 
@@ -136,10 +148,10 @@ for (const route of [
   "settings",
 ]) {
   test(`${route} uses the shared signed-out guard`, async ({ page }) => {
-    await page.goto(`/ui/${route}/`);
-    await expect(page).toHaveURL(/\/ui\/sign-in\//);
+    await page.goto(`/${route}/`);
+    await expect(page).toHaveURL(/\/sign-in\//);
     expect(new URL(page.url()).searchParams.get("return_to")).toBe(
-      `/ui/${route}/`,
+      `/${route}/`,
     );
     await expect(page.getByRole("navigation")).toHaveCount(0);
   });
@@ -151,7 +163,7 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   await page.route("**/auth/api/options*", (route) =>
     route.fulfill({ json: options }),
   );
-  await page.goto("/ui/sign-in/");
+  await page.goto("/sign-in/");
   const provider = page.getByRole("link", {
     name: "Continue with Household accounts",
   });
@@ -222,7 +234,7 @@ for (const [state, code, status, message, expected] of [
     await page.route("**/auth/api/login", (route) =>
       route.fulfill({ status, json: { error: { code, message } } }),
     );
-    await page.goto("/ui/sign-in/");
+    await page.goto("/sign-in/");
     await page.getByLabel("Email", { exact: true }).fill("member@example.test");
     await page
       .getByLabel("Password", { exact: true })
@@ -244,7 +256,7 @@ test("expired reset and provider failure each explain the next step", async ({
       json: { error: { code: "link_unavailable", message: "Expired" } },
     }),
   );
-  await page.goto("/ui/sign-in/#reset=expired-fixture");
+  await page.goto("/sign-in/#reset=expired-fixture");
   await page
     .getByLabel("New password", { exact: true })
     .fill("A long new browser password");
@@ -252,7 +264,7 @@ test("expired reset and provider failure each explain the next step", async ({
   await expect(page.getByRole("main").getByRole("alert")).toContainText(
     "Ask for a new link.",
   );
-  await page.goto("/ui/sign-in/?error=provider");
+  await page.goto("/sign-in/?error=provider");
   await expect(page.getByRole("main").getByRole("alert")).toContainText(
     "Single sign-on didn’t finish.",
   );
@@ -264,11 +276,11 @@ test("a new gateway offers setup before asking for a password", async ({
   await page.route("**/setup/api/state", (route) =>
     route.fulfill({ json: { owner_exists: false } }),
   );
-  await page.goto("/ui/sign-in/");
+  await page.goto("/sign-in/");
   await expect(
     page.getByRole("heading", { name: "Set up Azizam" }),
   ).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
   await page.getByRole("link", { name: "Set up your gateway" }).click();
-  await expect(page).toHaveURL(/\/ui\/setup\/$/);
+  await expect(page).toHaveURL(/\/setup\/$/);
 });

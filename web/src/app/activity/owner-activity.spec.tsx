@@ -218,7 +218,7 @@ it("keeps request errors distinct from empty results and retries", async () => {
   const label = await screen.findByText("No request receipts yet");
   expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
   expect(screen.getByText("Requests from apps and devices on your trusted network appear here.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/ui/");
+  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/");
   expect(screen.queryByRole("alert")).toBeNull();
 });
 

@@ -113,28 +113,28 @@ async function verifyMemberStatusPath(page: Page) {
       .getByRole("navigation", { name: "Phone navigation" })
       .getByRole("link", { name: "Status", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/ui\/status\/?$/);
-    await page.goto("/ui/");
+    await expect(page).toHaveURL(/\/status\/?$/);
+    await page.goto("/");
 
     await page.getByRole("button", { name: "More", exact: true }).click();
     const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
     await sheet.getByRole("link", { name: "Status", exact: true }).click();
     await expect(sheet).not.toBeVisible();
-    await expect(page).toHaveURL(/\/ui\/status\/?$/);
-    await page.goto("/ui/");
+    await expect(page).toHaveURL(/\/status\/?$/);
+    await page.goto("/");
   } else {
     await page
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name: "Status", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/ui\/status\/?$/);
-    await page.goto("/ui/");
+    await expect(page).toHaveURL(/\/status\/?$/);
+    await page.goto("/");
   }
 
   await page.keyboard.press("Control+k");
   await page.getByRole("option", { name: "Status", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/status\/?$/);
-  await page.goto("/ui/");
+  await expect(page).toHaveURL(/\/status\/?$/);
+  await page.goto("/");
 
   await page
     .getByRole("button", { name: /Gateway status:/ })
@@ -145,7 +145,7 @@ async function verifyMemberStatusPath(page: Page) {
     .getByLabel("Gateway health")
     .getByRole("link", { name: /^(View status|See why)$/ })
     .click();
-  await expect(page).toHaveURL(/\/ui\/status\/?$/);
+  await expect(page).toHaveURL(/\/status\/?$/);
   await expect(
     page.getByRole("heading", { name: "Status", exact: true }),
   ).toBeVisible();
@@ -156,7 +156,7 @@ test("tablet rail restores focus, closes from the button, and navigates", async 
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.setViewportSize({ width: 768, height: 1000 });
-  await page.goto("/ui/");
+  await page.goto("/");
 
   const expand = page.getByRole("button", { name: "Expand navigation" });
   expect(await seriousAxeViolations(page)).toEqual([]);
@@ -177,7 +177,7 @@ test("tablet rail restores focus, closes from the button, and navigates", async 
   sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   await sheet.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(sheet).not.toBeVisible();
-  await expect(page).toHaveURL(/\/ui\/settings\/?$/);
+  await expect(page).toHaveURL(/\/settings\/?$/);
 });
 
 test("phone More returns keyboard focus with motion enabled", async ({
@@ -185,7 +185,7 @@ test("phone More returns keyboard focus with motion enabled", async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto("/ui/");
+  await page.goto("/");
   const more = page.getByRole("button", { name: "More", exact: true });
   await more.focus();
   await page.keyboard.press("Enter");
@@ -211,7 +211,7 @@ for (const colorScheme of ["light", "dark"] as const) {
         reducedMotion: viewport.name === "desktop" ? "no-preference" : "reduce",
       });
       await page.setViewportSize(viewport);
-      await page.goto("/ui/");
+      await page.goto("/");
 
       await expect(
         page.getByRole("link", { name: /Azizam/ }).first(),
@@ -254,9 +254,9 @@ for (const colorScheme of ["light", "dark"] as const) {
           .getByRole("link", { name: "Activity", exact: true })
           .click();
         await expect(sheet).not.toBeVisible();
-        await expect(page).toHaveURL(/\/ui\/activity\/?$/);
+        await expect(page).toHaveURL(/\/activity\/?$/);
 
-        await page.goto("/ui/");
+        await page.goto("/");
         await page.getByRole("button", { name: "More", exact: true }).click();
         await sheet
           .getByRole("button", { name: "Go to", exact: true })
@@ -297,7 +297,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       const ownerCalls = await installMemberRoutes(page);
       await page.emulateMedia({ colorScheme });
       await page.setViewportSize(viewport);
-      await page.goto("/ui/");
+      await page.goto("/");
       await verifyMemberStatusPath(page);
       expect(ownerCalls).toEqual([]);
       expect(await seriousAxeViolations(page)).toEqual([]);

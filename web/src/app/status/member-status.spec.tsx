@@ -10,7 +10,7 @@ import { ApiError } from "@/lib/api";
 vi.mock("./status-client", () => ({ StatusClient: () => <p>Owner status</p> }));
 // Capability states come from the shared model, which reads the Home snapshot.
 const home = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
-vi.mock("@/app/home/home-api", () => ({
+vi.mock("@/app/_home/home-api", () => ({
   homeApi: {
     home: async () => ({
       authenticated: true,
@@ -74,7 +74,7 @@ const snapshot: Snapshot = {
       status: "failed",
       intent: "image.generate",
       created_at: null,
-      href: "/ui/usage/?receipt=my-failed-request",
+      href: "/usage/?receipt=my-failed-request",
     },
   ],
   help: "Ask the owner if an allowed capability is unavailable.",
@@ -243,7 +243,7 @@ describe("member Status diagnosis", () => {
     mount();
     expect(
       await screen.findByRole("link", { name: "Sign in" }),
-    ).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
+    ).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
     expect(status).toHaveBeenCalledOnce();
   });
   it("renders the loading state until the scoped request resolves", async () => {

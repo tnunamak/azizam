@@ -68,7 +68,7 @@ export default function SetupPage() {
                       : "The first allowed sign-in becomes this gateway’s owner."}
                   </p>
                   <Button asChild className="w-full">
-                    <a href="/login?return_to=/setup">
+                    <a href="/login?return_to=/setup/">
                       Continue with single sign-on
                     </a>
                   </Button>

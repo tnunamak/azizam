@@ -23,7 +23,7 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   tampered.searchParams.set("md", "full");
   expect((await page.request.get(tampered.toString())).status()).toBe(403);
 
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await page.getByRole("button", { name: "Audio", exact: true }).click();
   const audio = page.locator("article audio").first();
   await expect(audio).toBeAttached();

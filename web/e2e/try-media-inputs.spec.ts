@@ -38,7 +38,7 @@ test("every picture and video input on Try is one picker, in plain words", async
 
   for (const workflow of withMedia) {
     await test.step(workflow.id, async () => {
-      await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflow.id)}`);
+      await page.goto(`/try/?workflow=${encodeURIComponent(workflow.id)}`);
       await expect(page.getByRole("combobox").first()).toContainText(
         workflow.title,
       );

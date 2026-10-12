@@ -230,7 +230,7 @@ describe("media references", () => {
       assetIdFromPasted(`https://ai.vivid.fish/me/api/media/img_${hex}/download?scope=me`),
     ).toBe(`img_${hex}`);
     expect(
-      assetIdFromPasted(`https://ai.vivid.fish/ui/library/?asset=img_${hex}`),
+      assetIdFromPasted(`https://ai.vivid.fish/library/?asset=img_${hex}`),
     ).toBe(`img_${hex}`);
     expect(assetIdFromPasted("https://example.com/cat.png")).toBe(
       "https://example.com/cat.png",

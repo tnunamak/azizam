@@ -63,7 +63,7 @@ export default function AccountPage() {
             severity="info"
             heading="Sign in as a person"
             message="This session uses a key, which has no prompts of its own."
-            action={{ label: "Sign in", href: "/ui/sign-in/" }}
+            action={{ label: "Sign in", href: "/sign-in/" }}
           />
         ) : (
           <PromptsSection />

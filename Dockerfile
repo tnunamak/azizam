@@ -3,7 +3,7 @@ WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-COPY gateway/product_identity.json /app/gateway/product_identity.json
+COPY gateway/product_identity.json gateway/ui_pages.json /app/gateway/
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

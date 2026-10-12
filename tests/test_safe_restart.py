@@ -503,6 +503,9 @@ class WebBuildTests(unittest.TestCase):
         identity.parent.mkdir()
         identity.write_text('{"name": "Azizam"}\n')
         os.utime(identity, (100, 100))
+        pages = Path(root) / "gateway" / "ui_pages.json"
+        pages.write_text('{"pages": {"": "public"}}\n')
+        os.utime(pages, (100, 100))
         source = web / "src" / "page.tsx"
         source.write_text("export default function Page() {}\n")
         (web / "out").mkdir()

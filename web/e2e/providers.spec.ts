@@ -355,7 +355,7 @@ for (const theme of ["light", "dark"] as const) {
       test(`providers ${state}: ${theme} ${width}`, async ({ page }) => {
         await setViewport(page, theme, width);
         await routeProviders(page, state);
-        await page.goto("/ui/providers/");
+        await page.goto("/providers/");
         await expect(
           page.getByRole("heading", { name: "Providers" }),
         ).toBeVisible();
@@ -391,7 +391,7 @@ test("providers detail edits models caps and plans through real admin paths", as
   page,
 }) => {
   await routeProviders(page, "seeded");
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByText("Manage", { exact: true }).click();
   await page.getByRole("button", { name: "Edit models" }).click();
   await page
@@ -421,7 +421,7 @@ test("providers detail edits models caps and plans through real admin paths", as
 
 test("providers reconcile pending charges before removal", async ({ page }) => {
   await routeProviders(page, "seeded");
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByText("Manage", { exact: true }).click();
   await expect(page.getByText("1 charge needs checking")).toBeVisible();
   await page.getByRole("button", { name: "Check charges" }).click();
@@ -467,7 +467,7 @@ for (const theme of ["light", "dark"] as const) {
   test(`providers reconciliation dialog: ${theme} 390`, async ({ page }) => {
     await setViewport(page, theme, 390);
     await routeProviders(page, "seeded");
-    await page.goto("/ui/providers/");
+    await page.goto("/providers/");
     await page.getByText("Manage", { exact: true }).click();
     await expect(page.getByText("1 charge needs checking")).toBeVisible();
     await inspect(page, `providers-reconciliation-card-${theme}-390`);
@@ -532,7 +532,7 @@ async function routeProviderCredentialSecurity(
 }
 
 async function openAddProvider(page: Page) {
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByRole("button", { name: "Add provider" }).first().click();
 }
 
@@ -545,7 +545,7 @@ test("providers add OpenRouter and keep paid access gated", async ({
   page,
 }) => {
   await routeProviders(page, "empty");
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByRole("button", { name: "Add provider" }).first().click();
   await page.getByLabel("Search providers").fill("openrouter");
   await page.getByRole("button", { name: /OpenRouter/ }).click();
@@ -864,7 +864,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     expect(keyResponse.status()).toBe(201);
     const { credential } = await keyResponse.json();
 
-    await page.goto("/ui/providers/");
+    await page.goto("/providers/");
     await page.getByRole("button", { name: "Add provider" }).first().click();
     await page.getByLabel("Search providers").fill("openrouter");
     await page.getByRole("button", { name: /OpenRouter/ }).click();
@@ -977,7 +977,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     );
     expect(allowResponse.status()).toBe(200);
 
-    await page.goto("/ui/models/");
+    await page.goto("/models/");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
     await page.getByRole("button", { name: /All models/ }).click();
     await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
@@ -1029,7 +1029,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       error: { code: "provider_needs_reconciliation" },
     });
 
-    await page.goto("/ui/providers/");
+    await page.goto("/providers/");
     await page.getByText("Manage", { exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Check charges" }),
@@ -1130,7 +1130,7 @@ test("providers add dialog fits a 390 px phone with long preset metadata", async
       },
     }),
   );
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByRole("button", { name: "Add provider" }).first().click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Search providers")).toBeVisible();
@@ -1159,7 +1159,7 @@ test("providers replace a saved key in a masked dialog", async ({ page }) => {
     nativeDialogs.push(dialog.type());
     void dialog.dismiss();
   });
-  await page.goto("/ui/providers/");
+  await page.goto("/providers/");
   await page.getByText("Manage", { exact: true }).click();
   await page.getByRole("button", { name: "More actions for OpenRouter" }).click();
   await page.getByRole("menuitem", { name: /Replace key/ }).click();

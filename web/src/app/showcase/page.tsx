@@ -197,7 +197,7 @@ export default function GalleryPage() {
           description="Try a request to create media. The gateway owner can then choose examples to share here."
           action={
             <Button asChild variant="outline">
-              <a href="/ui/try/">Try a request</a>
+              <a href="/try/">Try a request</a>
             </Button>
           }
         />

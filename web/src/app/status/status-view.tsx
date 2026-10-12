@@ -179,7 +179,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
             description="Your session has ended. Sign in to view the models available to your account."
             action={
               <Button asChild>
-                <Link href="/sign-in/?return_to=%2Fui%2Fstatus%2F">
+                <Link href="/sign-in/?return_to=%2Fstatus%2F">
                   Sign in
                 </Link>
               </Button>
@@ -312,7 +312,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                     const describedBy = `receipt-${receipt.request_id}`;
                     return (
                       <li key={receipt.request_id}>
-                        {/* The gateway sends an absolute /ui path; next/link would prefix /ui again. */}
+                        {/* The gateway sends the receipt link; a plain anchor loads Usage with it. */}
                         <a
                           href={receipt.href}
                           aria-label="View request receipt"
@@ -362,7 +362,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                   <>
                     App still not working?{" "}
                     <Link
-                      href="/home"
+                      href="/"
                       className="text-link font-medium underline-offset-4 hover:underline"
                     >
                       Check your connection

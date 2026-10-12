@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight, ReceiptText } from "lucide-react";
@@ -301,7 +302,7 @@ export function Requests() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <a href="/ui/">Connect an app</a>
+                <Link href="/">Connect an app</Link>
               </Button>
             )
           }

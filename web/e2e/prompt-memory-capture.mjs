@@ -35,7 +35,7 @@ async function storageFor(email) {
   if (signedIn.has(email)) return signedIn.get(email);
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(`${base}/ui/sign-in/`);
+  await page.goto(`${base}/sign-in/`);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(seed.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -94,12 +94,12 @@ async function household(page, value) {
 
 const shots = {
   // Member: their own settings.
-  "account-member": { as: seed.member_email, go: "/ui/account/" },
+  "account-member": { as: seed.member_email, go: "/account/" },
   // Member: Try with the default (kept) and with Don't keep on.
-  "try-kept": { as: seed.member_email, go: "/ui/try/?capability=image" },
+  "try-kept": { as: seed.member_email, go: "/try/?capability=image" },
   "try-forget": {
     as: seed.member_email,
-    go: "/ui/try/?capability=image",
+    go: "/try/?capability=image",
     act: async (page) => {
       await page
         .getByRole("switch", { name: "Don’t keep this prompt" })
@@ -110,7 +110,7 @@ const shots = {
   // owner viewing the same member's item.
   "library-maker": {
     as: seed.member_email,
-    go: `/ui/library/?asset=${kept.asset_id}`,
+    go: `/library/?asset=${kept.asset_id}`,
     act: async (page) => {
       await page.getByRole("dialog").waitFor();
       await page.getByRole("button", { name: /^Actions for / }).click();
@@ -118,23 +118,23 @@ const shots = {
   },
   "library-maker-not-saved": {
     as: seed.member_email,
-    go: `/ui/library/?asset=${notKept.asset_id}`,
+    go: `/library/?asset=${notKept.asset_id}`,
     act: async (page) => page.getByRole("dialog").waitFor(),
   },
   "library-owner-sees-member": {
     as: seed.owner_email,
-    go: `/ui/library/?asset=${kept.asset_id}`,
+    go: `/library/?asset=${kept.asset_id}`,
     act: async (page) => page.getByRole("dialog").waitFor(),
   },
   "library-owner-own": {
     as: seed.owner_email,
-    go: `/ui/library/?asset=${samKept.asset_id}`,
+    go: `/library/?asset=${samKept.asset_id}`,
     act: async (page) => page.getByRole("dialog").waitFor(),
   },
   // Owner: the household's rules.
   "settings-owner": {
     as: seed.owner_email,
-    go: "/ui/settings/",
+    go: "/settings/",
     act: async (page) => {
       // The Prompts heading just under the header, with Defaults above it.
       await page
@@ -151,12 +151,12 @@ const shots = {
   "account-capped": {
     as: seed.member_email,
     owner: { retention_cap: "3_months" },
-    go: "/ui/account/",
+    go: "/account/",
   },
   // Background cleanup still running after Delete my saved prompts.
   "account-cleanup": {
     as: seed.member_email,
-    go: "/ui/account/",
+    go: "/account/",
     route: async (page) => {
       await page.route("**/me/api/prompt-memory", async (route) => {
         const response = await route.fetch();
@@ -172,7 +172,7 @@ const shots = {
   // A new key on the member's own app.
   "apps-key": {
     as: seed.member_email,
-    go: "/ui/apps/",
+    go: "/apps/",
     act: async (page) => {
       await page.getByRole("button", { name: "New app" }).first().click();
       await page.getByLabel("App name").fill("Kitchen tablet");
@@ -186,12 +186,12 @@ const shots = {
   "account-household-off": {
     as: seed.member_email,
     owner: { never_keep: true },
-    go: "/ui/account/",
+    go: "/account/",
   },
   "try-household-off": {
     as: seed.member_email,
     owner: { never_keep: true },
-    go: "/ui/try/?capability=image",
+    go: "/try/?capability=image",
   },
 };
 

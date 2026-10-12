@@ -224,7 +224,7 @@ describe("LibraryPage batch J provenance", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("link", { name: "View receipt req_image_123" }),
-      ).toHaveAttribute("href", "/r/req_image_123"),
+      ).toHaveAttribute("href", "/usage/?receipt=req_image_123"),
     );
     expect(screen.queryByText("Prompt not recorded.")).toBeNull();
   });
@@ -279,7 +279,7 @@ describe("LibraryPage batch J provenance", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("link", { name: "View receipt req/image 123" }),
-      ).toHaveAttribute("href", "/r/req%2Fimage%20123"),
+      ).toHaveAttribute("href", "/usage/?receipt=req%2Fimage%20123"),
     );
   });
 
