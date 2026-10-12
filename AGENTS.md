@@ -83,6 +83,14 @@ the fix is to move the knowledge to data, not to add an allowlist entry.** Addin
 an allowlist entry requires an explicit, reviewed justification and is the
 exception, never the reflex.
 
+A second check, the ratchet, counts every engine name in all production Python
+(`proxy.py`, root modules, `gateway/**`): string literals anywhere, names,
+attributes and def/class names, not only `if` conditions. The per-file counts
+live in `tests/engine_knowledge_baseline.json`. A count may only fall: a rise or
+a new file fails the test, and a fall fails until you lower the baseline with
+`python tests/test_engine_knowledge_boundary.py --lower-baseline`. There is no
+allowlist; the target is an empty baseline.
+
 The full design and the four-bucket classification of every engine-touching
 item live in `docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md`. Read it before adding
 or migrating anything engine-specific.

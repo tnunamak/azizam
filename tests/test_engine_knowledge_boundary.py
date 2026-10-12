@@ -522,6 +522,164 @@ def _check_primitive_vocabulary_closed() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Check 6: engine-knowledge RATCHET (no allowlist, counts only fall)
+#
+# Check 1 only sees engine literals inside branch conditions and only for LLM
+# engine names. The audit (engine-knowledge-audit-2026-10-12) found ~95 items
+# of engine knowledge that pass it: media engines, literals passed as
+# arguments, `engine_id == "omnivoice"`, engine-named identifiers.
+#
+# This check counts EVERY engine-name hit in production Python, per file, and
+# compares the count with tests/engine_knowledge_baseline.json:
+#   - a count above its baseline fails (new engine knowledge);
+#   - a file with hits that is not in the baseline fails (new file);
+#   - a count below its baseline fails too, until the baseline is lowered, so
+#     a deletion cannot be given back later.
+# Lower the baseline with:  python tests/test_engine_knowledge_boundary.py --lower-baseline
+# The tool refuses to raise a count. There is no allowlist: the target is an
+# empty baseline.
+#
+# A "hit" is one AST node, outside docstrings, whose text names an engine:
+# a string literal, a name, an attribute, a def/class name, an argument name
+# or a keyword name. Comments are not code and are not counted.
+# Served client protocols (openai, anthropic, ollama, a1111, mcp) and the
+# gateway's own LiteLLM library are not engine names here. Branches on
+# `ollama` stay under check 1.
+# ---------------------------------------------------------------------------
+
+_BASELINE_PATH = Path(__file__).parent / "engine_knowledge_baseline.json"
+
+_ENGINE_KNOWLEDGE_PATTERN = re.compile(
+    r"(?<![a-z])(?:"
+    r"comfy|vllm|sglang|kobold|tabby|llama|gguf|mmproj|lmstudio|lm-studio|"
+    r"qwen|gemma|mistral|hermes|functionary|command_r|tgi(?![a-z])|"
+    r"voxtral|parakeet|chatterbox|omnivoice|kokoro|supertonic|whisper|"
+    r"flux|ltx|ace[-_]?step|ideogram|minimax|seedvr"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _production_files() -> list[Path]:
+    """Every production Python module: proxy.py, root modules, gateway/**."""
+    return [
+        *sorted(_REPO_ROOT.glob("*.py")),
+        *sorted((_REPO_ROOT / "gateway").rglob("*.py")),
+        *sorted(_FAKE_UPSTREAM.rglob("*.py")),
+    ]
+
+
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                    and isinstance(body[0].value.value, str):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _count_engine_knowledge(source: str, filename: str = "<source>") -> int:
+    tree = ast.parse(source, filename=filename)
+    skip = _docstring_ids(tree)
+    hits = 0
+    for node in ast.walk(tree):
+        texts: list[str] = []
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
+            texts.append(node.value)
+        elif isinstance(node, ast.Name):
+            texts.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            texts.append(node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            texts.append(node.name)
+        elif isinstance(node, ast.arg):
+            texts.append(node.arg)
+        elif isinstance(node, ast.keyword) and node.arg:
+            texts.append(node.arg)
+        if any(_ENGINE_KNOWLEDGE_PATTERN.search(text) for text in texts):
+            hits += 1
+    return hits
+
+
+def _engine_knowledge_counts(
+    _sources: dict[str, str] | None = None,
+) -> dict[str, int]:
+    """Hits per file; files without hits are omitted."""
+    if _sources is None:
+        _sources = {
+            path.relative_to(_REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
+            for path in _production_files()
+        }
+    counts = {rel: _count_engine_knowledge(src, rel) for rel, src in sorted(_sources.items())}
+    return {rel: n for rel, n in counts.items() if n}
+
+
+def _load_baseline() -> dict[str, int]:
+    import json
+    return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))["files"]
+
+
+def _ratchet_violations(counts: dict[str, int], baseline: dict[str, int]) -> list[str]:
+    violations: list[str] = []
+    for rel, count in sorted(counts.items()):
+        if rel not in baseline:
+            violations.append(f"{rel}: new file with {count} engine-knowledge hit(s)")
+        elif count > baseline[rel]:
+            violations.append(f"{rel}: engine-knowledge hits rose {baseline[rel]} -> {count}")
+        elif count < baseline[rel]:
+            violations.append(
+                f"{rel}: engine-knowledge hits fell {baseline[rel]} -> {count}; "
+                "lower the baseline (python tests/test_engine_knowledge_boundary.py --lower-baseline)"
+            )
+    for rel, base in sorted(baseline.items()):
+        if rel not in counts:
+            violations.append(
+                f"{rel}: baseline lists {base} hit(s) but the file has none or is gone; "
+                "lower the baseline (python tests/test_engine_knowledge_boundary.py --lower-baseline)"
+            )
+    return violations
+
+
+def _hit_lines(rel: str, source: str) -> list[str]:
+    """Locate hits for a failure message."""
+    tree = ast.parse(source, filename=rel)
+    skip = _docstring_ids(tree)
+    found: list[str] = []
+    for node in ast.walk(tree):
+        text = None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
+            text = node.value
+        elif isinstance(node, ast.Name):
+            text = node.id
+        elif isinstance(node, ast.Attribute):
+            text = node.attr
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            text = node.name
+        elif isinstance(node, ast.arg):
+            text = node.arg
+        elif isinstance(node, ast.keyword) and node.arg:
+            text = node.arg
+        if text is not None and _ENGINE_KNOWLEDGE_PATTERN.search(text):
+            found.append(f"{rel}:{getattr(node, 'lineno', '?')}: {text[:80]!r}")
+    return found
+
+
+def _lower_baseline() -> None:
+    import json
+    counts = _engine_knowledge_counts()
+    baseline = _load_baseline() if _BASELINE_PATH.exists() else {}
+    raised = [rel for rel, n in counts.items() if n > baseline.get(rel, 0)]
+    if raised:
+        raise SystemExit(f"refusing to raise the baseline for: {', '.join(raised)}")
+    _BASELINE_PATH.write_text(
+        json.dumps({"files": counts}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(f"baseline written: {sum(counts.values())} hits in {len(counts)} files")
+
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -727,3 +885,73 @@ class TestEngineKnowledgeBoundary:
             "return backend in _HAS_DEFAULT_MODEL_FALLBACK",
             "return True",
         ))
+
+
+class TestEngineKnowledgeRatchet:
+    """Per-file engine-name counts may only fall (check 6)."""
+
+    def test_counts_match_the_checked_in_baseline(self) -> None:
+        counts = _engine_knowledge_counts()
+        violations = _ratchet_violations(counts, _load_baseline())
+        if violations:
+            rising = {v.split(":", 1)[0] for v in violations if "rose" in v or "new file" in v}
+            for rel in sorted(rising):
+                violations.extend(
+                    "    " + line for line in _hit_lines(rel, (_REPO_ROOT / rel).read_text(encoding="utf-8"))[:40]
+                )
+        assert not violations, _fail_message("engine-knowledge ratchet", violations)
+
+    def test_scope_covers_root_modules_gateway_and_media_engine_names(self) -> None:
+        scanned = {path.relative_to(_REPO_ROOT).as_posix() for path in _production_files()}
+        assert {"proxy.py", "status_endpoint.py", "firehose_render.py",
+                "responses_translator.py", "metrics_sampler.py"} <= scanned
+        assert "gateway/transforms.py" in scanned
+        for name in ("comfyui", "voxtral", "omnivoice", "chatterbox", "kokoro",
+                     "parakeet", "whisper", "flux2-klein-4b", "ltx-2.5", "ace-step", "kobold", "tabby"):
+            assert _ENGINE_KNOWLEDGE_PATTERN.search(name), name
+        for protocol in ("openai", "anthropic", "ollama", "a1111", "litellm", "mcp"):
+            assert not _ENGINE_KNOWLEDGE_PATTERN.search(protocol), protocol
+
+    def test_counts_literals_outside_if_conditions_and_identifiers(self) -> None:
+        source = "\n".join([
+            '"""docstring that mentions comfyui is not code"""',
+            "# comment about voxtral is not code",
+            'def pick(engine_id):',
+            '    """tabby in a docstring is not counted"""',
+            '    if engine_id == "omnivoice": return 1',   # 1 literal
+            '    return call(host="comfyui")',             # 1 literal
+            "def currently_loaded_kobold_model(): pass",   # 1 def name
+            "x = TABBY_HOST",                              # 1 name
+            'y = "plain"',
+        ])
+        assert _count_engine_knowledge(source) == 4
+
+    def test_ratchet_rejects_a_rise_a_new_file_and_a_stale_baseline(self) -> None:
+        baseline = {"proxy.py": 3, "gateway/a.py": 2}
+        assert _ratchet_violations({"proxy.py": 3, "gateway/a.py": 2}, baseline) == []
+        assert any("rose 3 -> 4" in v for v in _ratchet_violations({"proxy.py": 4, "gateway/a.py": 2}, baseline))
+        assert any("new file" in v for v in _ratchet_violations(
+            {"proxy.py": 3, "gateway/a.py": 2, "gateway/new.py": 1}, baseline))
+        assert any("fell 3 -> 2" in v for v in _ratchet_violations({"proxy.py": 2, "gateway/a.py": 2}, baseline))
+        assert any("gateway/a.py" in v for v in _ratchet_violations({"proxy.py": 3}, baseline))
+
+    def test_mutant_new_engine_literal_branch_fails_the_ratchet(self) -> None:
+        sources = {
+            rel: (_REPO_ROOT / rel).read_text(encoding="utf-8")
+            for rel in _load_baseline()
+        }
+        assert _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline()) == []
+        sources["gateway/lifecycle_drivers.py"] += '\n\ndef _mutant(engine_id):\n    if engine_id == "newengine-flux9":\n        return 1\n'
+        sources["gateway/brand_new_module.py"] = 'DEFAULT = "chatterbox"\n'
+        violations = _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline())
+        assert any("gateway/lifecycle_drivers.py" in v and "rose" in v for v in violations)
+        assert any("gateway/brand_new_module.py" in v and "new file" in v for v in violations)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:] == ["--lower-baseline"]:
+        _lower_baseline()
+    else:
+        raise SystemExit("usage: python tests/test_engine_knowledge_boundary.py --lower-baseline")
