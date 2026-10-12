@@ -52,7 +52,7 @@ def results(report: dict):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", default="18910")
+    parser.add_argument("--port", default="18450")
     parser.add_argument("--copies", default="4")
     parser.add_argument("--workers", default="4")
     parser.add_argument("--out", type=Path, default=Path.cwd())
