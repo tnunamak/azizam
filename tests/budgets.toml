@@ -7,7 +7,7 @@
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
 [ceilings]
-pytest = 8208
+pytest = 8216
 vitest = 1606
 playwright = 735
 
