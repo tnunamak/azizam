@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Run every CI job on an exact commit and retain per-step receipts.
-# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--shards N] [--skip-compose]
+# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--shards N] [--py-workers N] [--skip-compose]
 # Independent jobs and browser fixtures run in isolated detached worktrees.
 # A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
 
-signoff=0 force=0 port=18640 shards=4 skip_compose=0
+signoff=0 force=0 port=18640 shards=10 py_workers=12 skip_compose=0
 while (($#)); do
   case $1 in
     --signoff) signoff=1 ;;
     --force) force=1 ;;
-    --port|--shards)
+    --port|--shards|--py-workers)
       (($# >= 2)) || { echo "$1 requires a number" >&2; exit 2; }
-      if [[ $1 == --port ]]; then port=$2; else shards=$2; fi
+      case $1 in --port) port=$2 ;; --shards) shards=$2 ;; *) py_workers=$2 ;; esac
       shift ;;
     --skip-compose) skip_compose=1 ;;
     -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
@@ -22,8 +22,8 @@ while (($#)); do
 done
 # Each ten-port lane owns gateway +0, engine +1, strict probes +2..+9.
 # Bound inputs before arithmetic, including the two additional fixture lanes.
-if [[ ! $port =~ ^18[0-9]{3}$ || ! $shards =~ ^[1-9][0-9]?$ ]]; then
-  echo "--port must be 18000-18998 and --shards a positive integer <= 99" >&2
+if [[ ! $port =~ ^18[0-9]{3}$ || ! $shards =~ ^[1-9][0-9]?$ || ! $py_workers =~ ^[1-9][0-9]?$ ]]; then
+  echo "--port must be 18000-18998 and --shards and --py-workers positive integers <= 99" >&2
   exit 2
 fi
 if ((port + 10 * (shards + 2) + 9 > 18998)); then
@@ -97,7 +97,7 @@ add_worktree() {
 add_worktree "$work"
 add_worktree "$run/python"
 add_worktree "$run/fresh"
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\nshards\t%s\nbase_port\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" "$shards" "$port" > "$receipts/run.tsv"
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nshards\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" "$shards" "$py_workers" "$port" > "$receipts/run.tsv"
 
 failed=0
 step() {
@@ -113,7 +113,7 @@ step() {
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
 }
-export receipts work skip_compose
+export receipts work skip_compose py_workers run shards
 export -f step
 start_job() {
   local directory=$1; shift
@@ -141,33 +141,55 @@ wait_job() {
 # These jobs never share their venv, generated files or node_modules.
 start_job "$run/python" bash -c '
   failed=0
-  step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx
+  step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx -n "$py_workers" --dist worksteal
   exit "$failed"
 '
+# The Compose journey creates and removes a Docker bridge network. Chromium
+# aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
+# so Compose must never overlap the browser lanes: it runs here, alongside web
+# preparation, and the lanes start only after it finishes. The native journey
+# runs later, beside the lanes: it needs no Docker network, and running it
+# after Compose keeps the two from racing for the same free ports.
 start_job "$run/fresh" bash -c '
   failed=0
   step fresh-venv bash -c "uv venv -q --python 3.12.13 .ci-fresh-venv && uv pip sync -q --no-build --strict --require-hashes --link-mode copy --python .ci-fresh-venv/bin/python tests/requirements-hermetic.lock"
-  step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+  if ((skip_compose)); then
+    printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
+    failed=1
+    echo "== fresh-compose SKIPPED: the run cannot pass without it"
+  else
+    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
+  fi
   exit "$failed"
 '
 fresh_pid=$last_pid
 start_job "$work" bash -c '
   failed=0
   step web-npm-ci bash -c "cd web && npm ci --no-audit --no-fund"
+  # Unit tests run beside the build, not beside the browser lanes: there, CPU
+  # contention pushed tests past the 5 s vitest limit. They finish before the
+  # lanes copy this tree.
+  ( step web-unit bash -c "cd web && npx vitest run"; exit "$failed" ) &
+  unit_pid=$!
   step web-check bash -c "cd web && npm run check"
-  step web-unit bash -c "cd web && npx vitest run"
+  wait "$unit_pid" || failed=1
   step e2e-venv bash -c "uv venv -q --python 3.12 venv && uv pip sync -q --python venv/bin/python --require-hashes tests/requirements-hermetic.lock"
   step e2e-browser bash -c "cd web && npx playwright install chromium"
+  # Split spec files by measured time; --shard splits by test count, which
+  # left one of 12 lanes running 414 s and another 18 s.
+  step e2e-plan bash -c "cd web && ./node_modules/.bin/playwright test --list > \"\$1/e2e-list.txt\" && ../scripts/e2e/plan_shards.py plan \"\$1/e2e-list.txt\" e2e/shard-weights.tsv \"\$2\" \"\$1/shards\"" _ "$run" "$shards"
   exit "$failed"
 '
-wait_job "$last_pid"
+web_pid=$last_pid
+wait_job "$web_pid"
+wait_job "$fresh_pid"
 
 # Browser lanes test the built export with the e2e venv and browser. Without
 # them every journey fails with misleading 401/404s, so skip the lanes and
 # let the failed prerequisite be the reported cause.
 lanes=$((shards + 2))  # browser shards, live-data and household
 browser_ready=1
-for prerequisite in web-npm-ci web-check e2e-venv e2e-browser; do
+for prerequisite in web-npm-ci web-check e2e-venv e2e-browser e2e-plan; do
   rc=$(cut -f2 "$receipts/steps/$prerequisite.tsv" 2>/dev/null || echo missing)
   if [[ $rc != 0 ]]; then browser_ready=0; fi
 done
@@ -198,7 +220,7 @@ for ((i=1; i<=lanes; i++)); do
   args=()
   name=e2e-shard-$i-of-$shards
   if ((i <= shards)); then
-    args+=("--shard=$i/$shards")
+    args+=(--test-list "$run/shards/lane-$i.txt")
   elif ((i == shards + 1)); then
     config=playwright.live-data.config.ts; name=e2e-live-data
   else
@@ -212,27 +234,16 @@ for ((i=1; i<=lanes; i++)); do
   ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
   lane_pids+=("$last_pid")
 done
-# The Compose journey creates and removes a Docker bridge network. Chromium
-# aborts in-flight requests on any host network change (ERR_NETWORK_CHANGED),
-# so Compose must never overlap the browser lanes: run it after they finish,
-# while the Python suite (the longest job) is still running.
-for pid in "${lane_pids[@]}" "$fresh_pid"; do wait_job "$pid"; done
-if ((skip_compose)); then
-  printf "fresh-compose\tskipped\t0\n" > "$receipts/steps/fresh-compose.tsv"
-  failed=1
-  echo "== fresh-compose SKIPPED: the run cannot pass without it"
-else
-  start_job "$run/fresh" bash -c '
-    failed=0
-    step fresh-compose env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh --compose
-    exit "$failed"
-  '
-fi
+start_job "$run/fresh" bash -c '
+  failed=0
+  step fresh-native env FRESH_INSTANCE_PYTHON="$PWD/.ci-fresh-venv/bin/python" scripts/e2e/fresh_instance.sh
+  exit "$failed"
+'
 for pid in "${pids[@]}"; do wait_job "$pid"; done
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * lanes + 9))" '
+if ! awk -F '\t' -v expected="$((2 * lanes + 10))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi

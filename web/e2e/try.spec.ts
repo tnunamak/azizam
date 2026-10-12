@@ -4,11 +4,11 @@ import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
-  // Minting the temporary key can take a while on a busy machine; wait for
-  // it, so a slow mint fails here rather than as missing copy.
-  await expect(page.getByText("Creating Try key")).toBeHidden({ timeout: 30_000 });
+  // Run mints the temporary key; nothing does before it, so waiting for
+  // "Creating Try key" to hide before Run passed at once. Minting can take
+  // a while on a busy machine, so give the mint itself the longer wait.
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Try uses a temporary key")).toBeVisible({ timeout: 30_000 });
 }
 
 const TINY_PNG =

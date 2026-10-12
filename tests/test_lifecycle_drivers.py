@@ -268,7 +268,9 @@ class TestExternalDriver(unittest.TestCase):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            state = _run(self.driver.health(_external_svc(port=9999)))
+            # One refused probe is enough; skip the real 5 s polling window.
+            with patch.object(ExternalDriver, "_DEFAULT_HEALTH_TIMEOUT_S", 0.0):
+                state = _run(self.driver.health(_external_svc(port=9999)))
 
         self.assertEqual(state, HealthState.UNHEALTHY)
 
@@ -341,7 +343,9 @@ class TestEnsureTargetBugFix(unittest.TestCase):
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            result = _run(proxy.ensure_target("my-vllm", None))
+            # One refused probe is enough; skip the real 5 s polling window.
+            with patch.object(ExternalDriver, "_DEFAULT_HEALTH_TIMEOUT_S", 0.0):
+                result = _run(proxy.ensure_target("my-vllm", None))
 
         self.assertFalse(
             result,
