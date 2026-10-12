@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "note": "Section order is modality order. A workflow joins the first section whose rule matches; anything unmatched lands in the fallback section, so new workflows always appear. Rules: intent (exact), id (regex on the short id), not_id (regex that must NOT match).",
+  "note": "Sections put everyday tasks first, followed by media workflows and developer APIs. A workflow joins the first matching rule; unmatched workflows use the fallback. Rules: intent (exact), id (regex on the short id), not_id (regex that must NOT match).",
   "sections": [
     {
       "id": "chat",
       "title": "Chat and vision",
-      "blurb": "Local LLM through stable aliases. Same model answers text and image questions.",
+      "blurb": "Send text or image questions to a configured chat model.",
       "source": "aliases:chat"
     },
     {
       "id": "images",
       "title": "Image generation",
-      "blurb": "Text to image, including seamless tiles.",
+      "blurb": "Generate images from a prompt.",
       "match": {
         "intent": "image.generate"
       }
@@ -19,23 +19,15 @@
     {
       "id": "image-edits",
       "title": "Image edits and upscale",
-      "blurb": "Instruction edits, inpainting, multi-reference edits and upscaling.",
+      "blurb": "Edit images using instructions and supported reference inputs.",
       "match": {
         "intent": "image.edit"
       }
     },
     {
-      "id": "image-analysis",
-      "title": "Image analysis",
-      "blurb": "Score how closely the faces in an image match reference photos.",
-      "match": {
-        "intent": "image.analyze"
-      }
-    },
-    {
       "id": "video-create",
       "title": "Video: create",
-      "blurb": "Text to video and image to video, with synchronized audio on LTX.",
+      "blurb": "Generate video from text or a reference image.",
       "match": {
         "intent": "video.generate",
         "not_id": "long"
@@ -44,7 +36,7 @@
     {
       "id": "video-long",
       "title": "Video: long-form",
-      "blurb": "Clips of 2 to 50 seconds, rendered in chunks.",
+      "blurb": "Generate longer clips with a configured workflow.",
       "match": {
         "intent": "video.generate",
         "id": "long"
@@ -53,7 +45,7 @@
     {
       "id": "video-edit",
       "title": "Video: remix and character replace",
-      "blurb": "Edit an existing video with a prompt, or swap the character.",
+      "blurb": "Edit a source video using a configured workflow.",
       "match": {
         "intent": "video.edit",
         "not_id": "interpolate|upscale"
@@ -62,7 +54,7 @@
     {
       "id": "video-enhance",
       "title": "Video: upscale and interpolate",
-      "blurb": "Raise the frame rate of an existing clip.",
+      "blurb": "Change video resolution or frame rate with a configured workflow.",
       "match": {
         "intent": "video.edit",
         "id": "interpolate|upscale"
@@ -71,19 +63,19 @@
     {
       "id": "speech",
       "title": "Speech",
-      "blurb": "Text to speech in three tiers, 13 OpenAI voice names, per-language voices and custom voices.",
+      "blurb": "Turn text into speech with a configured voice.",
       "source": "aliases:speech"
     },
     {
       "id": "transcription",
       "title": "Transcription",
-      "blurb": "Speech to text in three tiers, plus speaker diarization.",
+      "blurb": "Transcribe audio with a configured speech recognition model.",
       "source": "aliases:transcriptions"
     },
     {
       "id": "music",
       "title": "Music",
-      "blurb": "Instrumental and sung music from a style prompt.",
+      "blurb": "Generate music from a style prompt.",
       "match": {
         "intent": "audio.generate",
         "id": "ace-step"
@@ -92,7 +84,7 @@
     {
       "id": "songs",
       "title": "Songs",
-      "blurb": "Songs with vocals from lyrics.",
+      "blurb": "Generate songs from lyrics and a style prompt.",
       "match": {
         "intent": "audio.generate",
         "id": "yue|song"
@@ -101,28 +93,36 @@
     {
       "id": "sfx",
       "title": "Sound effects",
-      "blurb": "Short sound effects and ambience.",
+      "blurb": "Generate sound effects from a description.",
       "match": {
         "intent": "audio.generate",
         "id": "sfx|tango|sa3"
       }
     },
     {
+      "id": "image-analysis",
+      "title": "Image analysis",
+      "blurb": "Analyze images with a configured workflow.",
+      "match": {
+        "intent": "image.analyze"
+      }
+    },
+    {
       "id": "embeddings",
       "title": "Embeddings",
-      "blurb": "Text embeddings on CPU.",
+      "blurb": "Convert text into numeric vectors.",
       "source": "aliases:embeddings"
     },
     {
       "id": "protocols",
       "title": "Protocols",
-      "blurb": "The same models behind the OpenAI, Anthropic, Ollama and Responses APIs. Point an existing client at this host.",
+      "blurb": "Send requests using the gateway's supported API formats.",
       "source": "protocols"
     },
     {
       "id": "more",
       "title": "More workflows",
-      "blurb": "Workflows that no section above claims yet.",
+      "blurb": "Browse workflows not matched by the sections above.",
       "fallback": true
     }
   ]

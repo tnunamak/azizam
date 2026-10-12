@@ -331,16 +331,38 @@
   }
 
   const PROTOCOLS = [
-    { id: "protocol-openai", kind: "protocol", flavor: "openai", title: "OpenAI Chat Completions", path: "/v1/chat/completions", note: "Any OpenAI SDK or tool. Model names such as gpt-4o resolve to the stable aliases." },
+    { id: "protocol-openai", kind: "protocol", flavor: "openai", title: "OpenAI Chat Completions", path: "/v1/chat/completions", note: "Any OpenAI SDK or tool. Use a model name from this gateway." },
     { id: "protocol-responses", kind: "protocol", flavor: "responses", title: "OpenAI Responses", path: "/v1/responses", note: "responses.create, previous_response_id, function tools, stored responses." },
-    { id: "protocol-anthropic", kind: "protocol", flavor: "anthropic", title: "Anthropic Messages", path: "/anthropic/v1/messages", note: "Anthropic SDK and Claude Code. Model names such as claude-sonnet-* resolve to aliases." },
+    { id: "protocol-anthropic", kind: "protocol", flavor: "anthropic", title: "Anthropic Messages", path: "/anthropic/v1/messages", note: "The Anthropic SDK and tools built on it, such as Claude Code." },
     { id: "protocol-ollama", kind: "protocol", flavor: "ollama", title: "Ollama", path: "/ollama/api/chat", note: "Ollama clients. Chat, generate, embed and read-only model routes." },
   ];
 
+  // Example card ids that are not workflow ids: card id -> [section id, title].
+  const RECORDED_CARDS = {
+    chat: ["chat", "Chat"], vision: ["chat", "Vision"],
+    tts: ["speech", "Text to speech"], voices: ["speech", "Voices"],
+    stt: ["transcription", "Transcription"], "stt-diarize": ["transcription", "Speaker diarization"],
+    embeddings: ["embeddings", "Embeddings"],
+  };
+
+  /** A card for recorded examples whose capability discovery did not return,
+   * for instance because discovery needs a key. Returns [sectionId, card] or null. */
+  function recordedCard(sections, cardId) {
+    const known = RECORDED_CARDS[cardId];
+    if (known) return [known[0], { id: cardId, kind: "recorded", title: known[1] }];
+    const m = /^([a-z]+\.[a-z]+)\.(.+)$/.exec(cardId);
+    if (!m) return null;
+    const wf = { id: cardId, intent: m[1], short_id: m[2] };
+    return [classifyWorkflow(sections, wf), { id: cardId, kind: "recorded", title: m[2], intent: m[1] }];
+  }
+
   /**
-   * ctx: {sectionsDoc, workflows, openapi, capabilities, aliases}.
+   * ctx: {sectionsDoc, workflows, openapi, capabilities, aliases, exampleCards?, live?}.
    * Returns [{id,title,blurb,cards:[...]}] in section order, without empty
    * sections (a section with no cards is hidden, not an error).
+   * Recorded examples are public, so every exampleCards id gets a card even when
+   * discovery returned nothing. With live === false (discovery unavailable), cards
+   * that have no recorded example are dropped: they could show nothing.
    */
   function buildSections(ctx) {
     const sections = ctx.sectionsDoc.sections;
@@ -371,6 +393,17 @@
     for (const s of sections) {
       if (s.source === "protocols") byId[s.id].cards.push(...PROTOCOLS.map((p) => ({ ...p })));
       else if (s.source && s.source.startsWith("aliases:")) byId[s.id].cards.push(...aliasCards(s.id, s.source, ctx));
+    }
+    const exampleCards = ctx.exampleCards || [];
+    const present = new Set(out.flatMap((sec) => sec.cards.map((c) => c.id)));
+    for (const cardId of exampleCards) {
+      if (present.has(cardId)) continue;
+      const found = recordedCard(sections, cardId);
+      if (found && byId[found[0]]) { byId[found[0]].cards.push(found[1]); present.add(cardId); }
+    }
+    if (ctx.live === false) {
+      const withExamples = new Set(exampleCards);
+      for (const sec of out) sec.cards = sec.cards.filter((c) => withExamples.has(c.id));
     }
     for (const sec of out) sec.cards.sort((a, b) => (a.kind === "workflow" && b.kind === "workflow" ? (a.typicalSeconds ?? 1e9) - (b.typicalSeconds ?? 1e9) : 0));
     return out.filter((s) => s.cards.length);
@@ -418,8 +451,8 @@
       if (status.llm.processing) { level = "busy"; parts.push("LLM generating"); }
       else parts.push("LLM idle");
     }
-    if (!status) { level = "unknown"; parts.push("status needs an API key"); }
-    return { level, text: parts.join(" - ") || "Gateway healthy" };
+    if (!status) { level = "unknown"; parts.push("Gateway is up. Engine status needs an API key"); }
+    return { level, text: parts.join(" · ") || "Gateway is up" };
   }
 
   /** Group curated examples by the card they belong to. */
@@ -432,7 +465,7 @@
 
   /** True only when `target` resolves to the same origin as `base`. Anything
    * unparseable or opaque (data:, javascript:, about:) counts as cross-origin.
-   * app.js uses this so the stored API key never leaves the gateway origin. */
+   * app.js uses this so the page-memory API key never leaves the gateway origin. */
   function isSameOrigin(target, base) {
     try {
       const b = new URL(base);
@@ -441,7 +474,28 @@
     } catch (e) { return false; }
   }
 
+  /** Suppress identical updates; callers keep elapsed time and streamed tokens out. */
+  function createAnnouncer(write) {
+    let previous;
+    return (message) => {
+      const text = String(message || "");
+      if (text === previous) return false;
+      previous = text; write(text); return true;
+    };
+  }
+
+  /** Keyboard navigation for a horizontal, automatically activated tab list. */
+  function tabIndexForKey(key, index, length) {
+    if (!length) return null;
+    if (key === "Home") return 0;
+    if (key === "End") return length - 1;
+    if (key === "ArrowRight") return (index + 1) % length;
+    if (key === "ArrowLeft") return (index + length - 1) % length;
+    return null;
+  }
+
   return {
+    createAnnouncer, tabIndexForKey,
     EXT_KEY, isSameOrigin, shortId, classifyWorkflow, resolveRef, formFields, planWorkflow, fillPath,
     curlFor, pythonFor, jsFor, buildSections, capabilityIndex, aliasesByWorkflow,
     statusSummary, examplesByCard, PROTOCOLS, isBlank,

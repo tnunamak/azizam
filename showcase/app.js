@@ -1,6 +1,6 @@
 /* Showcase page: fetches discovery, renders cards, runs Try-it requests.
  * Pure logic lives in core.js. Same-origin only; the optional API key stays in
- * localStorage and is sent only to this gateway.
+ * memory for this page and is sent only to this gateway.
  */
 (function () {
   "use strict";
@@ -27,7 +27,8 @@
     return el;
   }
 
-  const apiKey = () => (localStorage.getItem(KEY_STORE) || "").trim();
+  let pageKey = "";
+  const apiKey = () => pageKey;
   function authHeaders(extra) {
     const hd = Object.assign({}, extra || {});
     if (apiKey()) hd.Authorization = "Bearer " + apiKey();
@@ -85,9 +86,9 @@
 
   function mediaEl(kind, src, opts) {
     const o = opts || {};
-    if (kind === "image") return h("a", { href: src, target: "_blank", rel: "noopener" }, h("img", { src, alt: o.alt || "", loading: "lazy" }));
-    if (kind === "audio") return h("audio", { src, controls: true, preload: "metadata" });
-    if (kind === "video") return h("video", { src, controls: true, preload: "metadata", playsinline: true, loop: o.loop });
+    if (kind === "image") return h("a", { href: src, target: "_blank", rel: "noopener" }, h("img", { src, alt: o.alt || "Generated image", loading: "lazy", decoding: "async" }));
+    if (kind === "audio") return h("audio", { src, controls: true, preload: "none" });
+    if (kind === "video") return h("video", { src, controls: true, preload: "none", playsinline: true, loop: o.loop });
     return h("pre", { class: "out-text", text: String(src) });
   }
 
@@ -105,35 +106,45 @@
   // ----------------------------------------------------------------- results
 
   function resultBox() {
-    const box = h("div", { class: "result", "aria-live": "polite" });
+    const box = h("div", { class: "result" });
+    const live = h("p", { class: "hint result-status", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+    const content = h("div");
+    box.append(live, content);
+    const announce = C.createAnnouncer((text) => { live.textContent = text; });
     return {
       el: box,
-      clear() { box.replaceChildren(); },
+      clear() { content.replaceChildren(); announce(""); },
+      announce,
       progress(label, opts) {
         const o = opts || {};
+        announce(o.announcement || label);
         const bar = h("div", { class: "bar" }, h("span", { style: o.pct != null ? "width:" + o.pct + "%" : "" }));
         if (o.pct == null) bar.classList.add("indeterminate");
-        box.replaceChildren(h("div", { class: "progress" }, h("div", { class: "plabel", text: label }), bar, o.hint ? h("div", { class: "hint", text: o.hint }) : null));
+        content.replaceChildren(h("div", { class: "progress" }, h("div", { class: "plabel", text: label }), bar, o.hint ? h("div", { class: "hint", text: o.hint }) : null));
       },
       error(err) {
         const status = err.status;
         let msg = err.message || String(err);
-        let hint = "";
+        let hint = "Review the inputs, then use the run button to retry.";
         if (status === 401 || status === 403) hint = "Authentication needed. Add an API key with the key button at the top of the page.";
         else if (status === 503) hint = "The backend is busy or starting. Check the status strip, then retry.";
-        else if (status === 0 || err.name === "TypeError") hint = "Network error. The gateway may be restarting.";
+        else if (err.name === "TypeError") hint = "Check your connection, then use the run button to retry.";
+        announce("Request failed. " + hint);
         const detail = err.body && typeof err.body === "object" ? JSON.stringify(err.body, null, 2) : null;
-        box.replaceChildren(h("div", { class: "error" }, h("strong", { text: (status ? "HTTP " + status + ": " : "") + msg }), hint ? h("p", { text: hint }) : null, detail ? h("details", {}, h("summary", { text: "Raw error" }), h("pre", { text: detail })) : null));
+        content.replaceChildren(h("div", { class: "error" }, h("strong", { text: (status ? "HTTP " + status + ": " : "") + msg }), hint ? h("p", { text: hint }) : null, detail ? h("details", {}, h("summary", { text: "Raw error" }), h("pre", { text: detail })) : null));
       },
       media(kind, src, meta, filename) {
+        announce("Result ready. Use the download link to save it.");
         const dl = h("a", { class: "mini", href: src, download: filename || "output", text: "Download" });
-        box.replaceChildren(h("div", { class: "done" }, mediaEl(kind, src), h("div", { class: "meta" }, meta || "", " ", dl)));
+        content.replaceChildren(h("div", { class: "done" }, mediaEl(kind, src), h("div", { class: "meta" }, meta || "", " ", dl)));
       },
       text(text, meta) {
-        box.replaceChildren(h("div", { class: "done" }, h("pre", { class: "out-text", text }), meta ? h("div", { class: "meta", text: meta }) : null));
+        if (!String(text || "").trim()) text = "No output returned. Review the inputs, then use the run button to retry.";
+        announce("Result ready.");
+        content.replaceChildren(h("div", { class: "done" }, h("pre", { class: "out-text", text }), meta ? h("div", { class: "meta", text: meta }) : null));
       },
       node(n, meta) {
-        box.replaceChildren(h("div", { class: "done" }, n, meta ? h("div", { class: "meta", text: meta }) : null));
+        content.replaceChildren(h("div", { class: "done" }, n, meta ? h("div", { class: "meta", text: meta }) : null));
       },
     };
   }
@@ -150,23 +161,27 @@
       if (ctrl) return;
       ctrl = new AbortController();
       const t0 = Date.now();
+      res.clear();
       button.disabled = true; cancel.hidden = false;
+      cancel.focus();
       const hint = typical ? "Typical: " + fmtSeconds(typical) + ". Slower if another job holds the GPU." : "";
       const ctx = {
         signal: ctrl.signal,
         elapsed: () => (Date.now() - t0) / 1000,
-        progress: (text, pct) => res.progress(text + " (" + Math.round((Date.now() - t0) / 1000) + " s)", { pct, hint }),
+        progress: (text, pct) => res.progress(text + " (" + Math.round((Date.now() - t0) / 1000) + " s)", { pct, hint, announcement: text }),
       };
       ctx.progress("Starting");
       timer = setInterval(() => ctx.lastLabel && ctx.progress(ctx.lastLabel, ctx.lastPct), 1000);
       const wrap = ctx.progress;
       ctx.progress = (text, pct) => { ctx.lastLabel = text; ctx.lastPct = pct; wrap(text, pct); };
-      try { await task(ctx); }
+      try { await task(ctx); if (ctrl.signal.aborted) throw new DOMException("aborted", "AbortError"); res.announce("Request finished. Review the result below."); }
       catch (e) {
-        if (e.name === "AbortError") res.node(h("p", { class: "hint", text: "Canceled." }));
+        if (e.name === "AbortError") { res.node(h("p", { class: "hint", text: "Canceled. Use the run button to try again." })); res.announce("Canceled. Use the run button to try again."); }
         else res.error(e);
       } finally {
+        const restoreFocus = document.activeElement === cancel;
         clearInterval(timer); ctrl = null; button.disabled = false; cancel.hidden = true; button.textContent = label;
+        if (restoreFocus) button.focus();
       }
     });
   }
@@ -261,11 +276,13 @@
     } else {
       input = h("input", { type: "text", id, placeholder: f.def !== undefined ? String(f.def) : "" });
     }
+    if (f.required) input.setAttribute("aria-required", "true");
+    if (f.description) input.setAttribute("aria-describedby", id + "-help");
     const range = f.min !== undefined && f.max !== undefined ? " (" + f.min + " to " + f.max + ")" : f.min !== undefined ? " (min " + f.min + ")" : f.max !== undefined ? " (max " + f.max + ")" : "";
     const wrap = h("div", { class: "field" + (f.required ? " required" : "") },
       h("label", { for: id, text: f.name + (f.required ? " *" : "") + range }),
       input,
-      f.description ? h("small", { text: f.description.length > 160 ? f.description.slice(0, 157) + "..." : f.description }) : null);
+      f.description ? h("small", { id: id + "-help", text: f.description.length > 160 ? f.description.slice(0, 157) + "..." : f.description }) : null);
     return { wrap, input };
   }
 
@@ -282,14 +299,27 @@
 
   /** Attach an example media file as the value of a file input. */
   function setExampleFile(input, url, filename, type) {
+    const token = {};
+    input._exampleToken = token;
     input._example = null;
-    fetch(url).then((r) => r.blob()).then(async (blob) => {
-      input._example = { filename, type: blob.type || type, blob, dataUri: await readDataUri(blob) };
-      let note = input.parentElement.querySelector(".example-file");
-      if (!note) { note = h("span", { class: "example-file" }); input.after(note); }
-      note.textContent = " using example: " + filename;
+    let note = input.parentElement.querySelector(".example-file");
+    if (!note) { note = h("span", { class: "example-file", role: "status", "aria-live": "polite" }); input.after(note); }
+    note.textContent = "Loading example file. Wait before running.";
+    fetch(url).then((response) => {
+      if (!response.ok) throw new Error("Example file unavailable");
+      return response.blob();
+    }).then(async (blob) => {
+      const dataUri = await readDataUri(blob);
+      if (input._exampleToken !== token) return;
+      input._example = { filename, type: blob.type || type, blob, dataUri };
+      note.textContent = "Using example: " + filename;
+    }).catch(() => {
+      if (input._exampleToken === token) note.textContent = "Example file could not load. Choose a local file.";
     });
-    input.addEventListener("change", () => { input._example = null; const n = input.parentElement.querySelector(".example-file"); if (n) n.remove(); }, { once: true });
+    input.addEventListener("change", () => {
+      input._exampleToken = null; input._example = null;
+      const n = input.parentElement.querySelector(".example-file"); if (n) n.remove();
+    }, { once: true });
   }
 
   // --------------------------------------------------------------- try-it forms
@@ -310,7 +340,7 @@
     const modes = [exec.sync && "sync", exec.async && "async"].filter(Boolean);
     let modeSel = null;
     if (modes.length > 1) {
-      modeSel = h("select", { class: "mode" }, modes.map((m) => h("option", { value: m, text: m === "async" ? "async job (recommended for long renders)" : "sync (waits on one request)", selected: m === exec.recommended })));
+      modeSel = h("select", { class: "mode", "aria-label": "Execution mode" }, modes.map((m) => h("option", { value: m, text: m === "async" ? "async job (recommended for long renders)" : "sync (waits on one request)", selected: m === exec.recommended })));
       form.append(h("div", { class: "field" }, h("label", { text: "Mode" }), modeSel));
     }
     const typical = card.typicalSeconds;
@@ -326,7 +356,7 @@
       const values = {};
       for (const [name, { f, input }] of Object.entries(inputs)) values[name] = await readField(f, input);
       for (const [name, { f }] of Object.entries(inputs)) {
-        if (f.required && C.isBlank(values[name])) throw Object.assign(new Error("Missing required field: " + name), { status: 0 });
+        if (f.required && C.isBlank(values[name])) { inputs[name].input.focus(); throw new Error("Missing required field: " + name); }
       }
       return values;
     };
@@ -435,6 +465,7 @@
           if (d.reasoning_content) { thinking += d.reasoning_content.length; thinkEl.textContent = "Thinking... (" + thinking + " chars of reasoning)"; }
           if (d.content) { answer += d.content; answerEl.textContent = answer; }
         });
+        if (!answer.trim()) answerEl.textContent = "No response returned. Edit your message, then select Send.";
         thinkEl.textContent = "Done in " + ((Date.now() - t0) / 1000).toFixed(1) + " s" + (thinking ? " (reasoning hidden: " + thinking + " chars)" : "");
       },
     });
@@ -455,7 +486,8 @@
         if (lines.length < 1) throw new Error("Enter at least one line");
         const t0 = Date.now();
         const r = await apiJson("/v1/embeddings", { method: "POST", signal: ctx.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: card.aliases[0].alias, input: lines }) });
-        const vecs = r.data.map((d) => d.embedding);
+        const vecs = (r.data || []).map((d) => d.embedding);
+        if (!vecs.length) { res.text("No vectors returned. Edit the texts, then select Embed."); return; }
         const table = h("table", { class: "sim" }, h("tr", {}, h("th"), vecs.map((_, i) => h("th", { text: "#" + (i + 1) }))),
           vecs.map((a, i) => h("tr", {}, h("th", { text: "#" + (i + 1) + " " + lines[i].slice(0, 28) }), vecs.map((b) => h("td", { text: cosine(a, b).toFixed(2) })))));
         res.node(h("div", {}, h("p", { text: vecs.length + " vectors, " + vecs[0].length + " dimensions. First values: " + vecs[0].slice(0, 5).map((x) => x.toFixed(3)).join(", ") + " ..." }), h("p", { class: "hint", text: "Cosine similarity matrix:" }), table), "Took " + ((Date.now() - t0) / 1000).toFixed(2) + " s");
@@ -499,18 +531,19 @@
     const list = (state.voices && state.voices.voices) || [];
     const play = h("div", { class: "voice-grid" });
     for (const v of list) {
-      const out = h("span", { class: "vplay" });
+      const out = h("span", { class: "vplay", role: "status", "aria-live": "polite" });
       const b = h("button", { class: "mini", type: "button", text: "Play" });
       b.addEventListener("click", async () => {
-        b.disabled = true; b.textContent = "...";
+        b.disabled = true; b.textContent = "Loading"; out.textContent = "Preparing voice preview.";
         try {
           const blob = await speak("tts-fast", v.voice_id, "Hello, this is the " + v.name + " voice.", "mp3", { signal: undefined });
           out.replaceChildren(h("audio", { src: URL.createObjectURL(blob), controls: true, autoplay: true }));
-        } catch (e) { out.replaceChildren(h("span", { class: "err", text: e.message })); }
+        } catch (e) { out.replaceChildren(h("span", { class: "err", text: e.message + ". Select Play to retry." })); }
         b.disabled = false; b.textContent = "Play";
       });
       play.append(h("div", { class: "voice" }, h("strong", { text: v.name || v.voice_id }), h("span", { class: "tag", text: [v.language, v.gender].filter(Boolean).join(" / ") }), h("small", { text: v.description || "" }), b, out));
     }
+    if (!list.length) return h("p", { class: "hint", text: "No voices loaded. Use the API key button to connect, then reopen this panel." });
     return h("div", {}, h("p", { class: "hint", text: list.length + " built-in voices from GET /v1/voices. Play synthesizes a short line with tts-fast." }), play);
   }
 
@@ -585,23 +618,40 @@
         if (card.flavor === "anthropic") headers["anthropic-version"] = "2023-06-01";
         const j = await apiJson(card.path, { method: "POST", signal: ctx.signal, headers, body: JSON.stringify(body) });
         const text = protoText(card.flavor, j);
-        res.node(h("div", {}, h("pre", { class: "out-text", text: text || "(empty)" }), h("details", {}, h("summary", { text: "Raw " + card.title + " response" }), h("pre", { text: JSON.stringify(j, null, 2) }))), "Took " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
+        res.node(h("div", {}, h("pre", { class: "out-text", text: text || "No response returned. Edit your message, then select Send." }), h("details", {}, h("summary", { text: "Raw " + card.title + " response" }), h("pre", { text: JSON.stringify(j, null, 2) }))), "Took " + ((Date.now() - t0) / 1000).toFixed(1) + " s");
       },
     });
   }
 
   // ------------------------------------------------------------------ snippets
 
+  let nextPanelId = 0;
   function codeTabs(tabs) {
+    const id = "code-" + (++nextPanelId);
     const wrap = h("div", { class: "code" });
-    const bar = h("div", { class: "tabs", role: "tablist" });
-    const pre = h("pre", { tabindex: "0" });
+    const bar = h("div", { class: "tabs", role: "tablist", "aria-label": "Code language" });
+    const pre = h("pre", { id, tabindex: "0", role: "tabpanel" });
     let current = tabs[0];
-    const show = (t) => { current = t; pre.textContent = t.code; for (const b of bar.querySelectorAll("button.tab")) b.setAttribute("aria-selected", String(b.dataset.label === t.label)); };
-    for (const t of tabs) bar.append(h("button", { class: "tab", type: "button", role: "tab", "data-label": t.label, text: t.label, onclick: () => show(t) }));
-    bar.append(copyButton(() => current.code));
-    wrap.append(bar, pre);
-    show(tabs[0]);
+    const buttons = tabs.map((t, i) => h("button", {
+      id: id + "-tab-" + i, class: "tab", type: "button", role: "tab",
+      "aria-controls": id, text: t.label, onclick: () => show(i),
+      onkeydown: (e) => {
+        const next = C.tabIndexForKey(e.key, i, tabs.length);
+        if (next === null) return;
+        e.preventDefault(); show(next); buttons[next].focus();
+      },
+    }));
+    function show(index) {
+      current = tabs[index]; pre.textContent = current.code;
+      pre.setAttribute("aria-labelledby", buttons[index].id);
+      buttons.forEach((button, i) => {
+        button.setAttribute("aria-selected", String(i === index));
+        button.tabIndex = i === index ? 0 : -1;
+      });
+    }
+    bar.append(...buttons);
+    wrap.append(bar, copyButton(() => current.code), pre);
+    show(0);
     return wrap;
   }
 
@@ -682,20 +732,27 @@
     return h("div", { class: "io" }, label, mediaEl(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
   }
 
+  function recordedDay(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+  }
+
   function renderExample(card, ex, form) {
     const meta = [];
-    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this run through the gateway", text: ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s" }));
+    const day = recordedDay(ex.recorded_at);
+    if (day) meta.push(h("span", { class: "chip", text: "Recorded " + day }));
+    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
     if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model + (ex.resolves_to && ex.resolves_to !== ex.model ? " -> " + ex.resolves_to : "") }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
     const load = form && form._load && (ex.inputs || []).some((i) => i.name)
-      ? h("button", { class: "mini", type: "button", text: "Load into Try it", onclick: () => { form.closest("details").open = true; form._load(ex); form.scrollIntoView({ block: "nearest", behavior: "smooth" }); } })
+      ? h("button", { class: "mini", type: "button", text: "Load into Try it", onclick: () => { const panel = form.closest("details"); panel._returnFocus = load; panel.open = true; form._load(ex); focusPanel(panel); } })
       : null;
     return h("div", { class: "example" },
-      ex.title ? h("div", { class: "ex-title", text: ex.title }) : null,
       h("div", { class: "io-row" },
         h("div", { class: "io-col in" }, h("div", { class: "col-head", text: "Input" }), (ex.inputs || []).map((i) => inputBlock(i, ex))),
         h("div", { class: "io-arrow", "aria-hidden": "true", text: "\u2192" }),
         h("div", { class: "io-col out" }, h("div", { class: "col-head", text: "Output" }), (ex.outputs || []).map((o) => outputBlock(o, ex)))),
+      ex.title ? h("div", { class: "ex-title", text: ex.title }) : null,
       h("div", { class: "ex-meta" }, meta, load));
   }
 
@@ -728,14 +785,14 @@
   function cardDescription(card) {
     if (card.kind === "workflow") return card.description;
     return {
-      chat: "OpenAI-compatible chat completions on the local LLM. Reasoning is on for default; fast turns it off.",
-      vision: "Send an image plus a question. The same model answers; no separate vision endpoint.",
-      embeddings: "768-dimension CPU embeddings. Not vector-compatible with OpenAI's embedding models.",
-      tts: "Three speed and quality tiers. The 13 OpenAI voice names work on every tier; streaming PCM is available.",
-      voices: "Every built-in voice, straight from GET /v1/voices.",
-      "custom-voices": "Clone a voice from a short sample and use it with the same speech endpoint. Voices belong to the API key that made them.",
-      stt: "Speech to text. stt is the default tier, stt-fast streams, stt-quality is the highest accuracy tier.",
-      "stt-diarize": "Who spoke when. OpenAI diarized_json shape: speaker, start, end, text per segment.",
+      chat: "OpenAI-compatible chat completions with this gateway's chat model names.",
+      vision: "Send an image with a question to a model that accepts images.",
+      embeddings: "Turn text into vectors for search and similarity.",
+      tts: "Turn text into speech with the voices this gateway offers.",
+      voices: "The voices this gateway lists at GET /v1/voices.",
+      "custom-voices": "Make a voice from a short sample, then use it with the speech endpoint. A custom voice belongs to the key that made it.",
+      stt: "Turn speech into text.",
+      "stt-diarize": "Transcribe audio and label who spoke when, in OpenAI's diarized_json shape.",
       protocol: card.note,
     }[card.kind] || "";
   }
@@ -761,18 +818,43 @@
 
     const exBlocks = examples.length
       ? examples.map((ex) => renderExample(card, ex, form))
-      : [h("div", { class: "example pending" }, h("p", { text: "Example pending: it has not been generated yet. Use Try it to run it now." }))];
+      : [h("div", { class: "example pending" }, h("p", { text: "No recorded example for this item. Use Try it live to run one." }))];
 
     const tryLabel = card.kind === "voices" ? "Browse and play voices" : "Try it live";
     const tryBody = card.kind === "voices" ? voicesTable() : form;
     const node = h("article", { class: "card kind-" + card.kind, id: "card-" + card.id },
+      h("div", { class: "examples" }, exBlocks),
       h("header", {}, h("h3", { text: card.title }), h("div", { class: "badges" }, badges(card))),
       card.kind === "workflow" ? h("p", { class: "desc" }, shortDesc(card.description)) : h("p", { class: "desc", text: cardDescription(card) }),
       aliasLine(card),
-      h("div", { class: "examples" }, exBlocks),
       tryBody ? h("details", { class: "try" }, h("summary", { text: tryLabel }), tryBody) : null,
-      snippetsPanel(card, examples[0]));
+      card.kind === "recorded" ? null : snippetsPanel(card, examples[0]));
+    const panel = node.querySelector("details.try");
+    if (panel) managePanel(panel);
     return node;
+  }
+
+  function focusPanel(panel) {
+    const target = panel.querySelector("input:not([disabled]), textarea, select, button:not([disabled])");
+    if (target) target.focus();
+  }
+
+  function managePanel(panel) {
+    const summary = panel.querySelector("summary");
+    panel.addEventListener("toggle", () => {
+      if (panel.open) {
+        if (document.activeElement === summary || panel._returnFocus === document.activeElement) focusPanel(panel);
+      } else if (panel.contains(document.activeElement)) {
+        (panel._returnFocus && panel._returnFocus.isConnected ? panel._returnFocus : summary).focus();
+        panel._returnFocus = null;
+      }
+    });
+    panel.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !panel.open) return;
+      event.preventDefault(); event.stopPropagation(); panel.open = false;
+      (panel._returnFocus && panel._returnFocus.isConnected ? panel._returnFocus : summary).focus();
+      panel._returnFocus = null;
+    });
   }
 
   /** Build the code tabs only when the panel opens; most are never opened. */
@@ -798,6 +880,7 @@
     const sections = C.buildSections({
       sectionsDoc: state.data.sectionsDoc, workflows: state.data.workflows.workflows,
       openapi: state.data.openapi, capabilities: state.data.capabilities, aliases: state.data.aliases,
+      exampleCards: Object.keys(state.examplesByCard), live: state.live,
     });
     state.sections = sections;
     const main = $("#sections");
@@ -811,8 +894,10 @@
         h("div", { class: "grid" }, s.cards.map(renderCard))));
     }
     const cards = sections.flatMap((s) => s.cards);
-    const withEx = cards.filter((c) => (state.examplesByCard[c.id] || []).length).length;
-    $("#stats").textContent = cards.length + " capabilities in " + sections.length + " groups, " + state.data.workflows.workflows.length + " manifest workflows, " + withEx + " with recorded examples";
+    const shown = cards.reduce((n, c) => n + (state.examplesByCard[c.id] || []).length, 0);
+    const live = cards.filter((c) => c.kind !== "recorded").length;
+    $("#stats").textContent = plural(shown, "recorded example") + " in " + plural(sections.length, "group")
+      + (state.live ? ". " + plural(live, "capability", "capabilities") + " you can try live." : ".");
     // Deep link.
     if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }
   }
@@ -821,9 +906,23 @@
     try { state.voices = await apiJson("/v1/voices"); } catch (e) { state.voices = state.voices || null; }
   }
 
-  async function loadAll() {
+  function plural(n, one, many) {
+    return n + " " + (n === 1 ? one : many || one + "s");
+  }
+
+  let loadVersion = 0;
+  function discoveryNotice(text, action, handler) {
     const banner = $("#banner");
-    banner.hidden = true;
+    banner.hidden = false;
+    banner.replaceChildren(h("p", { text }), action ? h("button", { type: "button", class: "mini", text: action, onclick: handler }) : null);
+  }
+
+  async function loadAll() {
+    const version = ++loadVersion;
+    const banner = $("#banner");
+    discoveryNotice("Loading live capabilities. Recorded examples remain available.", null);
+    $("#sections").setAttribute("aria-busy", "true");
+    try {
     const get = (p) => apiJson(p).catch((e) => ({ __error: e }));
     const [workflows, openapi, capabilities, aliases, sectionsDoc, ex, voices] = await Promise.all([
       get("/gateway/v1/workflows"), get("/openapi.json"), get("/gateway/v1/capabilities"), get("/gateway/v1/aliases"),
@@ -831,10 +930,10 @@
       fetch("/showcase/examples/index.json").then((r) => r.json()).catch(() => ({ data: [] })),
       get("/v1/voices"),
     ]);
-    const authFail = [workflows, capabilities, aliases].find((x) => x.__error && [401, 403].includes(x.__error.status));
+    if (version !== loadVersion) return;
+    const authFail = [workflows, openapi, capabilities, aliases].find((x) => x.__error && [401, 403].includes(x.__error.status));
     if (authFail) {
-      banner.hidden = false;
-      banner.textContent = "This gateway needs an API key from your network. Click the key button, paste one, and the page reloads. Examples below still work.";
+      discoveryNotice("Live capabilities need an API key from the gateway owner. The key stays in memory for this page only.", "Add API key", () => { const p = $("#keypanel"); if (p.hidden) $("#keytoggle").click(); else $("#apikey").focus(); });
     }
     state.data = {
       workflows: workflows.__error ? { workflows: [] } : workflows,
@@ -844,9 +943,20 @@
       sectionsDoc,
     };
     state.voices = voices.__error ? null : voices;
+    state.live = !authFail && !workflows.__error;
     state.examples = ex.data || [];
     state.examplesByCard = C.examplesByCard(state.examples);
     renderPage();
+    if (!authFail) {
+      if ([workflows, openapi, capabilities, aliases].some((x) => x.__error)) discoveryNotice("Some live capabilities could not be loaded.", "Retry discovery", loadAll);
+      else if (!state.sections.some((section) => section.cards.length)) discoveryNotice("No live capabilities were returned by this gateway.", "Retry discovery", loadAll);
+      else banner.hidden = true;
+    }
+    } catch (error) {
+      if (version === loadVersion) discoveryNotice("Could not load live capabilities. " + error.message, "Retry discovery", loadAll);
+    } finally {
+      if (version === loadVersion) $("#sections").removeAttribute("aria-busy");
+    }
   }
 
   // ---------------------------------------------------------------- status strip
@@ -858,7 +968,8 @@
     try { status = await apiJson("/showcase/api/status"); } catch (e) { status = null; }
     const sum = C.statusSummary(health, status);
     el.dataset.level = sum.level;
-    $("#status-text").textContent = sum.text;
+    const statusText = $("#status-text");
+    if (statusText.textContent !== sum.text) statusText.textContent = sum.text;
     const chips = $("#engines");
     chips.replaceChildren();
     if (status && status.engines) {
@@ -869,20 +980,48 @@
   }
 
   function initKey() {
+    // Remove the legacy entry without reading its value. Storage can be blocked.
+    try { localStorage.removeItem(KEY_STORE); } catch (e) { /* memory-only still works */ }
     const input = $("#apikey");
-    input.value = apiKey();
+    const panel = $("#keypanel");
+    const toggle = $("#keytoggle");
+    input.value = "";
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("spellcheck", "false");
+    toggle.setAttribute("aria-controls", "keypanel");
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+    function close() {
+      panel.hidden = true; input.value = "";
+      toggle.setAttribute("aria-expanded", "false"); toggle.focus();
+    }
+    const help = $("#key-help");
+    if (help) help.textContent = "Your key stays in memory for this page only. Reloading or closing the page clears it.";
+    $("#keysave").textContent = "Use for this page";
     $("#keysave").addEventListener("click", () => {
-      const v = input.value.trim();
-      if (v) localStorage.setItem(KEY_STORE, v); else localStorage.removeItem(KEY_STORE);
-      location.reload();
+      pageKey = input.value.trim();
+      close(); loadAll(); pollStatus();
     });
-    $("#keyclear").addEventListener("click", () => { localStorage.removeItem(KEY_STORE); input.value = ""; location.reload(); });
-    $("#keytoggle").addEventListener("click", () => { const p = $("#keypanel"); p.hidden = !p.hidden; if (!p.hidden) input.focus(); });
+    $("#keyclear").addEventListener("click", () => {
+      pageKey = ""; close(); loadAll(); pollStatus();
+    });
+    toggle.addEventListener("click", () => {
+      if (!panel.hidden) { close(); return; }
+      panel.hidden = false; toggle.setAttribute("aria-expanded", "true"); input.focus();
+    });
+    panel.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+      else if (event.key === "Enter" && event.target === input) { event.preventDefault(); $("#keysave").click(); }
+    });
     $("#base").textContent = BASE;
+    const live = $("#status-text");
+    live.setAttribute("role", "status"); live.setAttribute("aria-live", "polite");
+    live.setAttribute("aria-atomic", "true");
+    $("#status").removeAttribute("aria-live");
+    $("#status").removeAttribute("role");
   }
 
   initKey();
-  loadAll().catch((e) => { const b = $("#banner"); b.hidden = false; b.textContent = "Could not load discovery: " + e.message; });
+  loadAll();
   pollStatus();
   setInterval(pollStatus, 10000);
 })();
