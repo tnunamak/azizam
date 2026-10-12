@@ -40,9 +40,9 @@ ad_hoc_upstream_fake_files = 50
 # the counts on 2026-10-12; a slice that removes occurrences lowers its
 # ceiling, and no slice raises one. S14 takes them to 0.
 [hygiene]
-waitForTimeout = 19
-networkidle = 12
+waitForTimeout = 18
+networkidle = 9
 force_true = 4
-one_shot_expect = 3
-bare_isVisible = 6
+one_shot_expect = 1
+bare_isVisible = 3
 absolute_home_path = 0
