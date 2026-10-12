@@ -12933,15 +12933,17 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 async def _initialize_stores() -> None:
     """Initialize the independent store files side by side on worker threads.
 
-    Startup waits for the slowest store, and the event loop stays free.
+    Startup waits for the slowest store, and the event loop stays free. Provider
+    spend recovery writes through the stores, so it starts only after all of them
+    are ready: a store that fails aborts startup before it runs.
     """
     await asyncio.gather(
         asyncio.to_thread(ADMIN_STORE.init_db),
         asyncio.to_thread(responses_store.init_db),
         asyncio.to_thread(receipt_store.init_db),
         asyncio.to_thread(media_jobs.init_db),
-        asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db"),
     )
+    await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
 @asynccontextmanager

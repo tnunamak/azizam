@@ -225,4 +225,4 @@ def test_startup_initializes_the_stores_in_parallel_off_the_loop():
             patch.object(providers, "recover_provider_spend", sleeper):
         worst, elapsed = asyncio.run(run())
     assert worst < STALL_LIMIT_S, f"startup stalled the event loop for {worst:.3f}s"
-    assert elapsed < slow * 2.5, f"the five stores initialized one after another ({elapsed:.2f}s)"
+    assert elapsed < slow * 3, f"the stores initialized one after another ({elapsed:.2f}s)"
