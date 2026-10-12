@@ -41,11 +41,14 @@ for (const { route, theme } of cases) {
     );
     await page.goto(route);
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
-    await expect(
-      page.locator(
-        '[aria-busy="true"]:visible, [data-slot="skeleton"]:visible',
-      ),
-    ).toHaveCount(0);
+    // The design page shows skeletons on purpose; every other route must have
+    // finished loading before it is measured.
+    if (route !== "/design/")
+      await expect(
+        page.locator(
+          '[aria-busy="true"]:visible, [data-slot="skeleton"]:visible',
+        ),
+      ).toHaveCount(0);
     await expect
       .poll(
         () =>
