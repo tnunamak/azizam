@@ -51,9 +51,16 @@ def _flat(routing: dict) -> dict:
     return {f"{method} {path}": outcome for path, row in routing.items() for method, outcome in row.items()}
 
 
+def _now_needs_a_key(old: str | None, new: str | None) -> bool:
+    """A path nothing serves answers a caller with no key 401 (key_required), not 404."""
+    return old is not None and new is not None and old.replace("none: 404", "none: 401") == new
+
+
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
+    if path == "/admin/api/access-plans" or path.startswith("/admin/api/access-plans/"):
+        return "access-plans"
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -67,6 +74,10 @@ def _deliberate(key: str) -> str | None:
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
+
+
+def path_is_unserved(key: str) -> bool:
+    return key.split(" ", 1)[1].startswith("/.well-known")
 
 
 def _method_of(key: str) -> str:
@@ -106,6 +117,10 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue
         if kind == "deleted" and (route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue
+        if kind == "access-plans":
+            continue  # the access plan API replaced /admin/api/profiles
+        if path_is_unserved(key) and _now_needs_a_key(old.get(key), new.get(key)):
+            continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
@@ -126,7 +141,9 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new"}:
+        if kind in {"ui", "deleted", "new", "access-plans"}:
+            continue
+        if path_is_unserved(key) and _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
             continue
