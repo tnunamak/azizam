@@ -134,10 +134,11 @@ class VoiceRouteTests(unittest.TestCase):
     def test_every_listed_kokoro_voice_reaches_the_engine(self) -> None:
         self.assertEqual(self.sent_voice("bm_george", model="kokoro"), "bm_george")
 
-    def test_voices_endpoint_lists_canonical_then_aliases(self) -> None:
+    def test_voices_endpoint_lists_every_voice_tts_1_speaks(self) -> None:
         body = self.client.get("/v1/voices").json()
         entries = {v["voice_id"]: v for v in body["voices"]}
-        self.assertEqual(body["default_voice"], "alloy")
+        # The default is what tts-1 sends when no voice is named.
+        self.assertEqual(body["default_voice"], self.sent_voice("", model="tts-1"))
         for name in OPENAI_VOICES:
             self.assertFalse(entries[name]["alias"], name)
             self.assertEqual(entries[name]["mapped_to"], name)
@@ -146,11 +147,12 @@ class VoiceRouteTests(unittest.TestCase):
             self.assertTrue(entries[alias]["alias"], alias)
             self.assertEqual(entries[alias]["mapped_to"], target)
             self.assertEqual(entries[alias]["gender"], entries[target]["gender"])
-        # Every listed voice is accepted by the speech route.
-        for voice_id, entry in entries.items():
-            self.assertEqual(map_voice(voice_id), entry["mapped_to"])
-        self.assertEqual(body["voices"][0]["voice_id"] in OPENAI_VOICES, True)
-
+        # Every listed voice is spoken by tts-1; a preset only a later engine lists reaches that engine.
+        for voice_id in entries:
+            with self.subTest(voice=voice_id):
+                self.sent_voice(voice_id, model="tts-1")
+        self.assertEqual(self.sent_voice("de_female", model="tts-1"), "de_female")
+        self.assertEqual(body["voices"], self.client.get("/v1/voices", params={"model": "tts-1"}).json()["voices"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -3919,6 +3919,31 @@ def _speech_engine_for_service(service_id: str) -> Mapping[str, Any]:
                  if isinstance(spec, Mapping) and str(spec.get("service") or "") == service_id), {})
 
 
+def _speech_voice_choices(model: str) -> "speech_voices.SpeechVoiceCatalog | None":
+    """Try's voice choices for a speech model: the voices its engines list; None when it names no engine.
+
+    Raises ModelCompatibilityError for a model that is not deployed.
+    """
+    resolution = resolve_model_for_operation("speech", model)
+    if resolution.alias is None or resolution.alias.engine_spec is None:
+        return None
+    return speech_voices.speech_voice_catalog(*(spec for _engine, spec in _speech_model_engines(resolution)))
+
+
+def _speech_model_engines(resolution: ModelResolution) -> list[tuple[str | None, Mapping[str, Any]]]:
+    """The deployed engines that serve a speech model, in the configured order, as (engine id, record).
+
+    A tier is its picked engine and then its fallbacks; an engine named directly is itself. A model
+    resolved to no engine is served by the default speech service, so that engine's record (id None).
+    """
+    alias = resolution.alias
+    if alias is None or not alias.engine or alias.engine_spec is None:
+        return [(None, _speech_engine_for_service("tts"))]
+    engines = _speech_engines()
+    return [(alias.engine, alias.engine_spec),
+            *((engine, engines.get(engine) or {}) for engine, _service in alias.fallbacks)]
+
+
 # ---- custom (user-created) voices -------------------------------------------
 # Storage, validation and the HTTP routes live in gateway/custom_voices.py,
 # gateway/voice_audio.py and gateway/voices_api.py; this block only wires them
@@ -4286,8 +4311,8 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
     503 and a 5xx that names an allocation failure. An engine id by name has no fallbacks. The
     fallback engine applies its own voice map, so the voice can differ; ``x-azizam-fallback`` says so.
     """
-    response = await _proxy_tts_once(request, auth_context, receipt=receipt)
-    fallbacks, notes = await _tts_tier_fallbacks(request)
+    fallbacks, notes, start_engine = await _tts_tier_fallbacks(request)
+    response = await _proxy_tts_once(request, auth_context, model_override=start_engine, receipt=receipt)
     if receipt is not None:
         for note in notes:
             receipt.add_fallback_reason(note)
@@ -4306,27 +4331,36 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
     return _with_fallback_header(response, notes)
 
 
-async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | None]], list[str]]:
-    """Return tier engines and notes for primary candidates skipped before dispatch.
+async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | None]], list[str], str | None]:
+    """Return tier engines, notes for primary candidates skipped before dispatch, and the engine to start with.
 
-    Empty when the body is not a JSON object, the model is not a tier, or it names an engine.
+    The engines are empty when the body is not a JSON object, the model is not a tier, or it names
+    an engine. A named voice only goes to the engines whose data accept it, so the tier starts with
+    the first of them (None when that is the tier's own pick); when none does, the pick refuses it.
     A custom voice only goes to engines that accept one.
     """
     try:
         body_json = json.loads(await request.body())
         resolution = resolve_model_for_operation("speech", body_json.get("model", "tts-1"))
     except (ValueError, AttributeError, ModelCompatibilityError):
-        return [], []
+        return [], [], None
     alias = resolution.alias
     if alias is None or not alias.engine or not alias.fallbacks:
-        return [], _speech_skipped_engine_notes(resolution)
-    custom_voice = voices_api.custom_voice_id(body_json.get("voice")) is not None
-    engines = _speech_engines()
-    usable = [
-        (engine, service) for engine, service in alias.fallbacks
-        if not custom_voice or bool_from_config((engines.get(engine) or {}).get("custom_voices"), False)
-    ]
-    return [(alias.engine, alias.service), *usable], _speech_skipped_engine_notes(resolution)
+        return [], _speech_skipped_engine_notes(resolution), None
+    notes = _speech_skipped_engine_notes(resolution)
+    tier = [(alias.engine, alias.service), *alias.fallbacks]
+    specs = dict(_speech_model_engines(resolution))
+    if voices_api.custom_voice_id(body_json.get("voice")) is not None:
+        usable = [tier[0], *((engine, service) for engine, service in tier[1:]
+                             if bool_from_config(specs[engine].get("custom_voices"), False))]
+        return usable, notes, None
+    requested_voice = str(body_json.get("voice", "") or "").lower()
+    aliases = _speech_voice_aliases()
+    accepting = [(engine, service) for engine, service in tier
+                 if speech_voices.resolve_voice(specs[engine], aliases, requested_voice) is not None]
+    if not accepting:
+        return tier[:1], notes, None
+    return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
@@ -15838,10 +15872,9 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         if not any(cap["intent"] == "speech.synthesis" for cap in row["capabilities"]):
             continue
         try:
-            resolution = resolve_model_for_operation("speech", row["id"])
-            spec = resolution.alias.engine_spec if resolution.alias else None
-            if spec is not None:
-                row["speech_voices"] = speech_voices.speech_voice_catalog(spec)
+            choices = _speech_voice_choices(row["id"])
+            if choices is not None:
+                row["speech_voices"] = choices
         except (ModelCompatibilityError, KeyError):
             # Unknown choices remain empty rather than borrowing another model's voices.
             continue
@@ -18642,31 +18675,16 @@ async def list_voices(request: Request):
     if policy_response is not None:
         return policy_response
 
-    # The voices of the engine behind the default speech service (what a request that names no
-    # engine speaks with), in their data order, then the older spellings that resolve to them.
-    default_engine = _speech_engine_for_service("tts")
-    records = {record["id"]: record for record in speech_voices.voice_records(default_engine)}
-    voices = [
-        {
-            "voice_id": voice_id,
-            # `id` is what Open WebUI reads ({v['id']: v['name']}); `voice_id` is kept for existing clients.
-            "id": voice_id,
-            "name": record.get("name") or voice_id,
-            "language": record.get("language"),
-            "gender": record.get("gender"),
-            "description": record.get("description"),
-            "mapped_to": voice_id,
-            "alias": False,
-        }
-        for voice_id, record in records.items()
-    ]
-    for alias, target in sorted(_speech_voice_aliases().items()):
-        if target in records:
-            voices.append({
-                "voice_id": alias, "id": alias, "name": alias.replace("_", " ").title(),
-                "language": records[target].get("language"), "gender": records[target].get("gender"),
-                "description": f"Legacy alias of '{target}'", "mapped_to": target, "alias": True,
-            })
+    # Every voice that ?model= (by default the model a request without one uses) accepts: the
+    # voices its engines list, in engine order, then the other spellings that resolve to them.
+    model = request.query_params.get("model") or "tts-1"
+    try:
+        specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
+    except ModelCompatibilityError as exc:
+        if "model" in request.query_params:
+            return model_compatibility_error(exc)
+        specs = []
+    voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
     # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
     try:
         after, limit = voices_api.parse_page_args(request)
@@ -18680,11 +18698,11 @@ async def list_voices(request: Request):
     if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
         mine, has_more = [], False
     page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
-    if not _category_entry_visible(auth_context, {"id": "tts-1", "operation": "speech"}):
+    if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
         voices = []
     engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
                      if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
-    return {"default_voice": default_engine.get("default_voice"), "voices": voices, "engines": engine_voices, **page}
+    return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)

@@ -7,6 +7,7 @@ byte for byte, apart from the intended changes listed here.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import unittest
@@ -14,7 +15,9 @@ from pathlib import Path
 
 import yaml
 
-from tests.engine_p2_differential import FIXTURES, load_fixture, observe, running_gateway
+from tests.engine_p2_differential import (
+    _PRESET_VOICES, _SPEECH_MODELS, FIXTURES, load_fixture, observe, running_gateway,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _GOLDEN = json.loads((FIXTURES / "golden.json").read_text(encoding="utf-8"))
@@ -170,34 +173,85 @@ class VoiceDesignDifferentialTests(unittest.TestCase):
 
 
 class SpeechVoiceDifferentialTests(unittest.TestCase):
-    """Every request and the voice listing match, except where a voice was silently replaced."""
+    """Every request matches, except where a voice was silently replaced; the listing is what is accepted."""
 
     def test_owner_configuration_speaks_byte_identical_requests(self) -> None:
         observed = observe(load_fixture("owner_config.migrated.json"), ("speech",))["speech"]
         golden = _GOLDEN["speech"]
         self.assertEqual(set(observed), set(golden))
         identical = {case for case in golden if observed[case] == golden[case]}
-        self.assertIn("GET /v1/audio/voices", identical)
-        changed = sorted(set(golden) - identical)
-        refused, now_listed = [], []
+        changed = sorted(set(golden) - identical - {"GET /v1/audio/voices"})
+        refused, now_listed, rerouted = [], [], {}
         for case in changed:
             old, new = golden[case], observed[case]
             old_body = json.loads(old["upstream"][0]["body"])
             # The old gateway sent the engine's default in place of a voice the engine did not know.
             self.assertEqual(old_body["voice"], _ENGINE_DEFAULTS[old_body["model"]], case)
+            model, voice = case.split(" voice=")
             if new["response"]["status"] == 400:
                 self.assertEqual(new["response"]["json"]["error"]["code"], "voice_not_available", case)
                 self.assertEqual(new["upstream"], [], case)
                 refused.append(case)
+            elif new == observed.get(f"{_REROUTED.get(model)} voice={voice}"):
+                # A tier sends the voice to its first engine that lists it, exactly as naming that engine does.
+                rerouted.setdefault(_REROUTED[model], []).append(case)
             else:
                 new_body = json.loads(new["upstream"][0]["body"])
                 self.assertEqual({**new_body, "voice": None}, {**old_body, "voice": None}, case)
                 now_listed.append((case, new_body["voice"]))
-        # Intended changes: an unknown voice is refused, and a listed Kokoro voice that was not an
-        # OpenAI-name mapping reaches the engine instead of becoming af_heart.
-        self.assertEqual(len(identical), 714)
-        self.assertEqual(len(refused), 222)
+        # Intended changes: an unknown voice is refused; a voice that only a later engine of a tier
+        # lists reaches that engine; a listed Kokoro voice that was not an OpenAI-name mapping reaches
+        # the engine instead of becoming af_heart.
+        self.assertEqual(len(identical), 713)
+        self.assertEqual(len(refused), 146)
+        presets = [f'"{v}"' for v in (*_PRESET_VOICES, "DE_Female")]
+        self.assertEqual(sorted(rerouted["omnivoice"]), sorted(
+            f"{model} voice={voice}" for model in ("tts-1", "gpt-4o-mini-tts", "tts", "tts-fast") for voice in presets))
+        self.assertEqual(sorted(rerouted["kokoro"]), sorted(
+            f"{model} voice={voice}" for model in ("tts-1-hd", "tts-quality")
+            for voice in ('"af_heart"', '"AF_Bella"', '"bm_george"', '"am_onyx"')))
         self.assertEqual(now_listed, [('kokoro voice="bm_george"', "bm_george")])
+        # An unknown voice is still refused on the default model.
+        self.assertEqual(observed['tts-1 voice="nope"']["response"]["json"]["error"]["code"], "voice_not_available")
+
+    def test_the_voice_listing_is_exactly_the_voices_each_model_accepts(self) -> None:
+        from tests.engine_p2_differential import _observe_speech
+
+        with running_gateway(load_fixture("owner_config.migrated.json")) as (proxy, client, upstream, _root):
+            observed = asyncio.run(_observe_speech(proxy, client, upstream))
+            overall = client.get("/v1/audio/voices").json()
+            for model in _SPEECH_MODELS:
+                resp = client.get("/v1/audio/voices", params={"model": model})
+                refused = observed[f'{model} voice="alloy"']["response"]
+                if refused["status"] != 200:  # no such model, or not deployed in the owner's registry
+                    self.assertEqual((resp.status_code, resp.json()), (refused["status"], refused["json"]), model)
+                    continue
+                listing = resp.json()
+                listed = {entry["id"].lower() for entry in listing["voices"]}
+                # Every listed voice is spoken by the model ...
+                for voice in sorted(listed):
+                    spoken = client.post("/v1/audio/speech", json={"model": model, "input": "hi", "response_format": "wav", "voice": voice})
+                    upstream.take()
+                    self.assertEqual(spoken.status_code, 200, f"{model} {voice}")
+                # ... and every voice the harness got spoken is listed.
+                for case, result in observed.items():
+                    named, _, voice = case.partition(" voice=")
+                    voice = json.loads(voice) if voice else None
+                    if named != model or not isinstance(voice, str) or voice in ("", "<omitted>") or voice.startswith("voice_"):
+                        continue
+                    self.assertEqual(result["response"]["status"] == 200, voice.lower() in listed, f"{model} {voice!r}")
+                # Try offers the same voices, without the accepted spellings.
+                choices = proxy._speech_voice_choices(model)
+                if choices is not None:
+                    self.assertEqual([c["id"] for c in choices["voices"]],
+                                     [e["id"] for e in listing["voices"] if not e["alias"]], model)
+                    self.assertEqual(choices["default_voice"], listing["default_voice"], model)
+            self.assertEqual(overall["voices"], client.get("/v1/audio/voices", params={"model": "tts-1"}).json()["voices"])
+        # The owner's tts-1 tier is Supertonic then OmniVoice: its codes lead, then the clips and presets.
+        self.assertEqual(overall["default_voice"], "F1")
+        ids = [entry["id"] for entry in overall["voices"] if not entry["alias"]]
+        self.assertEqual(ids[:11], ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5", "alloy"])
+        self.assertIn("de_female", ids)
 
     def test_a_replacement_engine_speaks_its_own_voices(self) -> None:
         fixture = copy.deepcopy(load_fixture("owner_config.migrated.json"))
@@ -223,6 +277,9 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
 
 
 _ENGINE_DEFAULTS = {"supertonic": "F1", "kokoro": "af_heart", "k2-fsa/OmniVoice": "alloy"}
+# The engine a tier's later-listed voices reach in the owner's configuration.
+_REROUTED = {"tts-1": "omnivoice", "gpt-4o-mini-tts": "omnivoice", "tts": "omnivoice", "tts-fast": "omnivoice",
+             "tts-1-hd": "kokoro", "tts-quality": "kokoro"}
 
 
 def _prompt_index(prompt: str) -> int:

@@ -1692,10 +1692,13 @@ voices under `engines`.
 **Voices are engine data.** Each engine in `model_aliases.speech.engines` lists
 its `voices`; `voice_map` and the speech section's `voice_aliases` are accepted
 spellings (an OpenAI name such as `shimmer`, or an older one such as
-`cheerful_female`). A voice the model's engine does not list is
-`400 voice_not_available` (`param: voice`), not a silent default. Omitting
-`voice` uses the engine's `default_voice`. An engine with no `voices` list takes
-any voice id.
+`cheerful_female`). A model served by a tier of engines (`stable`) sends a voice
+to the first engine, in the tier's order, that accepts it; a voice that no engine
+of the model accepts is `400 voice_not_available` (`param: voice`), not a silent
+default. Omitting `voice` uses the first engine's `default_voice`. An engine with
+no `voices` list takes any voice id. `GET /v1/audio/voices?model=<model>` lists
+exactly the voices that model accepts (without `model`, those of `tts-1`), and
+Try offers the same voices per model.
 
 ### Custom voices
 
