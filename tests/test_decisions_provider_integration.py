@@ -68,15 +68,20 @@ def _provider_registry(*, provider_id="typesafe", protocols=("typesafe-systemone
 
 
 def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> "AccessPlan":
-    # Plan caps and capability tags are not access-plan parts; only providers
-    # and listed models remain (design v4 §2.1).
-    return plan_for("paid-plan", models=list(models) if models is not None else None, paid=sorted(providers))
+    # Capability tags are not access-plan parts; providers, listed models and
+    # spending caps are.
+    return plan_for(
+        "paid-plan", models=list(models) if models is not None else None, paid=sorted(providers),
+        usd_per_request=None if max_usd_per_request is None else str(max_usd_per_request),
+        usd_per_day=None if budget_usd_per_day is None else str(budget_usd_per_day),
+        usd_per_month=None if budget_usd_per_month is None else str(budget_usd_per_month),
+    )
 
 
 @contextmanager
 def _authenticated(profile: "AccessPlan"):
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", access=access(profile))
+    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", accountable_person_id="usr-123", access=access(profile))
 
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
@@ -99,7 +104,7 @@ def _install_registry(mp: pytest.MonkeyPatch, tmp_path, registry: dict | None = 
 
 def _ledger_rows(path):
     with sqlite3.connect(path) as conn:
-        return conn.execute("SELECT provider, profile_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
+        return conn.execute("SELECT provider, app_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
 
 
 def _capture_receipts(mp: pytest.MonkeyPatch) -> list:
