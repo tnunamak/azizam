@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check one gate run against the test policy (docs/design/TEST_STRATEGY.md 3, 6).
 
-Usage: policy.py --root CHECKOUT --cases cases.jsonl [--today YYYY-MM-DD]
+Usage: policy.py --root CHECKOUT --cases cases.jsonl [--base-budgets FILE] [--today YYYY-MM-DD]
 
 CHECKOUT is the clean tree the gate ran; cases.jsonl comes from
 merge_cases.py. Rules, each failing the step with one line per violation:
@@ -23,6 +23,10 @@ merge_cases.py. Rules, each failing the step with one line per violation:
   code (test files, conftest.py, tests/**/*.py, test configs).
 - counts: first-attempt cases per framework stay within tests/budgets.toml
   [ceilings], in the units of TEST_STRATEGY.md 6.
+- ratchets: with --base-budgets FILE (the target branch's tests/budgets.toml),
+  no [ratchets] value is above its value there and none was removed, so a
+  ratchet can only fall. The ratchet's own test checks the real count against
+  the value.
 """
 
 from __future__ import annotations
@@ -185,10 +189,23 @@ def check_counts(cases: list[dict], budgets: dict) -> tuple[list[str], dict[str,
     return problems, counts
 
 
+def check_ratchets(budgets: dict, base: dict) -> list[str]:
+    ratchets = budgets.get("ratchets", {})
+    problems = []
+    for name, base_value in base.get("ratchets", {}).items():
+        value = ratchets.get(name)
+        if value is None:
+            problems.append(f"ratchets: {name} was removed from tests/budgets.toml (the target branch has {base_value})")
+        elif value > base_value:
+            problems.append(f"ratchets: {name} is {value}, above {base_value} on the target branch; a ratchet only falls")
+    return problems
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--cases", required=True, type=Path)
+    parser.add_argument("--base-budgets", type=Path, help="the target branch's tests/budgets.toml")
     parser.add_argument("--today", type=datetime.date.fromisoformat, default=datetime.date.today())
     args = parser.parse_args()
     root = args.root.resolve()
@@ -199,6 +216,8 @@ def main() -> None:
     tests = discover(files)
     code = test_code(files)
     count_problems, counts = check_counts(cases, budgets)
+    if args.base_budgets:
+        count_problems += check_ratchets(budgets, tomllib.loads(args.base_budgets.read_text(encoding="utf-8")))
     problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
                 + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems)
     for problem in problems:
