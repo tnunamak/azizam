@@ -15,5 +15,5 @@ def test_prof(gateway, path):
             pr.disable()
             return pr
     pr = asyncio.run(run())
-    out = io.StringIO(); pstats.Stats(pr, stream=out).sort_stats("tottime").print_stats(30)
+    out = io.StringIO(); pstats.Stats(pr, stream=out).sort_stats("cumulative").print_stats("checkout", 40)
     assert False, "\n" + out.getvalue()
