@@ -309,6 +309,8 @@ export const ROUTES: SweepRoute[] = [
     ],
   },
   { appRoute: "/settings", surface: "Settings", path: "/settings/", roles: signedIn, states: [{ id: "default" }] },
+  { appRoute: "/account", surface: "Account", path: "/account/", roles: signedIn, states: [{ id: "default" }] },
+  { appRoute: "/categories", surface: "Categories", path: "/categories/", roles: owner, states: [{ id: "default" }] },
   {
     appRoute: "/setup",
     surface: "Setup and first run",

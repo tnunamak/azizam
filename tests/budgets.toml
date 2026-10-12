@@ -10,10 +10,16 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8380  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded)
+pytest = 8404  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
 vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
-node = 5
+
+# Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
+# node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
+# cases (tests/showcase/core.test.mjs). 5 + 78 + 20 = 103. The showcase file's
+# Python wrapper (test_node_suite_passes, always skipped in the sandbox) is
+# deleted; pytest is left at its ceiling for S14 to lower.
+node = 103
 
 # Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
 # new upstream fakes belong in tests/support/fake_upstream/). It may only fall:

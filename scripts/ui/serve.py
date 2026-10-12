@@ -15,7 +15,10 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parents[2]
 PORT = int(os.environ.get('UI_E2E_PORT', '18180'))
-ENGINE_PORT = PORT + 1
+# A scheduled run points the gateway at an upstream it already started (the
+# fake upstream, scripts/scheduled/); then no fake engine is spawned here.
+EXTERNAL_UPSTREAM_PORT = os.environ.get('UI_E2E_UPSTREAM_PORT', '')
+ENGINE_PORT = int(EXTERNAL_UPSTREAM_PORT) if EXTERNAL_UPSTREAM_PORT else PORT + 1
 SEED_PROFILE = os.environ.get('UI_SEED_PROFILE', '')
 if SEED_PROFILE not in ('', 'household'):
     raise SystemExit('UI_SEED_PROFILE must be household or unset')
@@ -79,6 +82,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         manifest_path.write_text(json.dumps(manifest))
     try:
         for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
+            if module != 'proxy:app' and EXTERNAL_UPSTREAM_PORT:
+                continue
             log = (state / f'{port}.log').open('w')
             command = ([sys.executable, '-m', 'scripts.ui.fixture_gateway', str(PORT), str(ENGINE_PORT)]
                        if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
