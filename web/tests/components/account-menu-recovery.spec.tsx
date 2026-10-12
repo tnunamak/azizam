@@ -127,7 +127,7 @@ it("uses the admin fallback token when the member snapshot has none", async () =
 
 it("does not submit logout after fallback failure and still permits retry", async () => {
   const user = userEvent.setup();
-  vi.mocked(fetch).mockResolvedValue(json({}));
+  vi.mocked(fetch).mockImplementation(async () => json({}));
   mount();
   await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
   await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());

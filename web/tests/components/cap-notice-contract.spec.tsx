@@ -56,7 +56,7 @@ it("gives the owner the original warning and Status action", () => {
     "The daily limit counts the last 24 hours, so requests can work again within a day.",
   );
   expect(screen.getByRole("link", { name: "Open Status" }))
-    .toHaveAttribute("href", "/status/");
+    .toHaveAttribute("href", "/status");
   expect(screen.queryByText(/Ask Robin/)).toBeNull();
 });
 
