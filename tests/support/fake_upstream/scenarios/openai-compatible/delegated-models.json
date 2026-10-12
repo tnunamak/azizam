@@ -1,0 +1,17 @@
+{
+  "protocol": "openai-compatible",
+  "name": "delegated-models",
+  "description": "The LLM substrate lists the models a LiteLLM virtual key may use, once, only for that key.",
+  "provenance": {"source": "hand-written", "reference": "https://platform.openai.com/docs/api-reference/models/list and the X-Litellm-Key contract in gateway/backends/llm_execution.py"},
+  "exchanges": [
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models",
+        "headers": {"x-litellm-key": "Bearer {{virtual_key}}", "authorization": {"$absent": true}}
+      },
+      "response": {"json": {"object": "list", "data": [{"id": "{{model}}", "object": "model", "created": 1767225600, "owned_by": "litellm"}]}}
+    }
+  ]
+}
