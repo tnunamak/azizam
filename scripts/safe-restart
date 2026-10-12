@@ -29,10 +29,10 @@ Exit codes:
   2  usage error
   3  work still in flight at the deadline; NOT restarted (--dry-run: busy)
   4  drain endpoint unreachable or refused; NOT restarted (use --force)
-  5  systemctl restart failed
+  5  systemctl stop/start/restart failed
   6  another safe-restart is already running
-  7  web build failed; NOT drained or restarted
-  130 interrupted (drain is switched off again)
+  7  web build or publication failed; inspect recovery message
+  130 interrupted (drain cleared only before a publication transaction)
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ import fcntl
 import json
 import os
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -258,6 +259,7 @@ class Restarter:
         # A built export waits here, beside web/, until the drain is done.
         self.staged_export: Path | None = None
         self.published = False
+        self.publication_transaction = False
 
     # -- output -------------------------------------------------------------
 
@@ -300,8 +302,12 @@ class Restarter:
 
     @staticmethod
     def _drain_payload(status: int, payload: Any) -> dict[str, Any]:
-        if status == 200 and isinstance(payload, dict) and "draining" in payload:
-            return payload
+        if status == 200 and isinstance(payload, dict):
+            active = payload.get("active")
+            if (type(payload.get("draining")) is bool and isinstance(active, dict)
+                    and all(type(active.get(key)) is int and active[key] >= 0
+                            for key in ("requests", "chat", "async_media_jobs_total"))):
+                return payload
         detail = ""
         if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
             detail = f" ({payload['error'].get('code')})"
@@ -360,6 +366,17 @@ class Restarter:
         warned_slots = False
         warned_quiet = False
         while True:
+            # Never substitute a stale idle snapshot for a failed observation.
+            try:
+                snapshot = self.get_drain()
+                if not chat_only and self.drain_set_by_us and not snapshot["draining"]:
+                    raise DrainUnavailable("drain is no longer enabled")
+            except DrainUnavailable as exc:
+                if self.clock() >= deadline:
+                    self.warn(f"cannot prove idle: {exc}")
+                    return False, snapshot
+                self.sleep(min(self.args.poll, max(0.0, deadline - self.clock())))
+                continue
             busy = self._busy_count(snapshot, chat_only=chat_only)
             slots = self.llama_busy_slots() if self.args.llama else 0
             if self.args.llama and slots is None and not warned_slots:
@@ -387,12 +404,6 @@ class Restarter:
                 last_report = now
             last_state = state
             self.sleep(self.args.poll)
-            try:
-                snapshot = self.get_drain()
-            except DrainUnavailable as exc:
-                # Gateway went away mid-wait. Nothing to wait for any more.
-                self.warn(f"lost the drain endpoint while waiting: {exc}")
-                return True, snapshot
 
     # -- health -------------------------------------------------------------
 
@@ -423,15 +434,19 @@ class Restarter:
             return self.args.health_timeout
         return 600.0 if self.args.llama else 120.0
 
-    def _undrain_quietly(self) -> None:
+    def _undrain_quietly(self) -> bool:
         if not self.drain_set_by_us:
-            return
+            return True
         try:
             self.set_drain(False)
-            self.say("drain switched off")
+            if self.get_drain()["draining"]:
+                raise DrainUnavailable("drain remains enabled")
         except DrainUnavailable as exc:
-            self.warn(f"could not switch drain off ({exc}); it expires on its own after the TTL")
+            self.warn(f"could not confirm drain off ({exc})")
+            return False
+        self.say("drain switched off")
         self.drain_set_by_us = False
+        return True
 
     def execute(self) -> int:
         args = self.args
@@ -496,8 +511,13 @@ class Restarter:
         assert self.staged_export is not None
         served = self.web_dir / "out"
         had_previous = served.exists()
-        publish_web_export(self.staged_export / "out", served)
-        self.published = True
+        # Commit the in-memory recovery state before delivering an interrupt.
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            publish_web_export(self.staged_export / "out", served)
+            self.published = True
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
         self.say("published the new web export")
         # renameat2 exchanged the two trees: the holder now has the old export.
         return self.staged_export / "out" if had_previous else None
@@ -537,7 +557,7 @@ class Restarter:
                 "new requests are still accepted"
             )
             try:
-                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), quiet=quiet, chat_only=True)
+                ok, snapshot = self.wait_idle(snapshot, quiet=quiet, chat_only=True)
             except KeyboardInterrupt:
                 self.say("interrupted")
                 return EXIT_INTERRUPTED
@@ -553,7 +573,8 @@ class Restarter:
             + (" (chat only)" if args.llama else "")
         )
         try:
-            self.set_drain(True)
+            if not self.set_drain(True)["draining"]:
+                raise DrainUnavailable("drain was not enabled")
         except DrainUnavailable as exc:
             if not args.force:
                 self.say(f"REFUSING to restart {target}: could not start the drain: {exc}")
@@ -569,16 +590,16 @@ class Restarter:
                 # Phase 2: a request may have slipped in before the flag was set.
                 # Give it the rest of the deadline (at least 30 s) to finish.
                 remaining = max(30.0, args.timeout - (self.clock() - start))
-                ok, snapshot = self.wait_idle(self.get_drain_or(snapshot), timeout=remaining)
+                ok, snapshot = self.wait_idle(snapshot, timeout=remaining)
                 if not ok:
                     self._report_deadline(snapshot, target)
                     self.say(f"NOT restarting {target}. Drain is being switched off.")
-                    self._undrain_quietly()
-                    return EXIT_BUSY
+                    return EXIT_BUSY if self._undrain_quietly() else EXIT_UNCONFIRMED
             return self._restart_and_verify(drained=True)
         except KeyboardInterrupt:
             self.say("interrupted")
-            self._undrain_quietly()
+            if not self.publication_transaction:
+                self._undrain_quietly()
             return EXIT_INTERRUPTED
 
     def _report_deadline(self, snapshot: Mapping[str, Any], target: str) -> None:
@@ -588,12 +609,6 @@ class Restarter:
         seen = snapshot.get("seconds_since_chat_activity")
         if seen is not None and self.args.quiet_seconds > 0 and seen < self.args.quiet_seconds:
             self.say(f"  last chat activity {float(seen):.0f}s ago (quiet window is {self.args.quiet_seconds:.0f}s)")
-
-    def get_drain_or(self, fallback: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return self.get_drain()
-        except DrainUnavailable:
-            return fallback
 
     def _dry_run(self, snapshot: Mapping[str, Any]) -> int:
         active = snapshot.get("active") or {}
@@ -625,47 +640,96 @@ class Restarter:
         else:
             self.say("--force: nothing was in flight")
 
-    def _wait_public(self) -> None:
+    def _wait_public(self) -> bool:
         url = self.args.public_url.rstrip("/") + "/health"
         self.say(f"waiting for public health at {url}")
         if self.wait_health(url, self.args.public_timeout, name=url):
             self.say("public health is OK")
+            return True
         else:
             self.warn(
                 f"public health at {url} did not return 200 within {self.args.public_timeout:.0f}s; "
                 "the reverse proxy may still mark the gateway down"
             )
+            return False
+
+    def _rollback_command(self, previous: Path | None) -> str:
+        target = shlex.quote(self._unit())
+        stop = f"systemctl --user stop {target}"
+        start = f"systemctl --user start {target}"
+        if previous is None:
+            return f"{stop} && {start}"
+        # Reuse exactly the atomic exchange implementation; never rm -rf web/out.
+        program = (
+            "import runpy; from pathlib import Path; "
+            f"runpy.run_path({str(Path(__file__).resolve())!r})"
+            f"['publish_web_export'](Path({str(previous)!r}), "
+            f"Path({str(self.web_dir / 'out')!r}))"
+        )
+        return f"{stop} && python3 -c {shlex.quote(program)} && {start}"
 
     def _restart_and_verify(self, *, drained: bool) -> int:
-        args = self.args
         target = self._unit()
-        previous_export = None
-        if self.staged_export is not None:
-            # Publish only now: a page of the new build must never be served
-            # by the old process, which cannot serve that build's assets.
+        if self.staged_export is None:
+            return self._restart_and_check(target, drained=drained)
+
+        # Drain allows reads. Stop the old unit BEFORE publishing, so even a
+        # failed start or an uncatchable interruption cannot expose new assets
+        # to the old process. A successful synchronous systemctl stop is required.
+        self.publication_transaction = True
+        previous = self.staged_export / "out" if (self.web_dir / "out").exists() else None
+        rollback = self._rollback_command(None)
+        try:
+            code = self.run(["systemctl", "--user", "stop", target], self.args.systemctl_timeout)
+            if code != 0:
+                self.say(f"publication aborted: stop {target} failed (exit {code}); old export unchanged. Recovery: {rollback}")
+                return EXIT_SYSTEMCTL
+            self._publish_staged_export()
+            rollback = self._rollback_command(previous)
+            status = self._restart_and_check(target, drained=drained, action="start")
+        except OSError as exc:
+            status = EXIT_WEB_BUILD
+            self.warn(f"publication transaction failed: {exc}")
+        except KeyboardInterrupt:
+            status = EXIT_INTERRUPTED
+
+        if self.published:
+            rollback = self._rollback_command(previous)
+        if status == EXIT_OK:
+            self._discard_staged_export()
+            return status
+        recovery_state = "service stop UNVERIFIED"
+        if status != EXIT_OK:
+            # The outcome of start can be ambiguous. Stop before exchanging
+            # anything; otherwise retain both trees and never clear drain.
             try:
-                previous_export = self._publish_staged_export()
-            except OSError as exc:
-                self.say(f"web publication failed: {exc}; NOT restarting {target}")
-                self._undrain_quietly()
-                return EXIT_WEB_BUILD
-        status = self._restart_and_check(target, drained=drained)
-        if previous_export is not None:
-            if status == EXIT_OK:
-                self._discard_staged_export()
-            else:
-                served = self.web_dir / "out"
-                self.say(f"the previous web export is kept at {previous_export}")
-                self.say(f"to serve it again: rm -rf -- {served} && mv -- {previous_export} {served}")
+                stopped = self.run(["systemctl", "--user", "stop", target],
+                                   self.args.systemctl_timeout) == 0
+                if stopped:
+                    recovery_state = "service stopped"
+                if (stopped and status != EXIT_UNCONFIRMED
+                        and self.published and previous is not None):
+                    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+                    try:
+                        publish_web_export(previous, self.web_dir / "out")
+                        rollback = self._rollback_command(None)
+                        recovery_state = "old export restored; service stopped"
+                    finally:
+                        signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+            except (OSError, KeyboardInterrupt):
+                pass
+        export_state = f"retained export at {self.staged_export}" if self.published else "old export unchanged"
+        self.say(f"deployment unconfirmed: {recovery_state}; {export_state}. Recovery: {rollback}")
         return status
 
-    def _restart_and_check(self, target: str, *, drained: bool) -> int:
+    def _restart_and_check(self, target: str, *, drained: bool, action: str = "restart") -> int:
         args = self.args
-        self.say(f"restarting {target}")
-        code = self.run(["systemctl", "--user", "restart", target], args.systemctl_timeout)
+        self.say(f"{action}ing {target}")
+        code = self.run(["systemctl", "--user", action, target], args.systemctl_timeout)
         if code != 0:
-            self.say(f"systemctl restart {target} failed (exit {code})")
-            self._undrain_quietly()
+            self.say(f"systemctl {action} {target} failed (exit {code})")
+            if not self.publication_transaction:
+                self._undrain_quietly()
             return EXIT_SYSTEMCTL
         health_url = self._health_url()
         self.say(f"waiting for health at {health_url}")
@@ -676,14 +740,14 @@ class Restarter:
             status = EXIT_UNCONFIRMED
         else:
             self.say(f"{target} is healthy")
-            if not args.llama and args.public_url:
-                self._wait_public()
+            if not args.llama and args.public_url and not self._wait_public():
+                status = EXIT_UNCONFIRMED
 
         if args.llama:
             # The gateway kept running through a llama restart, so its drain flag
             # is still on. Always switch it off.
-            if drained:
-                self._undrain_quietly()
+            if drained and not self._undrain_quietly():
+                status = EXIT_UNCONFIRMED
             return status
 
         # A restarted gateway starts with draining off. Confirm it.
@@ -691,12 +755,13 @@ class Restarter:
             snapshot = self.get_drain()
         except DrainUnavailable as exc:
             self.warn(f"could not confirm the drain flag after restart: {exc}")
-            self.drain_set_by_us = False
-            return status
+            return EXIT_UNCONFIRMED
         if snapshot.get("draining"):
             self.warn("drain flag is still on after restart; switching it off")
             self.drain_set_by_us = True
-            self._undrain_quietly()
+            if (not healthy or (self.publication_transaction and status != EXIT_OK)
+                    or not self._undrain_quietly()):
+                status = EXIT_UNCONFIRMED
         else:
             self.say("draining is off")
             self.drain_set_by_us = False
@@ -789,12 +854,19 @@ def main(
             print(f"warning: could not take the lock {lock_path}: {exc}", file=sys.stderr)
 
     restarter = restarter_factory(args, token=token)
+
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+
+    old_term = signal.signal(signal.SIGTERM, interrupted)
     try:
         return restarter.execute()
     except KeyboardInterrupt:
-        restarter._undrain_quietly()
+        if not restarter.publication_transaction:
+            restarter._undrain_quietly()
         return EXIT_INTERRUPTED
     finally:
+        signal.signal(signal.SIGTERM, old_term)
         if lock_handle is not None:
             lock_handle.close()
 

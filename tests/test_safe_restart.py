@@ -8,6 +8,7 @@ import json
 import os
 import time
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,7 @@ class World:
         self.health_after_restart: list = [200]
         self.public_health: list = [200]
         self.restarted = False
+        self.running = True
         self.systemctl_code = 0
         self.llama_slots: list = [[{"is_processing": False}]]
         self.post_restart_snapshot = snap()
@@ -101,8 +103,13 @@ class World:
 
     def run(self, cmd, timeout):
         self.commands.append(list(cmd))
+        if cmd[2] == "stop":
+            if self.systemctl_code == 0:
+                self.running = False
+            return self.systemctl_code
         self.restarted = True
         if self.systemctl_code == 0:
+            self.running = True
             self.draining = False if cmd[-1] == "azizam" else self.draining
         return self.systemctl_code
 
@@ -208,7 +215,7 @@ class SafeRestartTests(unittest.TestCase):
         world = World()
         world.drain_status = 404
         code = world.invoke("--force")
-        self.assertEqual(code, sr.EXIT_OK, world.text)
+        self.assertEqual(code, sr.EXIT_UNCONFIRMED, world.text)
         self.assertEqual(len(world.commands), 1)
         self.assertIn("WITHOUT draining", world.text)
         self.assertIn("will be cut", world.text)
@@ -256,10 +263,10 @@ class SafeRestartTests(unittest.TestCase):
         self.assertEqual(len(public), 3)
         self.assertIn("public health is OK", world.text)
 
-    def test_public_health_timeout_warns_without_failing(self) -> None:
+    def test_public_health_timeout_is_unconfirmed(self) -> None:
         world = World()
         world.public_health = [503]
-        self.assertEqual(world.invoke("--public-timeout", "4"), sr.EXIT_OK, world.text)
+        self.assertEqual(world.invoke("--public-timeout", "4"), sr.EXIT_UNCONFIRMED, world.text)
         self.assertIn("did not return 200", world.text)
         empty = World()
         self.assertEqual(empty.invoke("--public-url", ""), sr.EXIT_OK)
@@ -321,6 +328,59 @@ class SafeRestartTests(unittest.TestCase):
         self.assertEqual(code, sr.EXIT_INTERRUPTED)
         self.assertEqual(world.commands, [])
         self.assertEqual(world.posts(), [])
+
+    def test_failed_observation_never_reuses_idle_snapshot(self):
+        for failure in ("timeout", "auth", "malformed", "http"):
+            with self.subTest(failure=failure):
+                world = World()
+                http = world.http
+
+                def unavailable(method, url, **kwargs):
+                    if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                        if failure == "timeout":
+                            raise sr.Unreachable("timeout")
+                        return {"auth": (401, {}), "malformed": (200, {"draining": True}),
+                                "http": (503, {})}[failure]
+                    return http(method, url, **kwargs)
+
+                world.http = unavailable
+                self.assertEqual(world.invoke("--quiet-seconds", "0", "--timeout", "1"), sr.EXIT_BUSY)
+                self.assertEqual(world.commands, [])
+                self.assertFalse(world.draining)
+                self.assertIn("cannot prove idle", world.text)
+
+    def test_transient_observation_failure_retries_busy_work(self):
+        world = World()
+        http = world.http
+        reads = 0
+
+        def transient(method, url, **kwargs):
+            nonlocal reads
+            if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                reads += 1
+                if reads == 1:
+                    return 200, snap(draining=True, requests=1)
+                if reads == 2:
+                    raise sr.Unreachable("timeout")
+            return http(method, url, **kwargs)
+
+        world.http = transient
+        self.assertEqual(world.invoke("--quiet-seconds", "0"), sr.EXIT_OK)
+        self.assertGreaterEqual(world.sleeps, 2)
+        self.assertEqual(len(world.commands), 1)
+
+    def test_lost_drain_flag_cannot_authorize_restart(self):
+        world = World()
+        http = world.http
+
+        def expired(method, url, **kwargs):
+            if method == "GET" and url.endswith("/admin/api/drain") and world.draining:
+                return 200, snap(draining=False)
+            return http(method, url, **kwargs)
+
+        world.http = expired
+        self.assertEqual(world.invoke("--quiet-seconds", "0", "--timeout", "1"), sr.EXIT_BUSY)
+        self.assertEqual(world.commands, [])
 
 
 class QuietWindowTests(unittest.TestCase):
@@ -542,7 +602,7 @@ class WebBuildTests(unittest.TestCase):
 
             world.run = run
             self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
-            self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl"])
+            self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl", "systemctl"])
             self.assertFalse(sr.web_build_required(web))
 
     def test_staged_build_sees_inputs_outside_web(self):
@@ -641,8 +701,10 @@ class WebBuildTests(unittest.TestCase):
             with patch.object(sr, "publish_web_export", side_effect=OSError("exchange refused")):
                 self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_WEB_BUILD)
             self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
-            self.assertEqual(world.commands, [])
-            self.assertEqual([p["draining"] for p in world.posts()], [True, False])
+            self.assertEqual([cmd[2] for cmd in world.commands], ["stop", "stop"])
+            self.assertEqual([p["draining"] for p in world.posts()], [True])
+            self.assertFalse(world.running)
+            self.assertIn("Recovery:", world.text)
             self.assertIn("exchange refused", world.text)
             self.assertEqual(self.staged(tmp), [])
 
@@ -661,7 +723,7 @@ class WebBuildTests(unittest.TestCase):
                 (build_web / "out").mkdir()
                 (build_web / "out" / "index.html").write_text("new page")
                 return 0
-            events.append(("restart", (web / "out" / "index.html").read_text()))
+            events.append((cmd[2], (web / "out" / "index.html").read_text()))
             return original_run(cmd, timeout)
 
         def http(method, url, **kwargs):
@@ -674,15 +736,15 @@ class WebBuildTests(unittest.TestCase):
         world.http = http
         return world
 
-    def test_export_is_published_after_the_drain_and_before_the_restart(self):
+    def test_export_is_published_between_stop_and_start(self):
         with tempfile.TemporaryDirectory() as tmp:
             web = self.make_web(tmp)
             events = []
             world = self.build_world(web, events)
             self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_OK)
-            self.assertEqual(events, [("drain", "<html></html>\n"), ("restart", "new page")])
+            self.assertEqual(events, [("drain", "<html></html>\n"), ("stop", "<html></html>\n"), ("start", "new page")])
             self.assertLess(world.output.index("published the new web export"),
-                            world.output.index("restarting azizam"))
+                            world.output.index("starting azizam"))
             self.assertEqual(self.staged(tmp), [])
 
     def test_drain_timeout_leaves_served_export_byte_identical(self):
@@ -708,17 +770,114 @@ class WebBuildTests(unittest.TestCase):
             self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
             self.assertEqual(self.staged(tmp), [])
 
-    def test_failed_restart_keeps_the_previous_export_and_prints_the_swap_back(self):
+    def test_failed_stop_leaves_old_process_and_old_export_together(self):
         with tempfile.TemporaryDirectory() as tmp:
             web = self.make_web(tmp)
             world = self.build_world(web, [])
             world.systemctl_code = 1
             self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_SYSTEMCTL)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertTrue(world.running)
+            self.assertTrue(world.draining)
+            self.assertEqual([cmd[2] for cmd in world.commands], ["stop"])
+            self.assertEqual(self.staged(tmp), [])
+            self.assertIn("Recovery: systemctl --user stop azizam && systemctl --user start azizam", world.text)
+
+    def test_failed_or_interrupted_start_rolls_back_only_while_stopped(self):
+        for failure in (1, KeyboardInterrupt):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                world = self.build_world(web, [])
+                run = world.run
+
+                def fail_start(cmd, timeout):
+                    if cmd[2] == "start":
+                        self.assertFalse(world.running)
+                        self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+                        if failure is KeyboardInterrupt:
+                            raise KeyboardInterrupt
+                        return failure
+                    return run(cmd, timeout)
+
+                world.run = fail_start
+                expected = sr.EXIT_INTERRUPTED if failure is KeyboardInterrupt else sr.EXIT_SYSTEMCTL
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), expected)
+                self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+                self.assertFalse(world.running)
+                self.assertNotIn(False, [p["draining"] for p in world.posts()])
+                [holder] = self.staged(tmp)
+                self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "new page")
+                self.assertIn("Recovery:", world.text)
+                self.assertNotIn("rm -rf", world.text)
+
+    def test_ambiguous_start_and_failed_cleanup_keep_both_exports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            run = world.run
+            stops = 0
+
+            def ambiguous(cmd, timeout):
+                nonlocal stops
+                if cmd[2] == "start":
+                    world.running = True  # new process started, but controller failed
+                    return 1
+                if cmd[2] == "stop":
+                    stops += 1
+                    if stops > 1:
+                        return 1
+                return run(cmd, timeout)
+
+            world.run = ambiguous
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_SYSTEMCTL)
             self.assertEqual((web / "out" / "index.html").read_text(), "new page")
             [holder] = self.staged(tmp)
-            previous = Path(tmp) / holder / "out"
-            self.assertEqual((previous / "index.html").read_text(), "<html></html>\n")
-            self.assertIn(f"rm -rf -- {web / 'out'} && mv -- {previous} {web / 'out'}", world.text)
+            self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertNotIn(False, [p["draining"] for p in world.posts()])
+            self.assertIn("publish_web_export", world.text)
+            self.assertIn("systemctl --user stop azizam && python3 -c", world.text)
+            self.assertNotIn("rm -rf", world.text)
+
+    def test_interrupt_after_exchange_retains_recovery_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            publish = sr.Restarter._publish_staged_export
+
+            def interrupt(restarter):
+                publish(restarter)
+                raise KeyboardInterrupt
+
+            with patch.object(sr.Restarter, "_publish_staged_export", interrupt):
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_INTERRUPTED)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertFalse(world.running)
+            self.assertEqual(len(self.staged(tmp)), 1)
+
+    def test_unconfirmed_public_or_drain_check_retains_previous_export(self):
+        for failure in ("public", "get", "clear"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                world = self.build_world(web, [])
+                http = world.http
+                if failure == "public":
+                    world.public_health = [503]
+
+                def fail_verification(method, url, **kwargs):
+                    if world.restarted and url.endswith("/admin/api/drain"):
+                        if failure == "get":
+                            return 503, {}
+                        if failure == "clear":
+                            return 200, snap(draining=True)
+                    return http(method, url, **kwargs)
+
+                world.http = fail_verification
+                self.assertEqual(world.invoke("--quiet-seconds", "0", "--public-timeout", "1", web_dir=web),
+                                 sr.EXIT_UNCONFIRMED)
+                self.assertFalse(world.running)
+                [holder] = self.staged(tmp)
+                self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "<html></html>\n")
+                self.assertIn("Recovery:", world.text)
 
     def test_failed_build_never_drains_or_restarts_even_with_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -807,6 +966,88 @@ class WebBuildTests(unittest.TestCase):
             web = self.make_web(tmp, fresh=True)
             (web / "out" / sr.WEB_BUILD_STAMP).unlink()
             self.assertTrue(sr.web_build_required(web))
+
+
+class SmokeAuthModeTests(unittest.TestCase):
+    def smoke(self, *, mode=None, status=200, body=None):
+        # No network and no model calls: every curl invocation is a local fake.
+        fake = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+url = next(a for a in args if a.startswith("http"))
+path = url.split("://", 1)[1].partition("/")[2]
+code, content_type, redirect = "200", "application/json", ""
+headers = ""
+if path == "v1/chat/completions":
+    body = '{"choices":[{"message":{"content":"OK"}}]}'
+elif path == "v1/audio/speech":
+    body = "x" * 1200
+elif path == "sdapi/v1/sd-models":
+    body = "[]"
+elif path == "":
+    content_type, body = "text/html", '<script src="/_next/static/a123456789abcdef.js"></script>'
+elif path == "library":
+    code, redirect, body = "308", "/library/", ""
+elif path.startswith("_next/static/"):
+    headers, body = "HTTP/1.1 200 OK\nCache-Control: public, immutable\n", ""
+elif path == "v1/models":
+    if "-I" in args:
+        code, body = "405", ""
+    else:
+        code, body = os.environ["FAKE_MODELS_STATUS"], os.environ["FAKE_MODELS_BODY"]
+elif path == "mcp":
+    headers, body = "HTTP/1.1 405 Method Not Allowed\nAllow: POST\n", ""
+elif path == "ui/home/":
+    code, content_type, body = "404", "text/html", "<html>not found</html>"
+else:
+    raise AssertionError(url)
+if "-D" in args:
+    sys.stdout.write(headers)
+if "-o" in args:
+    pathlib.Path(args[args.index("-o") + 1]).write_text(body)
+else:
+    sys.stdout.write(body)
+if "-w" in args:
+    fmt = args[args.index("-w") + 1].replace("\\n", "\n")
+    sys.stdout.write(fmt.replace("%{http_code}", code).replace("%{content_type}", content_type).replace("%{redirect_url}", redirect))
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            curl = Path(tmp) / "curl"
+            curl.write_text(fake)
+            curl.chmod(0o755)
+            env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
+                   "FAKE_MODELS_STATUS": str(status),
+                   "FAKE_MODELS_BODY": body if body is not None else json.dumps(
+                       {"object": "list", "data": [{"id": "fast"}, {"id": "default"}]})}
+            env.pop("AZIZAM_SMOKE_AUTH_MODE", None)
+            env.pop("AZIZAM_SMOKE_KEY", None)
+            if mode is not None:
+                env["AZIZAM_SMOKE_AUTH_MODE"] = mode
+            return subprocess.run(["bash", str(ROOT / "scripts" / "post-deploy-smoke")],
+                                  env=env, capture_output=True, text=True, timeout=10)
+
+    def test_default_lan_bypass_requires_json_model_list(self):
+        result = self.smoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS models without key (bypass)", result.stdout)
+
+    def test_explicit_required_auth_checks_401_json_error(self):
+        result = self.smoke(mode="required", status=401, body='{"error":{"code":"auth_required"}}')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS models without key (required)", result.stdout)
+
+    def test_mode_mismatch_or_malformed_json_fails(self):
+        for kwargs in ({"mode": "required"}, {"status": 401, "body": '{"error":{}}'},
+                       {"body": "not json"}, {"body": '{"object":"list","data":[]}'},
+                       {"mode": "required", "status": 401, "body": "{}"}):
+            with self.subTest(kwargs=kwargs):
+                result = self.smoke(**kwargs)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("FAIL models without key", result.stdout)
+
+    def test_unknown_auth_mode_is_usage_error(self):
+        result = self.smoke(mode="auto")
+        self.assertEqual(result.returncode, 2)
 
 
 if __name__ == "__main__":

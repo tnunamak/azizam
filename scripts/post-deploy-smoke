@@ -2,9 +2,16 @@
 
 # Post-deploy smoke for a live gateway: real requests that catch "healthy but broken" deploys.
 # Usage: scripts/post-deploy-smoke [BASE_URL]   (default http://127.0.0.1:5000; LAN needs no key,
-# otherwise set AZIZAM_SMOKE_KEY)
+# otherwise set AZIZAM_SMOKE_KEY). Set AZIZAM_SMOKE_AUTH_MODE=required for a
+# verified non-bypass ingress; default bypass expects unauthenticated models.
 set -uo pipefail
 BASE=${1:-http://127.0.0.1:5000}
+AUTH_MODE=${AZIZAM_SMOKE_AUTH_MODE:-bypass}
+case "$AUTH_MODE" in
+  bypass) MODELS_STATUS=200 ;;
+  required) MODELS_STATUS=401 ;;
+  *) echo "invalid AZIZAM_SMOKE_AUTH_MODE: expected bypass or required" >&2; exit 2 ;;
+esac
 AUTH=(); [ -n "${AZIZAM_SMOKE_KEY:-}" ] && AUTH=(-H "Authorization: Bearer $AZIZAM_SMOKE_KEY")
 fail=0
 check() { if [ "$2" = ok ]; then echo "PASS $1"; else echo "FAIL $1: $2"; fail=1; fi; }
@@ -47,7 +54,23 @@ fi
 out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/showcase/")
 check "product page /showcase/" "$(case "$out" in *'<title>Azizam: your own AI gateway</title>'*$'\n'"200 text/html"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
 out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/v1/models")
-check "models without key" "$(case "$out" in *$'\n'"401 application/json"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
+verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
+raw=sys.stdin.read()
+try:
+    body, meta = raw.rsplit("\n", 1)
+    code, content_type = meta.split(" ", 1)
+    payload = json.loads(body)
+    if code != sys.argv[1]: raise ValueError("HTTP " + code)
+    if content_type.split(";", 1)[0] != "application/json": raise ValueError(content_type)
+    if code == "200":
+        if payload.get("object") != "list" or not isinstance(payload.get("data"), list): raise ValueError("not a model list")
+        if not payload["data"] or not all(isinstance(m, dict) and isinstance(m.get("id"), str) for m in payload["data"]): raise ValueError("missing models")
+    else:
+        if not isinstance(payload.get("error"), dict): raise ValueError("missing authentication error")
+    print("ok")
+except Exception as exc:
+    print("invalid models response: " + str(exc))' "$MODELS_STATUS")
+check "models without key ($AUTH_MODE)" "$verdict"
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "$BASE/v1/models"); check "HEAD models" "$([ "$code" = 405 ] && echo ok || echo "HTTP $code")"
 hdr=$(curl -s -D - -o /dev/null --max-time 30 "$BASE/mcp" | tr -d '\r')
 check "GET /mcp" "$(printf '%s\n' "$hdr" | head -1 | grep -q ' 405' && printf '%s\n' "$hdr" | grep -qi '^allow:.*POST' && echo ok || echo "got $(printf '%s' "$hdr" | head -1)")"
