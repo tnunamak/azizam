@@ -21,7 +21,8 @@ from gateway import media_jobs  # noqa: E402
 
 class _StubJsonRequest:
     method = "POST"
-    scope: dict[str, Any] = {}
+    # The auth context the middleware would have put on the request.
+    scope: dict[str, Any] = {"auth_context": access_context()}
     query_params: dict[str, str] = {}
 
     def __init__(
