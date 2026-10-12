@@ -619,5 +619,33 @@ class TestDeriveBackendConstants(unittest.TestCase):
         self.assertTrue(result["COMFY_ENABLED"])
 
 
+def test_derivation_failure_does_not_publish_a_partial_reload(monkeypatch):
+    """A candidate config whose derivation fails must not go live; the old one keeps serving."""
+    import pytest
+
+    snapshot = _snapshot_reload_derived_state()
+    old_config = copy.deepcopy(snapshot["config"])
+    monkeypatch.setattr(proxy, "config", old_config)
+    for name, value in snapshot.items():
+        if name != "config":
+            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
+    candidate = _make_effective_config({"tabby": _tabby_backend(host="127.0.0.1", port=18092)})
+    monkeypatch.setattr(proxy, "_load_effective_runtime_config", lambda _bootstrap: candidate)
+
+    def fail_derivation(config):
+        assert config is candidate
+        raise RuntimeError("fixture derivation failure")
+
+    monkeypatch.setattr(proxy, "_derive_backend_constants", fail_derivation)
+    with pytest.raises(RuntimeError, match="fixture derivation failure"):
+        proxy.reload_runtime_config()
+
+    assert proxy.config is old_config
+    assert proxy.config == snapshot["config"]
+    for name, value in snapshot.items():
+        if name != "config":
+            assert getattr(proxy, name) == value, name
+
+
 if __name__ == "__main__":
     unittest.main()
