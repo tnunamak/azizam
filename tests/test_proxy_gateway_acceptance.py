@@ -47,7 +47,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
-from tests.support.access import access, authenticated, plan_for  # noqa: E402
+from tests.support.access import access, access_context, authenticated, plan_for  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
 
@@ -329,7 +329,7 @@ class TestLiteLLMReceiptLifecycle(unittest.IsolatedAsyncioTestCase):
             response = await proxy._forward_litellm_proxy_request(
                 self._request(),
                 request_path="/v1/chat/completions",
-                auth_context=proxy.NO_AUTH_CONTEXT,
+                auth_context=access_context(),
                 body_json={"model": "test", "messages": []},
                 runtime_config=runtime,
                 parent_request_id=parent_request_id,
@@ -1480,10 +1480,10 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertTrue(tracked_client.close_attempted)
 
     def test_litellm_substrate_keeps_gateway_responses_store_for_retrieve_delete_cancel(self) -> None:
-        auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+        auth = access_context(
             name="Responses maker", key_hash="sha256:responses-maker",
             app_id="responses-app", person_id="responses-person",
-        ))
+        )
 
         async def forbidden_litellm_direct(*_args, **_kwargs):
             raise AssertionError("Responses retrieve/delete/cancel should use the gateway store")
@@ -1615,7 +1615,7 @@ class TestGatewayAudienceFromProfile(unittest.TestCase):
             name="ops",
             key_hash="sha256:ops",
             downstream={},
-            access=access(plan_for("ops"), receipts='standard'),
+            access=access(plan_for("ops", receipts="standard")),
         )
 
         result = resolver(_Stub(admin_identity))
@@ -1638,7 +1638,7 @@ class TestFinishImageRouteReceiptPersistence(unittest.TestCase):
 
     def _build_receipt(self):
         return proxy.start_image_route_receipt(
-            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+            "/v1/images/generations", access_context()
         )
 
     def test_finish_persists_to_receipt_store(self) -> None:
@@ -1705,7 +1705,7 @@ class _StubRequest:
 class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCase):
     async def _call(self, body: Any):
         receipt = proxy.start_image_route_receipt(
-            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+            "/v1/images/generations", access_context()
         )
 
         async def fake_generate(**kwargs):
@@ -1733,7 +1733,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             fake_generate,
         ):
             response = await proxy.proxy_comfy_request(
-                _StubRequest(body), proxy.NO_AUTH_CONTEXT, receipt=receipt
+                _StubRequest(body), access_context(), receipt=receipt
             )
         return receipt, response
 
@@ -1786,9 +1786,9 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         ):
             response = await proxy.proxy_comfy_request(
                 _StubRequest({"prompt": "x", "model": "dall-e-3"}),
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 receipt=proxy.start_image_route_receipt(
-                    "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+                    "/v1/images/generations", access_context()
                 ),
             )
 
@@ -1835,7 +1835,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             "extensions": {"com.azizam.workflow": {"seed": 12345}},
         }
         receipt = proxy.start_image_route_receipt(
-            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+            "/v1/images/generations", access_context()
         )
         captured: dict[str, Any] = {}
 
@@ -1865,7 +1865,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             fake_generate,
         ):
             response = await proxy.proxy_comfy_request(
-                _StubRequest(body), proxy.NO_AUTH_CONTEXT, receipt=receipt
+                _StubRequest(body), access_context(), receipt=receipt
             )
 
         self.assertEqual(response.status_code, 200)
@@ -2243,7 +2243,7 @@ class TestNoBodyLeakInReceiptPersistence(unittest.TestCase):
 
     def test_persisted_receipt_has_no_prompt_field(self) -> None:
         receipt = proxy.start_image_route_receipt(
-            "/v1/images/generations", proxy.NO_AUTH_CONTEXT
+            "/v1/images/generations", access_context()
         )
         receipt.requested_model = "flux2-klein-4b"
         receipt.accept_input("prompt")  # name only
@@ -2331,8 +2331,8 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
             scope = {"auth_context": proxy.AuthContext(identity=identity)}
 
         local = [
-            Capability(intent="chat.completion", backend="llm-a", model="m-a", lifecycle="warm", health="healthy"),
-            Capability(intent="image.generation", backend="img-b", workflow="w-b", lifecycle="warm", health="healthy"),
+            Capability(intent="chat.completions", backend="llm-a", model="m-a", lifecycle="warm", health="healthy"),
+            Capability(intent="image.generate", backend="img-b", workflow="w-b", lifecycle="warm", health="healthy"),
         ]
         with patch.object(proxy, "build_local_capabilities", lambda cfg, **kwargs: local), \
              patch.object(proxy, "project_capabilities", lambda caps, **kwargs: list(caps)), \
@@ -2342,7 +2342,7 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
 
     def test_denied_profile_sees_nothing_available_while_open_profile_sees_something(self) -> None:
         open_listing = self._client_listing(plan_for("open"))
-        denied_listing = self._client_listing(plan_for("denied"))
+        denied_listing = self._client_listing(plan_for("denied", caps=()))
 
         # Non-vacuity: the same catalogue offers something to an open profile.
         self.assertTrue(any(row["available"] for row in open_listing))
@@ -2350,11 +2350,11 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
         self.assertEqual([row for row in denied_listing if row["available"]], [])
 
     def test_partial_profile_sees_only_its_own_backend_available(self) -> None:
-        listing = self._client_listing(plan_for("llm-only"))
+        listing = self._client_listing(plan_for("chat-only", caps=("chat",)))
 
         ours = {row["intent"]: row["available"] for row in listing
-                if row["intent"] in {"chat.completion", "image.generation"}}
-        self.assertEqual(ours, {"chat.completion": True, "image.generation": False})
+                if row["intent"] in {"chat.completions", "image.generate"}}
+        self.assertEqual(ours, {"chat.completions": True, "image.generate": False})
 
 
 if __name__ == "__main__":
