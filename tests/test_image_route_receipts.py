@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import access, identity, plan_for  # noqa: E402
+from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 # The image handlers apply the caller's plans; these tests run as the owner.
@@ -71,7 +71,7 @@ def _image_pixels(content: bytes) -> list[tuple[int, int, int, int]]:
 
 
 def _identity(name: str) -> proxy.AuthIdentity:
-    return proxy.AuthIdentity(name=name, key_hash=f"sha256:{name}")
+    return auth_identity(name=name, key_hash=f"sha256:{name}")
 
 
 def _lookup_from_identities(*identities: proxy.AuthIdentity):
@@ -461,8 +461,8 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             proxy,
             "runtime_identity_for_app_credential_hash",
             side_effect=_lookup_from_identities(
-                proxy.AuthIdentity(name="alice", key_hash=owner_hash),
-                proxy.AuthIdentity(name="bob", key_hash=bob_hash),
+                auth_identity(name="alice", key_hash=owner_hash),
+                auth_identity(name="bob", key_hash=bob_hash),
             ),
         ):
             no_auth = client.get(path, params=query)
@@ -556,7 +556,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         image_profile = plan_for("image", caps=('image',))
 
         def identity(profile: "AccessPlan") -> proxy.AuthIdentity:
-            return proxy.AuthIdentity(
+            return auth_identity(
                 name="gateway-asset-policy",
                 key_hash=owner_hash,
                 access=access(profile),
@@ -607,7 +607,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         expires = int(proxy.time.time()) + 60
         sig = proxy._sign_asset_token(asset_id, expires, "none")
         audio_profile = plan_for("audio", caps=('speech', 'transcribe', 'music', 'sfx', 'audio'))
-        identity = proxy.AuthIdentity(
+        identity = auth_identity(
             name="gateway-asset-content",
             key_hash=owner_hash,
             access=access(audio_profile),
@@ -635,7 +635,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         expires = int(proxy.time.time()) + 60
         sig = proxy._sign_asset_token(asset_id, expires)
         chat_only = plan_for("chat-only", caps=('chat',))
-        identity = proxy.AuthIdentity(
+        identity = auth_identity(
             name="invalid-asset-policy",
             key_hash=owner_hash,
             access=access(chat_only),

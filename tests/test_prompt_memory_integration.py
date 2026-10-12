@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_delivery, media_jobs, media_metadata, prompt_memory
 
 
@@ -103,7 +104,7 @@ def test_async_member_off_stays_forgotten_if_enabled_before_worker_starts(tmp_pa
     person = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=admin_db)
     app = admin_store.create_app("Maker", kind="personal", owner_user_id=person["id"], access_plan="person", path=admin_db)
     admin_store.put_prompt_memory_preference(person["id"], remember=False, retention="never", path=admin_db)
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = proxy.AuthContext(identity=auth_identity(
         name="maker", key_hash="sha256:maker", app_id=app["id"], person_id=person["id"],
     ))
     request = SimpleNamespace(

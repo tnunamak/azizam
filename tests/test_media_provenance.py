@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import plan_for, access, access_context  # noqa: E402
+from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
@@ -95,9 +95,9 @@ def idat(content: bytes) -> bytes:
 
 
 # Callers whose plans keep (FULL_AUTH) or strip (NONE_AUTH) media metadata.
-FULL_AUTH = proxy.AuthContext(identity=proxy.AuthIdentity(
+FULL_AUTH = proxy.AuthContext(identity=auth_identity(
     name="f", key_hash="sha256:f", access=access(plan_for("keep", metadata="full"))))
-NONE_AUTH = proxy.AuthContext(identity=proxy.AuthIdentity(
+NONE_AUTH = proxy.AuthContext(identity=auth_identity(
     name="n", key_hash="sha256:n", access=access(plan_for("strip", metadata="none"))))
 
 
@@ -118,10 +118,10 @@ class PlanBoundTests(unittest.TestCase):
                 plan_from_document({**document, "media_metadata": bad}, plan_id="p")
 
     def test_runtime_bound_by_identity(self) -> None:
-        owner = proxy.AuthContext(identity=proxy.AuthIdentity(
+        owner = proxy.AuthContext(identity=auth_identity(
             name="o", key_hash="sha256:o", access=access(plan_for("owner", metadata="full"))))
-        plain = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
-        mixed = proxy.AuthContext(identity=proxy.AuthIdentity(
+        plain = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
+        mixed = proxy.AuthContext(identity=auth_identity(
             name="m", key_hash="sha256:m",
             access=access(plan_for("owner", metadata="full"), plan_for("app", metadata="none"))))
         self.assertEqual(proxy._media_metadata_bound(owner), "full")
@@ -490,7 +490,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_plan_bound_and_request_override(self) -> None:
         none_profile = NONE_AUTH
-        full_profile = proxy.AuthContext(identity=proxy.AuthIdentity(
+        full_profile = proxy.AuthContext(identity=auth_identity(
             name="f", key_hash="sha256:f",
             access=access(plan_for("owner", metadata="full")),
         ))
@@ -651,7 +651,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_precedence(self) -> None:
         none_auth = NONE_AUTH
-        full_auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+        full_auth = proxy.AuthContext(identity=auth_identity(
             name="f", key_hash="sha256:f",
             access=access(plan_for("owner", metadata="full")),
         ))

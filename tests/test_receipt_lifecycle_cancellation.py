@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import proxy
-from tests.support.access import plan_for, access, access_context  # noqa: E402
+from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 def _request(path: str, payload: dict) -> Request:
     sent = False
 
@@ -55,7 +55,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
         native_profile = plan_for("native-only", paid=sorted(set()))
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="native-paid-test",
                 key_hash="sha256:native-paid-test",
                 access=access(native_profile),
@@ -115,7 +115,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
         native_profile = plan_for("native-only", paid=sorted(set()))
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="native-paid-test",
                 key_hash="sha256:native-paid-test",
                 access=access(native_profile),

@@ -47,7 +47,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
-from tests.support.access import access, access_context, authenticated, plan_for  # noqa: E402
+from tests.support.access import access, access_context, authenticated, plan_for, auth_identity  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
 
@@ -1611,7 +1611,7 @@ class TestGatewayAudienceFromProfile(unittest.TestCase):
                     "auth_context": proxy.AuthContext(identity=identity),
                 }
 
-        admin_identity = proxy.AuthIdentity(
+        admin_identity = auth_identity(
             name="ops",
             key_hash="sha256:ops",
             downstream={},
@@ -2323,7 +2323,7 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
     """A client must never be told it may use what its profile denies."""
 
     def _client_listing(self, profile: AccessPlan) -> list[dict[str, Any]]:
-        identity = proxy.AuthIdentity(
+        identity = auth_identity(
             name="listing-key", key_hash="sha256:listing", downstream={}, access=access(profile),
         )
 

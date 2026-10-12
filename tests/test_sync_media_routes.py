@@ -16,7 +16,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
-from tests.support.access import authenticated, access_context  # noqa: E402
+from tests.support.access import authenticated, access_context, auth_identity  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
@@ -422,7 +422,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         prompt_id = _FakeVideoAsyncClient.prompt_id
         video_id = proxy._video_id_from_prompt_id(prompt_id)
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="Video app",
                 key_hash="sha256:video-owner",
                 app_id="app_video",
@@ -477,7 +477,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         prompt_id = "prompt_sync_video_no_index"
         video_id = proxy._video_id_from_prompt_id(prompt_id)
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(name="Video app", key_hash="sha256:video-owner", app_id="app_video")
+            identity=auth_identity(name="Video app", key_hash="sha256:video-owner", app_id="app_video")
         )
         old_prompt = _FakeVideoAsyncClient.prompt_id
         _FakeVideoAsyncClient.prompt_id = prompt_id

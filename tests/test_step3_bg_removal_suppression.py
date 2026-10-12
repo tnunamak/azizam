@@ -16,6 +16,7 @@ import asyncio
 from unittest.mock import patch
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 from gateway.transforms import (
     QWEN3_ENABLE_THINKING_KEY,
@@ -48,7 +49,7 @@ class TestBackgroundRemovalOutboundPayload:
         async def model_for_host(_host: str) -> str:
             return "bg-decider-model"
 
-        auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
+        auth = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": fake.base_url}), \

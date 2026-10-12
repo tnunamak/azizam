@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
-from tests.support.access import access, plan_for  # noqa: E402
+from tests.support.access import access, plan_for, auth_identity  # noqa: E402
 
 
 RAW_KEY = "opk_runtime_policy_test"
@@ -35,7 +35,7 @@ AUTH_HEADERS = {"Authorization": f"Bearer {RAW_KEY}"}
 def authenticated_profile(profile: AccessPlan, downstream: dict | None = None):
     """Requests with RAW_KEY run as an App whose person and app hold ``profile``."""
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = proxy.AuthIdentity(
+    identity = auth_identity(
         name="runtime-policy",
         key_hash=key_hash,
         downstream=downstream or {},
@@ -350,7 +350,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         # Plans do not restrict by protocol (design v4 §2.1); a plan without chat
         # denies the direct route, and the loopback marker is still recognized.
         anthropic_only = plan_for("no-chat", caps=('embed',))
-        identity = proxy.AuthIdentity(
+        identity = auth_identity(
             name="anthropic-only",
             key_hash=proxy.hash_api_key(RAW_KEY),
             downstream={},

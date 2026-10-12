@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import auth_identity  # noqa: E402
 from test_anthropic_schema_conformance import (  # noqa: E402
     _FakeClient,
     chat_completion,
@@ -75,7 +76,7 @@ class ResponsesConformanceTests(unittest.TestCase):
         proxy.responses_store.init_db()
         self.client = TestClient(proxy.app)
         self.auth = patch.object(proxy, "authenticate_request", return_value=proxy.AuthContext(
-            identity=proxy.AuthIdentity(name="conformance", key_hash="sha256:conformance-responses")
+            identity=auth_identity(name="conformance", key_hash="sha256:conformance-responses")
         ))
         self.auth.start()
         self.addCleanup(self.auth.stop)

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import accounts, admin_store, media_jobs, prompt_memory, video_media_job_http
 from gateway.admin_runtime import person_for_app_credential
 
@@ -30,7 +31,7 @@ def household(tmp_path, monkeypatch):
     people = [admin_store.upsert_oidc_user('test', name, path=admin) for name in ('owner', 'robin', 'other')]
     apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], access_plan="person", path=admin)
             for name, user in zip(('owner', 'robin', 'other'), people)]
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(name='Robin', key_hash='sha256:robin',
+    auth = proxy.AuthContext(identity=auth_identity(name='Robin', key_hash='sha256:robin',
         app_id=apps[1]['id'], person_id=people[1]['id']))
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, owner=people[0], robin=people[1],
                            other=people[2], app=apps[1], other_app=apps[2], auth=auth)
@@ -97,7 +98,7 @@ def test_request_policy_reads_do_not_wait_for_admin_writer(household):
 
 
 def _job(hh, *, other=False, seeded=True, created_at=None):
-    auth = hh.auth if not other else proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = hh.auth if not other else proxy.AuthContext(identity=auth_identity(
         name='Other', key_hash='sha256:other', app_id=hh.other_app['id'], person_id=hh.other['id']))
     body = {'prompt': 'dedupe secret', **({'seed': 12} if seeded else {})}
     request_id, digest, mode = proxy._image_media_job_request_id(body=body, auth_context=auth,

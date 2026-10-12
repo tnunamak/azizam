@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import access_context  # noqa: E402
+from tests.support.access import access_context, auth_identity  # noqa: E402
 
 
 class _StubListRequest:
@@ -132,8 +132,8 @@ class VideoRegistryTestCase(unittest.IsolatedAsyncioTestCase):
         proxy._video_job_records[prompt_id] = record
 
 
-ALICE = proxy.AuthContext(identity=proxy.AuthIdentity(name="alice", key_hash="sha256:alice"))
-BOB = proxy.AuthContext(identity=proxy.AuthIdentity(name="bob", key_hash="sha256:bob"))
+ALICE = proxy.AuthContext(identity=auth_identity(name="alice", key_hash="sha256:alice"))
+BOB = proxy.AuthContext(identity=auth_identity(name="bob", key_hash="sha256:bob"))
 
 
 class TestVideosStatusAndContent(VideoRegistryTestCase):

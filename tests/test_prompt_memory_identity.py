@@ -11,6 +11,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 import httpx
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.admin_api import AdminContext
@@ -24,7 +25,7 @@ from tests.test_video_list_delete_remix import _FakeVideoAsyncClient, _StubListR
 
 
 def _auth(app_id, person_id, key):
-    identity = proxy.AuthIdentity(name="Try", key_hash=key, app_id=app_id, person_id=person_id)
+    identity = auth_identity(name="Try", key_hash=key, app_id=app_id, person_id=person_id)
     return proxy.AuthContext(identity=identity)
 
 

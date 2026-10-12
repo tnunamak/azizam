@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from fastapi.testclient import TestClient
 from gateway import admin_store, media_jobs, media_metadata, me_media, prompt_memory, receipt_store
 
@@ -57,7 +58,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(p.stop)
         self.member = admin_store.upsert_oidc_user("iss", "robin", email="robin@example.test", path=self.admin_db)
         self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], access_plan="person", path=self.admin_db)
-        self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
+        self.auth = proxy.AuthContext(identity=auth_identity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
 
     async def _generate(self, extensions):
         body = {"prompt": SENTINEL, "model": "krea2-turbo", "size": "8x6", "response_format": "b64_json"}

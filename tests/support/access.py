@@ -238,3 +238,11 @@ class AdminAppFixtures:
         """An App accountable to the test person, "Same as its person" unless told otherwise."""
         return self.client.post("/admin/api/apps", headers=self._auth(), json={
             "name": name, "owner_user_id": self.accountable["id"], "access_plan": "person", **body})
+
+
+def auth_identity(**kwargs: Any):
+    """``proxy.AuthIdentity`` for an App whose plans allow everything, unless ``access=`` says otherwise."""
+    import proxy
+
+    kwargs.setdefault("access", access(everything()))
+    return proxy.AuthIdentity(**kwargs)

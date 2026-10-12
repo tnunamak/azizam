@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from tests.support.access import access_context  # noqa: E402
+from tests.support.access import access_context, auth_identity  # noqa: E402
 from gateway import admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash
@@ -192,7 +192,7 @@ def test_unknown_credential_and_local_do_not_share_scoped_assets(owners):
 
 
 def test_authenticated_current_key_is_a_read_alias_without_a_registry_row(owners):
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Azizam imported", key_hash="sha256:fixture-imported", app_id="fixture-imported-app"))
+    auth = proxy.AuthContext(identity=auth_identity(name="Azizam imported", key_hash="sha256:fixture-imported", app_id="fixture-imported-app"))
     aliases = ownership.readable_owner_keys(auth)
     assert aliases == ("app:fixture-imported-app", "sha256:fixture-imported")
     asset = proxy.store_image_bytes(b"Azizam imported media")

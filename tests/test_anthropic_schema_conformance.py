@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated, plan_for, access# noqa: E402
+from tests.support.access import authenticated, plan_for, access, auth_identity# noqa: E402
 
 FIXTURE = json.loads(
     (ROOT / "tests" / "fixtures" / "anthropic-sdk-schemas.json").read_text("utf-8")
@@ -191,7 +191,7 @@ def keyed_auth(raw_key: str):
     from contextlib import ExitStack
 
     key_hash = proxy.hash_api_key(raw_key)
-    identity = proxy.AuthIdentity(
+    identity = auth_identity(
         name=raw_key,
         key_hash=key_hash,
         downstream={},

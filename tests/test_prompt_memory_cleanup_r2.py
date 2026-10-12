@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_jobs, media_metadata, prompt_memory
 from gateway import prompt_metadata_migration as pmm
 from gateway.admin_oidc import AdminSession
@@ -344,7 +345,7 @@ def test_settings_api_reports_queued_file_cleanup_until_it_finishes(hh):
 
 def _spool(hh, job_id: str, created_at: int):
     import json
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = proxy.AuthContext(identity=auth_identity(
         name="Try", key_hash="sha256:robin", app_id=hh.app["id"], person_id=hh.robin["id"]))
     request = SimpleNamespace(headers={"host": "testserver"}, url=SimpleNamespace(scheme="http", netloc="testserver"))
     # An active job, so the orphan sweep keeps the spool.
