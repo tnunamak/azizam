@@ -14,7 +14,9 @@ scripts/safe-restart --skip-web-build  # skip checking and rebuilding web/out
 ```
 
 Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so a deploy waits for 5 idle minutes and never lands mid-session; 20 is enough only when nobody is using an agent; 0 = off), `--ignore-async-jobs`,
-`--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`.
+`--health-timeout SEC`, `--unit`, `--llama-unit`, `--url`, `--public-url URL`, `--public-timeout SEC`.
+
+The public check is off by default. After a gateway restart, `--public-url https://your.host` (or `AZIZAM_PUBLIC_URL`) also waits for `/health` at that address, which confirms that your reverse proxy marks the gateway up again. Without it, the script prints `public health check skipped: set --public-url or AZIZAM_PUBLIC_URL to enable it`. An empty value also skips the check.
 
 ## Exit codes
 

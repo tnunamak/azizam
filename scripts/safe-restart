@@ -68,9 +68,10 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
-# The reverse proxy marks the gateway down while it restarts and re-probes on
+# A reverse proxy may mark the gateway down while it restarts and re-probe on
 # its own interval, so local health alone does not mean users can reach it.
-DEFAULT_PUBLIC_URL = "https://ai.vivid.fish"
+# There is no default public address: set --public-url or AZIZAM_PUBLIC_URL.
+DEFAULT_PUBLIC_URL = ""
 DEFAULT_TIMEOUT_S = 3600.0  # long enough to find a 5-minute idle window during normal use
 DEFAULT_QUIET_S = 300.0  # a person using an agent pauses for minutes between messages; 20 s only covered tool steps
 TOKEN_ENV_NAMES = ("AZIZAM_ADMIN_KEY",)
@@ -740,8 +741,11 @@ class Restarter:
             status = EXIT_UNCONFIRMED
         else:
             self.say(f"{target} is healthy")
-            if not args.llama and args.public_url and not self._wait_public():
-                status = EXIT_UNCONFIRMED
+            if not args.llama and args.public_url:
+                if not self._wait_public():
+                    status = EXIT_UNCONFIRMED
+            elif not args.llama:
+                self.say("public health check skipped: set --public-url or AZIZAM_PUBLIC_URL to enable it")
 
         if args.llama:
             # The gateway kept running through a llama restart, so its drain flag
@@ -796,7 +800,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--public-url",
         default=os.environ.get("AZIZAM_PUBLIC_URL", DEFAULT_PUBLIC_URL),
-        help="public base URL to confirm after restart; empty to skip (default https://ai.vivid.fish)",
+        help="public base URL to confirm after restart (default: AZIZAM_PUBLIC_URL; empty skips the check)",
     )
     parser.add_argument("--public-timeout", type=float, default=60.0, help="seconds to wait for public health (default 60)")
     parser.add_argument("--unit", default="azizam")

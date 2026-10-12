@@ -258,19 +258,27 @@ class SafeRestartTests(unittest.TestCase):
     def test_waits_for_the_public_proxy_to_mark_the_gateway_up(self) -> None:
         world = World()
         world.public_health = [503, 503, 200]
-        self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
-        public = [c for c in world.calls if c[1] == "https://ai.vivid.fish/health"]
+        self.assertEqual(world.invoke("--public-url", "https://ai.example.test"), sr.EXIT_OK, world.text)
+        public = [c for c in world.calls if c[1] == "https://ai.example.test/health"]
         self.assertEqual(len(public), 3)
         self.assertIn("public health is OK", world.text)
 
     def test_public_health_timeout_is_unconfirmed(self) -> None:
         world = World()
         world.public_health = [503]
-        self.assertEqual(world.invoke("--public-timeout", "4"), sr.EXIT_UNCONFIRMED, world.text)
+        self.assertEqual(world.invoke("--public-url", "https://ai.example.test", "--public-timeout", "4"), sr.EXIT_UNCONFIRMED, world.text)
         self.assertIn("did not return 200", world.text)
         empty = World()
         self.assertEqual(empty.invoke("--public-url", ""), sr.EXIT_OK)
         self.assertFalse([c for c in empty.calls if c[1].startswith("https://")])
+
+    def test_public_check_is_off_by_default_and_says_how_to_enable_it(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AZIZAM_PUBLIC_URL", None)
+            world = World()
+            self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
+        self.assertFalse([c for c in world.calls if c[1].startswith("https://")])
+        self.assertIn("public health check skipped: set --public-url or AZIZAM_PUBLIC_URL", world.text)
 
     def test_waits_through_connection_refused_while_starting(self) -> None:
         world = World()
@@ -862,6 +870,9 @@ class WebBuildTests(unittest.TestCase):
                 http = world.http
                 if failure == "public":
                     world.public_health = [503]
+                    extra = ("--public-url", "https://ai.example.test")
+                else:
+                    extra = ()
 
                 def fail_verification(method, url, **kwargs):
                     if world.restarted and url.endswith("/admin/api/drain"):
@@ -872,7 +883,7 @@ class WebBuildTests(unittest.TestCase):
                     return http(method, url, **kwargs)
 
                 world.http = fail_verification
-                self.assertEqual(world.invoke("--quiet-seconds", "0", "--public-timeout", "1", web_dir=web),
+                self.assertEqual(world.invoke("--quiet-seconds", "0", "--public-timeout", "1", *extra, web_dir=web),
                                  sr.EXIT_UNCONFIRMED)
                 self.assertFalse(world.running)
                 [holder] = self.staged(tmp)
