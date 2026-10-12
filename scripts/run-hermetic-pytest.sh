@@ -128,6 +128,10 @@ fi
 rc=0
 bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}" || rc=$?
 if [[ -n $junit_out ]]; then
-  cp -n -- "$state_dir/tmp/junit.xml" "$junit_out" && [[ -s $junit_out ]] || { echo "error: no JUnit XML copied to $junit_out" >&2; ((rc)) || rc=1; }
+  if [[ -e $junit_out ]]; then
+    echo "error: $junit_out appeared during the run; not replacing it" >&2; ((rc)) || rc=1
+  elif ! cp -- "$state_dir/tmp/junit.xml" "$junit_out"; then
+    echo "error: no JUnit XML copied to $junit_out" >&2; ((rc)) || rc=1
+  fi
 fi
 exit "$rc"
