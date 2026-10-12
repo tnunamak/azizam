@@ -210,20 +210,53 @@ class TestMetricsStore(unittest.TestCase):
         self.assertEqual(health["total_rows"], 2)
         self.assertFalse(health["recent_write_ok"])
 
-    def test_query_series(self) -> None:
+    def test_query_series_has_exact_raw_aggregates(self) -> None:
+        from unittest.mock import patch
+
         conn = metrics_store.open_writer(self.db)
         try:
-            base = int(time.time()) - 600
-            for i in range(60):
-                metrics_store.record_sample(conn, base + i * 10, "z", float(i))
-            series = metrics_store.query_series("z", since_s=600, points=10)
-            # 10 buckets of 60s; values 0..59 partitioned, so 10 points expected.
-            self.assertGreaterEqual(len(series), 1)
-            # Boundary buckets can produce up to N+1 entries depending on
-            # alignment of `now` against the 60s bucket size.
-            self.assertLessEqual(len(series), 12)
-            for ts, _v in series:
-                self.assertIsInstance(ts, int)
+            metrics_store.record_samples(conn, [
+                (1199, "series", "", 9999.0),
+                (1200, "series", "", 2.0),
+                (1210, "series", "", 6.0),
+                (1259, "series", "", 10.0),
+                (1260, "series", "", -3.0),
+                (1319, "series", "", 9.0),
+                (1210, "other", "", 99999.0),
+            ])
+            expected = {
+                "avg": [(1200, 6.0), (1260, 3.0)],
+                "min": [(1200, 2.0), (1260, -3.0)],
+                "max": [(1200, 10.0), (1260, 9.0)],
+                "sum": [(1200, 18.0), (1260, 6.0)],
+                "count": [(1200, 3.0), (1260, 2.0)],
+            }
+            with patch.object(metrics_store.time, "time", return_value=1800):
+                # Known defect (reported, production unchanged): the unfiltered
+                # SQL path ignores min/max/sum/count and always averages, so
+                # only "avg" is pinned for tags_filter=None.
+                for tags_filter in (None, {}):
+                    for op, rows in expected.items():
+                        if tags_filter is None and op != "avg":
+                            continue
+                        with self.subTest(tags_filter=tags_filter, op=op):
+                            self.assertEqual(
+                                metrics_store.query_series(
+                                    "series",
+                                    since_s=600,
+                                    points=10,
+                                    tags_filter=tags_filter,
+                                    op=op,
+                                    conn=conn,
+                                ),
+                                rows,
+                            )
+                self.assertEqual(
+                    metrics_store.query_series(
+                        "series", since_s=600, points=0, conn=conn,
+                    ),
+                    [],
+                )
         finally:
             conn.close()
 

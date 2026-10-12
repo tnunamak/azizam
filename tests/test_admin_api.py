@@ -2184,6 +2184,67 @@ class AdminPolicySimulationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["error"]["code"], "profile_not_found")
 
+    def test_simulator_preserves_each_selector_for_denial(self) -> None:
+        client, _ = _make_client()
+        profile = {
+            "id": "family-chat",
+            "allow": {
+                "intents": ["chat.completions"],
+                "exposure": ["default"],
+                "trust_tiers": ["stable"],
+                "resource_tiers": ["interactive"],
+                "tags": ["coder"],
+            },
+        }
+        permitted = {
+            "intent": "chat.completions",
+            "capability_exposure": "default",
+            "capability_trust_tier": "stable",
+            "capability_resource_tier": "interactive",
+            "capability_tags": ["coder", "local"],
+        }
+        cases = (
+            ("intent", "image.generate",
+             "intent 'image.generate' not permitted by profile"),
+            ("capability_exposure", "experimental",
+             "exposure 'experimental' not permitted by profile"),
+            ("capability_trust_tier", "untrusted",
+             "trust tier 'untrusted' not permitted by profile"),
+            ("capability_resource_tier", "batch",
+             "resource tier 'batch' not permitted by profile"),
+            ("capability_tags", ["other"],
+             "capability tags not permitted by profile"),
+        )
+        with client:
+            allowed = client.post(
+                "/admin/api/policy/simulate",
+                json={"profile": profile, "request": permitted},
+                headers=_auth(),
+            )
+            self.assertEqual(allowed.status_code, 200, allowed.text)
+            self.assertIs(allowed.json()["decision"]["allowed"], True)
+
+            for field, rejected_value, reason in cases:
+                with self.subTest(field=field):
+                    response = client.post(
+                        "/admin/api/policy/simulate",
+                        json={
+                            "profile": profile,
+                            "request": {**permitted, field: rejected_value},
+                        },
+                        headers=_auth(),
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    body = response.json()
+                    self.assertEqual(body["profile_id"], "family-chat")
+                    self.assertIs(body["decision"]["allowed"], False)
+                    self.assertEqual(body["decision"]["decision"], "denied")
+                    self.assertEqual(body["decision"]["reasons"], [reason])
+                    self.assertIn(
+                        "policy:capability-selectors",
+                        body["decision"]["sources"],
+                    )
+
     def test_simulate_requires_admin(self) -> None:
         client, _ = _make_client()
         resp = client.post(
