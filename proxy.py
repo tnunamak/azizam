@@ -19947,7 +19947,7 @@ def _media_job_content_preflight_response(auth_context: AuthContext) -> Response
     decisions = [
         evaluate_and_apply(
             auth_context.identity,
-            make_policy_request(intent=intent),
+            make_policy_request(protocol=_protocol_for_intent(intent), intent=intent),
         )
         for intent in media_intents
     ]
