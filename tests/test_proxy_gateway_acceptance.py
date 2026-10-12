@@ -473,7 +473,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                     f"gateway route {path!r} is registered after the catch-all",
                 )
 
-    def test_gateway_routes_reject_unauthenticated_when_auth_enabled(self) -> None:
+    def test_gateway_routes_reject_unauthenticated_requests(self) -> None:
         if not any(
             p.startswith("/gateway/v1") for p in _route_paths(proxy.app)
         ):
@@ -490,39 +490,21 @@ class TestGatewayRouterMounting(unittest.TestCase):
             # is the proxy's auth_error shape rather than a TabbyAPI passthrough.
             self.assertEqual(response.status_code, 401)
             body = response.json()
-            self.assertEqual(
-                body.get("error", {}).get("type"), "authentication_error"
-            )
+            self.assertEqual(body.get("error", {}).get("type"), "access_error")
+            self.assertEqual(body.get("error", {}).get("code"), "key_required")
 
-    def test_gateway_media_jobs_use_live_store_provider(self) -> None:
-        class _FakeJob:
-            def to_dict(self, audience):
-                return {
-                    "job_id": "mj_acceptance",
-                    "schema_version": 1,
-                    "audience": audience,
-                    "intent": "image.generate",
-                    "status": "queued",
-                }
-
-        calls: list[dict[str, Any]] = []
-
-        def fake_create(payload, *, path):
-            calls.append({"payload": payload, "path": path})
-            return _FakeJob()
-
+    def test_gateway_media_job_without_an_executable_submitter_is_refused_not_written_raw(self) -> None:
+        """A scoped caller cannot forge ownership through a raw store write."""
+        calls: list[Any] = []
         client = TestClient(proxy.app)
         with authenticated(), patch.object(
-            proxy.media_jobs, "create", fake_create
+            proxy.media_jobs, "create", lambda payload, *, path: calls.append(payload)
         ):
-            response = client.post(
-                "/gateway/v1/media/jobs",
-                json={"intent": "image.generate"},
-            )
+            response = client.post("/gateway/v1/media/jobs", json={"intent": "image.generate"})
 
-        self.assertEqual(response.status_code, 201, response.text)
-        self.assertEqual(response.json()["job_id"], "mj_acceptance")
-        self.assertEqual(calls[0]["path"], proxy.media_jobs.DB_PATH)
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error"]["code"], "unsupported_media_job")
+        self.assertEqual(calls, [])
 
     def test_explicit_azizam_routes_bypass_unmapped_v1_guard(self) -> None:
         async def fake_false(*_args, **_kwargs):
