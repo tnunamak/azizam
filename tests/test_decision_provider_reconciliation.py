@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from gateway import decision_provider_execution as execution
-from tests.support.access import plan_for  # noqa: E402
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway import decisions_api, receipt_store
 def _profile(
     *,
@@ -25,13 +25,24 @@ def _profile(
     budget=Decimal("5.00"),
     monthly=Decimal("20.00"),
 ):
-    return plan_for("paid-decisions", paid=sorted(providers))
+    return access(plan_for(
+        "paid-decisions", paid=sorted(providers),
+        usd_per_request=None if max_request is None else str(max_request),
+        usd_per_day=None if budget is None else str(budget),
+        usd_per_month=None if monthly is None else str(monthly),
+    ))
 
 
-def _auth(app_id="app_1", *, delegated=False):
-    return SimpleNamespace(
-        identity=SimpleNamespace(app_id=app_id, name="Decision App", delegated=delegated)
-    )
+def _auth(app_id="app_1", *, access_=None):
+    return SimpleNamespace(identity=SimpleNamespace(
+        app_id=app_id, name="Decision App", access=access_ or _profile(),
+        accountable_person_id="usr_1", person_id=None))
+
+
+def _ctx(app_id="app_1", **profile_kwargs):
+    """An authenticated App and the plans that bound it, so the reservation and the check agree."""
+    plans = _profile(**profile_kwargs)
+    return _auth(app_id, access_=plans), plans
 
 
 def _registry(
@@ -146,8 +157,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
         ):
             result = await execution.systemone(
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -200,8 +210,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
         ):
             result = await execution.systemone(
-                _auth(),
-                _profile(),
+                *_ctx(),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -235,8 +244,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
         ):
             result = await execution.systemone(
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 {
                     "model": "typesafe/jev-latest",
                     "state": "x",
@@ -276,8 +284,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
         ):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(),
-                _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 registry,
                 self.ledger,
             )
