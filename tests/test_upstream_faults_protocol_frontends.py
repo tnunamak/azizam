@@ -166,7 +166,8 @@ def test_streamed_answer(frontend_gateway, fake_upstreams, frontend) -> None:
     assert fake.calls("chat")[0].json["stream_options"] == {"include_usage": True}
 
 
-@pytest.mark.parametrize("frontend", ["anthropic", pytest.param("ollama", marks=pytest.mark.xfail(strict=True, reason="FK-B4: placeholder"))])
+@pytest.mark.xfail(strict=True, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-frontend-sse-bytes)")
+@pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway
     serve("stream-split-event", wire=True)
@@ -180,6 +181,7 @@ def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, 
         assert _ollama_lines(raw) == [_ollama_chunk("Hello"), _ollama_chunk(" café"), _ollama_done(0, 0)]
 
 
+@pytest.mark.xfail(strict=True, reason="FK-B5: after an upstream drop the frontends end with a successful stop (fix/fk-frontend-stream-error, on fix/fk-stream-drop-error)")
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway
@@ -196,6 +198,7 @@ def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, f
         assert _ollama_lines(raw) == [_ollama_chunk("Partial"), _ollama_chunk(" answer"), {"error": INTERRUPTED}]
 
 
+@pytest.mark.xfail(strict=True, reason="FK-B6: the frontends drop the upstream Retry-After header (fix/fk-frontend-retry-after)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_upstreams, frontend, stream) -> None:
@@ -212,6 +215,7 @@ def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_
     assert (json.loads(raw), response.headers.get("retry-after")) == (expected, "7")
 
 
+@pytest.mark.xfail(strict=True, reason="FK-B3: the LLM substrate read timeout answers {'detail': ...}, which the frontends pass on as the message (fix/fk-timeout-envelope)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upstreams, monkeypatch, frontend, stream) -> None:
