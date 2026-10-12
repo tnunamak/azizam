@@ -89,7 +89,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
                 },
             )
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
         backend.assert_not_awaited()
 
     def test_openai_responses_sdk_preserves_text_and_usage(self):
