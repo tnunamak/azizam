@@ -488,6 +488,24 @@ class FfmpegTests(unittest.TestCase):
         self.assertEqual(mm.embed_media_tags(buf.getvalue(), ".jpg", {"a": "b"}), buf.getvalue())
 
 
+def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
+    from unittest.mock import patch
+
+    with (
+        patch.object(mm.shutil, "which", return_value=None),
+        patch.object(
+            mm, "_media_buffers",
+            side_effect=AssertionError("must reject before allocating media buffers"),
+        ),
+    ):
+        try:
+            mm.strip_metadata(b"tagged private media", ".mp4")
+        except mm.MediaMetadataError as exc:
+            assert str(exc) == "ffmpeg not found"
+        else:
+            raise AssertionError("missing ffmpeg must never return unstripped bytes")
+
+
 if __name__ == "__main__":
     unittest.main()
 

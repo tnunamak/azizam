@@ -1025,5 +1025,52 @@ class UiGraphSubmitTests(unittest.TestCase):
         self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
 
 
+def test_provenance_builder_sanitizes_before_any_serializer():
+    parameters = {
+        "api_key": SECRET_KEY,
+        "nested": {"token": "nested-sensitive", "ok": "fine"},
+        "note": "use " + SECRET_KEY,
+        "raw": b"private-media",
+        "size": "512x512",
+    }
+    original = copy.deepcopy(parameters)
+    record = provenance.build_provenance_record(
+        kind="image",
+        created_at=0,
+        request_id="req-isolated",
+        parameters=parameters,
+    )
+    assert record["parameters"] == {
+        "api_key": "[redacted]",
+        "nested": {"token": "[redacted]", "ok": "fine"},
+        "note": "[redacted]",
+        "raw": "[media omitted]",
+        "size": "512x512",
+    }
+    assert SECRET_KEY not in json.dumps(record)
+    assert parameters == original
+
+def test_provenance_serializer_sanitizes_untrusted_record_independently():
+    raw = {
+        "parameters": {
+            "api_key": SECRET_KEY,
+            "nested": [{"token": "nested-sensitive", "ok": "fine"}],
+            "raw": b"private-media",
+            "size": "512x512",
+        },
+    }
+    original = copy.deepcopy(raw)
+    encoded = provenance.provenance_json(raw)
+    assert json.loads(encoded) == {
+        "parameters": {
+            "api_key": "[redacted]",
+            "nested": [{"token": "[redacted]", "ok": "fine"}],
+            "raw": "[media omitted]",
+            "size": "512x512",
+        },
+    }
+    assert raw == original
+
+
 if __name__ == "__main__":
     unittest.main()
