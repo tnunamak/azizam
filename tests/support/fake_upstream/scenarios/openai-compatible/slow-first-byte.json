@@ -1,0 +1,13 @@
+{
+  "protocol": "openai-compatible",
+  "name": "slow-first-byte",
+  "description": "The upstream accepts the request and never sends response headers (the test never advances the clock), so only the caller's read budget ends the wait.",
+  "provenance": {"source": "hand-written", "reference": "TEST_STRATEGY 4.6 (read timeout on loopback)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}"}},
+      "response": {"wait_before_headers": "forever", "json": {}}
+    }
+  ]
+}

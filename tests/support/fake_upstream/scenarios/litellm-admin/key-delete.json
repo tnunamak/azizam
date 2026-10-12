@@ -1,0 +1,18 @@
+{
+  "protocol": "litellm-admin",
+  "name": "key-delete",
+  "description": "One /key/delete request with the master key naming keys and/or key_aliases.",
+  "provenance": {"source": "hand-written", "reference": "https://docs.litellm.ai/docs/proxy/virtual_keys (POST /key/delete: keys, key_aliases)"},
+  "exchanges": [
+    {
+      "id": "delete",
+      "match": {
+        "method": "POST",
+        "path": "/key/delete",
+        "headers": {"x-litellm-key": "Bearer {{master_key}}"},
+        "json": "{{target}}"
+      },
+      "response": {"status": 200, "json": {"deleted_keys": "{{deleted}}"}}
+    }
+  ]
+}

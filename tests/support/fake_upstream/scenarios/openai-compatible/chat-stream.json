@@ -1,0 +1,23 @@
+{
+  "protocol": "openai-compatible",
+  "name": "chat-stream",
+  "description": "A streamed chat completion: role delta, two content deltas, stop, usage, [DONE].",
+  "provenance": {"source": "hand-written", "reference": "https://platform.openai.com/docs/api-reference/chat-streaming/streaming"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}", "stream": true}},
+      "response": {
+        "status": 200,
+        "body": [
+          {"event": {"id": "chatcmpl-fk-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-fk-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {"content": "Hello"}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-fk-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {"content": " café"}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-fk-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}},
+          {"event": {"id": "chatcmpl-fk-stream", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}}},
+          {"done": true}
+        ]
+      }
+    }
+  ]
+}

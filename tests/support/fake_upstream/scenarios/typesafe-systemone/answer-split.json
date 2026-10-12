@@ -1,0 +1,46 @@
+{
+  "protocol": "typesafe-systemone",
+  "name": "answer-split",
+  "description": "The JSON answer arrives in pieces, cut inside a multibyte character.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "gateway/providers.py call_typesafe_systemone (POST /v1/systemone, JSON answers keyed by question, usage.cost)"
+  },
+  "exchanges": [
+    {
+      "id": "decide",
+      "match": {
+        "method": "POST",
+        "path": "/v1/systemone",
+        "headers": {
+          "authorization": "Bearer {{api_key}}"
+        },
+        "json": {
+          "model": "{{model}}"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "text": "{\"model\": \"{{model}}\", \"answers\": {\"q\": {\"type\": \"noul\", \"noul\": 1.0}}, \"usage\": {\"input_tokens\": 1000, \"output_tokens\": 0, \"cost\": \"0.000123\"}, \"note\": \"caf"
+          },
+          {
+            "hex": "c3"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "hex": "a9"
+          },
+          {
+            "text": "\"}"
+          }
+        ]
+      }
+    }
+  ]
+}

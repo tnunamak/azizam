@@ -15,6 +15,7 @@ from gateway import media_jobs, me_make, resource_admission_http
 from gateway.admin_api import _RouteError, _validate_media_job_admission_overrides
 from test_decision_routing import BODY, runtime
 from test_dispatch_admission import dispatch_env  # noqa: F401
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - the fixture dispatch_env needs
 
 
 @pytest.mark.parametrize('cancel_before_start', [False, True])

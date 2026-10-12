@@ -1,0 +1,83 @@
+{
+  "protocol": "comfyui",
+  "name": "history-split",
+  "description": "The history JSON arrives in pieces, cut inside the multibyte character in the filename; the next piece waits on the clock.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes /prompt, /history/{prompt_id}, /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt",
+        "json": {
+          "prompt": {
+            "1": {
+              "class_type": "FkNode",
+              "inputs": {
+                "text": "{{text}}"
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "json": {
+          "prompt_id": "fk-job"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/fk-job"
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "text": "{\"fk-job\": {\"status\": {\"completed\": true}, \"outputs\": {\"1\": {\"images\": [{\"filename\": \"caf"
+          },
+          {
+            "hex": "c3"
+          },
+          {
+            "wait": 1
+          },
+          {
+            "hex": "a9"
+          },
+          {
+            "text": ".png\", \"subfolder\": \"\", \"type\": \"output\"}]}}}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "café.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "body": [
+          {
+            "hex": "89504e470d0a1a0a"
+          }
+        ]
+      }
+    }
+  ]
+}
