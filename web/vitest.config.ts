@@ -16,14 +16,13 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/vitest.setup.ts"],
-    // src/** holds per-page unit specs too; the *.e2e.* and *.playwright.* files there are Playwright.
     include: [
       "tests/**/*.spec.ts",
       "tests/**/*.spec.tsx",
       "src/**/*.spec.ts",
       "src/**/*.spec.tsx",
     ],
-    exclude: ["tests/playwright/**", "src/**/*.e2e.*", "src/**/*.playwright.*", "node_modules/**"],
+    exclude: ["tests/playwright/**", "node_modules/**"],
     clearMocks: true,
     restoreMocks: true,
   },
