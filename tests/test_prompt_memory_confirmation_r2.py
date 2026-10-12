@@ -296,3 +296,82 @@ def test_async_identity_failure_does_not_save_backend_prompt_echo(household, mon
     assert "RuntimeError" in job["error"]
     assert secret_prompt not in json.dumps(job)
     assert secret_prompt.encode() not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("intent", ["audio.generate", "music.generate", "sfx.generate"])
+def test_successful_audio_worker_preserves_forget_and_releases_payload(
+    household, monkeypatch, intent
+):
+    import io
+    import struct
+    import wave
+
+    hh = household
+    sentinel = "audio-worker-private-8c07"
+    receipts = hh.root / "receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
+    monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
+    monkeypatch.setattr(proxy, "_auth_context_from_image_job_payload", lambda *_: hh.auth)
+    monkeypatch.setattr(proxy, "_media_job_admission_response", lambda *a, **k: None)
+    monkeypatch.setattr(proxy, "_schedule_audio_media_job", lambda *_: True)
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\0\0" * 16)
+    clean = output.getvalue()
+    info = b"INFO" + b"ICMT" + struct.pack("<I", len(sentinel) + 1)
+    info += sentinel.encode() + b"\0"
+    if len(info) & 1:
+        info += b"\0"
+    riff_body = clean[8:] + b"LIST" + struct.pack("<I", len(info)) + info
+    tagged = b"RIFF" + struct.pack("<I", len(riff_body)) + riff_body
+    seen = []
+
+    async def fake_generate(request, auth_context, *, store_full=False):
+        body = await request.json()
+        seen.append(body)
+        assert body["prompt"] == sentinel
+        assert body["extensions"][prompt_memory.NAMESPACE] == {"mode": "forget"}
+        assert store_full is True
+        proxy._begin_media_delivery(auth_context)
+        assert proxy._note_media_metadata_body(body) is None
+        assert proxy.media_delivery.current().prompt_decision.keep is False
+        return proxy.Response(content=tagged, media_type="audio/wav")
+
+    monkeypatch.setattr(proxy, "proxy_audio_generate", fake_generate)
+
+    async def exercise():
+        response = await proxy._dispatch_gateway_media_job_submission(
+            request=_StubJsonRequest({}),
+            payload={"intent": intent,
+                     "request": {"model": "tangoflux", "prompt": sentinel,
+                                 "response_format": "wav"},
+                     "extensions": FORGET},
+            audience="client",
+        )
+        assert response.status_code == 202, response.body
+        result = json.loads(response.body)
+        job_id = result.get("job_id") or result["id"]
+        assert proxy._load_audio_media_job_payload(job_id) is not None
+        await proxy._run_audio_media_job(job_id)
+        row = media_jobs.get(job_id, audience="internal", path=hh.jobs)
+        assert row["status"] == media_jobs.STATUS_SUCCEEDED, row
+        assert len(seen) == 1
+        assert len(row["assets"]) == 1
+        asset_id = row["assets"][0]["asset_id"]
+        path = proxy.asset_cache_path(asset_id)
+        assert path is not None and path.is_file()
+        with wave.open(str(path), "rb") as wav:
+            assert wav.getnframes() == 16
+        assert sentinel.encode() not in path.read_bytes()
+        assert prompt_memory.get(asset_id, hh.robin["id"]) is None
+        assert proxy._load_audio_media_job_payload(job_id) is None
+        assert job_id not in proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS
+        assert job_id not in proxy._EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES
+
+    asyncio.run(exercise())
+    assert all(sentinel.encode() not in path.read_bytes()
+               for path in hh.root.rglob("*") if path.is_file())
