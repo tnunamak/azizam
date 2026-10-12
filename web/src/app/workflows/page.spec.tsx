@@ -587,6 +587,12 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.queryByText(/Ask the owner/)).toBeNull();
   });
 
+  test("the page subtitle tells people how to choose a workflow", async () => {
+    renderWorkflows();
+    await screen.findByText("Upscale image");
+    expect(screen.getByText("Choose by purpose and inputs.")).toBeVisible();
+  });
+
   test("COPY-14 workflow task filters", async () => {
     renderWorkflows();
     await screen.findByText("Upscale image");

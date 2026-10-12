@@ -1,5 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -20,6 +21,25 @@ vi.mock("@/lib/product-api", () => ({
     models: async () => ({ models: [], aliases: [] }),
   },
 }));
+
+// React Query hands results to React on a zero-delay timer; a microtask lets
+// `loaded` return only after the page shows them.
+notifyManager.setScheduler(queueMicrotask);
+
+/**
+ * Resolves once every request the page started has been answered and shown.
+ * It waits on the query cache's own events, not on a clock, so a starved host
+ * cannot make the wait expire before the page has rendered.
+ */
+async function loaded(client: QueryClient) {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      const done = () => client.isFetching() === 0 && (unsubscribe(), resolve());
+      const unsubscribe = client.getQueryCache().subscribe(done);
+      done();
+    });
+  });
+}
 
 afterEach(() => {
   cleanup();
@@ -65,8 +85,9 @@ it.each(["rejected", "missing URL", "JSON null", "invalid JSON"])(
         <LibraryPage />
       </QueryClientProvider>,
     );
-    fireEvent.error(await screen.findByRole("img", { name: "Saved image" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await loaded(client);
+    fireEvent.error(screen.getByRole("img", { name: "Saved image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(finish).toBeTypeOf("function"));
     // Retry first tries the old address; when that fails again while the
     // fresh link is pending, the tile shows a disabled pending Retry.
@@ -105,7 +126,7 @@ it("names an uncatalogued model readably and keeps the raw id only in Details", 
       <LibraryPage />
     </QueryClientProvider>,
   );
-  await screen.findByRole("button", { name: "Open Retired model image" });
+  await loaded(client);
   // A tile's caption names the picture and its day, never the model; the
   // viewer's facts carry the model.
   const tile = container.querySelector("article")!;
@@ -153,7 +174,8 @@ it("offers the maker's file with details from the viewer's actions", async () =>
       <LibraryPage />
     </QueryClientProvider>,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Open Workflow image" }));
+  await loaded(client);
+  fireEvent.click(screen.getByRole("button", { name: "Open Workflow image" }));
   // The gateway sends workflow_download_url to the maker only; the viewer
   // offers it as "Download with details" in its actions menu, not as a
   // standing link (docs/design/PROMPT_MEMORY.md).
@@ -189,7 +211,7 @@ it("pauses every other audio player when a card or drawer starts playing", async
       <LibraryPage />
     </QueryClientProvider>,
   );
-  await screen.findByRole("button", { name: "Play First clip" });
+  await loaded(client);
   const [first, second] = Array.from(container.querySelectorAll("audio"));
   const firstPause = vi.spyOn(first, "pause").mockImplementation(() => {
     fireEvent.pause(first);
@@ -267,8 +289,9 @@ it.each([
     </QueryClientProvider>,
   );
   // Files the gateway no longer stores fold under one summary; open it first.
-  fireEvent.click(await screen.findByText("Show them"));
-  expect(await screen.findByText(message!)).toBeVisible();
+  await loaded(client);
+  fireEvent.click(screen.getByText("Show them"));
+  expect(screen.getByText(message!)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(
     new URL(
@@ -309,7 +332,8 @@ it("marks retained results as updating until changed filter results arrive", asy
       <LibraryPage />
     </QueryClientProvider>,
   );
-  await screen.findByRole("button", { name: "Open Old result" });
+  await loaded(client);
+  expect(screen.getByRole("button", { name: "Open Old result" })).toBeVisible();
   expect(screen.queryByText("Updating")).toBeNull();
   expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
   fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
@@ -319,7 +343,8 @@ it("marks retained results as updating until changed filter results arrive", asy
   expect(screen.getByText("Updating")).toBeVisible();
   expect(screen.getByText("Updating")).toHaveAttribute("role", "status");
   finish();
-  await screen.findByRole("button", { name: "Open New result" });
+  await loaded(client);
+  expect(screen.getByRole("button", { name: "Open New result" })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Open Old result" })).toBeNull();
   expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
   expect(screen.queryByText("Updating")).toBeNull();

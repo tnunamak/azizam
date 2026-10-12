@@ -108,9 +108,7 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
     page.getByRole("button", { name: /Viewed everyone’s usage/ }),
   ).toHaveCount(0);
   expect(requestedFilters).toContain("true");
-  await expect(
-    page.getByText("owner@example.test", { exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByText("owner@example.test")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Show access history" }).click();
   await expect(

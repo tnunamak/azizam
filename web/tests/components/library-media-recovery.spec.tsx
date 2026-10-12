@@ -128,6 +128,15 @@ describe("Library media recovery", () => {
       await screen.findByRole("button", { name: "Refresh library" }),
     ).toBeVisible();
   });
+  it("HL-04 refreshes the list from the unavailable-item notice without opening anything", async () => {
+    mockAssets([{ ...image, available: false }]);
+    mount();
+    const listRequests = () =>
+      vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/me/api/media?")).length;
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh library" }));
+    await waitFor(() => expect(listRequests()).toBeGreaterThan(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
   it("HL-04 clears an old URL error after fresh signed metadata arrives", async () => {
     let renew!: (value: Response) => void;
     vi.stubGlobal(

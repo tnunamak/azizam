@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import path from "node:path";
 
 const mediaFixture = {
   assets: [
@@ -215,7 +216,16 @@ test("library delete confirms before mutation", async ({ page }) => {
   await setTheme(page, "light", 1440);
   let deleted = false;
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({ json: mediaFixture }),
+    route.fulfill({
+      json: deleted
+        ? {
+            ...mediaFixture,
+            assets: mediaFixture.assets.filter(
+              (asset) => asset.asset_id !== "asset_image_1",
+            ),
+          }
+        : mediaFixture,
+    }),
   );
   await page.route("**/me/api/media/asset_image_1", (route) => {
     if (route.request().method() !== "DELETE") return route.continue();
@@ -228,19 +238,35 @@ test("library delete confirms before mutation", async ({ page }) => {
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
+  const viewer = page.getByRole("dialog", {
+    name: "A clean product render of a teal fish gateway on a desk",
+    exact: true,
+  });
+  await expect(page).toHaveURL(/asset=asset_image_1/);
   await page
     .getByRole("button", { name: /Actions for A clean product render/ })
     .click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
-  await expect(
-    page.getByRole("dialog", { name: /Delete A clean product render/ }),
-  ).toBeVisible();
+  const confirm = page.getByRole("dialog", {
+    name: /Delete A clean product render/,
+  });
+  await expect(confirm).toBeVisible();
   expect(deleted).toBe(false);
+  // Cancel leaves the creation open and nothing deleted.
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toBeHidden();
+  await expect(viewer).toBeVisible();
+  expect(deleted).toBe(false);
+
   await page
-    .getByRole("dialog", { name: /Delete A clean product render/ })
-    .getByRole("button", { name: "Delete" })
+    .getByRole("button", { name: /Actions for A clean product render/ })
     .click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  await confirm.getByRole("button", { name: "Delete" }).click();
   await expect.poll(() => deleted).toBe(true);
+  // A deleted creation leaves the viewer and the address bar.
+  await expect(viewer).toBeHidden();
+  await expect(page).not.toHaveURL(/asset=/);
 });
 
 test("library filters dates and everyone, pages forward and preserves prior items", async ({
@@ -567,4 +593,101 @@ test("Library waits for posters and exposes recovery after both candidates fail"
     page.getByRole("img", { name: "Video preview unavailable" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /Retry/i })).toBeVisible();
+});
+
+for (const [mode, width] of [
+  ["light", 1440],
+  ["dark", 390],
+] as const) {
+  test(`library filtered empty ${mode} ${width}`, async ({ page }) => {
+    await setTheme(page, mode, width);
+    await page.route("**/me/api/media?**", (route) =>
+      route.fulfill({
+        json: new URL(route.request().url()).searchParams.get("kind")
+          ? { assets: [], models: [], next_cursor: null }
+          : mediaFixture,
+      }),
+    );
+    await page.goto("/library/");
+    await expect(
+      page.getByRole("button", { name: /Open A clean product render/ }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Video", exact: true }).click();
+    await expect(page.getByText("No matching creations")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Clear filters" }).last(),
+    ).toBeVisible();
+    await auditPage(page);
+  });
+}
+
+test("library video without a poster decodes a real first frame", async ({
+  page,
+}) => {
+  await setTheme(page, "dark", 390);
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            asset_id: "asset_video_noposter",
+            kind: "video",
+            prompt: "A teal launch clip",
+            model: "video",
+            created_at: 1_760_010_000,
+            download_url: "/fixture-preview.mp4",
+            poster_asset_id: null,
+          },
+        ],
+        models: ["video"],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/fixture-preview.mp4", (route) =>
+    route.fulfill({
+      path: path.join(__dirname, "fixtures", "preview-test.mp4"),
+      contentType: "video/mp4",
+    }),
+  );
+  await page.goto("/library/");
+  const preview = page.locator("article video");
+  await expect(preview).toBeVisible();
+  await expect
+    .poll(() =>
+      preview.evaluate(
+        (element: HTMLVideoElement) =>
+          element.readyState >= 2 && element.videoWidth > 0,
+      ),
+    )
+    .toBe(true);
+  // The tile is a still frame, not a player.
+  await expect(preview).not.toHaveAttribute("controls");
+  const pixel = await preview.evaluate((element: HTMLVideoElement) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(element, 0, 0, 1, 1);
+    return Array.from(context.getImageData(0, 0, 1, 1).data);
+  });
+  expect(pixel[1]).toBeGreaterThan(pixel[0]);
+  expect(pixel[2]).toBeGreaterThan(pixel[0]);
+  await auditPage(page);
+});
+
+test("library audio tile play control is at least 44 px on a phone", async ({
+  page,
+}) => {
+  await setTheme(page, "light", 390);
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({ json: mediaFixture }),
+  );
+  await page.goto("/library/");
+  const play = page.getByRole("button", {
+    name: /^Play A calm spoken introduction/,
+  });
+  await expect(play).toBeVisible();
+  const box = await play.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(44);
+  expect(box?.height).toBeGreaterThanOrEqual(44);
 });

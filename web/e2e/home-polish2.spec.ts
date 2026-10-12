@@ -399,7 +399,7 @@ test("Home recent media carries content while requests stay in receipts", async 
 test("Home and Library render a frame from posterless video", async ({
   page,
 }) => {
-  const videoBytes = await readFile("src/app/library/preview-test.mp4");
+  const videoBytes = await readFile("e2e/fixtures/preview-test.mp4");
   await page.addInitScript(() => {
     const currentTime = Object.getOwnPropertyDescriptor(
       HTMLMediaElement.prototype,

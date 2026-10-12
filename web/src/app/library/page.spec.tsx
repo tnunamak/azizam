@@ -1432,6 +1432,47 @@ describe("Library response and media boundaries", () => {
     queryClient.clear();
   });
 
+  test("a deep link that cannot open explains itself, and Try again opens it", async () => {
+    navigation.searchParams = new URLSearchParams("asset=flaky");
+    let attempts = 0;
+    routeFetch((path) => {
+      if (!path.startsWith("/me/api/media/flaky")) return undefined;
+      attempts += 1;
+      return attempts === 1
+        ? Response.json({}, { status: 404 })
+        : Response.json({ asset: picture("flaky", "Second try works") });
+    });
+    const { queryClient } = renderLibrary();
+    expect(await screen.findByText("That creation is unavailable")).toBeVisible();
+    expect(screen.getByText("The gateway couldn’t open this creation. Try again or return to your library.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("dialog", { name: "Second try works" })).toBeVisible();
+    expect(screen.queryByText("That creation is unavailable")).toBeNull();
+    queryClient.clear();
+  });
+
+  test("a library load failure says what failed in the body", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?") ? Response.json({ error: { message: "boom" } }, { status: 503 }) : undefined,
+    );
+    renderLibrary();
+    expect(await screen.findByText("Couldn’t load your library")).toBeVisible();
+    expect(screen.getByText("The gateway couldn't load your library. Try again.")).toBeVisible();
+  });
+
+  test("a creation dialog is named by its prompt and shows a text workflow in Details", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?")
+        ? list([picture("lamp", "A teal desk lamp on a walnut table", { workflow: "workflow.image.lamp" })])
+        : undefined,
+    );
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: "Open A teal desk lamp on a walnut table" }));
+    const dialog = await screen.findByRole("dialog", { name: "A teal desk lamp on a walnut table" });
+    fireEvent.click(within(dialog).getByText("Details"));
+    expect(within(dialog).getByText("workflow.image.lamp")).toBeVisible();
+  });
+
   test("deep link opens, becomes unavailable, and can return to the library", async () => {
     navigation.searchParams = new URLSearchParams("asset=missing");
     let finish!: (response: Response) => void;

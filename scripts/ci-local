@@ -264,8 +264,18 @@ start_job "$work" bash -c '
   exit "$failed"
 '
 web_pid=$last_pid
+# The Node probes that run offline: probe-gates.test.mjs proves the opted-out
+# live probes start no provider work. The live probes themselves stay with the
+# scheduled tier (tests/suites.toml). Its own install keeps them out of web/.
+start_job "$work" bash -c '
+  failed=0
+  step compat-node env CASE_RECEIPTS_FILE="$receipts/raw/compat-node.cases.jsonl" bash -c "cd tests/compat/node && npm ci --no-audit --no-fund && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=\"\$1\" --test-reporter-destination=stderr probe-gates.test.mjs" _ "$PWD/scripts/ci/node-case-receipts.mjs"
+  exit "$failed"
+'
+compat_pid=$last_pid
 wait_job "$web_pid"
 wait_job "$fresh_pid"
+wait_job "$compat_pid"
 
 # Browser lanes test the built export with the e2e venv and browser. Without
 # them every journey fails with misleading 401/404s, so skip the lanes and
@@ -327,6 +337,9 @@ for pid in "${pids[@]}"; do wait_job "$pid"; done
 # Case receipts: one cases.jsonl from every framework's report, then the
 # test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
 merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
+if [[ -f $receipts/raw/compat-node.cases.jsonl ]]; then
+  merge_args+=(--receipts "$receipts/raw/compat-node.cases.jsonl" "$work")
+fi
 for ((i=1; i<=lanes; i++)); do
   lane_port=$((port + 10 * i))
   name=e2e-shard-$i-of-$shards
@@ -341,7 +354,7 @@ step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$re
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * lanes + 12))" '
+if ! awk -F '\t' -v expected="$((2 * lanes + 13))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi

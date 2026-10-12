@@ -56,11 +56,6 @@ expires_on = 2026-11-12
 reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
 
 [[orphan]]
-path = "tests/compat/node/probe-gates.test.mjs"
-expires_on = 2026-11-12
-reason = "Offline check that the opted-out Node probes start no provider work (cb2325ae); it calls itself a gate test, but no gate step runs it (`node --test`, not installed in the hermetic lock)"
-
-[[orphan]]
 path = "tests/compat/node/vercel-ai-sdk.test.mjs"
 expires_on = 2026-11-12
 reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
@@ -75,100 +70,6 @@ path = "web/e2e/sweep/sweep.spec.ts"
 expires_on = 2026-11-12
 reason = "Only playwright.sweep.config.ts runs it (npm run sweep); no gate step does"
 
-[[orphan]]
-path = "web/src/app/_home/audit-tests/home.audit.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/_home/audit-tests/public-url.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/activity/activity-copy.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/engines/detect-apply-gate.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/engines/engine-gate.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/engines/owner-enabled.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/library/library-copy.e2e.spec.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/library/library.batch-j.e2e.spec.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/library/live-data-audio.e2e.spec.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/models/catalog.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/providers/gate-owner.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/status/member-status.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/status/owner-status.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/status/real-data-status.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/try/gate-owner.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/usage/usage-copy.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/app/workflows/workflows-copy.e2e.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/src/components/shell/app-shell.playwright.spec.ts"
-expires_on = 2026-11-12
-reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
-
-[[orphan]]
-path = "web/tests/ux/services-route.spec.mjs"
-expires_on = 2026-11-12
-reason = "node:test source check (.mjs) outside every vitest and Playwright include pattern; slice S13"
 
 # Gate cases that skip. A new skip fails the gate.
 [[skip]]

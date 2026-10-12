@@ -6,7 +6,11 @@
 # with this slice merged. Only a slice that must add cases
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
+# Slice S13 (orphaned e2e files): +25 vitest and +24 Playwright cases that carry
+# the orphans' assertions into gated suites; node:test cases are new, from
+# probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
 pytest = 8126
-vitest = 1606
-playwright = 735
+vitest = 1631
+playwright = 759
+node = 5

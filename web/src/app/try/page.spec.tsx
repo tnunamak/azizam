@@ -419,6 +419,20 @@ test("empty workflow catalog disables the selector and Run", async () => {
   expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
 });
 
+test("an empty decision catalog has no inferred model and cannot run", async () => {
+  mocks.params = new URLSearchParams("capability=decide");
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [] }),
+  );
+  render(<TryPage />);
+  expect(await screen.findByText(/No decision models are available/)).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Choose an option" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  expect(screen.queryByRole("link", { name: "View receipt" })).toBeNull();
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
+
 function bearerOfLastRun() {
   const call = fetchMock.mock.calls.findLast(
     ([, init]) => init?.method === "POST",

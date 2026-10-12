@@ -253,6 +253,34 @@ describe("AppShell accessible names", () => {
   });
 });
 
+describe("Member session", () => {
+  it("offers Status in the navigation and in Go to, and none of the owner pages", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/me/api/session")
+        ? jsonResponse({
+            authenticated: true,
+            csrf_token: "member",
+            user: { id: "member", name: "Test member", email: "member@example.test", role: "member" },
+            apps: [],
+          })
+        : originalFetch(input, init),
+    ));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const user = userEvent.setup();
+    await screen.findAllByRole("button", { name: "Account menu: Test member" });
+    expect(screen.getAllByRole("link", { name: "Status" }).length).toBeGreaterThan(0);
+    for (const name of ["Engines", "Providers", "People", "Activity", "Settings"]) {
+      expect(screen.queryByRole("link", { name })).toBeNull();
+    }
+    await user.click(screen.getByRole("button", { name: "Go to" }));
+    expect(await screen.findByRole("option", { name: "Status" })).toBeVisible();
+    for (const name of ["Engines", "Providers", "People", "Activity", "Settings"]) {
+      expect(screen.queryByRole("option", { name })).toBeNull();
+    }
+  });
+});
+
 describe("Service admin session", () => {
   it("shows an honest state on person-only pages without rendering their API consumers", async () => {
     const originalFetch = fetch;

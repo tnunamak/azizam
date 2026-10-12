@@ -33,7 +33,11 @@ if [[ $1 == vitest ]]; then
   [[ ${FAKE_VITEST_STATUS:-passed} == passed ]]
 fi""",
     "uv": """if [[ $1 == venv ]]; then for arg; do dir=$arg; done; mkdir -p "$dir/bin"; ln -sf /usr/bin/python3 "$dir/bin/python"; fi""",
-    "node": """if [[ $1 == --version ]]; then echo v0-fake; else echo "$FAKE_BIN/chrome"; fi""",
+    "node": """if [[ $1 == --version ]]; then echo v0-fake
+elif [[ $1 == --test ]]; then
+  printf '{"framework":"node","config":"","project":"","id":"g","file":"%s","titles":["g"],"status":"passed","duration_ms":5}\\n' \\
+    "$PWD/${!#}" >> "$CASE_RECEIPTS_FILE"
+else echo "$FAKE_BIN/chrome"; fi""",
     "chrome": "echo Fake Chromium 1",
     "ffmpeg": "echo ffmpeg version fake",
     "gh": """
@@ -64,8 +68,9 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
 """,
     "tests/test_ok.py": "def test_ok():\n    pass\n",
     "tests/suites.toml": "",
-    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\n",
+    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n",
     "tests/requirements-hermetic.lock": "",
+    "tests/compat/node/probe-gates.test.mjs": "",
     "web/package.json": "{}\n",
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
@@ -185,7 +190,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["seed"] == "5"
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
-        "cases", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
+        "cases", "compat-node", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
         "e2e-live-data", "e2e-plan", "e2e-shard-1-of-1", "e2e-venv", "fresh-compose", "fresh-native",
         "fresh-venv", "policy", "python-hermetic", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")

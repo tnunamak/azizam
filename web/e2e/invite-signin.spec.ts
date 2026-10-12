@@ -50,6 +50,31 @@ test("invited member creates a password account and signs in again", async ({
     await firstVisit.getByRole("button", { name: "I’ve saved it" }).click();
     await expect(firstVisit).toHaveURL(/^https?:\/\/[^/]+\/$/);
 
+    // The new member reads their own scoped Status without touching owner APIs.
+    const ownerCalls: string[] = [];
+    firstVisit.on("request", (request) => {
+      if (new URL(request.url()).pathname.startsWith("/admin/api/")) {
+        ownerCalls.push(request.url());
+      }
+    });
+    const status = await (await guest.request.get("/me/api/status")).json();
+    expect(status.scope).toBe("member");
+    const chat = status.capabilities.find(
+      (capability: { capability: string }) => capability.capability === "chat",
+    );
+    expect(chat).toMatchObject({
+      use_names: expect.arrayContaining(["demo-chat"]),
+      recommended_model: expect.any(String),
+    });
+    expect(chat.recommended_model.trim()).not.toBe("");
+    await firstVisit.goto("/status/");
+    await expect(firstVisit).toHaveURL(/\/status\/$/);
+    await firstVisit.getByText("Model names", { exact: true }).click();
+    await expect(
+      firstVisit.getByText(`Chat · ${chat.recommended_model}`, { exact: true }),
+    ).toBeVisible();
+    expect(ownerCalls).toEqual([]);
+
     const returnVisit = await browser.newContext({ baseURL });
     try {
       const signIn = await returnVisit.newPage();
