@@ -1,10 +1,68 @@
 """Deterministic OpenAI-compatible engine used only by the isolated UI harness."""
-import time
+import asyncio
 import os
+import re
+import time
 
 from fastapi import FastAPI, Request
 
 app = FastAPI()
+
+# Request state per test namespace (docs/design/TEST_STRATEGY.md 3.4.7). One
+# engine serves many parallel browser tests; a test tags its prompts with
+# `[ns:<namespace>]` (web/e2e/fixtures/isolation.ts) and its teardown reads
+# its own log, so two invocations never see each other's requests.
+_NAMESPACE = re.compile(rb"\[ns:([a-z0-9-]+)\]")
+_REQUESTS: dict[str, dict[str, int]] = {}
+
+
+@app.middleware("http")
+async def namespaced_request_log(request: Request, call_next):
+    if request.url.path.startswith("/fixture/") or request.url.path in {"/health", "/"}:
+        return await call_next(request)
+    body = await request.body()
+    match = _NAMESPACE.search(body)
+    namespace = match.group(1).decode() if match else "untagged"
+    entry = _REQUESTS.setdefault(namespace, {"in_flight": 0, "requests": 0})
+    entry["in_flight"] += 1
+    entry["requests"] += 1
+    try:
+        response = await call_next(request)
+    except BaseException:
+        entry["in_flight"] -= 1
+        raise
+    body_iterator = response.body_iterator
+
+    # A request stays in flight until its last body byte is sent.
+    async def tracked():
+        try:
+            async for chunk in body_iterator:
+                yield chunk
+        finally:
+            entry["in_flight"] -= 1
+
+    response.body_iterator = tracked()
+    return response
+
+
+@app.get("/fixture/requests")
+def namespace_requests(namespace: str):
+    # "*" sums every namespace, including untagged requests: the serial
+    # global-state project reads it after each test, since no other test runs.
+    if namespace == "*":
+        return {key: sum(item[key] for item in _REQUESTS.values()) for key in ("in_flight", "requests")}
+    return _REQUESTS.get(namespace, {"in_flight": 0, "requests": 0})
+
+
+# A chat whose prompt holds `[hold]` waits until its namespace is released, so
+# a test can leave an upstream request open (the fixture's teardown proof).
+_HELD: dict[str, asyncio.Event] = {}
+
+
+@app.post("/fixture/release")
+def release(namespace: str):
+    _HELD.setdefault(namespace, asyncio.Event()).set()
+    return {"released": namespace}
 
 
 @app.get("/health")
@@ -49,6 +107,8 @@ async def chat(request: Request):
     body = await request.json()
     messages = body.get("messages") or []
     content = " ".join(str((message or {}).get("content", "")) for message in messages if isinstance(message, dict))
+    if "[hold]" in content and (held := _NAMESPACE.search(content.encode())):
+        await _HELD.setdefault(held.group(1).decode(), asyncio.Event()).wait()
     response = {
         "id": f"chatcmpl-demo-{time.time_ns()}",
         "object": "chat.completion",

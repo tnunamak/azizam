@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // Every top-level page must fit a 390 px phone: no sideways page scroll. The
 // owner session is the seeded one, so owner-only pages are included.

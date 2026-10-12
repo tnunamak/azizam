@@ -58,7 +58,7 @@ class Tree:
     def __init__(self, root: Path) -> None:
         self.root = root
         files = policy.all_files(ROOT)
-        for relative in {*policy.discover(files), *policy.test_code(files), *READ_FILES}:
+        for relative in {*policy.discover(files), *policy.test_code(files), *policy.browser_code(files), *READ_FILES}:
             target = root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
@@ -138,7 +138,7 @@ def _inject_computed_vitest_retry(tree: Tree) -> None:
 
 
 def _inject_computed_project_retries(tree: Tree) -> None:
-    tree.edit("web/playwright.config.ts", '{ name: "chromium",', '{ name: "chromium", retries: process.env.CI ? 2 : 0,')
+    tree.edit("web/playwright.config.ts", 'name: "chromium",', 'name: "chromium", retries: process.env.CI ? 2 : 0,')
 
 
 def _inject_shorthand_retries(tree: Tree) -> None:
@@ -191,7 +191,19 @@ def _inject_count_over_ceiling(tree: Tree) -> None:
     tree.edit("tests/budgets.toml", f"vitest = {ceilings['vitest']}", f"vitest = {count - 1}")
 
 
+def _inject_hygiene(snippet: str):
+    def inject(tree: Tree) -> None:
+        tree.append("web/e2e/invite-signin.spec.ts", f"\n// injected\n{snippet}\n")
+    inject.__name__ = "_inject_hygiene_" + snippet.split("(")[0].split(".")[-1].replace(" ", "_")
+    return inject
+
+
+def _inject_bare_test_import(tree: Tree) -> None:
+    tree.append("web/e2e/invite-signin.spec.ts", "\nimport { test as bare } from \"@playwright/test\";\n")
+
+
 @pytest.mark.parametrize(("inject", "message"), [
+    (_inject_bare_test_import, "fixture: web/e2e/invite-signin.spec.ts imports test from @playwright/test"),
     (_inject_rerun_plugin, "retries: rerun plugin pytest-rerunfailures"),
     (_inject_flaky_marker, f"uses {FLAKY}"),
     (_inject_retry_flag, "retries: scripts/ci-local passes --retries"),
@@ -212,6 +224,16 @@ def _inject_count_over_ceiling(tree: Tree) -> None:
     (_inject_quarantine_manifest, "quarantine: manifest tests/quarantine.json exists"),
     (_inject_quarantine_marker, f"uses {QUARANTINE}"),
     (_inject_count_over_ceiling, "counts: vitest has"),
+    (_inject_hygiene("await page.waitForTimeout(500);"), "hygiene: waitForTimeout occurs"),
+    (_inject_hygiene("await page.waitForLoadState('networkidle');"), "hygiene: networkidle occurs"),
+    (_inject_hygiene("await button.click({ force: true });"), "hygiene: force_true occurs"),
+    (_inject_hygiene("expect(await page.getByRole('button').isVisible()).toBe(true);"), "hygiene: one_shot_expect occurs"),
+    (_inject_hygiene("if (await banner.isVisible()) return;"), "hygiene: bare_isVisible occurs"),
+    (_inject_hygiene("await page.screenshot({ path: '/home/someone/.tmp/shot.png' });"), "hygiene: absolute_home_path occurs"),
+    (_inject_hygiene("await page.waitForTimeout (500);"), "hygiene: waitForTimeout occurs"),
+    (_inject_hygiene("await page.waitForLoadState ( 'networkidle' );"), "hygiene: networkidle occurs"),
+    (_inject_hygiene("expect (await page.locator('a')?.isVisible ()).toBe(true);"), "hygiene: one_shot_expect occurs"),
+    (_inject_hygiene("if (await banner?.isVisible ()) return;"), "hygiene: bare_isVisible occurs"),
 ], ids=lambda value: value.__name__.removeprefix("_inject_") if callable(value) else None)
 def test_injected_violation_fails(tree: Tree, inject, message: str) -> None:
     inject(tree)

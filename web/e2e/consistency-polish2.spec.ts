@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 import AxeBuilder from "@axe-core/playwright";
 

@@ -1,10 +1,5 @@
-import {
-  test,
-  expect,
-  type APIRequestContext,
-  type Page,
-  type Route,
-} from "@playwright/test";
+import { type APIRequestContext, type Page, type Route } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const catalog = {
@@ -786,7 +781,7 @@ async function removeSeededOpenRouterProvider(
   ).toBe(false);
 }
 
-test("providers real backend OpenRouter journey keeps paid access denied until allowed", async ({
+test("providers real backend OpenRouter journey keeps paid access denied until allowed", { tag: "@global-state" }, async ({
   page,
   request,
   baseURL,

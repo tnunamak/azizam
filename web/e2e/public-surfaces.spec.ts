@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 for (const theme of ["light", "dark"] as const) {
@@ -222,7 +222,7 @@ test("expired invite links ask for a new invitation without retry", async ({
 });
 
 for (const theme of ["light", "dark"] as const) {
-  test(`native recovery failure fits 390px in ${theme}`, async ({
+  test(`native recovery failure fits 390px in ${theme}`, { tag: "@global-state" }, async ({
     page,
     context,
   }) => {

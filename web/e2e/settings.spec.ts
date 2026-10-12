@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
@@ -264,48 +265,14 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("settings saves each section through its own API and keeps OIDC secret write-only", async ({
+// Owner-global state: instance, media admission, default plan, app defaults
+// and sign-in choice. The fixture restores them after the test; the default
+// plan matters most, since the owner inherits it and a "Local chat" default
+// left behind hides every workflow from later specs.
+test("settings saves each section through its own API and keeps OIDC secret write-only", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
-  // The default access plan is shared server state: the owner inherits it, so
-  // a "Local chat" default left behind hides every workflow from later specs
-  // (try-media-inputs read an empty catalog). Put the original plan back.
-  const defaults = await page.request.get("/admin/api/settings/defaults");
-  expect(defaults.ok()).toBe(true);
-  const originalPlan = (
-    (await defaults.json()) as {
-      defaults: { profile_id: string | null };
-    }
-  ).defaults.profile_id;
-  const accessDefaults = await page.request.get(
-    "/admin/api/operator/overrides",
-  );
-  const originalApps = (await accessDefaults.json()).overrides
-    .user_access_defaults;
-  try {
-    await settingsJourney(page);
-  } finally {
-    const session = await (await page.request.get("/admin/api/session")).json();
-    const restored = await page.request.put("/admin/api/settings/defaults", {
-      headers: {
-        "x-azizam-admin-action": "1",
-        "x-azizam-csrf": session.actor.csrf_token,
-      },
-      data: { profile_id: originalPlan },
-    });
-    expect(restored.ok(), "restore the default access plan").toBe(true);
-    const appsRestored = await page.request.put(
-      "/admin/api/operator/user-access-defaults",
-      {
-        headers: {
-          "x-azizam-admin-action": "1",
-          "x-azizam-csrf": session.actor.csrf_token,
-        },
-        data: originalApps,
-      },
-    );
-    expect(appsRestored.ok(), "restore app creation settings").toBe(true);
-  }
+  await settingsJourney(page);
 });
 
 async function settingsJourney(page: Page) {
@@ -486,7 +453,7 @@ async function settingsJourney(page: Page) {
   );
 }
 
-test("a provider draft saves after a real sign-in choice write", async ({
+test("a provider draft saves after a real sign-in choice write", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
   await page.goto("/settings/");

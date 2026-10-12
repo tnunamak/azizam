@@ -51,11 +51,15 @@ same order, so `scripts/ci-local --force --order-seed N` reproduces a failure.
   only on the seed and the node IDs, so every xdist worker collects the same
   list (xdist aborts the run when two workers' ordered lists differ).
 - vitest: `--sequence.shuffle --sequence.seed N`.
-- Playwright: the lane plan stays the legacy grouping (`plan_shards.py` without
-  a seed), so no stateful spec meets new neighbors before it is isolated
-  (TEST_STRATEGY.md 7, T0 item 1). `plan_shards.py plan` accepts a seed for the
-  last BI2 batch to turn on: it then places each spec file on a seeded choice
-  among the lanes within half the file's estimate of the least-loaded lane.
+- Playwright: the main run is one invocation. Parallel workers take tests in
+  the order Playwright assigns; every test gets its own namespace (the
+  `isolated` fixture, `web/e2e/fixtures/isolation.ts`), so a neighbor cannot
+  change its data. Tests that write owner-wide settings carry `@global-state`
+  and run serially on a second server. `--order-seed` does not reorder browser
+  tests; it only goes into the namespace text (`UI_E2E_RUN_ID`). The browser
+  tier's protection against bad neighbors is the data isolation above, which
+  `scripts/e2e/prove-isolation` checks with four copies of each isolated case on
+  four workers.
 
 ## Case receipts and policy
 
@@ -140,32 +144,31 @@ interrupted run, lock waiting, and a killed controller.
   in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`),
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
-- `--shards N` (default `10`) main Playwright lanes run in parallel with the
-  live-data and household lanes. `scripts/e2e/plan_shards.py` assigns whole
-  spec files to lanes by the measured times in `web/e2e/shard-weights.tsv`
-  (longest first, to the least-loaded lane) and fails unless every listed
-  file is in exactly one lane. Each lane runs its list with `--test-list`.
-  `--shard i/N` splits by test count: with 12 lanes one lane ran 414 s and
-  another 18 s. Workers remain `1` within each fixture and each file keeps its
-  test order. Regenerate the weights after large spec changes with
-  `scripts/e2e/plan_shards.py weights <receipts>/logs/e2e-shard-*.log`; stale
-  weights change balance only, never coverage.
-- `--port BASE` defaults to `18640`. Main lane `i` uses `BASE + 10*i`
-  (i starts at 1); live-data and household use the next two lanes. Each lane
-  reserves gateway +0, fake engine +1 and strict-engine candidates +2 through +9.
-  The entire allocation must fit within 18000–18998 or the command fails early.
-  The fresh-instance journeys take the first free ports from 18000 upward.
-- Each browser lane has its own port-named worktree, state root, results,
-  screenshots and auth files. It receives an isolated copy of the completed web
-  directory (copy-on-write on supporting filesystems), and shares only the
-  completed, read-only browser Python environment. No npm install or build runs
-  concurrently against that directory. Legacy live-data auth/manifest names stay
-  compatible because their containing worktree is private to that lane.
+- `--browser-workers N` (default `4`) sets the Playwright workers of the main
+  run. The main run is one `playwright test` invocation with two servers: the
+  parallel pool (project `chromium`, N workers) on port `BASE+10`, and the
+  `@global-state` project (`chromium-global-state`, 1 worker, 33 cases that
+  write owner-wide settings, services, profiles, categories or providers) on
+  `BASE+20`. The live-data (`BASE+30`) and household (`BASE+40`) runs start at
+  the same time. Each server is one gateway and one fake engine for all its
+  workers. Per-test data comes from the `isolated` fixture: a namespaced
+  member, app, key and request log created through the admin API. Teardown
+  fails a test that leaves queued or running jobs, open fake-engine requests,
+  or a changed owner-wide setting it did not tag `@global-state`. The fixture
+  snapshots seven owner-wide settings before each test and restores them after.
+- `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake
+  engine +1 and strict-engine candidates +2 through +9. The entire allocation
+  must fit within 18000–18998 or the command fails early. The fresh-instance
+  journeys take the first free ports from 18000 upward.
+- The browser steps share one completed web directory, read-only: no per-lane
+  copies and no npm install or build while they run. The runner writes
+  (`test-results`, auth files, screenshots, reports) go to the run directory;
+  `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
+  the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
   aggregates receipts, rejects missing/nonzero/skipped steps, and retains all
-  failing-run browser evidence by port. Interrupts terminate job process groups
-  before worktrees are removed. `setsid` and GNU-compatible `cp --reflink` are
-  required. Extra worktrees and copied dependencies need additional disk space.
+  failing-run browser evidence. Interrupts terminate job process groups
+  before worktrees are removed. `setsid` is required.
 
 ## Duration
 

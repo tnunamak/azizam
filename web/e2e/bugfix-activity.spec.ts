@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 
 for (const status of ["error", "failed"]) {
   test(`decision ${status} shows failure and HTTP status in Activity`, async ({

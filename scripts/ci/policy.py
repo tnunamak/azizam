@@ -27,6 +27,10 @@ merge_cases.py. Rules, each failing the step with one line per violation:
   no [ratchets] value is above its value there and none was removed, so a
   ratchet can only fall. The ratchet's own test checks the real count against
   the value.
+- hygiene: in browser test code (web/e2e and *.e2e.* / *.playwright.* files
+  under web/src) each pattern of TEST_STRATEGY.md 3.4 rules 1-3 occurs no
+  more often than its tests/budgets.toml [hygiene] ceiling. The ceilings only
+  fall; S14 takes them to 0.
 """
 
 from __future__ import annotations
@@ -55,6 +59,24 @@ RETRY_SETTING = re.compile(r"\b(retry|retries|repeats)\s*:\s*([^,}\n]*)")
 # An object-literal shorthand ({ retries }); `={retry}` is a JSX prop, not one.
 RETRY_SHORTHAND = re.compile(r"(?:(?<!=)\{|,)\s*(retry|retries|repeats)\s*[,}]")
 QUARANTINE_MANIFEST = re.compile(r"^quarantine.*\.(json|toml|ya?ml|txt)$", re.IGNORECASE)
+# TEST_STRATEGY.md 3.4 rules 1-3, as ratchets. These are lexical: they tolerate
+# whitespace and optional chaining, and count comments and strings too (the
+# safe direction). They do not see aliased calls or helpers outside web/e2e.
+HYGIENE_PATTERNS = {
+    "waitForTimeout": re.compile(r"\bwaitForTimeout\s*\("),
+    "networkidle": re.compile(r"""waitForLoadState\s*\(\s*["']networkidle"""),
+    "force_true": re.compile(r"\bforce\s*:\s*true\b|\[\s*[\"']force[\"']\s*\]\s*=\s*true\b"),
+    # A one-shot read of page state inside expect(); expect(await response.json())
+    # and other awaited values are fine.
+    "one_shot_expect": re.compile(
+        r"\bexpect\s*\(\s*await\s[^;]{0,200}?\??\.(isVisible|isHidden|isEnabled|isDisabled|isChecked|isEditable"
+        r"|textContent|innerText|innerHTML|inputValue|count|getAttribute|allTextContents|allInnerTexts)\s*\("),
+    # A path outside the run directory escapes the tree-unchanged check and
+    # lets two copies of a case overwrite each other.
+    "absolute_home_path": re.compile(r"""["'`]/home/[A-Za-z0-9_.-]+/"""),
+    "bare_isVisible": re.compile(r"\??\.isVisible\s*\("),
+}
+BROWSER_CODE = re.compile(r"\.(e2e|playwright)\.|\.household\.ts$")
 QUARANTINE_MARKER = re.compile(r"\bmark\.quarantine\b|@quarantine\b|\btest(\.describe)?\.quarantine\b")
 
 
@@ -199,6 +221,44 @@ def check_ratchets(budgets: dict, base: dict) -> list[str]:
         elif value > base_value:
             problems.append(f"ratchets: {name} is {value}, above {base_value} on the target branch; a ratchet only falls")
     return problems
+def browser_code(files: list[str]) -> list[str]:
+    """Playwright test code: everything under web/e2e, and browser specs under web/src."""
+    code = re.compile(r"\.[cm]?[jt]sx?$")
+    return [path for path in files if code.search(path) and (
+        path.startswith("web/e2e/") or (path.startswith("web/src/") and BROWSER_CODE.search(Path(path).name)))]
+
+
+def check_hygiene(root: Path, files: list[str], budgets: dict) -> tuple[list[str], dict[str, int]]:
+    counts = dict.fromkeys(HYGIENE_PATTERNS, 0)
+    for relative in browser_code(files):
+        text = read(root, relative)
+        for name, pattern in HYGIENE_PATTERNS.items():
+            counts[name] += len(pattern.findall(text))
+    ceilings = budgets.get("hygiene", {})
+    problems = []
+    for name, count in counts.items():
+        ceiling = ceilings.get(name)
+        if ceiling is None:
+            problems.append(f"hygiene: tests/budgets.toml [hygiene] has no ceiling for {name}")
+        elif count > ceiling:
+            problems.append(f"hygiene: {name} occurs {count} times in browser test code, over its ceiling {ceiling} "
+                            "(TEST_STRATEGY.md 3.4 rules 1-3)")
+    return problems, counts
+
+
+BARE_TEST_IMPORT = re.compile(r"import\s*\{[^}]*\btest\b[^}]*\}\s*from\s*[\"']@playwright/test[\"']")
+# These run against other fixture servers and keep Playwright's own `test`.
+OWN_FIXTURE_SPECS = ("web/e2e/live-data-", "web/e2e/sweep/")
+
+
+def check_fixture_import(root: Path, files: list[str]) -> list[str]:
+    """Every gated browser spec takes `test` from e2e/fixtures/isolation.ts, which
+    adds the teardown guard and spreads workers over the pool's servers."""
+    return [f"fixture: {relative} imports test from @playwright/test; import it from ./fixtures/isolation"
+            for relative in files
+            if relative.startswith("web/e2e/") and relative.endswith(".spec.ts")
+            and not relative.startswith(OWN_FIXTURE_SPECS)
+            and BARE_TEST_IMPORT.search(read(root, relative))]
 
 
 def main() -> None:
@@ -218,12 +278,15 @@ def main() -> None:
     count_problems, counts = check_counts(cases, budgets)
     if args.base_budgets:
         count_problems += check_ratchets(budgets, tomllib.loads(args.base_budgets.read_text(encoding="utf-8")))
+    hygiene_problems, hygiene = check_hygiene(root, files, budgets)
     problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
-                + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems)
+                + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems
+                + hygiene_problems + check_fixture_import(root, files))
     for problem in problems:
         print(f"policy: {problem}")
     summary = ", ".join(f"{framework} {count}" for framework, count in counts.items())
-    print(f"policy: {'FAILED' if problems else 'ok'}: {len(tests)} test files; cases {summary}")
+    patterns = ", ".join(f"{name} {count}" for name, count in hygiene.items())
+    print(f"policy: {'FAILED' if problems else 'ok'}: {len(tests)} test files; cases {summary}; hygiene {patterns}")
     sys.exit(1 if problems else 0)
 
 

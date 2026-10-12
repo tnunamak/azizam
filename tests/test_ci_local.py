@@ -1,6 +1,6 @@
 """scripts/ci-local's signoff, host lock and run-directory lifecycle.
 
-Each test runs the real ci-local, merge_cases.py, policy.py and plan_shards.py
+Each test runs the real ci-local, merge_cases.py and policy.py
 in a throwaway repository whose test runners, installers, `node`, `gh` and
 fresh-instance journey are stubs that finish in milliseconds. The origin is a
 local bare repository, so `git ls-remote` is real; `gh` only records what it
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/e2e/plan_shards.py")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py")
 
 STUBS = {
     # Tools on PATH.
@@ -49,7 +49,7 @@ exit 0""",
     # Copied into web/node_modules/.bin by the npm stub.
     "playwright": """
 [[ $1 == test ]] || exit 0
-if [[ $2 == --list ]]; then echo "  [chromium] › e2e/a.spec.ts:3:1 › a"; exit 0; fi
+if [[ -n ${FAKE_TREE_WRITE:-} ]]; then touch "$PWD/$FAKE_TREE_WRITE"; fi
 case $3 in
   playwright.config.ts) file=e2e/a.spec.ts ;;
   playwright.live-data.config.ts) file=e2e/live-data-scoping.spec.ts ;;
@@ -68,7 +68,7 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
 """,
     "tests/test_ok.py": "def test_ok():\n    pass\n",
     "tests/suites.toml": "",
-    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n",
+    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n[hygiene]\nwaitForTimeout = 0\nnetworkidle = 0\nforce_true = 0\none_shot_expect = 0\nbare_isVisible = 0\nabsolute_home_path = 0\n",
     "tests/requirements-hermetic.lock": "",
     "tests/compat/node/probe-gates.test.mjs": "",
     "web/package.json": "{}\n",
@@ -130,7 +130,7 @@ class World:
                 "FAKE_BIN": str(self.bin), "FAKE_GH_LOG": str(self.gh_log), **extra}
 
     def args(self, *extra: str) -> list[str]:
-        return [str(self.repo / "scripts/ci-local"), "--force", "--shards", "1", "--order-seed", "5", *extra]
+        return [str(self.repo / "scripts/ci-local"), "--force", "--browser-workers", "1", "--order-seed", "5", *extra]
 
     def run(self, *extra: str, **env: str) -> subprocess.CompletedProcess[str]:
         # Files, not pipes: jobs a killed controller leaves behind keep its
@@ -190,9 +190,9 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["seed"] == "5"
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
-        "cases", "compat-node", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
-        "e2e-live-data", "e2e-plan", "e2e-shard-1-of-1", "e2e-venv", "fresh-compose", "fresh-native",
-        "fresh-venv", "policy", "python-hermetic", "web-check", "web-npm-ci", "web-unit"])
+        "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
+        "fresh-compose", "fresh-native", "fresh-venv", "policy", "python-hermetic", "web-check", "web-npm-ci",
+        "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 
@@ -285,3 +285,14 @@ def test_a_killed_controller_keeps_the_lock_until_its_jobs_end(world: World) -> 
     assert world.run().returncode == 0
     assert world.run_dirs() == []  # the next run removed the killed run's directory
     assert not os.path.exists(orphaned)
+
+
+def test_a_browser_write_into_the_shared_build_fails_the_run(world: World) -> None:
+    """Browser tests share one build tree: runner output goes to the linked
+    test-results directory, and any other write into web/ fails the gate."""
+    result = world.run(FAKE_TREE_WRITE="test-results/report.html")
+    assert result.returncode == 0, result.stdout + result.stderr
+    result = world.run(FAKE_TREE_WRITE="stray-output.json")
+    assert result.returncode == 1, result.stdout + result.stderr
+    log = (world.receipts / "logs" / "e2e-tree-unchanged.log").read_text()
+    assert "browser tests wrote into the shared build tree:" in log and "web/stray-output.json" in log

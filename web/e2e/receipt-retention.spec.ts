@@ -1,16 +1,21 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 // Seed only the test server's disposable database, never an operator file:
-// it must be the one run directory under .ui-e2e-state serving this port.
+// it must be the one run directory under the fixture state root (or one of
+// its per-server subdirectories, playwright.config.ts) serving this port.
 function fixtureDatabase(port: number) {
-  const root = path.resolve(__dirname, "../../.ui-e2e-state");
-  const active = readdirSync(root)
-    .filter((name) => name.startsWith("run-"))
-    .map((name) => path.join(root, name))
+  const root = process.env.UI_E2E_STATE_ROOT ?? path.resolve(__dirname, "../../.ui-e2e-state");
+  const runs = (directory: string) =>
+    readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(directory, entry.name));
+  const active = [root, ...runs(root)]
+    .flatMap(runs)
+    .filter((directory) => path.basename(directory).startsWith("run-"))
     .filter(
       (directory) =>
         existsSync(path.join(directory, `${port}.log`)) &&
@@ -24,7 +29,7 @@ function fixtureDatabase(port: number) {
 }
 
 for (const width of [1440, 390]) {
-  test(`owner previews and saves receipt expiry through the real API at ${width}px`, async ({
+  test(`owner previews and saves receipt expiry through the real API at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
     page,
     baseURL,
   }) => {

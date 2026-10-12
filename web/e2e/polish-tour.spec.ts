@@ -1,11 +1,12 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir, copyFile } from "node:fs/promises";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 
-const finalScreens =
-  process.env.UI_POLISH_SCREEN_DIR ??
-  "/home/tnunamak/.tmp/gw-product/ui-review/polish";
+// Screenshots go to the test's own output path inside the run directory. Only
+// an explicit UI_POLISH_SCREEN_DIR publishes copies outside it.
+const finalScreens = process.env.UI_POLISH_SCREEN_DIR;
 
 // The existing Library test's deterministic media fixtures exercise presentation.
 // Usage, activity, availability and model timing still come from the seeded API.
@@ -115,18 +116,17 @@ async function inspect(page: Page, name: string) {
     (violation) => ["serious", "critical"].includes(violation.impact ?? ""),
   );
   expect(serious, `${name} accessibility`).toEqual([]);
-  const file = `test-results/screens/polish/${name}.png`;
+  const file = test.info().outputPath(`${name}.png`);
   await page.screenshot({
     path: file,
     fullPage: !name.startsWith("workflows-detail-"),
     animations: "disabled",
   });
-  await copyFile(file, `${finalScreens}/${name}.png`);
+  if (finalScreens) await copyFile(file, `${finalScreens}/${name}.png`);
 }
 
 test.beforeAll(async ({ request }) => {
-  await mkdir(finalScreens, { recursive: true });
-  await mkdir("test-results/screens/polish", { recursive: true });
+  if (finalScreens) await mkdir(finalScreens, { recursive: true });
   const session = await (await request.get("/admin/api/session")).json();
   const profiles = await (await request.get("/admin/api/profiles")).json();
   const profile = profiles.profiles.find(
@@ -137,7 +137,7 @@ test.beforeAll(async ({ request }) => {
     headers: { "x-azizam-csrf": session.actor.csrf_token },
     data: {
       profile_id: profile.id,
-      email: "polish-tour@example.test",
+      email: `polish-tour+${process.env.UI_E2E_RUN_ID ?? "local"}-${process.pid}@example.test`,
       expires_in: 86400,
     },
   });

@@ -1,10 +1,14 @@
-import { expect, test } from "@playwright/test";
+// Principal state: the invite creates a member, so the address is namespaced
+// and two copies of this case can run at once (fixtures/isolation.ts).
+import { expect, test } from "./fixtures/isolation";
 
 test("invited member creates a password account and signs in again", async ({
   browser,
   page,
   baseURL,
+  isolated,
 }) => {
+  const email = isolated.email("invited");
   const session = await (await page.request.get("/admin/api/session")).json();
   const profiles = await (await page.request.get("/admin/api/profiles")).json();
   const profile = profiles.profiles.find(
@@ -13,7 +17,7 @@ test("invited member creates a password account and signs in again", async ({
   expect(profile).toBeDefined();
   const inviteResponse = await page.request.post("/admin/api/invites", {
     headers: { "x-azizam-csrf": session.actor.csrf_token },
-    data: { profile_id: profile.id, email: "invited@example.test" },
+    data: { profile_id: profile.id, email },
   });
   expect(inviteResponse.ok()).toBe(true);
   const invite = await inviteResponse.json();
@@ -79,9 +83,7 @@ test("invited member creates a password account and signs in again", async ({
     try {
       const signIn = await returnVisit.newPage();
       await signIn.goto("/sign-in/");
-      await signIn
-        .getByLabel("Email", { exact: true })
-        .fill("invited@example.test");
+      await signIn.getByLabel("Email", { exact: true }).fill(email);
       await signIn
         .getByLabel("Password", { exact: true })
         .fill("A long browser test password");

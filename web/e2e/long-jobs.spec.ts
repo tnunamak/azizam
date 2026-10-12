@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 
@@ -9,7 +9,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   page,
 }) => {
   test.setTimeout(120_000);
-  await mkdir("/home/tnunamak/.tmp/longjobs-shots", { recursive: true });
+  await mkdir("test-results/screens/longjobs", { recursive: true });
   let started = false;
   let finished = false;
   let renewals = 0;
@@ -114,7 +114,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
           ).violations,
         ).toEqual([]);
         await page.screenshot({
-          path: `/home/tnunamak/.tmp/longjobs-shots/notice-${width}-${theme}-${scale}.png`,
+          path: `test-results/screens/longjobs/notice-${width}-${theme}-${scale}.png`,
         });
       }
     }

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import path from "node:path";
 
@@ -146,7 +147,7 @@ for (const mode of ["light", "dark"] as const) {
         );
       expect(Math.max(...cards) - Math.min(...cards)).toBeLessThan(2);
       await expect(page.getByText(/Playback link expires|Reopen to renew/)).toHaveCount(0);
-      if (mode === "light") await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/library-viewer-light-${width}.png` });
+      if (mode === "light") await page.screenshot({ path: `test-results/screens/uxfb/library-viewer-light-${width}.png` });
       await page.screenshot({
         path: `test-results/screens/library-sheet-${mode}-${width}.png`,
         fullPage: false,

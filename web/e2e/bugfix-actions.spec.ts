@@ -1,6 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
-test("remove an app through Apps & keys and invalidate its key", async ({
+test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {

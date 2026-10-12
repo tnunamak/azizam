@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import type { CatalogService, Snapshot } from "../src/app/categories/editor";
 
@@ -220,7 +221,7 @@ async function closeAndRead(page: Page, revision: number) {
   return current;
 }
 
-test("empty rules reach an activated person and app grant through the real fixture catalog", async ({ page, request }) => {
+test("empty rules reach an activated person and app grant through the real fixture catalog", { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
   test.setTimeout(180_000);
   await surface(page, 390);
   const post = await writer(request);
@@ -351,7 +352,7 @@ test.describe("Categories editor real fixture journeys", () => {
   });
 
   for (const width of widths) {
-    test(`service values, new plans, blocked removal, rewrite and gains at ${width}px`, async ({ page, request }) => {
+    test(`service values, new plans, blocked removal, rewrite and gains at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
       test.setTimeout(180_000);
       await surface(page, width);
       const base = await seed(request, "editor-plans-" + width, "embed");
@@ -440,7 +441,7 @@ test.describe("Categories editor real fixture journeys", () => {
     });
 
     for (const stage of ["preview", "activation"] as const) {
-      test(`stale ${stage} rebuild preserves both owners' changes at ${width}px`, async ({ page, request }) => {
+      test(`stale ${stage} rebuild preserves both owners' changes at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
         test.setTimeout(180_000);
         await surface(page, width);
         const base = await seed(request, "editor-base-" + stage + "-" + width, "embed");

@@ -1,10 +1,5 @@
-import {
-  test,
-  expect,
-  type Locator,
-  type Page,
-  type Route,
-} from "@playwright/test";
+import { type Locator, type Page, type Route } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 /** Open the engines table: folded under a card below 1280 px, open above. */

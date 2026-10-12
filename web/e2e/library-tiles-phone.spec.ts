@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // WP-7: on a phone, a running creation says what it is, a quiet audio tile
 // carries no invented decoration, a long household name is not clipped, and an

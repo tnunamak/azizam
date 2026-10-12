@@ -1,9 +1,5 @@
-import {
-  test,
-  expect,
-  type Page,
-  type APIRequestContext,
-} from "@playwright/test";
+import { type Page, type APIRequestContext } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";

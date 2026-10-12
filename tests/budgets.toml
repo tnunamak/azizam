@@ -22,3 +22,15 @@ node = 5
 # patch.object(proxy.httpx, "AsyncClient", ...) fakes).
 [ratchets]
 ad_hoc_upstream_fake_files = 50
+
+# Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3): occurrences in Playwright
+# code under web/e2e and *.e2e.* / *.playwright.* files under web/src. Set at
+# the counts on 2026-10-12; a slice that removes occurrences lowers its
+# ceiling, and no slice raises one. S14 takes them to 0.
+[hygiene]
+waitForTimeout = 19
+networkidle = 12
+force_true = 4
+one_shot_expect = 4
+bare_isVisible = 7
+absolute_home_path = 7

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // A llama.cpp engine reports the GGUF file it loaded, so a model id can be a
 // directory on the gateway host. No screen shows it outside an owner's

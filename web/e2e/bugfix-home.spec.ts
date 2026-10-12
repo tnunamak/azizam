@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 const homeApi = "**/me/api/home";
 const setupApi = "**/admin/api/setup-progress";

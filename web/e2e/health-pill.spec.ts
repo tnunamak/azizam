@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import type { Page } from "@playwright/test";
 
 // The shell health pill must say what its dot says (DESIGN.md, Status model
