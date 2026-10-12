@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   api,
   queryKeys,
+  type PlanCaps,
   type AccessPlan,
   type AccessPlanDocument,
   type AccessPlanEditorContract,
@@ -36,6 +37,7 @@ const DOCUMENT_FIELDS = [
   "direct_engine_access",
   "paid_providers",
   "provider_fallback",
+  "caps",
   "can_load_models",
   "receipt_detail",
   "media_metadata",
@@ -47,6 +49,49 @@ export function planShapeError(value: unknown): string | null {
     return "Enter a valid JSON object before saving.";
   const missing = DOCUMENT_FIELDS.find((field) => !(field in value));
   return missing ? `The plan needs the field ${missing}.` : null;
+}
+
+const CAP_FIELDS: { key: keyof PlanCaps; label: string }[] = [
+  { key: "usd_per_request", label: "Per request" },
+  { key: "usd_per_day", label: "Per day" },
+  { key: "usd_per_month", label: "Per month" },
+];
+
+/** Blank means no cap; the server checks that a cap is a positive amount. */
+function SpendingCaps({
+  caps,
+  change,
+  disabled,
+}: {
+  caps: PlanCaps;
+  change: (caps: PlanCaps) => void;
+  disabled: boolean;
+}) {
+  return (
+    <fieldset className="space-y-3">
+      <legend className="text-label">Spending caps</legend>
+      <p className="text-muted-foreground text-meta">
+        In US dollars, for paid models. The cap counts what the person, or the
+        app, has spent in total. Leave a box empty for no cap.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {CAP_FIELDS.map(({ key, label }) => (
+          <div key={key} className="space-y-2">
+            <Label htmlFor={`plan-cap-${key}`}>{label}</Label>
+            <Input
+              id={`plan-cap-${key}`}
+              inputMode="decimal"
+              value={caps[key] ?? ""}
+              disabled={disabled}
+              onChange={(e) =>
+                change({ ...caps, [key]: e.target.value.trim() || null })
+              }
+            />
+          </div>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
 
 const itemKey = (item: PlanItem) =>
@@ -291,10 +336,15 @@ function PlanForm({
           Use a paid provider when the engine is unavailable
         </label>
         <p className="text-muted-foreground text-meta">
-          Paid models can incur provider charges within the provider and
-          gateway spending caps.
+          Paid models can incur provider charges within the spending caps
+          below and the provider and gateway caps.
         </p>
       </fieldset>
+      <SpendingCaps
+        caps={doc.caps}
+        change={(caps) => update({ caps })}
+        disabled={mutation.isPending}
+      />
       <details className="border-t pt-4">
         <summary className="flex min-h-8 cursor-pointer items-center text-meta font-medium max-sm:min-h-11">
           Details

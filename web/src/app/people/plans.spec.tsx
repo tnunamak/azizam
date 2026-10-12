@@ -11,6 +11,7 @@ const document = (overrides: Partial<AccessPlanDocument> = {}): AccessPlanDocume
   direct_engine_access: { engines: [], operations: [] },
   paid_providers: [],
   provider_fallback: false,
+  caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
   can_load_models: true,
   receipt_detail: "basic",
   media_metadata: "none",
@@ -103,8 +104,25 @@ describe("Access plan editor", () => {
     expect(create.mock.calls[0][0].can_use).toEqual({ video: { items: "all" } });
   });
 
+  it("saves spending caps as dollar amounts, and an empty box as no cap", async () => {
+    const { update } = mount(document({
+      caps: { usd_per_request: "0.50", usd_per_day: null, usd_per_month: null },
+    }));
+    await canUse();
+    expect(screen.getByLabelText("Per request")).toHaveValue("0.50");
+    expect(screen.getByLabelText("Per day")).toHaveValue("");
+    await userEvent.type(screen.getByLabelText("Per day"), "5");
+    await userEvent.clear(screen.getByLabelText("Per request"));
+    await userEvent.click(screen.getByRole("button", { name: "Save access plan" }));
+    expect(update.mock.calls[0][1].caps).toEqual({
+      usd_per_request: null, usd_per_day: "5", usd_per_month: null,
+    });
+  });
+
   it("refuses a pasted document that misses a field", () => {
     expect(planShapeError({ name: "x" })).toBe("The plan needs the field can_use.");
+    const { caps: _caps, ...withoutCaps } = document();
+    expect(planShapeError(withoutCaps)).toBe("The plan needs the field caps.");
     expect(planShapeError(document())).toBeNull();
   });
 });

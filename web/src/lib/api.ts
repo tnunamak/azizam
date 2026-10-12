@@ -157,6 +157,12 @@ export type CapabilityId =
 
 export type PlanItem = { model: string } | { workflow: string };
 
+export interface PlanCaps {
+  usd_per_request: string | null;
+  usd_per_day: string | null;
+  usd_per_month: string | null;
+}
+
 /** An access plan document (design §3.1). Every field is required. */
 export interface AccessPlanDocument {
   id?: string;
@@ -165,6 +171,8 @@ export interface AccessPlanDocument {
   direct_engine_access: { engines: "all" | string[]; operations: string[] };
   paid_providers: string[];
   provider_fallback: boolean;
+  /** US dollars as decimal strings; null means no cap for that period. */
+  caps: PlanCaps;
   can_load_models: boolean;
   receipt_detail: "none" | "basic" | "standard" | "full";
   media_metadata: "none" | "full";

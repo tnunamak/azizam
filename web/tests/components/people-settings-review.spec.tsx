@@ -32,6 +32,7 @@ const plan: AccessPlan = {
     direct_engine_access: { engines: [], operations: [] },
     paid_providers: [],
     provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
     can_load_models: true,
     receipt_detail: "full",
     media_metadata: "none",
