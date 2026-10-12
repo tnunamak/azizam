@@ -41,9 +41,11 @@ class _ResponseStream(httpx.AsyncByteStream):
             if item is _END:
                 return
             if isinstance(item, _Abort):
-                if isinstance(item.error, FakeDisconnect):
-                    raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
-                raise item.error
+                # A server drops the connection when its app fails after the
+                # response started; the client sees an incomplete body.
+                raise httpx.RemoteProtocolError(
+                    "peer closed connection without sending complete message body"
+                ) from item.error
             yield item
 
     async def aclose(self) -> None:
