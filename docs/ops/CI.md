@@ -89,6 +89,23 @@ the gate it finishes before the slowest browser lane, which ends the run, and
 all jobs share the CPU, so more workers would only add contention. The lanes
 start after Compose, whose time varies with Docker's build cache.
 
+## Affected tests for lanes
+
+`scripts/test-affected [--base REF] [--list] [--e2e]` runs only the tests that
+the commits since the merge base with REF (default `origin/main`) can reach:
+
+- Python test modules whose static import closure contains a changed `.py`
+  file, changed test modules, and test modules that name a changed file by
+  path (or a changed non-Python file by name). A change to the shared harness
+  (conftest, runner, lock files, `proxy_config.yml`) selects the whole suite.
+  The selection runs through the hermetic runner with xdist, so commit first.
+- `vitest run --changed` when `web/` changed, and with `--e2e` the Playwright
+  specs that `--only-changed` selects (build `web/` first).
+
+Most gateway modules reach `proxy.py`, so a gateway change still selects most
+Python modules (145–231 of 324 on recent commits). It is a fast check
+while working, not a gate: `scripts/ci-local` still runs everything.
+
 ## Limits
 
 - A signoff is the owner's attestation that the local run passed. GitHub does

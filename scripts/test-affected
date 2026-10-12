@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Run only the tests that a branch's changes can reach.
+
+Usage: scripts/test-affected [--base REF] [--list] [--e2e] [-- PYTEST_ARGS...]
+
+Compares HEAD with its merge base on REF (default: origin/main) and picks:
+- Python: every test module whose static import closure contains a changed
+  .py file, every changed test module, and every test module that names a
+  changed file by repository path (or a changed non-Python file by basename,
+  for fixtures and scripts that tests run as subprocesses).  A change to the
+  shared harness (conftest, runner, lock files) selects the whole suite.
+  Selected modules run through scripts/run-hermetic-pytest.sh with xdist.
+- Web: when web/ changed, `vitest run --changed` and, with --e2e, the
+  Playwright specs that `playwright test --only-changed` reports (they need a
+  built export: run `npm run build` in web/ first).
+
+This is a fast lane check, not the release gate: scripts/ci-local still runs
+everything.  Imports by string (importlib, subprocess of module names) that no
+test mentions by path are invisible here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "web", "data", "cache", "__pycache__"}
+# Any change here can alter every test's outcome.
+WHOLE_SUITE = {
+    "tests/conftest.py",
+    "tests/_hermetic.py",
+    "tests/requirements-hermetic.in",
+    "tests/requirements-hermetic.lock",
+    "requirements.txt",
+    "proxy_config.yml",
+    "pytest.ini",
+    "pyproject.toml",
+    "scripts/run-hermetic-pytest.sh",
+    "scripts/hermetic_source_preflight.sh",
+}
+IMPORT_ROOTS = (ROOT, ROOT / "tests", ROOT / "tests" / "e2e")
+
+
+def git(*args: str) -> str:
+    return subprocess.run(["git", "-C", str(ROOT), *args], check=True, text=True,
+                          capture_output=True).stdout
+
+
+def changed_files(base: str) -> list[str]:
+    merge_base = git("merge-base", base, "HEAD").strip()
+    names = git("diff", "--name-only", "--no-renames", f"{merge_base}..HEAD")
+    return sorted({line for line in names.splitlines() if line})
+
+
+def python_files() -> list[Path]:
+    found = []
+    for directory, subdirs, files in os.walk(ROOT):
+        subdirs[:] = [d for d in subdirs if d not in SKIP_DIRS and not d.startswith(".")]
+        found += [Path(directory) / f for f in files if f.endswith(".py")]
+    return found
+
+
+def resolve(dotted: str, roots: tuple[Path, ...]) -> list[Path]:
+    """Map a dotted module name to its file and its packages' __init__ files."""
+    parts = dotted.split(".")
+    for root in roots:
+        hits = []
+        for depth in range(1, len(parts) + 1):
+            base = root.joinpath(*parts[:depth])
+            if (base / "__init__.py").is_file():
+                hits.append(base / "__init__.py")
+            elif base.with_suffix(".py").is_file():
+                hits.append(base.with_suffix(".py"))
+                break
+            elif not base.is_dir():
+                break
+        if hits:
+            return hits
+    return []
+
+
+def imports_of(path: Path) -> set[Path]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    except (SyntaxError, UnicodeDecodeError):
+        return set()
+    roots = (path.parent, *IMPORT_ROOTS)
+    found: set[Path] = set()
+    package = path.parent
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found.update(resolve(alias.name, roots))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                anchor = package
+                for _ in range(node.level - 1):
+                    anchor = anchor.parent
+                module_roots: tuple[Path, ...] = (anchor,)
+                prefix = node.module or ""
+            else:
+                module_roots, prefix = roots, node.module or ""
+            # `from a import b` names either module a.b or an attribute of a;
+            # resolving a.b covers both, since resolve stops at a's file.
+            for alias in node.names:
+                name = f"{prefix}.{alias.name}" if prefix else alias.name
+                found.update(resolve(name, module_roots))
+    found.discard(path)
+    return found
+
+
+def affected_python_tests(changed: list[str]) -> list[str] | None:
+    """Return selected test paths, or None when the whole suite is affected."""
+    if any(name in WHOLE_SUITE for name in changed):
+        return None
+    files = python_files()
+    graph = {path: imports_of(path) for path in files}
+    tests = sorted(p for p in files if p.is_relative_to(ROOT / "tests") and p.name.startswith("test_"))
+    changed_paths = {ROOT / name for name in changed}
+    selected = []
+    for test in tests:
+        seen, stack = {test}, [test]
+        while stack:
+            for dependency in graph.get(stack.pop(), ()):
+                if dependency not in seen:
+                    seen.add(dependency)
+                    stack.append(dependency)
+        text = test.read_text(encoding="utf-8", errors="replace")
+        named = any(name in text or (not name.endswith(".py") and Path(name).name in text)
+                    for name in changed)
+        if seen & changed_paths or named:
+            selected.append(str(test.relative_to(ROOT)))
+    return selected
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--base", default="origin/main")
+    parser.add_argument("--list", action="store_true", help="print the selection and exit")
+    parser.add_argument("--e2e", action="store_true", help="also run affected Playwright specs")
+    parser.add_argument("pytest_args", nargs="*")
+    args = parser.parse_args()
+
+    changed = changed_files(args.base)
+    print(f"{len(changed)} changed file(s) since merge base with {args.base}")
+    selected = affected_python_tests(changed)
+    web_changed = any(name.startswith("web/") for name in changed)
+    if selected is None:
+        print("python: shared test harness changed; selecting the whole suite")
+    else:
+        print(f"python: {len(selected)} test module(s)")
+        if args.list:
+            for name in selected:
+                print(f"  {name}")
+    print(f"web: {'changed' if web_changed else 'unchanged'}")
+    if args.list:
+        return 0
+
+    rc = 0
+    if selected is None or selected:
+        command = [str(ROOT / "scripts" / "run-hermetic-pytest.sh"), "-q", "-n", "auto",
+                   "--dist", "worksteal", *(selected or []), *args.pytest_args]
+        rc |= subprocess.run(command, cwd=ROOT).returncode
+    if web_changed:
+        web = ROOT / "web"
+        merge_base = git("merge-base", args.base, "HEAD").strip()
+        rc |= subprocess.run(["npx", "vitest", "run", "--changed", merge_base], cwd=web).returncode
+        if args.e2e:
+            rc |= subprocess.run(["npx", "playwright", "test", f"--only-changed={merge_base}"],
+                                 cwd=web).returncode
+    return 1 if rc else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
