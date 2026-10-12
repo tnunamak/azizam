@@ -176,3 +176,18 @@ def test_startup_refuses_removed_keyless_environment(variable):
 
 def test_shipped_config_has_no_keyless_settings():
     assert proxy.removed_auth_settings(proxy.auth_cfg, {}) == []
+
+
+def _routes():
+    return [getattr(route, "path", "") for route in proxy.app.routes]
+
+
+@pytest.mark.parametrize("entry", ["/v1/*", "/v1/models", "/api/tags", "/gateway/v1/*", "/mcp", "/*"])
+def test_startup_refuses_a_public_path_that_reaches_a_protected_route(entry):
+    conflicts = proxy.public_path_conflicts([entry], _routes())
+    assert conflicts and conflicts[0].startswith(entry)
+
+
+def test_public_paths_may_name_health_and_the_showcase():
+    assert proxy.public_path_conflicts(["/health", "/showcase/*"], _routes()) == []
+    assert proxy.public_path_conflicts(proxy.AUTH_PUBLIC_PATHS, _routes()) == []

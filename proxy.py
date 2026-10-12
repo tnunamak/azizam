@@ -28558,6 +28558,29 @@ def _gateway_openapi() -> dict[str, Any]:
 _fastapi_openapi = app.openapi
 app.openapi = _gateway_openapi  # type: ignore[method-assign]
 
+# A public path never calls the evaluator, so it may only name routes that run
+# nothing (design §2.8). Startup refuses an entry that reaches any other route.
+_PUBLIC_ROUTE_FAMILIES = ("/health", "/showcase", "/.well-known")
+
+
+def public_path_conflicts(public_paths: Iterable[Any], route_paths: Iterable[str]) -> list[str]:
+    """Configured public paths that match a route outside the public families."""
+    conflicts: list[str] = []
+    for entry in public_paths:
+        entry = str(entry)
+        prefix = entry[:-1] if entry.endswith("*") else None
+        for path in route_paths:
+            reaches = path.startswith(prefix) if prefix is not None else path == entry
+            if reaches and not path.startswith(_PUBLIC_ROUTE_FAMILIES):
+                conflicts.append(f"{entry} (reaches {path})")
+                break
+    return conflicts
+
+
+_public_conflicts = public_path_conflicts(AUTH_PUBLIC_PATHS, [getattr(route, "path", "") for route in app.routes])
+if _public_conflicts:
+    raise SystemExit("[proxy] refusing to start: auth.public_paths names protected routes: " + ", ".join(_public_conflicts))
+
 
 def signal_handler(signum, frame):
     print(f"\n[proxy] Received signal {signum}, shutting down...", flush=True)
