@@ -100,7 +100,7 @@ def home_case(tmp_path):
     def give_app(app_row, plan):
         admin_store.update_app(app_row["id"], access_plan=plan["id"], path=db)
     case.give_person, case.give_app = give_person, give_app
-    case.http = TestClient(app, raise_server_exceptions=False)
+    case.http = TestClient(app, raise_server_exceptions=True)
     case.headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf"}
     yield case
     case.http.close()
