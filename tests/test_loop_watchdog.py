@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 
 from gateway import loop_watchdog
 
@@ -15,6 +14,13 @@ def test_reports_the_stack_that_blocks_the_loop(monkeypatch):
     sampled = threading.Event()
     samples = []
     real_stack_key = loop_watchdog._stack_key
+    step_s = 0.5
+
+    class SteppedTime:
+        """The watchdog's clock: it moves half a second per stack sample."""
+
+        def monotonic(self):
+            return 1000.0 + step_s * len(samples)
 
     def counting_stack_key(frame):
         samples.append(1)
@@ -27,6 +33,7 @@ def test_reports_the_stack_that_blocks_the_loop(monkeypatch):
         logged.set()
 
     monkeypatch.setattr(loop_watchdog, "_stack_key", counting_stack_key)
+    monkeypatch.setattr(loop_watchdog, "time", SteppedTime())
 
     async def scenario():
         watchdog = loop_watchdog.LoopWatchdog(
@@ -40,9 +47,7 @@ def test_reports_the_stack_that_blocks_the_loop(monkeypatch):
         watchdog.start()
         # The loop stays blocked until the watchdog has sampled it twice.
         _blocking_culprit(sampled)
-        deadline = time.monotonic() + 5  # watchdog only; the log line is the event
-        while not logged.is_set() and time.monotonic() < deadline:
-            await asyncio.sleep(0.001)
+        assert await asyncio.to_thread(logged.wait, 5)  # watchdog only; the log line is the event
         await asyncio.to_thread(watchdog.stop)  # joining on the loop would starve its heartbeat
 
     asyncio.run(scenario())
@@ -51,7 +56,9 @@ def test_reports_the_stack_that_blocks_the_loop(monkeypatch):
     report = lines[0]
     assert "event loop blocked" in report
     assert "_blocking_culprit" in report
-    assert int(report.split("(")[1].split(" stack samples")[0]) >= 2
+    reported_samples = int(report.split("(")[1].split(" stack samples")[0])
+    assert reported_samples >= 2
+    assert report.split("blocked ")[1].startswith(f"{step_s * reported_samples:.2f}s ")
 
 
 def test_quiet_when_the_loop_keeps_answering():

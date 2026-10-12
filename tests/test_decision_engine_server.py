@@ -916,7 +916,7 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     clock = _SteppedClock()
     monkeypatch.setattr(server, "time", clock)
     got_eof = threading.Event()
-    sent_headers = threading.Event()
+    body_started = threading.Event()
 
     def serve(listener):
         conn, _addr = listener.accept()
@@ -929,11 +929,11 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
                 b"Content-Type: application/json\r\n"
                 b"\r\n"
             )
-            sent_headers.set()
             conn.settimeout(2)
             try:
                 while True:
                     conn.sendall(b" ")
+                    body_started.set()
                     try:
                         data = conn.recv(4096)
                     except socket.timeout:
@@ -958,7 +958,7 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
                 f"http://127.0.0.1:{listener.getsockname()[1]}",
                 "/completion",
                 {},
-                deadline=clock.now + 100,
+                deadline=clock.now + 0.05,
                 cancel_check=None,
             )
         except BaseException as exc:  # noqa: BLE001 - the test inspects the type
@@ -968,12 +968,13 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     try:
         caller.start()
         # The deadline ends only after the response body is already dripping.
-        assert sent_headers.wait(timeout=5)
+        assert body_started.wait(timeout=5)
         clock.now += 1000
         caller.join(timeout=5)
     finally:
         listener.close()
         thread.join(timeout=2)
+        caller.join(timeout=5)
 
     assert not caller.is_alive()
     assert len(outcome) == 1 and isinstance(outcome[0], server.DecisionDeadlineExceeded)

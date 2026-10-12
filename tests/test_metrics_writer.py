@@ -124,6 +124,7 @@ class MetricsWriterTests(unittest.TestCase):
             self.assertEqual(writer.stats["dropped_samples"], 2)
             self.assertEqual(writer.stats["dropped_commands"], 2)
             release.set()
+            overflow.join()
             writer.close()
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT metric FROM samples ORDER BY ts").fetchall(),
@@ -358,7 +359,8 @@ class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0.001)
                     self.assertTrue(entered.is_set())
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=proxy.app), base_url="http://test") as client:
-                        response = await client.get("/health")
+                        # Finite only so a hang fails; the oracle is the gated write below.
+                        response = await asyncio.wait_for(client.get("/health"), timeout=5)
                     self.assertEqual(response.status_code, 200)
                     # The write was still gated when the route answered.
                     self.assertFalse(finished.is_set())
@@ -411,12 +413,8 @@ class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
         ):
             task = asyncio.create_task(metrics_sampler.sampler_loop())
             try:
-                deadline = time.monotonic() + 2
-                while not entered.is_set() and time.monotonic() < deadline:
-                    await original_sleep(0.001)
-                self.assertTrue(entered.is_set())
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
                 # The disk probe is held closed, yet the loop still runs: it is off-loop.
-                await original_sleep(0)
                 self.assertFalse(task.done())
             finally:
                 release.set()

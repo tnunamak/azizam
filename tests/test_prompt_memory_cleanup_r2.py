@@ -135,16 +135,22 @@ def test_maintenance_ignores_stale_kill_switch_reading(hh, monkeypatch):
 # --- P2-20: rows now, files queued ----------------------------------------
 
 class _WatchedScanLock:
-    """The migration scan lock, reporting a blocking acquire by the watched thread."""
+    """The migration scan lock, reporting a blocked acquire by any other thread.
+
+    The route under test may take the lock on a thread of its own (the ASGI
+    portal), so the spy watches every thread but the owner, not one thread.
+    """
 
     def __init__(self, real, settled):
         self._real = real
         self._settled = settled
-        self.watched = None
+        self._owner = threading.get_ident()
         self.blocked = False
 
     def acquire(self, blocking=True, timeout=-1):
-        if blocking and threading.get_ident() == self.watched:
+        if blocking and threading.get_ident() != self._owner:
+            if self._real.acquire(False):
+                return True
             self.blocked = True
             self._settled.set()
         return self._real.acquire(blocking, timeout)
@@ -163,8 +169,8 @@ class _WatchedScanLock:
 def _run_with_scan_lock_held(fn):
     """Run fn on a thread while the scan lock is held; report whether it returned.
 
-    Success is the thread finishing, a failure is its blocking on the lock.
-    The 30 s wait only bounds a hang; it is not the oracle.
+    Success is the thread finishing BEFORE the lock is released; a failure is
+    its blocking on the lock. The waits only bound a hang; they are not the oracle.
     """
     settled = threading.Event()
     done = threading.Event()
@@ -172,21 +178,28 @@ def _run_with_scan_lock_held(fn):
     lock = _WatchedScanLock(pmm._SCAN_LOCK, settled)
 
     def run():
-        lock.watched = threading.get_ident()
-        out["result"] = fn()
-        done.set()
-        settled.set()
+        try:
+            out["result"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the test thread
+            out["error"] = exc
+        finally:
+            done.set()
+            settled.set()
 
     with patch.object(pmm, "_SCAN_LOCK", lock):
         assert lock.acquire(timeout=5)
         worker = threading.Thread(target=run, daemon=True)
         try:
             worker.start()
-            settled.wait(30)
+            settled.wait(3.0)
+            finished = done.is_set() and not lock.blocked
         finally:
             lock.release()
         worker.join(30)
-    return done.is_set() and not lock.blocked, out.get("result")
+        assert not worker.is_alive(), "the worker never finished after the lock was released"
+    if "error" in out:
+        raise out["error"]
+    return finished, out.get("result")
 
 
 def test_member_erasure_returns_while_scan_lock_is_held_and_rows_are_gone(hh):

@@ -9,6 +9,7 @@ import os
 import time
 import shutil
 import subprocess
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -548,21 +549,36 @@ class RunCommandTests(unittest.TestCase):
         # Like `npm run build` -> sh -> `next build`: the grandchild must die too.
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / "grandchild.pid"
-            script = f"sleep 60 & echo $! > {pid_file}; wait"
+            ready_pipe = Path(tmp) / "ready.fifo"
+            os.mkfifo(ready_pipe)
+            script = f"sleep 60 & echo $! > {pid_file}; echo > {ready_pipe}; wait"
+            ready = threading.Event()
+
+            def await_grandchild():
+                with open(ready_pipe, "rb") as pipe:  # opens once the script writes
+                    pipe.read()
+                ready.set()
+
+            reader = threading.Thread(target=await_grandchild, daemon=True)
+            reader.start()
 
             class ReadyPopen(subprocess.Popen):
                 """Starts the timeout clock only once the grandchild exists."""
 
                 def wait(self, timeout=None):
-                    ready_by = time.monotonic() + 30  # watchdog; the pid file is the event
-                    while not (pid_file.exists() and pid_file.read_text().endswith("\n")):
-                        if time.monotonic() > ready_by:
-                            raise AssertionError("grandchild never started")
-                        time.sleep(0.01)
+                    # The 30 s only bounds a hang; the pipe write is the event.
+                    if not ready.wait(30):
+                        raise AssertionError("grandchild never started")
                     return super().wait(timeout)
 
-            with patch.object(sr.subprocess, "Popen", ReadyPopen):
-                code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+            try:
+                with patch.object(sr.subprocess, "Popen", ReadyPopen):
+                    code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+            finally:
+                if not ready.is_set():  # unblock the reader's open()
+                    with open(ready_pipe, "wb"):
+                        pass
+                reader.join(5)
             self.assertEqual(code, 124)
             grandchild = int(pid_file.read_text())
             deadline = time.time() + 5
