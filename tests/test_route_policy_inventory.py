@@ -163,7 +163,7 @@ def gateway(monkeypatch, tmp_path, request):
     key = mint_user_app_key(session, app["id"], path=paths["admin"])["api_key"]
     # Session routes (/me/api/make/jobs) act as the person's keyless session
     # App, which uses the person's plan: the same plan as this key's App.
-    admin_store.ensure_session_app_for_user(user["id"], name=me_make.APP_NAME, path=paths["admin"])
+    session_app = admin_store.ensure_session_app_for_user(user["id"], name=me_make.APP_NAME, path=paths["admin"])
     headers = {"Authorization": f"Bearer {key}"}
     request = Request({
         "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
