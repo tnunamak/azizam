@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -214,38 +215,41 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
         # An unknown voice is still refused on the default model.
         self.assertEqual(observed['tts-1 voice="nope"']["response"]["json"]["error"]["code"], "voice_not_available")
 
-    def test_the_voice_listing_is_exactly_the_voices_each_model_accepts(self) -> None:
+    def _check_voice_listing(self, model: str) -> None:
+        """The listing is exactly the voices ``model`` accepts. One model per test keeps each sweep short."""
         from tests.engine_p2_differential import _observe_speech
 
         with running_gateway(load_fixture("owner_config.migrated.json")) as (proxy, client, upstream, _root):
-            observed = asyncio.run(_observe_speech(proxy, client, upstream))
-            overall = client.get("/v1/audio/voices").json()
-            for model in _SPEECH_MODELS:
-                resp = client.get("/v1/audio/voices", params={"model": model})
-                refused = observed[f'{model} voice="alloy"']["response"]
-                if refused["status"] != 200:  # no such model, or not deployed in the owner's registry
-                    self.assertEqual((resp.status_code, resp.json()), (refused["status"], refused["json"]), model)
+            observed = asyncio.run(_observe_speech(proxy, client, upstream, (model,)))
+            resp = client.get("/v1/audio/voices", params={"model": model})
+            refused = observed[f'{model} voice="alloy"']["response"]
+            if refused["status"] != 200:  # no such model, or not deployed in the owner's registry
+                self.assertEqual((resp.status_code, resp.json()), (refused["status"], refused["json"]), model)
+                return
+            listing = resp.json()
+            listed = {entry["id"].lower() for entry in listing["voices"]}
+            # Every listed voice is spoken by the model ...
+            for voice in sorted(listed):
+                spoken = client.post("/v1/audio/speech", json={"model": model, "input": "hi", "response_format": "wav", "voice": voice})
+                upstream.take()
+                self.assertEqual(spoken.status_code, 200, f"{model} {voice}")
+            # ... and every voice the harness got spoken is listed.
+            for case, result in observed.items():
+                named, _, voice = case.partition(" voice=")
+                voice = json.loads(voice) if voice else None
+                if named != model or not isinstance(voice, str) or voice in ("", "<omitted>") or voice.startswith("voice_"):
                     continue
-                listing = resp.json()
-                listed = {entry["id"].lower() for entry in listing["voices"]}
-                # Every listed voice is spoken by the model ...
-                for voice in sorted(listed):
-                    spoken = client.post("/v1/audio/speech", json={"model": model, "input": "hi", "response_format": "wav", "voice": voice})
-                    upstream.take()
-                    self.assertEqual(spoken.status_code, 200, f"{model} {voice}")
-                # ... and every voice the harness got spoken is listed.
-                for case, result in observed.items():
-                    named, _, voice = case.partition(" voice=")
-                    voice = json.loads(voice) if voice else None
-                    if named != model or not isinstance(voice, str) or voice in ("", "<omitted>") or voice.startswith("voice_"):
-                        continue
-                    self.assertEqual(result["response"]["status"] == 200, voice.lower() in listed, f"{model} {voice!r}")
-                # Try offers the same voices, without the accepted spellings.
-                choices = proxy._speech_voice_choices(model)
-                if choices is not None:
-                    self.assertEqual([c["id"] for c in choices["voices"]],
-                                     [e["id"] for e in listing["voices"] if not e["alias"]], model)
-                    self.assertEqual(choices["default_voice"], listing["default_voice"], model)
+                self.assertEqual(result["response"]["status"] == 200, voice.lower() in listed, f"{model} {voice!r}")
+            # Try offers the same voices, without the accepted spellings.
+            choices = proxy._speech_voice_choices(model)
+            if choices is not None:
+                self.assertEqual([c["id"] for c in choices["voices"]],
+                                 [e["id"] for e in listing["voices"] if not e["alias"]], model)
+                self.assertEqual(choices["default_voice"], listing["default_voice"], model)
+
+    def test_the_overall_voice_listing_is_the_default_model_listing(self) -> None:
+        with running_gateway(load_fixture("owner_config.migrated.json")) as (_proxy, client, _upstream, _root):
+            overall = client.get("/v1/audio/voices").json()
             self.assertEqual(overall["voices"], client.get("/v1/audio/voices", params={"model": "tts-1"}).json()["voices"])
         # The owner's tts-1 tier is Supertonic then OmniVoice: its codes lead, then the clips and presets.
         self.assertEqual(overall["default_voice"], "F1")
@@ -275,6 +279,14 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
             listing = client.get("/v1/audio/voices").json()
         self.assertNotIn("kokoro", listing["engines"])
 
+
+def _listing_test(model: str):
+    return lambda self: self._check_voice_listing(model)
+
+
+for _model in _SPEECH_MODELS:
+    setattr(SpeechVoiceDifferentialTests,
+            "test_the_voice_listing_is_exactly_the_voices_" + re.sub(r"\W", "_", _model) + "_accepts", _listing_test(_model))
 
 _ENGINE_DEFAULTS = {"supertonic": "F1", "kokoro": "af_heart", "k2-fsa/OmniVoice": "alloy"}
 # The engine a tier's later-listed voices reach in the owner's configuration.

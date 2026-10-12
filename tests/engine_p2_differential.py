@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import tempfile
 from contextlib import ExitStack, contextmanager
@@ -187,22 +188,23 @@ _UNKNOWN_VOICES = ("nope", "Jenny", "voice", "alloy ", " alloy", "alloy-2", "F9"
 _EMPTY_VOICES = ("<omitted>", "", None)
 
 
-async def _observe_speech(proxy: Any, client: Any, upstream: _Upstream) -> dict[str, Any]:
+async def _observe_speech(proxy: Any, client: Any, upstream: _Upstream, models: tuple[str, ...] = _SPEECH_MODELS) -> dict[str, Any]:
     out: dict[str, Any] = {}
     voices = (
         *_EMPTY_VOICES, *_OPENAI_VOICES, *(v.upper() for v in _OPENAI_VOICES), "Marin", "sHiMmEr",
         *_LEGACY_VOICES, "Cheerful_Female", *_PRESET_VOICES, "DE_Female", *_NATIVE_VOICES, *_UNKNOWN_VOICES,
         "voice_0123456789abcdef01234567", {"id": "voice_0123456789abcdef01234567"},
     )
-    for model in _SPEECH_MODELS:
+    for model in models:
         for voice in voices:
             body: dict[str, Any] = {"model": model, "input": "hello there", "response_format": "wav"}
             if voice != "<omitted>":
                 body["voice"] = voice
             resp = client.post("/v1/audio/speech", json=body)
             out[f"{model} voice={json.dumps(voice)}"] = {"response": _response(resp), "upstream": upstream.take()}
-    listing = client.get("/v1/audio/voices")
-    out["GET /v1/audio/voices"] = {"response": _response(listing), "upstream": upstream.take()}
+    if models == _SPEECH_MODELS:
+        listing = client.get("/v1/audio/voices")
+        out["GET /v1/audio/voices"] = {"response": _response(listing), "upstream": upstream.take()}
     return out
 
 
@@ -310,6 +312,13 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
         receipt_store.init_db(root / "receipts.db")
         media_jobs.init_db(root / "media_jobs.db")
         upstream = _Upstream(proxy.httpx, speechlike(11))
+        # Each request opens and closes the stores several times. Closing the last connection of a
+        # WAL database checkpoints and deletes the WAL, which costs an fsync per close and made one
+        # sweep take minutes on a busy host. An idle connection per store keeps the close cheap.
+        for store in (root / "receipts.db", root / "media_jobs.db", proxy.ADMIN_STORE.path):
+            keeper = sqlite3.connect(store)
+            keeper.execute("PRAGMA journal_mode=WAL").fetchone()
+            stack.callback(keeper.close)
         merged = _overlaid_config(proxy.config, fixture, str(root / "voices"))
         for patcher in (
             patch.dict(proxy.config, merged, clear=True),
