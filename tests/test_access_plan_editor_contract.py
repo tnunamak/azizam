@@ -13,7 +13,7 @@ def _registry() -> dict[str, object]:
                                  "config": {"models": [{"id": "extension-public-model"}]}},
             "parked-engine": {"enabled": False, "capabilities": ["image"],
                               "config": {"models": [{"id": "parked-image-model"}]}},
-            "extension-cloud": {"enabled": True, "config": {"provider_type": "paid-remote"}},
+            "extension-cloud": {"enabled": True, "config": {"provider_type": "paid-remote", "api_key_env": "EXTENSION_CLOUD_KEY"}},
         },
         "workflows": {},
     }
