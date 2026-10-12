@@ -47,11 +47,17 @@ def test_copy_key_separates_causes_that_share_a_code() -> None:
 @pytest.mark.parametrize("key", ["input_file_unavailable", "input_not_accepted",
                                   "input_set_by_gateway", "input_mapping_invalid",
                                   "alias_misconfigured", "model_not_deployed"])
-def test_identifiers_are_not_copy_placeholders(key):
-    for audience in ("api", "ui"):
-        layer, message = describe(key, audience=audience, input="input_private_id", model="model_private_id")
-        assert layer in LAYERS
-        assert "private_id" not in message
+def test_only_api_copy_names_the_clients_input_or_model(key):
+    values = {"input": "input_private_id", "model": "model_private_id"}
+    layer, ui = describe(key, **values)
+    assert layer in LAYERS
+    assert "private_id" not in ui
+    # An API client needs to know which of its inputs or models failed.
+    api_layer, api = describe(key, audience="api", **values)
+    assert api_layer == layer
+    assert re.search(r"'(input|model)_private_id'", api)
+    for bad in ("", "x" * 201, "a\nb", 7, None):
+        assert describe(key, audience="api", input=bad, model=bad) == describe("unknown")
 
 
 @pytest.mark.parametrize("value", ["private_id", {}, [], None, True, float("inf"), 10 ** 1000])

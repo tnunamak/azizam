@@ -71,9 +71,9 @@ class AliasUnavailableError(Exception):
     @classmethod
     def public(cls, code: str, model: str, *, fallback_declared: bool = False,
                **details: Any) -> "AliasUnavailableError":
-        layer, message = describe(code, model=model)
+        layer, message = describe(code, audience="api", model=model)
         return cls(message, code=code, fallback_declared=fallback_declared,
-                   details={**details, "model": model, "layer": layer})
+                   details={"layer": layer, **details})
 
 
 @dataclass(frozen=True)

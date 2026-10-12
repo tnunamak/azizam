@@ -82,7 +82,9 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
     "source_pending": ("library", "That picture isn't ready. Wait for it to finish."),
     "source_missing": ("library", "That task didn't produce a picture. Choose another source picture."),
     "input_file_unavailable": ("library", "The input file isn't available. "
-                                          "Send the file again, or choose another one."),
+                                          "Send the file again, or choose another one.",
+                               "The file for input '{input}' isn't available. "
+                               "Send the file again, or choose another one."),
     # The request itself: usually a stale page or a client bug.
     "invalid_since": ("request", "This list can't be refreshed from that point. Refresh the page."),
     "invalid_cursor": ("request", "This page of results can't be loaded. Refresh the list."),
@@ -106,8 +108,10 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
     "one_source": ("request", "Two source pictures were sent. Choose one."),
     "idempotency_conflict": ("request", "This submission was already used for a different request. "
                                         "Refresh the page before you submit again."),
-    "input_not_accepted": ("request", "This workflow doesn't take that input. Remove it and try again."),
-    "input_set_by_gateway": ("request", "The gateway sets that input itself. Remove it and try again."),
+    "input_not_accepted": ("request", "This workflow doesn't take that input. Remove it and try again.",
+                           "This workflow doesn't take input '{input}'. Remove it and try again."),
+    "input_set_by_gateway": ("request", "The gateway sets that input itself. Remove it and try again.",
+                             "The gateway sets input '{input}' itself. Remove it and try again."),
     # The gateway: its queue, its restarts, its configuration.
     "make_unavailable": ("gateway", "Making pictures isn't set up on this gateway. Ask the owner to set it up."),
     "make_busy": ("gateway", "The gateway is busy making other things. Try again in a minute."),
@@ -119,26 +123,44 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
     "restart_while_running": ("gateway", "The gateway restarted while this task was running, and it wasn't run "
                                          "again. Check your Library, then make it again if the picture is missing."),
     "alias_misconfigured": ("gateway", "This model is set up incorrectly on this gateway. "
-                                       "Ask the owner to check it."),
+                                       "Ask the owner to check it.",
+                            "Model '{model}' is set up incorrectly on this gateway. "
+                            "Ask the owner to check it."),
     # What runs the work.
     "model_not_deployed": ("engine", "No engine or provider is running this model right now. "
-                                     "Choose another model, or ask the owner to turn one on."),
+                                     "Choose another model, or ask the owner to turn one on.",
+                           "No engine or provider is running model '{model}' right now. "
+                           "Choose another model, or ask the owner to turn one on."),
     "make_failed": ("unknown", "The picture couldn't be made, and we couldn't tell where it stopped. Try again."),
     "no_picture": ("model", "The model finished without a picture. Try again."),
     "input_mapping_invalid": ("workflow", "An input of this workflow is set up incorrectly. "
-                                          "Ask the owner to check the workflow."),
+                                          "Ask the owner to check the workflow.",
+                              "Input '{input}' of this workflow is set up incorrectly. "
+                              "Ask the owner to check the workflow."),
 }
 
 
+# API copy may name what the client itself sent; member copy never does.
+_IDENTIFIER_FIELDS = frozenset({"input", "model"})
+
+
+def _public_value(name: str, value: Any) -> bool:
+    if name in _IDENTIFIER_FIELDS:
+        return isinstance(value, str) and 0 < len(value) <= 200 and value.isprintable()
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and abs(value) <= 10 ** 12 and math.isfinite(value))
+
+
 def describe(key: str, *, audience: str = "ui", **values: Any) -> tuple[str, str]:
-    """Render one shared entry; only bounded numeric placeholders are public."""
+    """Render one shared entry.
+
+    Numeric placeholders must be bounded numbers. Only API copy names an
+    input or model, the client's own request terms.
+    """
     entry = _COPY.get(key, _COPY[UNKNOWN])
     template = entry[2] if audience == "api" and len(entry) == 3 else entry[1]
     fields = {name for _, name, _, _ in Formatter().parse(template) if name}
-    if any(isinstance(values.get(name), bool)
-           or not isinstance(values.get(name), (int, float))
-           or abs(values[name]) > 10 ** 12 or not math.isfinite(values[name])
-           for name in fields):
+    if not all(_public_value(name, values.get(name)) for name in fields):
         return _COPY[UNKNOWN][0], _COPY[UNKNOWN][1]
     return entry[0], template.format(**values)
 
