@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
+import { MakingTile } from "@/components/product/making-tile";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Select,
@@ -1282,39 +1283,17 @@ function Recent({
           <ul className={cn("grid grid-cols-4", mediaGridGap)}>
             {making.slice(0, 2).map((receipt) => {
               const kind = inFlightKind(receipt);
-              const Icon =
-                kind === "video"
-                  ? Video
-                  : kind === "audio"
-                    ? AudioLines
-                    : ImageIcon;
+              if (!kind) return null;
               const at = receipt.accepted_at_ms
                 ? receipt.accepted_at_ms / 1000
                 : receipt._stored_at;
-              const risk = runningRisk(receipt, views);
               return (
-                <li
-                  key={receipt.request_id}
-                  className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col justify-end gap-1 p-3 max-sm:items-center max-sm:justify-center max-sm:p-2"
-                >
-                  <Icon aria-hidden="true" className="size-5" />
-                  <span className="text-foreground text-meta font-medium max-sm:sr-only">
-                    {kind === "video"
-                      ? "Making your video"
-                      : kind === "audio"
-                        ? "Making your audio"
-                        : "Making your picture"}
-                  </span>
-                  {at ? (
-                    <span className="text-badge max-sm:sr-only">
-                      Started <RelativeTime ts={at} fallback="" />
-                    </span>
-                  ) : null}
-                  {risk ? (
-                    <span className="text-warning text-badge max-sm:sr-only">
-                      {risk}
-                    </span>
-                  ) : null}
+                <li key={receipt.request_id}>
+                  <MakingTile
+                    kind={kind}
+                    startedAt={at}
+                    risk={runningRisk(receipt, views)}
+                  />
                 </li>
               );
             })}

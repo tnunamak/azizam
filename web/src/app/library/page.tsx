@@ -46,6 +46,7 @@ import { toast } from "@/lib/toast";
 
 import { cn } from "@/lib/cn";
 import { formatAbsoluteUTC } from "@/lib/format";
+import { MakingTile } from "@/components/product/making-tile";
 import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
@@ -56,7 +57,6 @@ import {
 } from "@/components/product/key-value";
 import {
   AudioFace,
-  audioKind,
   DayChip,
   mediaGridGap,
   tilePlayButton,
@@ -100,14 +100,12 @@ import {
   tryKeepState,
 } from "@/lib/prompt-memory";
 import {
-  MAKING_COPY,
   dayMarks,
   inProgressMedia,
   modelDisplayName,
   tileDate,
   captionTitle,
   type CapabilityNameRow,
-  type InProgressItem,
 } from "./library-format";
 
 type NameModel = (model: string, workflow?: string | null) => string;
@@ -434,9 +432,9 @@ function UnavailablePreview({
 }) {
   const Icon = kindIcon(kind);
   return (
-    <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-2 p-3 text-center">
+    <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-0.5 p-2 text-center sm:gap-2 sm:p-3">
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
-        <Icon aria-hidden="true" className="mx-auto size-5" />
+        <Icon aria-hidden="true" className="mx-auto size-4 sm:size-5" />
       </div>
       <p className="text-badge font-normal">{copy}</p>
       {onRetry ? (
@@ -582,8 +580,6 @@ function AudioTile({
     <>
       <AudioFace
         peaksKey={assetId}
-        coverSeed={assetId}
-        title={captionTitle(title, title, 56)}
         src={src}
         visible={visible}
         status={errorText || buffering ? <span role="status">{errorText || "Loading audio…"}</span> : null}
@@ -1246,24 +1242,6 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Work the gateway accepted and is still making: calm, not clickable. */
-function InProgressTile({ item }: { item: InProgressItem }) {
-  const Icon = kindIcon(item.kind);
-  return (
-    <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
-      <Icon aria-hidden="true" className="size-5" />
-      <p className="text-foreground text-meta font-medium max-sm:sr-only">
-        {MAKING_COPY[item.kind]}
-      </p>
-      {item.startedAt != null ? (
-        <p className="text-badge font-normal max-sm:sr-only">
-          Started <RelativeTime ts={item.startedAt} fallback="" />
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function AssetTile({
   asset,
   onOpen,
@@ -1284,6 +1262,13 @@ function AssetTile({
   const [makerTooltip, setMakerTooltip] = useState(false);
   const playableAudio =
     asset.kind === "audio" && asset.download_url && asset.available !== false;
+  const hoverTitle = playableAudio
+    ? null
+    : captionTitle(asset.prompt, untitledName(asset), 56);
+  // The first tile of a day already wears the day chip.
+  const hoverDate = day
+    ? null
+    : tileDate(toDateValue(asset.created_at), new Date());
   return (
     <article
       className="group relative min-w-0"
@@ -1363,29 +1348,27 @@ function AssetTile({
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
             a wide screen, hover or keyboard focus shows a short title (whole
-            words, two lines), the maker and the day. The button's name
-            carries the full prompt for screen readers. */}
-        <div
-          aria-hidden="true"
-          className={cn(
-            "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
-            asset.kind === "image" ? "bottom-0" : "bottom-14",
-          )}
-        >
-          {!playableAudio ? (
-            <p className="text-badge line-clamp-2">
-              {captionTitle(asset.prompt, untitledName(asset), 56)}
-            </p>
-          ) : null}
-          <p className="text-foreground/80 text-badge mt-0.5 font-normal">
-            {[
-              everyone ? person : null,
-              tileDate(toDateValue(asset.created_at), new Date()),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-        </div>
+            words, two lines) and the day. The maker is the mark and its
+            tooltip, and the day is not repeated where its chip shows. The
+            button's name carries the full prompt for screen readers. */}
+        {hoverTitle || hoverDate ? (
+          <div
+            aria-hidden="true"
+            className={cn(
+              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+              asset.kind === "image" ? "bottom-0" : "bottom-14",
+            )}
+          >
+            {hoverTitle ? (
+              <p className="text-badge line-clamp-2">{hoverTitle}</p>
+            ) : null}
+            {hoverDate ? (
+              <p className="text-foreground/80 text-badge mt-0.5 font-normal">
+                {hoverDate}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -1744,7 +1727,7 @@ function CreationViewer({
                         as a picture's are (D1.5b: the prompt showed twice). */}
                     <p className="text-muted-foreground text-badge relative flex w-full items-center gap-1.5">
                       <AudioLines aria-hidden="true" className="size-3.5" />
-                      {audioKind(asset.model).label}
+                      Audio
                     </p>
                   </>
                 ) : null}
@@ -2619,12 +2602,12 @@ export default function LibraryPage() {
             <div
               role="group"
               aria-label="Creation makers"
-              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full"
+              className="text-muted-foreground text-meta flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap max-sm:order-last max-sm:w-full max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-1 max-sm:overflow-visible max-sm:whitespace-normal"
             >
               {visiblePeople.map((person) => (
-                <span key={person} className="inline-flex items-center gap-1.5">
+                <span key={person} className="inline-flex min-w-0 items-center gap-1.5">
                   <PersonMark name={person} size="2xs" label={person} />
-                  {person}
+                  <span className="min-w-0 break-words">{person}</span>
                 </span>
               ))}
             </div>
@@ -2728,7 +2711,7 @@ export default function LibraryPage() {
               part-filled rows); the day rides on its first tile. */}
             <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
               {inProgress.map((item) => (
-                <InProgressTile key={item.id} item={item} />
+                <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />
               ))}
               {storedAssets.map((asset, index) => (
                 <AssetTile

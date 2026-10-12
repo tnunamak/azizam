@@ -59,13 +59,26 @@ type RequestPage = {
   sources?: { id: string; label: string }[];
 };
 
+// The title of a request in the words people use, never the stored intent.
+const requestNames: Record<string, string> = {
+  chat: "Chat",
+  image: "Image",
+  video: "Video",
+  speech: "Voice",
+  transcribe: "Transcription",
+  music: "Music",
+  sfx: "Sound effect",
+  audio: "Audio",
+  decide: "Decision",
+  embed: "Embedding",
+  rerank: "Rerank",
+};
 function requestSummary(receipt: Receipt) {
-  const intent = receipt.intent?.replace(/[._-]/g, " ") || "AI request";
-  if (/\bspeech\b/.test(intent)) return "Voice request";
-  if (/\bimage\b/.test(intent)) return "Image request";
-  if (/\bdecision\b|\bdecide\b/.test(intent)) return "Decision request";
-  if (/\bembedding\b|\bembed\b/.test(intent)) return "Embedding request";
-  return intent.charAt(0).toUpperCase() + intent.slice(1);
+  const capability = requestCapability(
+    receipt.intent ?? (receipt as { capability?: string }).capability,
+    receipt.path,
+  );
+  return (capability && requestNames[capability]) || "AI request";
 }
 function outcome(status?: string) {
   return (
@@ -202,7 +215,7 @@ export function Requests() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground text-meta">
-        Receipts show outcome, route and timing without request bodies.
+        Receipts show the outcome, model and time. They do not include what was asked.
       </p>
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-0 space-y-2">
@@ -279,7 +292,12 @@ export function Requests() {
               Try again
             </Button>
           }
-        />
+        >
+          <p>
+            The gateway&apos;s request list could not be loaded. We could not
+            identify the cause. Try again.
+          </p>
+        </Callout>
       ) : rows.length === 0 ? (
         <EmptyState
           icon={ReceiptText}
@@ -320,7 +338,11 @@ export function Requests() {
                 </Button>
               }
             >
-              <p>The requests already loaded are still shown.</p>
+              <p>
+                The gateway&apos;s request list could not be refreshed. We could
+                not identify the cause. The requests already loaded are still
+                shown.
+              </p>
             </Callout>
           )}
           <Card className="gap-0 overflow-hidden p-0! max-sm:p-0!">
@@ -332,15 +354,15 @@ export function Requests() {
                       <button
                         type="button"
                         aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
-                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
+                        className="focus-visible:outline-ring flex min-h-(--row-2) w-full min-w-0 items-center gap-3 px-4 py-2 text-left hover:[&_p:first-child]:underline focus-visible:outline-2 max-sm:min-h-(--row-phone-2)"
                         onClick={() => setSelectedReceiptKey(keys[index])}
                       >
                         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                           <p className="min-w-0 truncate text-body font-medium">
                             {requestSummary(row.receipt)}
                             {row.receipt.parent_request_id && (
-                              <span className="text-muted-foreground ml-2 text-meta font-normal">
-                                Internal execution
+                              <span className="text-muted-foreground block text-meta font-normal">
+                                Part of another request
                               </span>
                             )}
                           </p>
@@ -399,7 +421,11 @@ export function Requests() {
                   </Button>
                 }
               >
-                <p>The requests already loaded are still shown.</p>
+                <p>
+                The gateway&apos;s request list could not be refreshed. We could
+                not identify the cause. The requests already loaded are still
+                shown.
+              </p>
               </Callout>
             )}
             {hasNextPage ? (

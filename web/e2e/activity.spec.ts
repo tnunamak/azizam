@@ -82,12 +82,12 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
     page.getByText("owner@example.test", { exact: true }),
   ).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Show access audit" }).click();
+  await page.getByRole("button", { name: "Show access history" }).click();
   await expect(
     page.getByRole("button", { name: /Viewed everyone’s usage/ }),
   ).toBeVisible();
   expect(requestedFilters).toContain("false");
-  await page.getByRole("button", { name: "Hide access audit" }).click();
+  await page.getByRole("button", { name: "Hide access history" }).click();
   await expect(
     page.getByRole("button", { name: /Viewed everyone’s usage/ }),
   ).toHaveCount(0);
@@ -198,7 +198,7 @@ test("system change labels stay generic until event details are opened", async (
 
   await change.click();
   await page.getByText("Technical details", { exact: true }).click();
-  await expect(page.getByLabel("Technical audit details")).toContainText(rawLabel);
+  await expect(page.getByLabel("Technical change details")).toContainText(rawLabel);
 });
 
 for (const theme of ["light", "dark"] as const) {

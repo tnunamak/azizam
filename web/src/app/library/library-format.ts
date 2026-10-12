@@ -112,12 +112,6 @@ export function inProgressMedia(
   return items;
 }
 
-export const MAKING_COPY: Record<InProgressKind, string> = {
-  image: "Making your picture",
-  video: "Making your video",
-  audio: "Making your audio",
-};
-
 /**
  * A tile caption from a prompt: its first sentence without the framing a
  * prompt opens with ("An overhead photograph of a …", "A …"), so the first
