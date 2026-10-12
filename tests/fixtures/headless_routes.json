@@ -1,30 +1,6 @@
 [
   {
     "method": "GET",
-    "path": "/admin",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_dashboard",
-    "schema": false
-  },
-  {
-    "method": "HEAD",
-    "path": "/admin",
-    "auth": "browser/public",
-    "gate": "Public health check",
-    "handler": "proxy.head_admin",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_dashboard",
-    "schema": false
-  },
-  {
-    "method": "GET",
     "path": "/admin/api/activity/requests",
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
@@ -873,154 +849,10 @@
   },
   {
     "method": "GET",
-    "path": "/admin/apps",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/apps/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/audit",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/audit/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/login",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.admin_login_compat",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/admin/logout",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.admin_logout",
-    "schema": false
-  },
-  {
-    "method": "GET",
     "path": "/admin/oidc/callback",
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
     "handler": "proxy.admin_oidc_callback",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/overview",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/overview/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/profiles",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/profiles/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/services",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/services/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/settings",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/settings/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/status",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/status/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/users",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/admin/users/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "handler": "proxy.admin_react_section_redirect",
     "schema": false
   },
   {
@@ -1080,35 +912,11 @@
     "schema": false
   },
   {
-    "method": "GET",
-    "path": "/logout",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.browser_logout_alias",
-    "schema": false
-  },
-  {
     "method": "POST",
     "path": "/logout",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "proxy.admin_logout",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.user_portal",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.user_portal",
     "schema": false
   },
   {
@@ -1353,34 +1161,10 @@
   },
   {
     "method": "GET",
-    "path": "/me/login",
+    "path": "/setup/console",
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.user_portal_login",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/me/logout",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.user_portal_logout",
-    "schema": false
-  },
-  {
-    "method": "POST",
-    "path": "/me/logout",
-    "auth": "session-only",
-    "gate": "Browser session; mutations require CSRF/action header",
-    "handler": "proxy.admin_logout",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/setup",
-    "auth": "browser/public",
-    "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
-    "handler": "proxy.setup_page",
+    "handler": "proxy.setup_console",
     "schema": false
   },
   {
@@ -1421,22 +1205,6 @@
     "auth": "browser/public",
     "gate": "Browser redirect, sign-in, or first-run guard; no admin bearer contract",
     "handler": "proxy.setup_create_local_owner",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/status",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth",
-    "handler": "proxy.status_dashboard_index",
-    "schema": false
-  },
-  {
-    "method": "GET",
-    "path": "/status/",
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth",
-    "handler": "proxy.status_dashboard_index",
     "schema": false
   },
   {

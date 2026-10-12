@@ -12,7 +12,7 @@ test("You navigation keeps Workflows right after Models", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/ui/");
+  await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   await expect(navigation.getByRole("link")).toHaveText([
     "Home",
@@ -28,7 +28,7 @@ test("You navigation keeps Workflows right after Models", async ({
   await navigation
     .getByRole("link", { name: "Workflows", exact: true })
     .click();
-  await expect(page).toHaveURL(/\/ui\/workflows\/?$/);
+  await expect(page).toHaveURL(/\/workflows\/?$/);
   await expect(
     page.getByRole("heading", { level: 1, name: /^Workflows( \d+)?$/ }),
   ).toBeVisible();
@@ -46,7 +46,7 @@ test("command palette navigates and runs three real actions", async ({
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.goto("/ui/");
+  await page.goto("/");
   await page.keyboard.press("Control+k");
   await expect(
     page.getByRole("dialog", { name: "Go to" }),
@@ -55,7 +55,7 @@ test("command palette navigates and runs three real actions", async ({
     .getByRole("combobox", { name: "Go to" })
     .fill("Models");
   await page.getByRole("option", { name: "Models", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/models\/?$/);
+  await expect(page).toHaveURL(/\/models\/?$/);
   // Both desktop shortcuts are supported, independent of the host platform.
   await page.keyboard.press("Meta+k");
   const discovery = page.waitForResponse((response) =>
@@ -95,7 +95,7 @@ test("command palette navigates and runs three real actions", async ({
     .getByRole("combobox", { name: "Go to" })
     .fill("Create key");
   await page.getByRole("option", { name: "Create key", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/apps\/\?action=create-key/);
+  await expect(page).toHaveURL(/\/apps\/\?action=create-key/);
   await expect(
     page.getByRole("dialog", { name: "New app", exact: true }),
   ).toBeVisible();
@@ -137,7 +137,7 @@ test("command clipboard denial preserves and focuses the exact gateway address",
       json: { recipes: { openai: { canonical_base_url: address } } },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   const trigger = page.getByRole("button", {
     name: "Go to",
     exact: true,
@@ -172,7 +172,7 @@ test("command clipboard denial preserves and focuses the exact gateway address",
 test("command discovery failure offers retry before attempting clipboard writes", async ({
   page,
 }) => {
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   let clipboardWrites = 0;
   await page.exposeFunction("recordClipboardWrite", () => {
     clipboardWrites += 1;
@@ -214,7 +214,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
 test("theme toggle persists after navigation and reload", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: "light" });
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(page.locator("html")).toHaveClass(/light/);
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
@@ -227,7 +227,7 @@ test("phone More and tablet expansion expose every destination", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/");
+  await page.goto("/");
   await page.getByRole("button", { name: "More", exact: true }).click();
   let sheet = page.getByRole("dialog", { name: "Explore your gateway" });
   for (const name of [
@@ -243,7 +243,7 @@ test("phone More and tablet expansion expose every destination", async ({
     await expect(sheet.getByRole("link", { name, exact: true })).toBeVisible();
   }
   await sheet.getByRole("link", { name: "Activity", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/activity\/?$/);
+  await expect(page).toHaveURL(/\/activity\/?$/);
   await expect(sheet).not.toBeVisible();
   await page.setViewportSize({ width: 768, height: 1000 });
   await page.getByRole("button", { name: "Expand navigation" }).click();
@@ -252,7 +252,7 @@ test("phone More and tablet expansion expose every destination", async ({
     sheet.getByRole("link", { name: "Settings", exact: true }),
   ).toBeVisible();
   await sheet.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/settings\/?$/);
+  await expect(page).toHaveURL(/\/settings\/?$/);
 });
 
 test("member shell hides owner controls and makes no owner API calls", async ({
@@ -311,7 +311,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
       },
     }),
   );
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(
     page.getByRole("button", { name: "Account menu" }),
   ).toContainText("Test member");
@@ -338,7 +338,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   for (const name of ownerPages)
     await expect(sheet.getByRole("link", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByRole("heading", { name: "Status", exact: true }),
   ).toBeVisible();
@@ -353,7 +353,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
 for (const width of [1024, 768]) {
   test(`sidebar footer remains reachable at ${width}x768`, async ({ page }) => {
     await page.setViewportSize({ width, height: 768 });
-    await page.goto("/ui/");
+    await page.goto("/");
     await expect(
       page.getByRole("link", { name: "Settings", exact: true }),
     ).toBeVisible();
@@ -371,7 +371,7 @@ for (const width of [1024, 768]) {
       .getByLabel("Gateway health")
       .getByRole("link", { name: /^(View status|See why)$/ })
       .click();
-    await expect(page).toHaveURL(/\/ui\/status\/?$/);
+    await expect(page).toHaveURL(/\/status\/?$/);
   });
 }
 
@@ -384,7 +384,7 @@ test("session failure explains the problem and retry restores the account", asyn
       json: { error: { message: "Unavailable for this test" } },
     }),
   );
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(
     page.getByText("We couldn't tell why your account didn't load. Try again.", { exact: true }),
   ).toBeVisible();
@@ -402,7 +402,7 @@ test("session failure explains the problem and retry restores the account", asyn
 test("phone header navigation has 44px touch targets", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   // Library: Home and Status carry their own verdict instead of the pill.
-  await page.goto("/ui/library/");
+  await page.goto("/library/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });

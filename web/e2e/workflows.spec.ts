@@ -61,7 +61,7 @@ const seededCatalog = {
       },
       native_route: "/v1/workflows/image.product-render/run",
       discovery_url: "/gateway/v1/workflows/image.product-render",
-      try_url: "/ui/try/?workflow=image.product-render",
+      try_url: "/try/?workflow=image.product-render",
     },
     {
       id: "audio.voiceover",
@@ -95,7 +95,7 @@ const seededCatalog = {
       },
       native_route: null,
       discovery_url: "/gateway/v1/workflows/audio.voiceover",
-      try_url: "/ui/try/?workflow=audio.voiceover",
+      try_url: "/try/?workflow=audio.voiceover",
     },
   ],
 };
@@ -177,7 +177,7 @@ async function preparePage(
   await setSurface(page, theme, width);
   await routeWorkflows(page, payload, status);
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
-  const response = await page.goto("/ui/workflows/");
+  const response = await page.goto("/workflows/");
   expect(response?.status()).toBeLessThan(500);
   await expect(
     page.getByRole("heading", { name: /^Workflows/ }),
@@ -284,7 +284,7 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
     await setSurface(page, "light", width);
     await routeWorkflows(page, workflowsPolishCatalog);
     await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
-    await page.goto("/ui/workflows/");
+    await page.goto("/workflows/");
     await page.getByRole("button", { name: /^Details for / }).first().click();
 
     const sheet = page.getByRole("dialog", { name: "Product render" });
@@ -367,7 +367,7 @@ test("missing input and time details stay quiet", async ({
   await setSurface(page, "light", 390);
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
-  await page.goto("/ui/workflows/");
+  await page.goto("/workflows/");
   await openNotSetUp(page);
   await page.getByRole("button", { name: /^Details for / }).nth(1).click();
   const sheet = page.getByRole("dialog", { name: "Voiceover" });
@@ -395,7 +395,7 @@ async function openSeededSheet(
   await setSurface(page, theme, width);
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, seededRecentJobs, 200, requests);
-  await page.goto("/ui/workflows/");
+  await page.goto("/workflows/");
   await page.getByRole("button", { name: /^Details for / }).first().click();
   const sheet = page.getByRole("dialog", { name: "Product render" });
   await expect(sheet).toBeVisible();
@@ -478,7 +478,7 @@ test("workflows loading state stays accessible while the catalog is pending", as
     await route.fulfill({ json: seededCatalog });
   });
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
-  await page.goto("/ui/workflows/", { waitUntil: "domcontentloaded" });
+  await page.goto("/workflows/", { waitUntil: "domcontentloaded" });
 
   await expect(
     page.getByRole("status", { name: "Loading workflows" }),
@@ -667,7 +667,7 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
 
   await expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute(
     "href",
-    "/ui/try/?workflow=image.product-render",
+    "/try/?workflow=image.product-render",
   );
   await expect(
     sheet.getByRole("link", { name: "Machine-readable workflow" }),
@@ -707,7 +707,7 @@ test("workflow sheet recent jobs handles empty records", async ({ page }) => {
   await setSurface(page, "dark", 390);
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
-  await page.goto("/ui/workflows/");
+  await page.goto("/workflows/");
   await openNotSetUp(page);
   await page.getByRole("button", { name: /^Details for / }).nth(1).click();
   await expect(page.getByRole("dialog")).toContainText(
@@ -720,7 +720,7 @@ test("workflow sheet recent jobs handles media errors", async ({ page }) => {
   await setSurface(page, "dark", 390);
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { error: { message: "Unavailable" } }, 503);
-  await page.goto("/ui/workflows/");
+  await page.goto("/workflows/");
   await page.getByRole("button", { name: /^Details for / }).first().click();
   await expect(page.getByRole("dialog")).toContainText(
     /Recent creations could not be loaded|Workflow data could not be loaded/,

@@ -326,7 +326,7 @@ def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_cl
     _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
     accepted = client.post("/auth/api/invite/accept", json={"token": token, "email": "person@example.test", "name": "Person", "password": PASSWORD})
     assert accepted.status_code == 200
-    assert accepted.json()["next"] == "/ui/"
+    assert accepted.json()["next"] == "/"
     assert accepted.json()["credential"]["api_key"]
     assert "httponly" in accepted.headers["set-cookie"].lower()
     assert accepted.headers["cache-control"] == "no-store"
@@ -416,7 +416,7 @@ def test_owner_and_admin_accounts_are_protected_from_people_actions(account_db):
         expect_error("protected_person", lambda: accounts.change_person(user["id"], "owner", remove=True, path=path))
 
 
-def test_proxy_rejects_revoked_session_for_portal_and_browser_before_and_after_reenable(account_db, fast_password_work, monkeypatch):
+def test_proxy_treats_revoked_session_as_signed_out_before_and_after_reenable(account_db, fast_password_work, monkeypatch):
     import proxy
     from gateway.admin_oidc import encode_session_cookie
     from gateway.admin_runtime import AdminSQLiteStore
@@ -432,21 +432,22 @@ def test_proxy_rejects_revoked_session_for_portal_and_browser_before_and_after_r
     raw = encode_session_cookie(session, signing_key=SIGNING_KEY)
     client = TestClient(proxy.app, client=("127.0.0.1", 50000))
     client.cookies.set(cookie.name, raw)
-    assert client.get("/me/api/session").status_code == 200
+    assert client.get("/me/api/session").json()["authenticated"] is True
     accounts.change_person(user["id"], "owner", disabled=True, path=path)
+    # The session reader rejects it; the response clears the revoked cookie.
     denied = client.get("/me/api/session")
-    assert denied.status_code == 401
-    assert denied.json()["error"]["code"] == "session_revoked"
+    assert denied.status_code == 200
+    assert denied.json()["authenticated"] is False
     assert "max-age=0" in denied.headers["set-cookie"].lower()
     accounts.change_person(user["id"], "owner", disabled=False, path=path)
     client.cookies.set(cookie.name, raw)
-    assert client.get("/me/api/session").status_code == 401
+    assert client.get("/me/api/session").json()["authenticated"] is False
     client.cookies.set(cookie.name, raw)
-    redirected = client.get("/ui/", follow_redirects=False)
-    assert redirected.status_code == 303
-    assert redirected.headers["location"] == "/ui/sign-in/"
+    assert client.get("/me/api/home").status_code == 401
     client.cookies.set(cookie.name, raw)
-    assert client.get("/auth/api/options").status_code == 200
+    options = client.get("/auth/api/options")
+    assert options.status_code == 200
+    assert "max-age=0" in options.headers["set-cookie"].lower()
 
 
 def test_invite_acceptance_without_session_signing_key_does_not_consume_link_or_create_account(account_db, account_client, fast_password_work):
@@ -508,11 +509,11 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     assert member.get("/me/api/session").json()["apps"][0]["default_profile_id"] == changed_plan["id"]
     assert rows(path, "SELECT profile_id FROM credentials WHERE id=?", (first_key,))[0]["profile_id"] == changed_plan["id"]
     assert admin.patch(f"/admin/api/people/{user_id}", headers=owner_csrf, json={"disabled": True}).status_code == 200
-    assert member.get("/me/api/session").status_code == 401
+    assert member.get("/me/api/session").json()["authenticated"] is False
     assert member.post("/auth/api/login", json={"email": "member@example.test", "password": PASSWORD}).status_code == 401
     assert admin.patch(f"/admin/api/people/{user_id}", headers=owner_csrf, json={"disabled": False}).status_code == 200
     member.cookies.set(cookie.name, old_cookie, domain="testserver.local", path="/")
-    assert member.get("/me/api/session").status_code == 401
+    assert member.get("/me/api/session").json()["authenticated"] is False
     assert rows(path, "SELECT revoked_at FROM credentials WHERE id=?", (first_key,))[0]["revoked_at"] is not None
     assert member.post("/auth/api/login", json={"email": "member@example.test", "password": PASSWORD}).status_code == 200
     reset = admin.post(f"/admin/api/people/{user_id}/reset", json={}, headers=owner_csrf)
@@ -522,10 +523,10 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     new_password = "a replacement member password"
     assert member.post("/auth/api/password-reset", json={"token": reset_token, "password": new_password}).status_code == 200
     member.cookies.set(cookie.name, pre_reset_cookie, domain="testserver.local", path="/")
-    assert member.get("/me/api/session").status_code == 401
+    assert member.get("/me/api/session").json()["authenticated"] is False
     assert member.post("/auth/api/login", json={"email": "member@example.test", "password": new_password}).status_code == 200
     assert admin.delete(f"/admin/api/people/{user_id}", headers=owner_csrf).status_code == 200
-    assert member.get("/me/api/session").status_code == 401
+    assert member.get("/me/api/session").json()["authenticated"] is False
     assert user_id not in {person["id"] for person in admin.get("/admin/api/people").json()["people"]}
 
 
@@ -698,11 +699,11 @@ def test_people_excludes_key_claim_placeholders_and_reports_protected_oidc_users
     assert result[0]["builtin"] is False
 
 
-@pytest.mark.parametrize("target", ["/ui/", "/ui/invite/", "/ui/sign-in/"])
+@pytest.mark.parametrize("target", ["/", "/invite/", "/sign-in/"])
 def test_oidc_returns_to_the_product_account_page(target):
     import proxy
     assert proxy._safe_admin_return_to(target) == target
-    assert proxy._safe_admin_return_to("//evil.example" + target) == "/ui/home/"
+    assert proxy._safe_admin_return_to("//evil.example" + target) == "/"
 
 
 def test_account_connection_closes_and_rolls_back_failed_work(account_db):
@@ -743,12 +744,11 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
 
 
 @pytest.mark.parametrize("target,expected", [
-    ("/ui/home/", "/ui/home/"),
-    ("/ui/usage/?receipt=abc#details", "/ui/usage/?receipt=abc#details"),
-    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
-    ("/ui/admin/profiles/?plan=family", "/ui/people/?tab=plans&plan=family"),
-    ("/me?tab=keys", "/ui/home/?tab=keys"),
-    ("https://evil.example", "/ui/home/"), ("//evil.example", "/ui/home/"), (None, "/ui/home/"),
+    ("/", "/"),
+    ("/usage/?receipt=abc#details", "/usage/?receipt=abc#details"),
+    ("/people/?tab=plans&plan=family", "/people/?tab=plans&plan=family"),
+    ("/ui/home/", "/"), ("/admin/services?service=tts", "/"), ("/me?tab=keys", "/"),
+    ("https://evil.example", "/"), ("//evil.example", "/"), (None, "/"),
 ])
 def test_builtin_login_uses_safe_product_return_path(account_db, account_client, fast_password_work, target, expected):
     from urllib.parse import parse_qs, urlsplit

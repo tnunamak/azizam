@@ -98,7 +98,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeWorkflows(page, "seeded");
 
-      await page.goto("/ui/workflows/");
+      await page.goto("/workflows/");
       await expect(
         page.getByText("Choose by purpose and inputs."),
       ).toBeVisible();
@@ -129,7 +129,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeWorkflows(page, "empty");
 
-      await page.goto("/ui/workflows/");
+      await page.goto("/workflows/");
       await expect(page.getByText("No workflows available")).toBeVisible();
       await auditPage(page);
       await page.screenshot({
@@ -141,7 +141,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await routeWorkflows(page, "error");
 
-      await page.goto("/ui/workflows/");
+      await page.goto("/workflows/");
       await expect(
         page.getByText("Workflows catalog could not be loaded. Try again."),
       ).toBeVisible();
@@ -158,7 +158,7 @@ for (const mode of ["light", "dark"] as const) {
       await setViewportAndTheme(page, mode, width);
       await page.route("**/me/api/workflows", () => undefined);
 
-      await page.goto("/ui/workflows/");
+      await page.goto("/workflows/");
       await expect(
         page.getByRole("status", { name: "Loading workflows" }),
       ).toBeVisible();

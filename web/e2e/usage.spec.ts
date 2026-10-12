@@ -68,7 +68,7 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   await page.route("**/me/api/usage/summary?**", (route) =>
     route.fulfill({ json: seededSummary }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
   await page.getByText("Receipt coverage", { exact: true }).click();
   await expect(page.getByText("Receipts are kept until you delete them.")).toBeVisible();
@@ -125,7 +125,7 @@ test("usage omits the model line when only the capability is known", async ({
     }),
   );
 
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   const transcriptionRow = page
     .getByRole("table", { name: "Models" })
     .getByRole("row")
@@ -153,7 +153,7 @@ for (const theme of ["light", "dark"] as const) {
           },
         }),
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(
         page.getByText("No requests in this period", { exact: true }),
       ).toBeVisible();
@@ -178,7 +178,7 @@ for (const theme of ["light", "dark"] as const) {
         }
         return route.fulfill({ json: seededSummary });
       });
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(
         page.getByText("Usage could not be loaded", { exact: true }),
       ).toBeVisible();
@@ -202,7 +202,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/me/api/usage/summary?**", (route) =>
         route.fulfill({ json: seededSummary }),
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
       await expect(
         page.locator('[aria-label="Loading your account"]'),
@@ -251,7 +251,7 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
       },
     }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   const remoteSpendCard = page
     .getByLabel("This month")
     .getByText("Spend", { exact: true })
@@ -283,7 +283,7 @@ test("usage reads the real account summary and seeded receipt", async ({
         receipt.requested_model === "demo-chat",
     ),
   ).toBe(true);
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await page.getByRole("button", { name: "View recent requests" }).click();
   await expect(
     page
@@ -313,7 +313,7 @@ test("Usage person filter does not promote an email address to a person name", a
       },
     }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
 
   await page.getByRole("combobox", { name: "Person" }).click();
   const people = page.getByRole("option", { name: /^Person name not recorded/ });
@@ -360,7 +360,7 @@ for (const theme of ["dark", "light"] as const) {
     await page.route("**/me/api/usage/summary?**", (route) =>
       route.fulfill({ json: phoneSummary }),
     );
-    await page.goto("/ui/usage/");
+    await page.goto("/usage/");
     await expect(page.getByText("Top models by requests")).toBeVisible();
     await expectNoHorizontalOverflow(page);
 
@@ -398,7 +398,7 @@ test("usage model table shows names, never a path, and a consistent Cost", async
       },
     }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   const table = page.getByRole("table").filter({ hasText: "Task and model" });
   await expect(table).toBeVisible();
   const text = await table.innerText();
@@ -456,7 +456,7 @@ test("usage Source list stays on screen, scrolls inside itself and ranks apps", 
   await page.route("**/me/api/usage/summary?**", (route) =>
     route.fulfill({ json: { ...phoneSummary, sources: manySources } }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByText("Top models by requests")).toBeVisible();
   await page.getByRole("combobox", { name: "Source" }).click();
   const list = page.getByRole("listbox");
@@ -498,7 +498,7 @@ test("usage Source list does not push the page wider on a phone", async ({ page 
   await page.route("**/me/api/usage/summary?**", (route) =>
     route.fulfill({ json: { ...phoneSummary, sources: manySources } }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await page.getByRole("combobox", { name: "Source" }).click();
   await page.keyboard.press("End");
   await expectNoHorizontalOverflow(page);
@@ -512,7 +512,7 @@ test("usage distinguishes partial totals, missing breakdowns and genuine zero", 
     ? { requests: null, media_count: 0 }
     : { requests: 2, media_count: 0, by_day: [], by_model: [], receipts: [] }
   }));
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
   await expect(page.getByText("No requests in this period")).toHaveCount(0);
   partial = false;

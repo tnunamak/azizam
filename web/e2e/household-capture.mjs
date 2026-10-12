@@ -26,11 +26,11 @@ const browserLocale = "en-US";
 const browserTimezone = "America/Chicago";
 const baseURL = `http://127.0.0.1:${port}`;
 const routes = [
-  ["home", "/ui/home/"], ["apps", "/ui/apps/"], ["models", "/ui/models/"],
-  ["workflows", "/ui/workflows/"], ["try", "/ui/try/"], ["library", "/ui/library/"],
-  ["usage", "/ui/usage/"], ["status", "/ui/status/"], ["engines", "/ui/engines/"],
-  ["providers", "/ui/providers/"], ["people", "/ui/people/"],
-  ["activity", "/ui/activity/"], ["settings", "/ui/settings/"],
+  ["home", "/"], ["apps", "/apps/"], ["models", "/models/"],
+  ["workflows", "/workflows/"], ["try", "/try/"], ["library", "/library/"],
+  ["usage", "/usage/"], ["status", "/status/"], ["engines", "/engines/"],
+  ["providers", "/providers/"], ["people", "/people/"],
+  ["activity", "/activity/"], ["settings", "/settings/"],
 ];
 const captures = [];
 const skipped = [];
@@ -138,7 +138,7 @@ async function settled(page) {
 
 async function login(context, account, base) {
   const page = await context.newPage();
-  await page.goto(`${base}/ui/sign-in/`);
+  await page.goto(`${base}/sign-in/`);
   await page.getByLabel("Email", { exact: true }).fill(account.email);
   await page.getByLabel("Password", { exact: true }).fill(account.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -158,9 +158,9 @@ async function prepareLibraryMedia(page, entry) {
     const pause = page.getByRole("button", { name: /^Pause / }).first();
     await pause.click();
     await audio.evaluate(item => { item.pause(); item.currentTime = 0; });
-    mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "audio", result: "decoded-and-played", duration_seconds: duration });
+    mediaChecks.push({ view: entry.view, route: "/library/", media: "audio", result: "decoded-and-played", duration_seconds: duration });
   } else {
-    mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "audio", result: "unavailable" });
+    mediaChecks.push({ view: entry.view, route: "/library/", media: "audio", result: "unavailable" });
   }
 
   const video = page.locator("article video").first();
@@ -178,9 +178,9 @@ async function prepareLibraryMedia(page, entry) {
       item.currentTime = 0;
     }));
     await page.evaluate(() => window.scrollTo(0, 0));
-    mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "video", result: "frame-decoded-and-paused", duration_seconds: duration });
+    mediaChecks.push({ view: entry.view, route: "/library/", media: "video", result: "frame-decoded-and-paused", duration_seconds: duration });
   } else {
-    mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "video", result: "unavailable" });
+    mediaChecks.push({ view: entry.view, route: "/library/", media: "video", result: "unavailable" });
   }
 }
 
@@ -261,7 +261,7 @@ try {
 async function captureInteractions(page, { view, theme, width, base }) {
   const shot = async (route, interaction) => capture(page, { route, view, interaction, theme, width, state: "settled" });
   const skip = (route, interaction, reason) => skipped.push({ route, view, interaction, theme, width, reason });
-  await page.goto(`${base}/ui/status/`);
+  await page.goto(`${base}/status/`);
   await settled(page);
   const showAll = page.locator("main").getByRole("button", { name: "Show all", exact: true }).first();
   if (await showAll.count()) { await showAll.click(); await shot("status", "show-all"); }
@@ -269,7 +269,7 @@ async function captureInteractions(page, { view, theme, width, base }) {
   if (await alert.count()) { await alert.click(); await shot("status", "alert"); }
   else await shot("status", "alert-state"); // A healthy gateway has no alert, so this is not a skipped state.
 
-  await page.goto(`${base}/ui/engines/`);
+  await page.goto(`${base}/engines/`);
   await settled(page);
   const showNotInUse = page.getByRole("switch", { name: "Show not in use" });
   if (await showNotInUse.count()) {
@@ -277,19 +277,19 @@ async function captureInteractions(page, { view, theme, width, base }) {
     await shot("engines", "show-not-in-use");
   } else skip("engines", "show-not-in-use", "Show not in use control was not rendered");
 
-  await page.goto(`${base}/ui/apps/`);
+  await page.goto(`${base}/apps/`);
   await settled(page);
   const newApp = page.getByRole("button", { name: "New app", exact: true }).first();
   if (await newApp.count()) { await newApp.click(); await shot("apps", "new-app"); }
   else skip("apps", "new-app", "New app control was not rendered");
 
-  await page.goto(`${base}/ui/people/?tab=invites`);
+  await page.goto(`${base}/people/?tab=invites`);
   await settled(page);
   const invite = page.getByRole("button", { name: /invite someone/i }).first();
   if (await invite.count()) { await invite.click(); await shot("people", "invite"); }
   else skip("people", "invite", "Invite someone control was not rendered");
 
-  await page.goto(`${base}/ui/library/`);
+  await page.goto(`${base}/library/`);
   await settled(page);
   const detail = page.getByRole("button", { name: /^Open / }).first();
   if (await detail.count()) { await detail.click(); await shot("library", "detail"); }
@@ -317,7 +317,7 @@ async function captureTryResult({ theme, width }) {
   const context = await newContext(seed, { width, theme });
   await login(context, { email: seed.owner_email, password: seed.password }, seed.base_url);
   const page = await context.newPage();
-  await page.goto(`${seed.base_url}/ui/try/`);
+  await page.goto(`${seed.base_url}/try/`);
   await settled(page);
   const run = page.getByRole("button", { name: "Run", exact: true }).first();
   await page.waitForFunction(() => {
@@ -335,7 +335,7 @@ async function capturePeopleViews(page, { view, theme, width }) {
   for (const tab of ["Invites", "Access plans"]) {
     const control = page.getByRole("tab", { name: tab, exact: true });
     if (!(await control.count())) {
-      skipped.push({ route: "/ui/people/", view, interaction: `tab-${tab.toLowerCase().replaceAll(" ", "-")}`, theme, width, state: "unavailable", reason: "Tab was not rendered for this viewer" });
+      skipped.push({ route: "/people/", view, interaction: `tab-${tab.toLowerCase().replaceAll(" ", "-")}`, theme, width, state: "unavailable", reason: "Tab was not rendered for this viewer" });
       continue;
     }
     await control.click();
@@ -347,7 +347,7 @@ async function captureActivityViews(page, { view, theme, width }) {
   for (const tab of ["Changes", "Requests"]) {
     const control = page.getByRole("tab", { name: tab, exact: true });
     if (!(await control.count())) {
-      skipped.push({ route: "/ui/activity/", view, interaction: `tab-${tab.toLowerCase()}`, theme, width, state: "unavailable", reason: "Tab was not rendered for this viewer" });
+      skipped.push({ route: "/activity/", view, interaction: `tab-${tab.toLowerCase()}`, theme, width, state: "unavailable", reason: "Tab was not rendered for this viewer" });
       continue;
     }
     await control.click();

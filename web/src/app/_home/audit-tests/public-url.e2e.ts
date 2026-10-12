@@ -26,7 +26,7 @@ test("Home uses the saved public URL without assuming every key can call Chat", 
     const home = await (await request.get("/me/api/home")).json();
     expect(home.public_base_url).toBe(publicUrl);
     expect(home.api_base_url).toBe(`${publicUrl}/v1`);
-    await page.goto("/ui/home/");
+    await page.goto("/");
     await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     await expect(
       page.getByRole("textbox", { name: "Base URL", exact: true }),

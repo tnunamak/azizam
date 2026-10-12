@@ -204,7 +204,7 @@ class UIStaticFiles(StaticFiles):
 
     @staticmethod
     def _is_hashed_ui_asset(scope: dict[str, Any], filename: str) -> bool:
-        return (scope["path"].startswith("/ui/_next/static/")
+        return (scope["path"].startswith("/_next/static/")
                 and _HASHED_FILENAME.search(filename) is not None)
 
     @staticmethod

@@ -9,7 +9,7 @@ const selectionVariable = /^(?:model|voice|modelId|voiceId|selectedModel|selecte
 
 // These are capability names or UI labels, not selected model or voice IDs.
 const capabilityMaps: Record<string, string[]> = {
-  "app/home/presentation.ts": ["names"],
+  "app/_home/presentation.ts": ["names"],
   "app/people/people-api.ts": ["labels", "INVITEE_TASKS"],
   "app/try/page.tsx": ["CAPABILITY_TABS"],
   "app/usage/page.tsx": ["requestNouns"],

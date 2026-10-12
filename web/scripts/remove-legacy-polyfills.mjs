@@ -18,13 +18,11 @@ for (const htmlFile of htmlFiles) {
     if (!src) throw new Error(`Legacy script in ${htmlFile} has no source`);
     const url = new URL(src, "https://azizam.invalid");
     if (
-      !/^\/ui\/_next\/static\/chunks\/polyfills-[\w-]+\.js$/.test(url.pathname)
+      !/^\/_next\/static\/chunks\/polyfills-[\w-]+\.js$/.test(url.pathname)
     ) {
       throw new Error(`Unexpected legacy script in ${htmlFile}`);
     }
-    polyfillFiles.add(
-      path.resolve(output, url.pathname.replace(/^\/ui\//, "")),
-    );
+    polyfillFiles.add(path.resolve(output, url.pathname.slice(1)));
     removedTags += 1;
     return "";
   });

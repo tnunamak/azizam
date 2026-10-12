@@ -54,7 +54,7 @@ test("health popover explains a measured outage and links to Status", async ({
     ];
     await route.fulfill({ json: home });
   });
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   // The owner alert reports the engine fault, while the capability has no
   // measured route evidence: the health line says it is not checked yet.
   await page
@@ -72,7 +72,7 @@ test("health popover explains a measured outage and links to Status", async ({
   ).toEqual([]);
   await expect(
     explanation.getByRole("link", { name: "See why" }),
-  ).toHaveAttribute("href", "/ui/status/");
+  ).toHaveAttribute("href", "/status/");
   await page.keyboard.press("Escape");
   // Off-page owner alerts hand keyboard focus to the affected section. The
   // target page already shows those diagnostics and must not repeat the banner.
@@ -83,7 +83,7 @@ test("health popover explains a measured outage and links to Status", async ({
   const action = banner.getByRole("link", { name: "See Status", exact: true });
   await action.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
+  await expect(page).toHaveURL(/\/status\/?#engines$/);
   // D1: engines and providers share one section on Status.
   await expect(
     page.getByRole("heading", {
@@ -167,14 +167,14 @@ test("member health uses their allowed models and never requests owner diagnosti
       },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await page.getByRole("button", { name: "Gateway status: 1 issue" }).click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText("Your AIImages down");
   await expect(explanation).toContainText("GatewayReachable");
   await expect(
     explanation.getByRole("link", { name: "See why" }),
-  ).toHaveAttribute("href", "/ui/status/");
+  ).toHaveAttribute("href", "/status/");
   expect(ownerRequests).toEqual([]);
 });
 
@@ -209,7 +209,7 @@ test("an unreachable gateway takes priority over unavailable member models", asy
   await page.route("**/health", (route) =>
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await page
     .getByRole("button", { name: "Gateway status: Gateway unreachable" })
     .click();

@@ -13,33 +13,22 @@ from gateway.admin_oidc import (
 
 
 @pytest.mark.parametrize("target", [
-    "/ui/home/", "/ui/models/?capability=chat", "/ui/people/?tab=plans",
-    "/ui/usage/?receipt=abc#details", "/ui/invite/#token=opaque", "/setup", "/status/raw?tab=engines",
+    "/", "/models/?capability=chat", "/people/?tab=plans",
+    "/usage/?receipt=abc#details", "/invite/#token=opaque", "/setup/", "/status/raw?tab=engines",
 ])
 def test_product_return_paths_keep_queries_and_fragments(target):
     assert safe_browser_return_to(target) == target
 
 
-@pytest.mark.parametrize("target,expected", [
-    ("/?welcome=yes", "/ui/home/?welcome=yes"),
-    ("/me?tab=keys#app", "/ui/home/?tab=keys#app"),
-    ("/status?engine=tts", "/ui/status/?engine=tts"),
-    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
-    ("/ui/admin/profiles/?plan=family#details", "/ui/people/?tab=plans&plan=family#details"),
-    ("/admin/settings?tab=sign-in", "/ui/settings/?tab=sign-in"),
-])
-def test_legacy_return_paths_use_product_destinations(target, expected):
-    assert safe_browser_return_to(target) == expected
-
-
 @pytest.mark.parametrize("target", [
-    None, "", "https://evil.example/ui/home/", "//evil.example/ui/home/",
-    "/\\evil.example/ui/home/", "/%5cevil.example/ui/home/", "/%2fevil.example/ui/home/",
-    "/ui/home/%0d%0aLocation:evil", "/ui/home/\x00", "/administrator", "/v1/models",
-    "/admin/api/services", "/ui/admin/unknown", "/admin/unknown",
+    None, "", "https://evil.example/library/", "//evil.example/library/",
+    "/\\evil.example/library/", "/%5cevil.example/library/", "/%2fevil.example/library/",
+    "/library/%0d%0aLocation:evil", "/library/\x00", "/administrator", "/v1/models",
+    "/admin/api/services", "/admin/unknown", "/admin/services?service=tts", "/me?tab=keys",
+    "/ui/home/", "/ui/usage/?receipt=abc", "/status?engine=tts", "/setup",
 ])
-def test_unsafe_return_paths_fall_back_to_home(target):
-    assert safe_browser_return_to(target) == "/ui/home/"
+def test_unsafe_or_removed_return_paths_fall_back_to_home(target):
+    assert safe_browser_return_to(target) == "/"
 
 
 def config():
@@ -96,8 +85,8 @@ def browser_gateway(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("public_origin", ["", "https://ai.vivid.fish"])
 @pytest.mark.parametrize("target,return_page", [
-    ("/ui/usage/?receipt=abc#details", "/ui/usage/?receipt=abc#details"),
-    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
+    ("/usage/?receipt=abc#details", "/usage/?receipt=abc#details"),
+    ("/ui/usage/?receipt=abc", "/"),
 ])
 def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, monkeypatch, public_origin, target, return_page):
     proxy, client, path = browser_gateway
@@ -141,7 +130,7 @@ def test_local_owner_login_returns_to_product_page(browser_gateway, monkeypatch)
                           follow_redirects=False)
     assert created.status_code == 303, created.text
     client.cookies.clear()
-    target = "/ui/settings/?tab=sign-in"
+    target = "/settings/?tab=sign-in"
     login = client.post("/setup/local-login", data={"email": "owner@example.test", "password": "correct-horse-battery", "return_to": target}, follow_redirects=False)
     assert login.status_code == 303, login.text
     assert login.headers["location"] == target

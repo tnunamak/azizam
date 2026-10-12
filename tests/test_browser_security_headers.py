@@ -2,23 +2,23 @@
 import ast
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 
 def test_browser_media_csp_allows_generated_audio_without_widening_scripts():
     tree = ast.parse((Path(__file__).parents[1] / "proxy.py").read_text())
-    names = {"_HTML_CONTENT_TYPES", "_BROWSER_UI_PREFIXES", "_SECURITY_HEADERS"}
+    names = {"_HTML_CONTENT_TYPES", "_BROWSER_UI_PREFIXES", "_SECURITY_HEADERS", "_BROWSER_AUTH_PATHS"}
     nodes = [node for node in tree.body if isinstance(node, ast.Assign)
              and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)]
-    nodes += [node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
-              and node.name == "_security_headers_middleware"]
+    nodes += [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+              and node.name in {"_security_headers_middleware", "_mark_browser_auth_response"}]
     app = FastAPI()
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "proxy-security-headers", "exec"),
-         {"app": app, "Request": Request})
+         {"app": app, "Request": Request, "Response": Response})
 
-    @app.get("/ui/try/")
+    @app.get("/try/")
     def try_page():
         return HTMLResponse("<audio controls></audio>")
 
@@ -27,7 +27,7 @@ def test_browser_media_csp_allows_generated_audio_without_widening_scripts():
         return {"ok": True}
 
     with TestClient(app) as client:
-        for path in ("/ui/try/", "/me/api/home"):
+        for path in ("/try/", "/me/api/home"):
             response = client.get(path)
             assert response.status_code == 200
             directives = dict(part.strip().split(" ", 1) for part in response.headers["content-security-policy"].split(";") if part.strip())

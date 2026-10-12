@@ -60,7 +60,7 @@ for (const theme of ["light", "dark"]) {
             },
           });
         });
-        await page.goto("/ui/providers/");
+        await page.goto("/providers/");
         await expect(
           page.getByRole("heading", { name: "Providers", exact: true }),
         ).toBeVisible();

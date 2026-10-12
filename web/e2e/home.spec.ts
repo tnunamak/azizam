@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { chatAlias } from "../src/app/home/recipes";
+import { chatAlias } from "../src/app/_home/recipes";
 
-const homePath = "/ui/home/";
+const homePath = "/";
 const homeApi = "**/me/api/home";
 const mediaApi = "**/me/api/media?limit=50";
 const setupApi = "**/admin/api/setup-progress";
@@ -261,7 +261,7 @@ for (const theme of ["light", "dark"] as const) {
             (app: { name: string }) => app.name === "Browser test app",
           );
           expect(seededApp?.credentials.length).toBeGreaterThan(0);
-          const thumbnail = page.locator('a[href^="/ui/library/?asset="] img');
+          const thumbnail = page.locator('a[href^="/library/?asset="] img');
           await expect(thumbnail).toHaveCount(1);
           await thumbnail.scrollIntoViewIfNeeded();
           await expect
@@ -449,9 +449,9 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
   await expect(page.getByLabel("Loading Home")).toHaveCount(0);
 });
 
-test("signed-in landing redirects to Home", async ({ page }) => {
-  await page.goto("/ui/");
-  await expect(page).toHaveURL(/\/ui\/home\/$/);
+test("signed-in root shows Home", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await openClientInstructionsOnPhone(page, 1280);
   await expect(
     page.getByRole("button", { name: "Open WebUI", exact: true }),
@@ -779,13 +779,15 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     await page
       .getByRole("link", { name: "View request receipt", exact: true })
       .click();
-    await expect(page).toHaveURL(new RegExp(`/r/${connection.request_id}$`));
-    await expect(
-      page.getByRole("dialog", { name: "Request detail", exact: true }),
-    ).toBeVisible();
-    await expect(page.locator("#receipt-body")).toContainText(
-      connection.request_id,
-    );
+    await expect(page).toHaveURL(new RegExp(`/usage/\\?receipt=${connection.request_id}$`));
+    // /usage/?receipt= opens the Usage receipt sheet (the /r/<id> page is gone).
+    const sheet = page.getByRole("dialog", {
+      name: "Request receipt",
+      exact: true,
+    });
+    await expect(sheet).toBeVisible();
+    await sheet.getByText("Technical details", { exact: true }).click();
+    await expect(sheet).toContainText(`Request ID: ${connection.request_id}`);
   } finally {
     expect(
       (

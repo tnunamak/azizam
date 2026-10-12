@@ -20,6 +20,7 @@ from gateway import accounts, admin_store, providers, receipt_store
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
+from gateway.ui_routes import UiRoute
 from gateway.ui_static import UIStaticFiles
 import test_proxy_admin_integration as admin_integration
 
@@ -36,10 +37,10 @@ def _inventoried(path):
 def _registered_routes(routes):
     rows = []
     for path, route in walk_routes(routes):
+        if type(route) is UiRoute:
+            # The web export: registry pages, payloads and assets only (test_ui_routes).
+            continue
         if isinstance(route, Mount):
-            if path == "/ui" and route.name == "web_ui" and type(route.app) is UIStaticFiles:
-                # Static export only; owner page paths are guarded by middleware.
-                continue
             assert route.routes, f"Unclassified opaque mount: {path}"
             continue
         assert isinstance(route, (Route, WebSocketRoute)), f"Unclassified route type: {path}"
@@ -101,13 +102,13 @@ def test_walk_preserves_nested_mount_prefixes_and_http_and_websocket_methods():
     ]
 
 
-def test_only_named_ui_static_mount_is_exempt(tmp_path):
-    static = UIStaticFiles(directory=tmp_path)
-    assert _registered_routes([Mount("/ui", app=static, name="web_ui")]) == []
-    for route in (Mount("/admin/static", app=static, name="web_ui"),
-                  Mount("/ui", app=static, name="other")):
-        with pytest.raises(AssertionError, match="opaque mount"):
-            _registered_routes([route])
+def test_only_the_ui_route_type_is_exempt(tmp_path):
+    async def guard(request, name):
+        return None
+
+    assert _registered_routes([UiRoute(tmp_path, guard)]) == []
+    with pytest.raises(AssertionError, match="opaque mount"):
+        _registered_routes([Mount("/ui", app=UIStaticFiles(directory=tmp_path), name="web_ui")])
 
 
 def test_owner_schema_describes_nested_mounts_and_rejects_unsupported_http_routes():
@@ -360,7 +361,7 @@ def test_every_owner_route_reaches_handler_with_owner_bearer(row, principals, ga
             assert response.json()["error"]["code"] in HANDLER_ERRORS, (
                 row["method"], row["path"], response.json()["error"]["code"])
         elif response.is_redirect:
-            assert response.headers["location"].startswith("/ui/")
+            assert response.headers["location"].startswith("/") and not response.headers["location"].startswith("//")
     assert _database_contents(gateway_test_state_dir) == before
     assert _database_contents(principals.db.parent) == fixture_before
     assert _drain_state() == drain_before
@@ -391,7 +392,7 @@ def test_session_only_routes_do_not_accept_standalone_owner_bearer(row, principa
         headers=principals._auth(), follow_redirects=False)
     assert response.status_code in {401, 403, 302, 303}, (row["method"], row["path"], response.status_code)
     if response.is_redirect:
-        assert response.headers["location"] in {"/setup", "/ui/sign-in/"}
+        assert response.headers["location"] in {"/setup/", "/sign-in/"}
 
 
 @pytest.mark.parametrize("row", [row for row in INVENTORY if row["auth"] == "session-view"],

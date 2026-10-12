@@ -3,15 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement, Profiler } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import HomePage from "@/app/home/page";
-import { homeApi } from "@/app/home/home-api";
+import HomePage from "@/app/_home/home-page";
+import { homeApi } from "@/app/_home/home-api";
 import { accountApi } from "@/lib/account-api";
-import { chatAlias } from "@/app/home/recipes";
+import { chatAlias } from "@/app/_home/recipes";
 import {
   capabilitySummary,
   capabilityTiles,
-} from "@/app/home/presentation";
-import type { HomeAlias, HomeCapability } from "@/app/home/home-api";
+} from "@/app/_home/presentation";
+import type { HomeAlias, HomeCapability } from "@/app/_home/home-api";
 
 vi.mock("@/components/shell/session", () => ({
   useViewer: () => ({ role: "member", admin: false, name: "Alex" }),

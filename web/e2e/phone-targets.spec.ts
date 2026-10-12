@@ -219,7 +219,7 @@ test.describe("phone target primitives", () => {
       }) => {
         await mockEngineApis(page);
         await setTheme(page, theme, width);
-        await page.goto("/ui/engines/");
+        await page.goto("/engines/");
         await expect(
           page.getByRole("heading", { name: "Engines", level: 1 }),
         ).toBeVisible();
@@ -317,7 +317,7 @@ test.describe("phone target primitives", () => {
       page,
     }) => {
       await setTheme(page, theme, 390);
-      await page.goto("/ui/design/");
+      await page.goto("/design/");
       await expect(
         page.getByRole("heading", { name: "Design system", level: 1 }),
       ).toBeVisible();
@@ -373,7 +373,7 @@ test.describe("phone target primitives", () => {
       page,
     }) => {
       await setTheme(page, theme, 1440);
-      await page.goto("/ui/design/");
+      await page.goto("/design/");
       await expect(
         page.getByRole("heading", { name: "Design system", level: 1 }),
       ).toBeVisible();

@@ -16,7 +16,6 @@ STATIC_NA = {
     "design",
     "design-dialog",
     "design-sheet",
-    "gallery",
     "docs",
     "redoc",
 }
@@ -29,7 +28,7 @@ ROUTE_COVERAGE = {
     "/": {
         "groups": ("home",),
         "states": STATES,
-        "note": "Covered by the Home matrix; the root route redirects to Home.",
+        "note": "Home is the root route.",
     },
     "/activity": {
         "groups": ("activity-audit", "activity-requests"),
@@ -39,8 +38,6 @@ ROUTE_COVERAGE = {
     "/apps": {"groups": ("apps",), "states": STATES, "note": "Canonical member Apps & keys route."},
     "/design": {"groups": ("design",), "states": ("n-a",), "note": "Static design-system route; data state is N/A."},
     "/engines": {"groups": ("status-engines-services",), "states": STATES, "note": "Canonical Engines matrix."},
-    "/gallery": {"groups": ("gallery",), "states": ("n-a",), "note": "Static alias; data state is N/A."},
-    "/home": {"groups": ("home",), "states": STATES, "note": "Canonical Home route."},
     "/invite": {"groups": ("people-invite",), "states": STATES, "note": "Invite acceptance public route."},
     "/library": {"groups": ("library",), "states": ("grid", "empty", "error"), "note": "Library uses grid as seeded success."},
     "/models": {"groups": ("models",), "states": STATES, "note": "Canonical Models route."},
@@ -50,11 +47,6 @@ ROUTE_COVERAGE = {
         "note": "People route has separate tab matrices.",
     },
     "/providers": {"groups": ("providers",), "states": STATES, "note": "Canonical Providers route."},
-    "/services": {
-        "groups": ("status-engines-services",),
-        "states": STATES,
-        "note": "Compatibility alias covered by the Engines/Services matrix.",
-    },
     "/settings": {"groups": ("settings",), "states": STATES, "note": "Canonical Settings route."},
     "/setup": {"groups": ("public-setup",), "states": STATES, "note": "Public setup route matrix."},
     "/showcase": {"groups": ("public-showcase",), "states": STATES, "note": "Public showcase route matrix."},
@@ -65,24 +57,6 @@ ROUTE_COVERAGE = {
     "/docs": {"groups": ("docs",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
     "/redoc": {"groups": ("redoc",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
 }
-
-
-# Browser compatibility entries reuse the destination's capture matrix.
-for alias, canonical in {
-    "/admin": "/home",
-    "/admin/overview": "/home",
-    "/admin/apps": "/apps",
-    "/admin/audit": "/activity",
-    "/admin/profiles": "/people",
-    "/admin/services": "/engines",
-    "/admin/settings": "/settings",
-    "/admin/status": "/status",
-    "/admin/users": "/people",
-}.items():
-    ROUTE_COVERAGE[alias] = {
-        **ROUTE_COVERAGE[canonical],
-        "note": f"Compatibility redirect; covered by {canonical} and redirect journey tests.",
-    }
 
 
 def classify(path: Path) -> tuple[str, str]:
@@ -171,9 +145,9 @@ def main() -> int:
         "## State Notes",
         "",
         "- Seeded/empty/error screenshots use the route's own e2e fixture when present.",
-        "- Static routes `design`, `gallery`, `docs`, and `redoc` have data state N/A.",
-        "- Admin compatibility routes reuse canonical page captures; removed fixtures are excluded.",
-        "- `/` is covered by the Home matrix. `/services` is covered by the Engines/Services matrix.",
+        "- Static routes `design`, `docs`, and `redoc` have data state N/A.",
+        "- Fixtures for removed pages are excluded.",
+        "- `/` is Home and is covered by the Home matrix.",
         "",
         "## Exported Route Coverage",
         "",

@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import HomePage from "../page";
+import HomePage from "../home-page";
 import { ViewerContext } from "@/components/shell/session";
 import { mediaGridGap } from "@/components/product/audio-cover";
 
@@ -102,7 +102,7 @@ function progress(evidence = {}) {
         done: true,
         optional: false,
         reason: "A service is connected.",
-        href: "/ui/engines/",
+        href: "/engines/",
       },
       {
         id: "test_request",

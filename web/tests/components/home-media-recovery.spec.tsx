@@ -11,7 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import HomePage from "@/app/home/page";
+import HomePage from "@/app/_home/home-page";
 import { ViewerContext } from "@/components/shell/session";
 
 const home = {

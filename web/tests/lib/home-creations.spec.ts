@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasHomeCreationContent, homeApi } from "@/app/home/home-api";
+import { hasHomeCreationContent, homeApi } from "@/app/_home/home-api";
 
 afterEach(() => vi.unstubAllGlobals());
 

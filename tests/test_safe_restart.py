@@ -503,6 +503,9 @@ class WebBuildTests(unittest.TestCase):
         identity.parent.mkdir()
         identity.write_text('{"name": "Azizam"}\n')
         os.utime(identity, (100, 100))
+        pages = Path(root) / "gateway" / "ui_pages.json"
+        pages.write_text('{"pages": {"": "public"}}\n')
+        os.utime(pages, (100, 100))
         source = web / "src" / "page.tsx"
         source.write_text("export default function Page() {}\n")
         (web / "out").mkdir()
@@ -624,8 +627,11 @@ class WebBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             web = self.make_web(tmp)
             world = World()
+            original_run = world.run
 
             def export(cmd, timeout):
+                if cmd[0] != "npm":
+                    return original_run(cmd, timeout)
                 build_web = Path(cmd[2])
                 (build_web / "out").mkdir()
                 (build_web / "out" / "index.html").write_text("new page")
@@ -633,10 +639,86 @@ class WebBuildTests(unittest.TestCase):
 
             world.run = export
             with patch.object(sr, "publish_web_export", side_effect=OSError("exchange refused")):
-                self.assertEqual(world.invoke(web_dir=web), sr.EXIT_WEB_BUILD)
+                self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_WEB_BUILD)
             self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
-            self.assertEqual(world.calls, [])
+            self.assertEqual(world.commands, [])
+            self.assertEqual([p["draining"] for p in world.posts()], [True, False])
             self.assertIn("exchange refused", world.text)
+            self.assertEqual(self.staged(tmp), [])
+
+    @staticmethod
+    def staged(root):
+        return sorted(path.name for path in Path(root).glob(".azizam-web-*"))
+
+    def build_world(self, web, events):
+        world = World()
+        original_run = world.run
+        original_http = world.http
+
+        def run(cmd, timeout):
+            if cmd[0] == "npm":
+                build_web = Path(cmd[2])
+                (build_web / "out").mkdir()
+                (build_web / "out" / "index.html").write_text("new page")
+                return 0
+            events.append(("restart", (web / "out" / "index.html").read_text()))
+            return original_run(cmd, timeout)
+
+        def http(method, url, **kwargs):
+            if method == "POST" and url.endswith("/admin/api/drain"):
+                events.append(("drain" if kwargs["body"]["draining"] else "undrain",
+                               (web / "out" / "index.html").read_text()))
+            return original_http(method, url, **kwargs)
+
+        world.run = run
+        world.http = http
+        return world
+
+    def test_export_is_published_after_the_drain_and_before_the_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            events = []
+            world = self.build_world(web, events)
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_OK)
+            self.assertEqual(events, [("drain", "<html></html>\n"), ("restart", "new page")])
+            self.assertLess(world.output.index("published the new web export"),
+                            world.output.index("restarting azizam"))
+            self.assertEqual(self.staged(tmp), [])
+
+    def test_drain_timeout_leaves_served_export_byte_identical(self):
+        busy = snap(requests=1, inflight=[{"method": "POST", "path": "/v1/images", "age_s": 9}])
+        for argv in (("--timeout", "5", "--quiet-seconds", "0"), ("--timeout", "5", "--quiet-seconds", "60")):
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                before = {p.name: p.read_bytes() for p in (web / "out").iterdir()}
+                events = []
+                world = self.build_world(web, events)
+                world.snapshots = [snap(requests=1, chat=1, quiet=0.0, inflight=busy["inflight"])]
+                self.assertEqual(world.invoke(*argv, web_dir=web), sr.EXIT_BUSY)
+                self.assertEqual({p.name: p.read_bytes() for p in (web / "out").iterdir()}, before)
+                self.assertEqual(world.commands, [])
+                self.assertEqual(self.staged(tmp), [])
+
+    def test_refused_drain_discards_the_staged_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            world.drain_status = 404
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_REFUSED)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertEqual(self.staged(tmp), [])
+
+    def test_failed_restart_keeps_the_previous_export_and_prints_the_swap_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = self.build_world(web, [])
+            world.systemctl_code = 1
+            self.assertEqual(world.invoke("--quiet-seconds", "0", web_dir=web), sr.EXIT_SYSTEMCTL)
+            self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+            [holder] = self.staged(tmp)
+            previous = Path(tmp) / holder / "out"
+            self.assertEqual((previous / "index.html").read_text(), "<html></html>\n")
+            self.assertIn(f"rm -rf -- {web / 'out'} && mv -- {previous} {web / 'out'}", world.text)
 
     def test_failed_build_never_drains_or_restarts_even_with_force(self):
         with tempfile.TemporaryDirectory() as tmp:

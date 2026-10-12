@@ -30,7 +30,7 @@ async function open(role, width, theme) {
   const page = await context.newPage();
   if (cookies[role]) await context.addCookies(cookies[role]);
   else {
-    await page.goto(`${base}/ui/sign-in/`);
+    await page.goto(`${base}/sign-in/`);
     await page.getByLabel("Email", { exact: true }).fill(role === "owner" ? fixture.owner_email : fixture.member_email);
     await page.getByLabel("Password", { exact: true }).fill(fixture.password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -49,7 +49,7 @@ async function settle(page) {
 const flows = {
   // A member makes a picture from Home and finds it in Library.
   "make-a-picture": ["member", [
-    ["home", async (page) => page.goto(`${base}/ui/home/`)],
+    ["home", async (page) => page.goto(`${base}/`)],
     ["try", async (page) => page.getByRole("link", { name: /Make a picture/ }).first().click()],
     ["prompt", async (page) => {
       const prompt = page.getByRole("textbox", { name: /prompt/i }).first();
@@ -59,11 +59,11 @@ const flows = {
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await page.waitForTimeout(4000);
     }],
-    ["library", async (page) => page.goto(`${base}/ui/library/`)],
+    ["library", async (page) => page.goto(`${base}/library/`)],
   ]],
   // A member has a sentence read aloud.
   "read-text-aloud": ["member", [
-    ["home", async (page) => page.goto(`${base}/ui/home/`)],
+    ["home", async (page) => page.goto(`${base}/`)],
     ["try", async (page) => page.getByRole("link", { name: /Read text aloud/ }).first().click()],
     ["result", async (page) => {
       const text = page.getByRole("textbox").first();
@@ -74,13 +74,13 @@ const flows = {
   ]],
   // A member listens to a clip in Library.
   "play-a-clip": ["member", [
-    ["library", async (page) => page.goto(`${base}/ui/library/`)],
+    ["library", async (page) => page.goto(`${base}/library/`)],
     ["audio", async (page) => page.getByRole("group", { name: "Kind" }).getByRole("button", { name: "Audio", exact: true }).click()],
     ["viewer", async (page) => page.getByRole("button", { name: /^Open / }).first().click({ position: { x: 24, y: 60 } })],
   ]],
   // The owner finds what Robin made.
   "find-robins-work": ["owner", [
-    ["library", async (page) => page.goto(`${base}/ui/library/`)],
+    ["library", async (page) => page.goto(`${base}/library/`)],
     ["person", async (page) => {
       const picker = page.getByRole("combobox", { name: /Person|Everyone/ });
       if (await picker.isVisible().catch(() => false)) {
@@ -96,12 +96,12 @@ const flows = {
   ]],
   // A member sees video is degraded on Home and follows it to Status.
   "why-is-video-degraded": ["member", [
-    ["home", async (page) => page.goto(`${base}/ui/home/`)],
+    ["home", async (page) => page.goto(`${base}/`)],
     ["status", async (page) => page.getByRole("link", { name: "See what is happening" }).click()],
   ]],
   // The owner goes from the problem to the engine.
   "fix-video": ["owner", [
-    ["status", async (page) => page.goto(`${base}/ui/status/`)],
+    ["status", async (page) => page.goto(`${base}/status/`)],
     ["inspect", async (page) =>
       page.getByRole("link", { name: /^Inspect / }).or(page.getByRole("button", { name: /^Inspect / })).first().click()],
   ]],

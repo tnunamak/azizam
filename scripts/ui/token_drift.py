@@ -24,8 +24,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "web" / "src"
 DEFAULT_SCOPE = [
-    "app/home/page.tsx",
-    "app/home/presentation.ts",
+    "app/_home/home-page.tsx",
+    "app/_home/presentation.ts",
     "app/status",
     "app/library/page.tsx",
     "app/globals.css",
@@ -94,7 +94,7 @@ SYSTEM_FILES = [
     "app/apps/page.tsx",
     "components/product/secret-reveal.tsx",
     # PR 4: Home
-    "app/home/page.tsx",
+    "app/_home/home-page.tsx",
     # PR 5: Library
     "app/library/page.tsx",
     "app/library/library-format.ts",

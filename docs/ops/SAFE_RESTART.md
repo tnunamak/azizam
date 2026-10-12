@@ -40,14 +40,20 @@ The key is never printed.
 
 ## How it works
 
-- Before a gateway restart, the script checks the static UI export served at
-  `/ui`. If `web/out/index.html` is missing or a web input is newer than the
+- Before a gateway restart, the script checks the static web export served at
+  `/`. If `web/out/index.html` is missing or a web input is newer than the
   last completed export, it copies the web sources into a temporary sibling
   directory and runs `npm run build` there, using the installed dependencies.
-  After a successful export, it atomically exchanges the staged `out` directory
-  with `web/out` using Linux `renameat2`. The live export stays intact during
-  compilation, including if the build fails, times out, or is interrupted.
-  A publication failure also stops the restart and leaves the live export intact.
+  The script builds the export before the drain but publishes it only after the
+  drain succeeds, immediately before the restart. Publication atomically
+  exchanges the staged `out` directory with `web/out` using Linux `renameat2`.
+  The live export stays intact during compilation and the drain, including if
+  the build fails, times out, or is interrupted. If the restart or the health
+  check fails after publication, the script keeps the previous export and prints
+  the command that swaps it back. A publication failure also stops the restart
+  and leaves the live export intact. The page registry `gateway/ui_pages.json`
+  (page name to public, member or admin) is a web build input, so a change to it
+  triggers a rebuild.
   It ignores `node_modules`, `.next`, `out`, and generated TypeScript files.
   The completion marker records the source paths, so removing an input also
   triggers a rebuild. An older export without this marker is rebuilt once

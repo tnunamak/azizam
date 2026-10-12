@@ -47,7 +47,7 @@ try {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(
         page.getByRole("heading", { level: 1, name: "Usage", exact: true }),
       ).toBeVisible();

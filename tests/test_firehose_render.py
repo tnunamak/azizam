@@ -21,7 +21,7 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
         _payload(),
         host="gateway.local",
         actor_label="operator@example.com",
-        logout_url="/me/logout",
+        logout_url="/auth/logout-confirm",
     )
 
     assert 'class="shell-header"' in html
@@ -29,11 +29,11 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
     assert 'aria-label="Azizam home"' in html
     assert "shell-brand-product" in html
     assert ">Azizam</span>" in html
-    assert 'href="/status" aria-current="page">Status</a>' in html
-    assert 'href="/admin">Admin</a>' in html
+    assert 'href="/status/" aria-current="page">Status</a>' in html
+    assert 'href="/admin"' not in html
     assert 'href="/">Home</a>' in html
     assert "operator@example.com" in html
-    assert 'href="/me/logout">Sign out</a>' in html
+    assert 'href="/auth/logout-confirm">Sign out</a>' in html
     assert "gateway.local" in html
     assert "Live activity" not in html
     assert "No jobs in flight" not in html
@@ -45,8 +45,8 @@ def test_render_default_status_nav_keeps_status_page_chrome() -> None:
     html = render_html(_payload())
 
     assert 'class="shell-header"' in html
-    assert 'href="/status" aria-current="page">Status</a>' in html
-    assert 'href="/admin">Admin</a>' in html
+    assert 'href="/status/" aria-current="page">Status</a>' in html
+    assert 'href="/admin"' not in html
     assert 'href="/">Home</a>' in html
     assert "ai.vivid.fish" in html
     assert "openai.vivid.fish" not in html
@@ -95,8 +95,8 @@ def test_quick_test_snippets_use_ai_azizam_host() -> None:
 
 
 def test_module_copy_does_not_say_root_serves_status() -> None:
-    assert "`/` and `/firehose` both serve it" not in (firehose_render.__doc__ or "")
-    assert "served at `/status`" in (firehose_render.__doc__ or "")
+    assert "/firehose" not in (firehose_render.__doc__ or "")
+    assert "served at `/status/raw`" in (firehose_render.__doc__ or "")
     assert "ai.vivid.fish status dashboard" in (firehose_render.__doc__ or "")
 
 

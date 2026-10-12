@@ -365,7 +365,7 @@ export default function ActivityPage() {
                   </Button>
                 ) : (
                   <Button asChild variant="outline">
-                    <a href="/ui/apps/?action=create-key">Create an app</a>
+                    <a href="/apps/?action=create-key">Create an app</a>
                   </Button>
                 )
               }

@@ -336,7 +336,8 @@ async function openEngineActions(
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
-    for (const route of ["engines", "services"]) {
+    // The services page was removed; Engines is the only route for this view.
+    for (const route of ["engines"]) {
       test(`${route} seeded ${theme} ${width}`, async ({ page }) => {
         await mockEngineApis(page);
         await page.setViewportSize({
@@ -347,7 +348,7 @@ for (const theme of ["light", "dark"] as const) {
           (value) => localStorage.setItem("theme", value),
           theme,
         );
-        await page.goto(`/ui/${route}/`);
+        await page.goto(`/${route}/`);
 
         await expect(
           page.getByRole("heading", { name: "Engines", level: 1 }),
@@ -397,7 +398,7 @@ for (const theme of ["light", "dark"] as const) {
           (value) => localStorage.setItem("theme", value),
           theme,
         );
-        await page.goto(`/ui/${route}/`);
+        await page.goto(`/${route}/`);
         await expect(page.getByText("No engines configured")).toBeVisible();
         await checkPageBasics(page, `status-${route}-empty-${theme}-${width}`);
       });
@@ -412,7 +413,7 @@ for (const theme of ["light", "dark"] as const) {
           (value) => localStorage.setItem("theme", value),
           theme,
         );
-        await page.goto(`/ui/${route}/`);
+        await page.goto(`/${route}/`);
         await expect(page.getByText("Engines unavailable")).toBeVisible();
         await expect(page.getByText("Registry offline")).toBeVisible();
         await checkPageBasics(page, `status-${route}-error-${theme}-${width}`);
@@ -437,7 +438,7 @@ test("engines do not infer green state when observations are unavailable", async
       backends: [{ service_id: "chat", live_status: "up" }],
     },
   });
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
     0,
   );
@@ -448,7 +449,7 @@ test("engines route selects a disabled service from the query string", async ({
   page,
 }) => {
   await mockEngineApis(page);
-  await page.goto("/ui/engines/?service=image");
+  await page.goto("/engines/?service=image");
   await expect(page.getByText("Local image engine")).toBeVisible();
   await expect(
     page
@@ -461,7 +462,7 @@ test("engines clear live projection when status refresh fails", async ({
   page,
 }) => {
   await mockEngineApis(page, { statusError: true });
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await expect(page.getByText("Live status unavailable")).toBeVisible();
   await expect(page.getByText("Status refresh failed")).toBeVisible();
   await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
@@ -475,7 +476,7 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
 }) => {
   const bodies: unknown[] = [];
   await mockEngineApis(page, { bodies });
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
 
   await page.getByRole("button", { name: "Add engine" }).first().click();
   const addDialog = page.getByRole("dialog", { name: "Add engine" });
@@ -619,14 +620,14 @@ test("engines label degraded and standby states honestly", async ({ page }) => {
       backends: [],
     },
   });
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText("Idle", { exact: true })).toBeVisible();
   await expect(page.getByText("Busy")).toHaveCount(0);
   await expect(page.getByText("Starting")).toHaveCount(0);
 });
 
-test("services compatibility route is owner gated", async ({ page }) => {
+test("Engines is owner gated for a member", async ({ page }) => {
   const adminCalls: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/admin/api/")) {
@@ -647,7 +648,7 @@ test("services compatibility route is owner gated", async ({ page }) => {
       },
     }),
   );
-  await page.goto("/ui/services/");
+  await page.goto("/engines/");
   await expect(
     page.getByText(
       "This page is available to gateway owners and admins. Sign in with an owner account to continue.",
@@ -673,7 +674,7 @@ test("standby engines stay collapsed under primary, and presets belong to Add", 
       services: { ...registry.services, ...{ standby } },
     },
   });
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await expect(
     page.getByRole("heading", { name: "Chat", exact: true }),
   ).toBeVisible();

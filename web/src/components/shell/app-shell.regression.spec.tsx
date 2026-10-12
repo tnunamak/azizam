@@ -26,7 +26,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const push = vi.fn();
 const replace = vi.fn();
-let pathname = "/home";
+let pathname = "/";
 let search = "";
 
 vi.mock("next/navigation", () => ({
@@ -59,9 +59,9 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 beforeEach(() => {
   clients.forEach((client) => client.clear());
   resetSessionCache();
-  pathname = "/home";
+  pathname = "/";
   search = "";
-  window.history.replaceState(null, "", "/ui/home/");
+  window.history.replaceState(null, "", "/");
   push.mockReset();
   replace.mockReset();
   localStorage.clear();
@@ -286,7 +286,7 @@ describe("Service admin session", () => {
     expect(screen.queryByText("Private library consumer")).toBeNull();
     expect(
       screen.getByRole("link", { name: "Sign in as a person" }),
-    ).toHaveAttribute("href", "/ui/sign-in/?return_to=%2Fui%2Fhome%2F");
+    ).toHaveAttribute("href", "/sign-in/?return_to=%2F");
     expect(screen.queryByRole("link", { name: "People" })).toBeNull();
   });
 });
@@ -295,7 +295,7 @@ describe("Signed-out private pages", () => {
   it("redirects without showing navigation or private content and keeps the current page", async () => {
     pathname = "/models";
     search = "capability=chat";
-    window.history.replaceState(null, "", "/ui/models/?capability=chat");
+    window.history.replaceState(null, "", "/models/?capability=chat");
     const originalFetch = fetch;
     vi.stubGlobal(
       "fetch",
@@ -325,7 +325,7 @@ describe("Signed-out private pages", () => {
 
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith(
-        "/sign-in/?return_to=%2Fui%2Fmodels%2F%3Fcapability%3Dchat",
+        "/sign-in/?return_to=%2Fmodels%2F%3Fcapability%3Dchat",
       ),
     );
     expect(screen.queryByText("Models consumer")).toBeNull();
@@ -335,6 +335,8 @@ describe("Signed-out private pages", () => {
   });
 
   it("keeps the shell and private consumers unmounted until the session is known", async () => {
+    pathname = "/library";
+    window.history.replaceState(null, "", "/library/");
     vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
     render(
       <AppShell>
@@ -353,6 +355,8 @@ describe("Signed-out private pages", () => {
   });
 
   it("keeps a failed session check distinct from signed out and allows retry", async () => {
+    pathname = "/library";
+    window.history.replaceState(null, "", "/library/");
     vi.mocked(fetch).mockRejectedValue(new Error("Offline"));
     clients.forEach((client) =>
       client.setDefaultOptions({ queries: { retry: false } }),

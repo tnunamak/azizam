@@ -9789,7 +9789,7 @@
     },
     "/admin/api/session": {
       "get": {
-        "description": "Actor identity + CSRF token for browser (cookie-session) clients.\n\nThe server-rendered admin embeds the CSRF token in its HTML; a JS\nclient (the ``/ui/`` React app) bootstraps the same data from this\nendpoint using its session cookie. ``csrf_token`` is empty for\nbearer-key callers, whose mutations don't require CSRF headers.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Actor identity + CSRF token for browser (cookie-session) clients.\n\nThe web app (served at ``/``) bootstraps the actor and CSRF token\nfrom this endpoint using its session cookie. ``csrf_token`` is empty for\nbearer-key callers, whose mutations don't require CSRF headers.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_session",
         "parameters": [],
         "responses": {

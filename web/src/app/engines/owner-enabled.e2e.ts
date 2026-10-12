@@ -4,7 +4,7 @@ test("Azizam Enabled changes reach the registry only on Save", async ({
   page,
   baseURL,
 }) => {
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await page
     .getByRole("button", { name: "Add engine", exact: true })
     .first()
@@ -33,7 +33,7 @@ test("Azizam Enabled changes reach the registry only on Save", async ({
   )!;
   expect(service.enabled).toBe(true);
   const card = page.locator(`tr[data-engine-id="${service.id}"]`);
-  await page.goto(`/ui/engines/?service=${encodeURIComponent(service.id)}`);
+  await page.goto(`/engines/?service=${encodeURIComponent(service.id)}`);
   for (const dismiss of ["Cancel", "Escape"]) {
     await card.getByRole("button").first().click();
     const edit = page.getByRole("dialog", { name: "Edit engine", exact: true });

@@ -326,7 +326,7 @@ _MEDIA_ADMISSION_FIELDS = frozenset(
 
 
 def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
-    """Resolve an App's effective profile id (mirrors admin_render._app_profile_id)."""
+    """Resolve an App's effective profile id (the effective profile shown to owners)."""
     profile_id = (
         record.get("default_profile_id")
         or record.get("profile_id")
@@ -1778,9 +1778,8 @@ def create_admin_router(
     def session(request: Request) -> JSONResponse:
         """Actor identity + CSRF token for browser (cookie-session) clients.
 
-        The server-rendered admin embeds the CSRF token in its HTML; a JS
-        client (the ``/ui/`` React app) bootstraps the same data from this
-        endpoint using its session cookie. ``csrf_token`` is empty for
+        The web app (served at ``/``) bootstraps the actor and CSRF token
+        from this endpoint using its session cookie. ``csrf_token`` is empty for
         bearer-key callers, whose mutations don't require CSRF headers.
         """
         ctx = _guard(request)

@@ -307,7 +307,7 @@ async function routeCatalogs(page: Page) {
 
 async function prepareTryKey(page: Page, workflowId: string) {
   await routeCatalogs(page);
-  await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflowId)}`);
+  await page.goto(`/try/?workflow=${encodeURIComponent(workflowId)}`);
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -465,7 +465,7 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
   ).toBeVisible();
   await expect(page.getByAltText("Generated result")).toBeVisible();
   await expect(
-    page.locator('a[href="/r/receipt_json_workflow"]'),
+    page.locator('a[href="/usage/?receipt=receipt_json_workflow"]'),
   ).toBeVisible();
   await expectTechnicalCollapsed(page);
   await openTechnicalDetails(page);
@@ -751,7 +751,7 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
   ).toBeVisible();
 });
 
-test("workflow denied receipt does not create a link, while verified receipt links /r/:id", async ({
+test("workflow denied receipt does not create a link, while verified receipt links to its Usage receipt", async ({
   page,
 }) => {
   await prepareTryKey(page, "image.generate.poster");
@@ -779,7 +779,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
     route.fulfill({ json: { request_id: "receipt_from_asset" } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.locator('a[href="/r/receipt_from_asset"]')).toBeVisible();
+  await expect(page.locator('a[href="/usage/?receipt=receipt_from_asset"]')).toBeVisible();
 
   await page.unroute("**/v1/images/generations");
   await page.route("**/v1/images/generations", (route) =>
@@ -794,7 +794,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Not available for this session")).toBeVisible();
   await expect(
-    page.locator('a[href="/r/receipt%20denied%2Fvalue"]'),
+    page.locator('a[href="/usage/?receipt=receipt%20denied%2Fvalue"]'),
   ).toHaveCount(0);
 
   await page.unroute("**/v1/images/generations");
@@ -809,8 +809,8 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
-    page.locator('a[href="/r/receipt%20verified%2Fvalue"]'),
-  ).toHaveAttribute("href", "/r/receipt%20verified%2Fvalue");
+    page.locator('a[href="/usage/?receipt=receipt%20verified%2Fvalue"]'),
+  ).toHaveAttribute("href", "/usage/?receipt=receipt%20verified%2Fvalue");
 });
 
 test("workflow deep link reports missing runnable examples without guessing", async ({
@@ -973,7 +973,7 @@ async function openComposed(page: Page, workflowId: string, member = false) {
     );
   await page.route("**/me/api/models/catalog", (route) => route.fulfill({ json: emptyModelsCatalog }));
   await page.route("**/me/api/workflows", (route) => route.fulfill({ json: composedCatalog }));
-  await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflowId)}`);
+  await page.goto(`/try/?workflow=${encodeURIComponent(workflowId)}`);
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
 }
 

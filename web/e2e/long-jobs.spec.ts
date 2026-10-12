@@ -70,7 +70,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
     renewals++;
     return route.fulfill({ json: { download_url: png } });
   });
-  await page.goto("/ui/try/");
+  await page.goto("/try/");
   // The job starts after an empty poll and finishes on another page. The
   // shell must discover it through its timer and the server's watermark.
   await expect.poll(() => polls.length).toBe(1);

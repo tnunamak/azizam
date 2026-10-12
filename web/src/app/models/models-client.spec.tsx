@@ -1285,7 +1285,7 @@ describe("models catalog contract distinctions", () => {
       within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     const action = screen.getByRole("link", { name: "Connect an engine" });
-    expect(action).toHaveAttribute("href", "/ui/engines/");
+    expect(action).toHaveAttribute("href", "/engines/");
     expect(
       within(screen.getByRole("dialog")).getByText("Catalog only"),
     ).toBeVisible();
@@ -1367,7 +1367,7 @@ describe("models catalog contract distinctions", () => {
     const providerAction = screen.getByRole("link", {
       name: "Connect a provider",
     });
-    expect(providerAction).toHaveAttribute("href", "/ui/providers/");
+    expect(providerAction).toHaveAttribute("href", "/providers/");
   });
 
   it("keeps omitted configuration fields as not reported and gives members a status action", async () => {
@@ -1393,7 +1393,7 @@ describe("models catalog contract distinctions", () => {
     );
     expect(within(screen.getByRole("dialog")).getByRole("link", { name: "Check status" })).toHaveAttribute(
       "href",
-      "/ui/status/",
+      "/status/",
     );
   });
 
@@ -1443,7 +1443,7 @@ describe("models catalog contract distinctions", () => {
     fireEvent.click(table.getByRole("button", { name: "Details" }));
     expect(
       screen.getByRole("link", { name: "Review provider" }),
-    ).toHaveAttribute("href", "/ui/providers/");
+    ).toHaveAttribute("href", "/providers/");
   });
 });
 
@@ -1654,7 +1654,7 @@ describe("task-first catalog rows", () => {
         expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
         expect(table.getByRole("columnheader", { name: "Status" })).toBeVisible();
         expect(table.getByText("Not checked yet")).toBeVisible();
-        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
+        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status/");
       }
       expect(screen.queryByText("Local · no provider charge")).toBeNull();
     },
@@ -1802,7 +1802,7 @@ describe("model availability and removal recovery", () => {
   it("distinguishes a failed observation from a model not checked yet", async () => {
     renderModels(catalog([row({ availability: { ...row().availability, status: "unknown", measured: true } })]));
     expect(await screen.findByText("Couldn't check")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/ui/status/");
+    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status/");
     expect(screen.queryByText("Ready")).toBeNull();
   });
 

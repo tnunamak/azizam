@@ -83,7 +83,7 @@ async function catalog(page: Page, aliases: unknown[]) {
       },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
 }
 
 for (const theme of ["light", "dark"] as const) {
@@ -203,7 +203,7 @@ test("models polish 2 empty states provide the next action", async ({
   await catalog(page, []);
   await expect(
     page.getByRole("link", { name: "Review setup" }),
-  ).toHaveAttribute("href", "/ui/home/");
+  ).toHaveAttribute("href", "/");
   await catalog(page, [measured]);
   await page.getByRole("textbox", { name: "Search models" }).fill("unmatched");
   await page.getByRole("button", { name: "Clear filters" }).click();

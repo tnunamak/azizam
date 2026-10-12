@@ -1,11 +1,11 @@
 {
   "title": "Azizam gateway UI polish round 2",
-  "url": "http://127.0.0.1:18180/ui/",
-  "start": "/home/",
+  "url": "http://127.0.0.1:18180/",
+  "start": "/",
   "authScript": "./darshana-auth.mjs",
   "crawl": {
     "include": [
-      "^/ui/(home|models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings|showcase|design)/?$"
+      "^/((models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings|showcase|design)/?)?$"
     ],
     "exclude": [
       "sign-out",
@@ -14,7 +14,7 @@
     ],
     "maxPages": 15,
     "extraRoutes": [
-      "/home/",
+      "/",
       "/models/",
       "/workflows/",
       "/try/",

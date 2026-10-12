@@ -5,7 +5,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
   request,
 }) => {
   const name = "Journey client";
-  await page.goto("/ui/apps/");
+  await page.goto("/apps/");
   await page
     .getByRole("button", { name: "New app", exact: true })
     .first()
@@ -83,7 +83,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
     ).status(),
   ).toBe(401);
 
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   const filterRequest = page.waitForResponse((response) =>
     response.url().includes("action_prefix=app."),
@@ -116,7 +116,7 @@ test("apps explain an empty account and recover after an API error", async ({
     const actual = await response.json();
     await route.fulfill({ response, json: { ...actual, apps: [] } });
   });
-  await page.goto("/ui/apps/");
+  await page.goto("/apps/");
   await expect(
     page.getByText("Connect your first app", { exact: true }),
   ).toBeVisible();
@@ -145,7 +145,7 @@ test("apps explain an empty account and recover after an API error", async ({
 test("audit has a useful empty filter state and recovers after an API error", async ({
   page,
 }) => {
-  await page.goto("/ui/activity/");
+  await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();
   // OWNER-05: people are picked by name; raw IDs live under a technical disclosure.
   await page.getByText("Technical: filter by person ID", { exact: true }).click();

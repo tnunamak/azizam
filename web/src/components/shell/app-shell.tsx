@@ -34,7 +34,10 @@ import { createQueryClient } from "@/lib/api";
 import {
   canonicalDestinationPath,
   destinations,
+  pageAccess,
+  pageNameFor,
   PRODUCT_NAME,
+  uiPages,
 } from "@/lib/product";
 import { useCapabilityViews } from "@/lib/use-capability-views";
 import {
@@ -115,22 +118,16 @@ const icons: Record<string, LucideIcon> = {
   Settings,
 };
 const queryClient = createQueryClient();
-const publicPages = ["/sign-in", "/setup", "/invite", "/showcase"];
 
 function signInReturnPath(pathname: string, search: string): string {
-  if (typeof window !== "undefined") {
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (current.startsWith("/ui/")) return current;
-  }
+  if (typeof window !== "undefined")
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const uiPath = normalizedPath.startsWith("/ui/")
-    ? normalizedPath
-    : `/ui${normalizedPath}`;
-  return `${uiPath}${search ? `?${search}` : ""}`;
+  return `${normalizedPath}${search ? `?${search}` : ""}`;
 }
 
 function signInHref(returnPath: string): string {
-  return `/ui/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
+  return `/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
 }
 
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
@@ -627,9 +624,13 @@ function Shell({ children }: { children: React.ReactNode }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-  const publicPage = publicPages.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`),
-  );
+  // Public pages come from gateway/ui_pages.json. A path outside it is the
+  // 404 page, which needs no session either. Home ("/") and the 404 page give
+  // a signed-in person the member shell; a signed-out one sees them as is.
+  const pageName = pageNameFor(pathname);
+  const publicPage =
+    (pageName === undefined || uiPages[pageName] === "public") &&
+    !((pageName === undefined || pageName === "") && viewer?.authenticated);
   const showPublicShell =
     publicPage || sessionPending || sessionError || !viewer?.authenticated;
   const currentPath = canonicalDestinationPath(pathname);
@@ -642,8 +643,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       !sessionError &&
       !viewer?.authenticated
     ) {
-      // Next adds /ui; the destination itself stays encoded for server validation.
-      router.replace(`/sign-in/?return_to=${encodeURIComponent(returnPath)}`);
+      // The destination stays encoded for server validation.
+      router.replace(signInHref(returnPath));
     }
   }, [
     publicPage,
@@ -653,12 +654,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     returnPath,
     router,
   ]);
-  const ownerPage = destinations.some(
-    (d) =>
-      d.group === "Gateway" &&
-      d.title !== "Status" &&
-      currentPath === canonicalDestinationPath(d.href),
-  );
+  const ownerPage = pageAccess(pathname) === "admin";
   const content = publicPage ? (
     children
   ) : sessionPending ? (

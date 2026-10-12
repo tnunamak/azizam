@@ -60,7 +60,7 @@ export function AccountMenuContent({
         headers: { "x-azizam-csrf": csrf, accept: "application/json" },
       });
       if (!response.ok) throw new Error("Sign out failed");
-      window.location.assign("/ui/sign-in/");
+      window.location.assign("/sign-in/");
     } catch {
       signingOutRef.current = false;
       setSigningOut(false);
@@ -136,7 +136,7 @@ export function AccountMenuContent({
           ) : (
             <DropdownMenuItem asChild>
               <a
-                href={`/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`}
+                href={`/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`}
               >
                 <LogOut />
                 Sign in

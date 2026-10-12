@@ -204,13 +204,14 @@ for (const theme of ["light", "dark"] as const) {
         "providers",
         "settings",
       ]) {
-        await page.goto(`/ui/${name}/`);
+        // Home is the root page; there is no /home/ page.
+        await page.goto(name === "home" ? "/" : `/${name}/`);
         await inspect(page, `${name}-seeded-${theme}-${width}`);
       }
-      await page.goto("/ui/workflows/");
+      await page.goto("/workflows/");
       await page.getByRole("button", { name: "Details" }).first().click();
       await inspect(page, `workflows-detail-seeded-${theme}-${width}`);
-      await page.goto("/ui/people/");
+      await page.goto("/people/");
       for (const [name, tab] of [
         ["people", "People"],
         ["people-invites", "Invites"],
@@ -219,7 +220,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByRole("tab", { name: tab, exact: true }).click();
         await inspect(page, `${name}-seeded-${theme}-${width}`);
       }
-      await page.goto("/ui/activity/");
+      await page.goto("/activity/");
       await page.getByRole("tab", { name: "Changes", exact: true }).click();
       await inspect(page, `activity-audit-seeded-${theme}-${width}`);
       await page.getByRole("tab", { name: "Requests", exact: true }).click();

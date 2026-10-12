@@ -1505,7 +1505,9 @@ class AdminAuthenticator:
                     from gateway.accounts import session_allowed
 
                     if not session_allowed(session.subject, session.session_id, path=self.store.path):
-                        raise AdminAuthError("session revoked or account disabled")
+                        # A revoked session is no session: a bearer key sent
+                        # beside a stale cookie still authenticates.
+                        raise SessionError("session revoked or account disabled")
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )

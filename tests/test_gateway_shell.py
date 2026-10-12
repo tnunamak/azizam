@@ -49,33 +49,6 @@ class ShellBrandTests(unittest.TestCase):
 
 
 class BottomTabsTests(unittest.TestCase):
-    def test_default_tabs_list_only_real_destinations(self) -> None:
-        # A tab that scrolls nowhere is nav that lies. The default set lists ONLY
-        # destinations that exist today (Home); the design's Keys/What-works/
-        # Activity tabs are added back when each target section ships (Phase 2).
-        from gateway.gateway_shell import render_bottom_tabs
-
-        html = render_bottom_tabs(active="home", admin=False)
-        self.assertIn('class="tabbar"', html)
-        self.assertIn(">Home</span>", html)
-        # No phantom destinations.
-        for phantom in ("Keys", "What works", "Activity", "You"):
-            self.assertNotIn(f">{phantom}</span>", html)
-        self.assertNotIn("/#keys", html)
-        self.assertNotIn("/#caps", html)
-        self.assertNotIn("/#activity", html)
-        # Active tab is marked.
-        self.assertIn('class="tabbar-item is-active"', html)
-        self.assertIn('aria-current="page"', html)
-
-    def test_admin_gets_a_real_admin_tab(self) -> None:
-        from gateway.gateway_shell import render_bottom_tabs
-
-        html = render_bottom_tabs(active="me", admin=True)
-        self.assertIn(">Admin</span>", html)
-        self.assertIn('href="/admin"', html)
-        self.assertNotIn(">You</span>", html)
-
     def test_tabbar_is_mobile_only_and_safe_area_aware(self) -> None:
         # The shared CSS hides the bar on desktop and reserves space on mobile.
         from gateway.gateway_shell import SHELL_CSS

@@ -9,6 +9,7 @@ Callers supply already-loaded data and an already-authenticated policy view.
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import quote
 import copy
 import json
 import statistics
@@ -1161,7 +1162,7 @@ def _receipt_stats(receipts: Iterable[Mapping[str, Any]]) -> dict[str, dict[str,
                 recent[key].append(
                     {
                         "request_id": str(request_id),
-                        "href": f"/r/{request_id}",
+                        "href": f"/usage/?receipt={quote(str(request_id), safe='')}",
                         "status": receipt.get("status"),
                         "latency_ms": latency_ms if has_latency else None,
                     }

@@ -150,7 +150,7 @@
    "discovery_url": "/gateway/v1/workflows/video.generate.ltx-2.5-i2v",
    "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
    "recent_jobs_url": "/me/api/media?workflow=video.generate.ltx-2.5-i2v",
-   "try_url": "/ui/try/?workflow=video.generate.ltx-2.5-i2v",
+   "try_url": "/try/?workflow=video.generate.ltx-2.5-i2v",
    "capabilities": [
     {
      "intent": "video.generate",

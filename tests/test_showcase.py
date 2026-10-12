@@ -52,35 +52,6 @@ class ShowcaseRouteTests(unittest.TestCase):
         self.examples = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
 
-    def test_index_served_with_showcase_csp(self) -> None:
-        r = _app(self.examples).get("/showcase")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("text/html", r.headers["content-type"])
-        self.assertIn("Azizam", r.text)
-        csp = r.headers["content-security-policy"]
-        self.assertIn("media-src 'self' blob:", csp)
-        self.assertNotIn("unsafe-inline'; style", csp.split("style-src")[0])  # scripts stay external-only
-        self.assertIn("script-src 'self';", csp)
-
-    def test_trailing_slash_redirects(self) -> None:
-        r = _app(self.examples).get("/showcase/", follow_redirects=False)
-        self.assertEqual(r.status_code, 307)
-        self.assertEqual(r.headers["location"], "/showcase")
-
-    def test_gallery_redirect_preserves_public_recorded_data(self) -> None:
-        _write_example(self.examples, "chat", {"card": "chat"})
-        app = FastAPI()
-        app.include_router(showcase.build_showcase_router(
-            static_dir=STATIC,
-            examples_dir=self.examples,
-            gallery_ui_url="/ui/showcase/",
-        ))
-        client = TestClient(app)
-        response = client.get("/showcase", follow_redirects=False)
-        self.assertEqual(response.status_code, 307)
-        self.assertEqual(response.headers["location"], "/ui/showcase/")
-        self.assertEqual(client.get("/showcase/examples/index.json").json()["data"][0]["id"], "chat")
-
     def test_static_assets_and_types(self) -> None:
         c = _app(self.examples)
         self.assertIn("javascript", c.get("/showcase/static/app.js").headers["content-type"])
@@ -141,8 +112,16 @@ class ShowcaseGatewayWiringTests(unittest.TestCase):
         self.assertTrue(proxy.is_public_path("/showcase"))
         self.assertTrue(proxy.is_public_path("/showcase/static/app.js"))
         self.assertFalse(proxy.is_public_path("/showcase/api/status"))
+        # The page is the web app's /showcase/; the data routes stay here.
+        from unittest.mock import patch
+        from ui_fixtures import write_export
         client = TestClient(proxy.app)
-        self.assertEqual(client.get("/showcase").status_code, 200)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                proxy.WEB_UI_ROUTE, "directory", write_export(Path(tmp))):
+            response = client.get("/showcase?x=1", follow_redirects=False)
+        self.assertEqual(response.status_code, 308)
+        self.assertEqual(response.headers["location"], "/showcase/?x=1")
+        self.assertEqual(client.get("/showcase/examples/index.json").status_code, 200)
 
 
 class SectionRulesTests(unittest.TestCase):

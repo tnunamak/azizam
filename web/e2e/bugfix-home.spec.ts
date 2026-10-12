@@ -94,7 +94,7 @@ test("Home capability link carries chat into Models", async ({ page }) => {
   await routeFocusedHome(page);
   await routeTryCatalog(page);
 
-  await page.goto("/ui/home/");
+  await page.goto("/");
   // D1.1: Home lists tasks ("Make something") that open Try in the right
   // mode, not capabilities that open Models. The chat entry point must still
   // carry the chat capability and the home's chat model ("fast", not the
@@ -109,13 +109,13 @@ test("Home capability link carries chat into Models", async ({ page }) => {
   await expect(chatLink).toHaveCount(1);
   await expect(chatLink).toHaveAttribute("href", /[?&]model=fast(&|$)/);
   await chatLink.click();
-  await expect(page).toHaveURL(/\/ui\/try\/\?capability=chat&model=fast$/);
+  await expect(page).toHaveURL(/\/try\/\?capability=chat&model=fast$/);
 });
 
 test("Home picks the app recipe before creating a key", async ({ page }) => {
   await routeFocusedHome(page);
 
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await expect(page.getByRole("textbox", { name: "Base URL" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open WebUI" }).click();
   await expect(
@@ -143,7 +143,7 @@ function catalogRow(id: string, intent: string) {
 
 test("Home connects a renamed paid chat model without a default-model warning", async ({ page }) => {
   await routeFocusedHome(page);
-  await page.goto("/ui/home/");
+  await page.goto("/");
   await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Model", exact: true })).toHaveValue("renamed-paid-chat");
   await expect(page.getByText(/This key has no chat models|default model/)).toHaveCount(0);
@@ -156,7 +156,7 @@ test("Home explains a failed recent fetch and retries it", async ({ page }) => {
   await page.route(mediaApi, (route) => route.fulfill(
     failed ? { status: 503, json: {} } : { json: { assets: [], next_cursor: null } },
   ));
-  await page.goto("/ui/home/");
+  await page.goto("/");
   const recent = page.getByRole("region", { name: "Recent", exact: true });
   await expect(recent).toContainText("We couldn't tell why your recent creations didn't load. Try again.");
   await expect(recent).not.toContainText("503");

@@ -104,7 +104,7 @@ try {
           page.on("console", (message) => {
             if (message.type() === "error") errors.push(clean(message.text()));
           });
-          await page.goto(`/ui/${surface}/`);
+          await page.goto(`/${surface}/`);
           await page.waitForLoadState("networkidle");
           await page
             .locator(

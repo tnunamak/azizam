@@ -164,7 +164,7 @@ try {
   const states = ["empty", "seeded", "error"];
   const urls = states.map(
     (state) =>
-      `${baseURL}/ui/try/?workflow=image.generate.review&review=${state}`,
+      `${baseURL}/try/?workflow=image.generate.review&review=${state}`,
   );
   const captures = await captureAll(reviewBrowser, config, urls);
   if (captures.length !== 12)

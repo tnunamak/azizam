@@ -335,7 +335,7 @@ export function EngineChecks({
               Use existing access rules for these models
             </label>
             <a
-              href="/ui/people/?tab=plans"
+              href="/people/?tab=plans"
               className="text-meta text-muted-foreground inline-flex min-h-8 items-center underline underline-offset-4 max-sm:min-h-11"
             >
               Review access plans in People

@@ -68,14 +68,14 @@ For the operator-facing first-run story this model implies, see
   in on that callback host. Relative return paths bring them to the requested
   page there, including its query string. Local accounts use the requested
   relative page on the host where sign-in started. Invalid return paths fall
-  back to `/ui/home/`.
+  back to `/`.
 - **Full provisioning / as-code reconciliation is deferred.** Default Profiles
   and user-access defaults are seeded into `admin.db` on startup; once seeded,
   the dashboard is authoritative. No YAML "policy file" exists for those
   settings, and no full bundle restore or file-wins reconciliation exists.
 
 > **Implementation invariant.** The first-run access path is DB-backed:
-> `/setup` and `/admin` create Apps, App keys, Profiles, identity/Profile
+> `/setup/` and the web app create Apps, App keys, Profiles, identity/Profile
 > mappings, and user access defaults in `admin.db`. `admin.user_defaults` in
 > `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
 > state is authoritative. The legacy `AZIZAM_USER_SELF_SERVICE` and
@@ -94,7 +94,7 @@ Concretely:
    listener, TLS, optional explicit session signing keys, trust roots,
    secret references, and on-disk model directories. Never dashboard-writable.
    Restart to apply. Provisioning bundles never carry secrets.
-2. **Dashboard plane** — `admin.db`, edited through `/admin` (and the
+2. **Dashboard plane** — `admin.db`, edited through the web app (and the
    `/admin/api/*` JSON surface). Runtime access policy: the admin user list,
    role grants, Profiles, Apps, App API keys, user access defaults,
    identity/Profile mappings, role→model bindings, admission caps, throttles,
@@ -156,7 +156,7 @@ Implications:
   metadata or references only. Provider catalog files are extensible provisioning
   data; a saved provider record is dashboard-owned runtime state. OIDC
   `client_secret` is another intentional exception:
-  when configured from `/admin`, it is encrypted in the same `admin.db` secret
+  when configured from the web app, it is encrypted in the same `admin.db` secret
   store; `operator_settings.oidc_provider_config` keeps only its
   `client_secret_ref`. It is write-only (UI/API responses show only
   `client_secret_set`), preserved on blank updates, and audited. Startup moves

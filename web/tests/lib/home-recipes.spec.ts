@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { chatAlias, clients, recipeFor } from "@/app/home/recipes";
+import { chatAlias, clients, recipeFor } from "@/app/_home/recipes";
 
 describe("Home client recipes", () => {
   it("uses the advertised model for every client without copying a secret", () => {

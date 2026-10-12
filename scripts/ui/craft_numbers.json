@@ -1,20 +1,20 @@
 {
   "_doc": "Thresholds for scripts/ui/craft_numbers.py (docs/design/DESIGN.md, 'Gates for these numbers'). 'enforce' lists, per route, the checks --fail enforces; every check is reported for every measured route. A surface PR turns its route's checks on here (docs/design/craft-system/PLAN.md, PRs 2-9).",
   "routes": {
-    "home": "/ui/home/",
-    "status": "/ui/status/",
-    "library": "/ui/library/",
-    "try": "/ui/try/",
-    "people": "/ui/people/",
-    "usage": "/ui/usage/",
-    "workflows": "/ui/workflows/",
-    "settings": "/ui/settings/",
-    "apps": "/ui/apps/",
-    "activity": "/ui/activity/",
-    "models": "/ui/models/",
-    "engines": "/ui/engines/",
-    "providers": "/ui/providers/",
-    "account": "/ui/account/"
+    "home": "/",
+    "status": "/status/",
+    "library": "/library/",
+    "try": "/try/",
+    "people": "/people/",
+    "usage": "/usage/",
+    "workflows": "/workflows/",
+    "settings": "/settings/",
+    "apps": "/apps/",
+    "activity": "/activity/",
+    "models": "/models/",
+    "engines": "/engines/",
+    "providers": "/providers/",
+    "account": "/account/"
   },
   "enforce": {
     "home": [

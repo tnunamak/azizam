@@ -34,13 +34,13 @@ test("member Status offers sign-in when its account snapshot expires", async ({
       json: { error: { code: "unauthorized", message: "Session expired" } },
     }),
   );
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByText("Sign in to see your status", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Sign in", exact: true }),
-  ).toHaveAttribute("href", "/ui/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  ).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
   expect(ownerCalls).toEqual([]);
 });
 
@@ -158,7 +158,7 @@ for (const theme of ["light", "dark"] as const) {
                             status: "failed",
                             intent: "image.generate",
                             created_at: 1790870400,
-                            href: "/ui/usage/?receipt=member-status-receipt",
+                            href: "/usage/?receipt=member-status-receipt",
                           },
                         ],
                   help: "",
@@ -168,7 +168,7 @@ for (const theme of ["light", "dark"] as const) {
         const yourCapabilities = page.getByRole("region", {
           name: "What you can use",
         });
-        await page.goto("/ui/status/");
+        await page.goto("/status/");
         if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),

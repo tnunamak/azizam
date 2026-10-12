@@ -1,6 +1,6 @@
 # People and built-in accounts
 
-Owners manage People, Invites and Access plans at `/ui/people/`. Existing
+Owners manage People, Invites and Access plans at `/people/`. Existing
 profiles remain the policy model and use the existing profile CRUD and
 `POST /admin/api/policy/simulate` APIs. The Home, Settings and Status pages
 are unchanged by this feature.
@@ -9,7 +9,7 @@ are unchanged by this feature.
 
 1. The owner creates an invitation with a stored profile, expiry and optional
    email restriction. A pending invitation can be copied again or revoked.
-2. The invitee opens `/ui/invite/#token=...`. They create an email/password
+2. The invitee opens `/invite/#token=...`. They create an email/password
    account, or sign in with the configured OIDC provider and accept using
    their signed-in identity. Targeted OIDC invites require a verified email.
 3. Acceptance atomically assigns the access plan, creates a personal App and

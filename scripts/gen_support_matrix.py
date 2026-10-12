@@ -34,7 +34,7 @@ def public_routes(app):
 
     for route in walk(app.routes):
         path = route.path
-        if path.startswith(("/admin", "/me", "/ui", "/setup", "/login", "/auth", "/showcase", "/internal")):
+        if path.startswith(("/admin", "/me", "/setup", "/login", "/auth", "/showcase", "/internal")):
             continue
         if getattr(route, "endpoint", None) is not None:
             yield route

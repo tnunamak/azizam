@@ -18,7 +18,7 @@ test("real registry journey preserves disabled state and unknown config through 
   baseURL,
 }) => {
   const enginePort = Number(new URL(baseURL!).port) + 1;
-  await page.goto("/ui/engines/");
+  await page.goto("/engines/");
   await expect(
     page.getByRole("heading", { name: "Engines", level: 1 }),
   ).toBeVisible();

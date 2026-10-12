@@ -47,7 +47,8 @@ The short version:
 4. The app seeds default Profiles and identity/Profile mappings, creates the
    signed-in user's first App, and mints one `opk_...` runtime key shown once.
 5. Manage providers, users, Apps, Profiles, keys, admission limits, and
-   service availability from `/admin`. OIDC provider settings are dashboard
+   service availability from the web app (`/settings/`, `/people/`,
+   `/apps/`, `/engines/`, `/providers/`). OIDC provider settings are dashboard
    owned after setup. The narrow, authenticated service-registry export at
    `GET /admin/api/config/export` is shipped; only full deployment-bundle
    restore and authoritative file-wins reconciliation remain deferred. Default
@@ -62,11 +63,11 @@ guide is the runtime/auth model and the CLI recovery paths.
 Once the gateway is running and you have signed in, the normal way to mint
 an App API key is from setup, the dashboard, or the account portal:
 
-- During first run, a signed-in owner/admin opens `/setup` and mints the first
+- During first run, a signed-in owner/admin opens `/setup/` and mints the first
   `opk_...` key for their Personal App. This is the quickest smoke-test path.
-- An operator opens `/admin`, creates an App, attaches a Profile, and
+- An operator opens `/apps/`, creates an App, attaches a Profile, and
   generates an `opk_...` key for it.
-- A signed-in user opens `/` (the account portal), creates a Personal App,
+- A signed-in user opens `/` (the Apps page), creates a Personal App,
   and mints their own `opk_...` key bound to that App.
 
 Dashboard-minted keys live in `admin.db`. The raw `opk_...` value is shown
@@ -76,8 +77,8 @@ environment. Do not put the printed key in source files, logs, or prompts.
 
 ## Quick Start For Apps
 
-Runtime App keys are database-backed. Use `/setup`, the account portal at `/`,
-or `/admin` to create an App and mint an `opk_...` key. The key value is shown
+Runtime App keys are database-backed. Use `/setup/`, or the Apps page at `/apps/`,
+to create an App and mint an `opk_...` key. The key value is shown
 once:
 
 ```text
@@ -118,8 +119,8 @@ the consuming app's configuration.
 The control plane is separate from the runtime `/v1` plane.
 
 - App keys (`opk_...`) call `/v1`, `/api`, and `/gateway/v1`.
-- Admin keys (`oak_...`) and signed OIDC dashboard sessions call `/admin`,
-  `/admin/api/*`, `/status`, and `/v1/status`.
+- Admin keys (`oak_...`) and signed OIDC dashboard sessions call
+  `/admin/api/*`, `/status/raw`, and `/v1/status`.
 - An App key cannot administer the gateway, and an admin key should not be put
   into OpenAI-compatible apps.
 
@@ -149,14 +150,16 @@ curl -s https://ai.example.com/admin/api/overview \
 
 ### OIDC configuration
 
-OIDC browser login is normally configured from `/admin` after the local owner
+OIDC browser login is normally configured from the Settings page (`/settings/`) after the local owner
 has signed in. `admin.oidc` in `proxy_config.yml` remains a bootstrap fallback
-for operators who need IdP login before the first browser claim. `/login` is
-the raw OIDC redirect starter, while `/me/login` and `/admin/login` are
-compatibility redirects into that route. After login, normal users land on
-`/`, while admins can follow the Admin link from the account portal or go
-directly to `/admin`. `/me` is a legacy browser alias that redirects to `/`,
-never an API-key error page.
+for operators who need IdP login before the first browser claim. `/login?return_to=...`
+is the raw OIDC redirect starter (the default return path is `/`). The old
+`/me/login` and `/admin/login` routes no longer exist. After login, every user
+lands on the requested page, or on Home (`/`) by default; admins reach the
+admin pages from the same app, for example `/people/` and `/settings/`. The
+OIDC redirect URI stays `/admin/oidc/callback`. To sign out, use the app's
+sign-out link (`/auth/logout-confirm`) or `POST /logout`, which answers
+`next: "/sign-in/"`.
 
 Dashboard-saved OIDC client secrets are stored in `admin.db`, redacted in UI
 and API responses, and preserved when the secret field is left blank. If your
@@ -192,7 +195,7 @@ one.
 
 `admin.user_defaults` and the legacy user-access env flags are bootstrap seeds
 for self-service defaults and identity/Profile mappings. On startup, those
-defaults are imported into `admin.db`; after that, `/admin` identity mappings
+defaults are imported into `admin.db`; after that, People and Settings identity mappings
 and operator settings are the runtime policy boundary. Omit
 `default_profile_id` to use the gateway's built-in `default-local` profile.
 
@@ -207,8 +210,8 @@ flow:
    self-service Personal Apps. One human can own several Apps; one App is the
    access boundary for one client, tool, workflow, or script.
 3. **Inherited Profile.** By default, the Personal App inherits the user's
-   effective Profile. Admins control that default with `/admin` identity
-   mappings, which may be seeded once from `admin.user_defaults`, and can still
+   effective Profile. Admins control that default with identity
+   mappings in the web app, which may be seeded once from `admin.user_defaults`, and can still
    attach an explicit App/Profile override when needed.
    For a typical chat-only setup:
    ```yaml
@@ -244,9 +247,9 @@ grant themselves new capability classes; those remain admin-plane actions.
 
 ## Request Auth Rules
 
-All gateway runtime traffic requires a valid App API key. `/`, `/health`,
-`/me`, `/me/api/session`, and the `/.well-known/*` discovery surfaces are public.
-`/me` redirects to `/`. The account portal is a shell only: it does not show
+All gateway runtime traffic requires a valid App API key. `/` (the web app's Home page), `/health`,
+`/me/api/session`, and the `/.well-known/*` discovery surfaces are public.
+`/me` no longer exists. The web app shell is public only: it does not show
 private capability, model, or job data until the browser sends either the
 signed OIDC session cookie or the user's `opk_...` key to the normal
 authenticated runtime APIs. State-changing
@@ -482,12 +485,12 @@ status_visibility:
 
 Rotate one App's API key:
 
-1. Open `/` for keys you own, or `/admin` as an operator.
+1. Open `/apps/` for keys you own, or as an operator.
 2. Delete or revoke the old Credential.
 3. Create a new key on the same App.
 4. Update that App to use the newly printed `opk_...` value.
 
-Delete an App's API key from `/` or `/admin`; it is revoked immediately in
+Delete an App's API key from `/apps/`; it is revoked immediately in
 `admin.db` and rejected on subsequent runtime requests.
 
 ## Common Failures

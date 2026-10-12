@@ -181,7 +181,6 @@ def build_gateway_discovery_metadata(
         "health": "/health",
         "login": "/login",
         "user_portal": "/",
-        "user_portal_alias": "/me",
         "user_session": "/me/api/session",
         "user_apps": "/me/api/apps",
         "user_app": "/me/api/apps/{app_id}",

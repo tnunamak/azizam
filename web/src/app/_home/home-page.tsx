@@ -838,7 +838,7 @@ function Connect({
               {testResult.request_id && (
                 <a
                   className="text-link inline-flex items-center underline underline-offset-4 max-sm:min-h-11"
-                  href={`/r/${encodeURIComponent(testResult.request_id)}`}
+                  href={`/usage/?receipt=${encodeURIComponent(testResult.request_id)}`}
                 >
                   View request receipt
                 </a>
@@ -1397,7 +1397,7 @@ export default function HomePage() {
             message="Make pictures, chat and more with the apps you already use."
             action={{
               label: "Sign in",
-              href: `/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`,
+              href: `/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`,
             }}
           />
         </>

@@ -150,12 +150,10 @@ verbose output with credentials; it can include request headers.
 
 ## Registered route inventory
 
-The original inventory came from a walk of `proxy.app.routes` at base `33810bda`.
-The table below now lists **126 owner-bearer** entries
-(104 owner-schema operations and 22 hidden routes), **35 session-only**,
-**2 session-view** and **19 browser/public** entries: **182 total**.
-These counts describe the table's method/path entries, including trailing-slash aliases.
-Re-walk `proxy.app.routes` for the current live inventory.
+Captured by walking `proxy.app.routes` when the web app moved to `/`. Counts
+are per registered method/path, including trailing-slash aliases: **106
+owner-bearer** (104 JSON/YAML owner API operations, 2 browser/HTML routes),
+**33 session-only**, **2 session-view**, **12 browser/public**; **153 total**.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -164,9 +162,10 @@ owner/app bearer key. `session-view` permits an unauthenticated snapshot.
 `browser/public` covers sign-in, first-run, redirect and health contracts;
 headers alone do not turn them into owner API operations. Routes outside these
 namespaces are explicitly listed in `tests/fixtures/headless_non_control_routes.json`;
-that classification does not assert their authorization contract. The only
-opaque-mount exception is the `/ui` mount named `web_ui` whose app is exactly
-`UIStaticFiles`: it serves the static export, with owner pages guarded by middleware.
+that classification does not assert their authorization contract. There are no
+mounts. The one route that is not a `Route` is `UiRoute` (`gateway/ui_routes.py`),
+just before the catch-all: it serves the web export's registry pages, payloads and
+assets, and guards admin pages itself (`tests/test_ui_routes.py`).
 
 The tests walk every route type and recurse through mounts, preserving their
 path prefixes. An unclassified route or opaque mount fails the inventory test.
@@ -179,9 +178,6 @@ Selected successful workflows are exercised separately.
 
 | Method and path | Auth class | App key | Handler / auth call | Schema |
 | --- | --- | --- | --- | --- |
-| `GET /admin` | owner-bearer | denied | `proxy.admin_dashboard`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `HEAD /admin` | browser/public | no owner authority | `proxy.head_admin`; Public health check | hidden |
-| `GET /admin/` | owner-bearer | denied | `proxy.admin_dashboard`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `GET /admin/api/activity/requests` | owner-bearer | denied | `gateway.activity_api.requests`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/admin-keys` | owner-bearer | denied | `gateway.admin_api.create_admin_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key | owner |
 | `GET /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.list_apps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -288,25 +284,7 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/apps` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/apps/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/audit` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/audit/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/login` | browser/public | no owner authority | `proxy.admin_login_compat`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `POST /admin/logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /admin/oidc/callback` | browser/public | no owner authority | `proxy.admin_oidc_callback`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `GET /admin/overview` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/overview/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/profiles` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/profiles/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/services` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/services/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/settings` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/settings/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/status` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/status/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/users` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
-| `GET /admin/users/` | owner-bearer | denied | `proxy.admin_react_section_redirect`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `POST /auth/api/invite` | browser/public | no owner authority | `gateway.accounts_api.inspect`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/invite/accept` | browser/public | no owner authority | `gateway.accounts_api.accept`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/login` | browser/public | no owner authority | `gateway.accounts_api.login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
@@ -314,10 +292,7 @@ Selected successful workflows are exercised separately.
 | `POST /auth/api/password-reset` | browser/public | no owner authority | `gateway.accounts_api.reset`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `GET /auth/logout-confirm` | session-only | denied | `proxy.logout_confirmation`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /login` | browser/public | no owner authority | `proxy.browser_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `GET /logout` | browser/public | no owner authority | `proxy.browser_logout_alias`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |
-| `GET /me` | browser/public | no owner authority | `proxy.user_portal`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `GET /me/` | browser/public | no owner authority | `proxy.user_portal`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /me/api/access-request` | session-only | denied | `proxy.user_portal_request_access`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/activity` | session-view | no owner authority | `proxy.user_portal_activity`; Optional browser session; returns empty unauthenticated activity without cookie | hidden |
 | `POST /me/api/apps` | session-only | denied | `proxy.user_portal_create_app`; Browser session; mutations require CSRF/action header | hidden |
@@ -348,17 +323,12 @@ Selected successful workflows are exercised separately.
 | `POST /me/api/try-key` | session-only | denied | `proxy.user_portal_try_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/usage/summary` | session-only | denied | `gateway.me_media.usage_summary`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/workflows` | session-only | denied | `gateway.workflows_catalog.workflows_catalog`; Browser session; mutations require CSRF/action header | hidden |
-| `GET /me/login` | browser/public | no owner authority | `proxy.user_portal_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `GET /me/logout` | browser/public | no owner authority | `proxy.user_portal_logout`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `POST /me/logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |
-| `GET /setup` | browser/public | no owner authority | `proxy.setup_page`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `GET /setup/api/state` | browser/public | no owner authority | `gateway.setup_api.setup_state`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `GET /setup/console` | browser/public | no owner authority | `proxy.setup_console`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /setup/claim` | browser/public | no owner authority | `proxy.setup_claim_admin_key`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /setup/first-app` | session-only | denied | `proxy.setup_create_first_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /setup/local-login` | browser/public | no owner authority | `proxy.setup_local_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /setup/local-owner` | browser/public | no owner authority | `proxy.setup_create_local_owner`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
-| `GET /status` | owner-bearer | denied | `proxy.status_dashboard_index`; AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth | hidden |
-| `GET /status/` | owner-bearer | denied | `proxy.status_dashboard_index`; AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth | hidden |
 | `GET /status/raw` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `GET /status/raw/` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 

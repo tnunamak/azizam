@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import HomePage from "@/app/home/page";
+import HomePage from "@/app/_home/home-page";
 import ProvidersPage from "@/app/providers/page";
 import ShowcasePage from "@/app/showcase/page";
 import { canonicalDestinationPath } from "@/lib/product";
@@ -22,12 +22,10 @@ afterEach(() => {
 });
 
 describe("integrated UI coherence", () => {
-  it("treats /ui/home as the Home destination", () => {
+  it("treats the root as the Home destination", () => {
     expect(canonicalDestinationPath("/")).toBe("/");
-    expect(canonicalDestinationPath("/ui/")).toBe("/");
-    expect(canonicalDestinationPath("/ui/home/")).toBe("/");
-    expect(canonicalDestinationPath("/home")).toBe("/");
-    expect(canonicalDestinationPath("/ui/models/")).toBe("/models");
+    expect(canonicalDestinationPath("/models/")).toBe("/models");
+    expect(canonicalDestinationPath("/models")).toBe("/models");
   });
 
   it("announces Showcase recorded-example loading as a status", () => {

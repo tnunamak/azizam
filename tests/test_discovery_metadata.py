@@ -189,7 +189,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         )
         self.assertEqual(metadata["links"]["login"], "/login")
         self.assertEqual(metadata["links"]["user_portal"], "/")
-        self.assertEqual(metadata["links"]["user_portal_alias"], "/me")
+        self.assertNotIn("user_portal_alias", metadata["links"])
         self.assertEqual(metadata["links"]["user_session"], "/me/api/session")
         self.assertEqual(metadata["links"]["user_apps"], "/me/api/apps")
         self.assertEqual(metadata["links"]["user_app"], "/me/api/apps/{app_id}")
@@ -422,16 +422,13 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
                 "x-forwarded-proto": "https",
             })
 
-    def test_root_serves_user_portal(self) -> None:
+    def test_root_is_the_web_app_and_firehose_is_gone(self) -> None:
+        # The sandbox has no web build, so the root page explains that instead.
         response = self.client.get("/", follow_redirects=False)
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
-        self.assertIn("Azizam", response.text)
-
-    def test_legacy_firehose_redirects_to_technical_status(self) -> None:
-        response = self.client.get("/firehose", follow_redirects=False)
-        self.assertEqual(response.status_code, 301, response.text)
-        self.assertEqual(response.headers["location"], "/status/raw")
+        self.assertIn(response.status_code, {200, 503}, response.text)
+        self.assertNotEqual(response.status_code // 100, 3)
+        legacy = self.client.get("/firehose", headers={"accept": "application/json"}, follow_redirects=False)
+        self.assertNotEqual(legacy.status_code // 100, 3)
 
     def test_well_known_azizam_is_public(self) -> None:
         response = self.client.get("/.well-known/azizam")
@@ -441,22 +438,17 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(body["service"]["product"], "Azizam")
         self.assertEqual(body["service"]["canonical_host"], "http://testserver")
         self.assertEqual(body["links"]["user_portal"], "/")
-        self.assertEqual(body["links"]["user_portal_alias"], "/me")
         self.assertEqual(body["links"]["media_jobs"], "/gateway/v1/media/jobs")
         self.assertEqual(
             body["absolute_links"]["user_portal"],
             "http://testserver/",
         )
-        self.assertEqual(
-            body["absolute_links"]["user_portal_alias"],
-            "http://testserver/me",
-        )
+        self.assertNotIn("user_portal_alias", body["absolute_links"])
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
-    def test_user_portal_alias_redirects_to_home(self) -> None:
-        response = self.client.get("/me", follow_redirects=False)
-        self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/ui/home/")
+    def test_old_user_portal_alias_is_gone(self) -> None:
+        response = self.client.get("/me", headers={"accept": "application/json"}, follow_redirects=False)
+        self.assertNotEqual(response.status_code // 100, 3)
 
     def test_azizam_alias_matches_discovery_shape(self) -> None:
         response = self.client.get("/.well-known/azizam")

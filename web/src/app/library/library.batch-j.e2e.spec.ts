@@ -59,7 +59,7 @@ for (const mode of ["light", "dark"] as const) {
         }),
       );
 
-      await page.goto("/ui/library/");
+      await page.goto("/library/");
 
       await expect(page.getByRole("main")).toHaveCount(1);
       await page
@@ -73,7 +73,7 @@ for (const mode of ["light", "dark"] as const) {
       const details = dialog.locator("details");
       await expect(
         dialog.getByRole("link", { name: `View receipt ${requestId}` }),
-      ).toHaveAttribute("href", `/r/${encodeURIComponent(requestId)}`);
+      ).toHaveAttribute("href", `/usage/?receipt=${encodeURIComponent(requestId)}`);
       await expect(details.getByText(requestId)).toBeVisible();
       await auditPage(page);
       expect(
@@ -91,12 +91,18 @@ for (const mode of ["light", "dark"] as const) {
       await dialog
         .getByRole("link", { name: `View receipt ${requestId}` })
         .click();
-      await expect(page).toHaveURL(new RegExp(`/r/${requestId}$`));
+      await expect(page).toHaveURL(new RegExp(`/usage/\\?receipt=${requestId}$`));
       const receipt = await receiptResponse;
       expect(receipt.status()).toBe(200);
       expect((await receipt.json()).request_id).toBe(requestId);
-      await expect(page.locator("#receipt-sheet")).toBeVisible();
-      await expect(page.locator("#receipt-body")).toContainText(requestId);
+      // /usage/?receipt= opens the Usage receipt sheet (the /r/<id> page is gone).
+      const sheet = page.getByRole("dialog", {
+        name: "Request receipt",
+        exact: true,
+      });
+      await expect(sheet).toBeVisible();
+      await sheet.getByText("Technical details", { exact: true }).click();
+      await expect(sheet).toContainText(`Request ID: ${requestId}`);
     });
   }
 }

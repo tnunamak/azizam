@@ -180,7 +180,7 @@
    "discovery_url": "/gateway/v1/workflows/image.edit.flux2-klein-4b",
    "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
    "recent_jobs_url": "/me/api/media?workflow=image.edit.flux2-klein-4b",
-   "try_url": "/ui/try/?workflow=image.edit.flux2-klein-4b",
+   "try_url": "/try/?workflow=image.edit.flux2-klein-4b",
    "capabilities": [
     {
      "intent": "image.edit",

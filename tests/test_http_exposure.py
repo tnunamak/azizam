@@ -69,7 +69,7 @@ def test_public_activity_has_no_member_records(public_client):
     assert not response.json().get("receipts")
 
 
-@pytest.mark.parametrize("path,status", [("/status/raw", 401), ("/ui/settings/", 302)])
+@pytest.mark.parametrize("path,status", [("/status/raw", 401), ("/settings/", 302)])
 def test_owner_pages_refuse_anonymous_browsers(public_client, path, status):
     response = public_client.get(path, follow_redirects=False)
     assert response.status_code == status

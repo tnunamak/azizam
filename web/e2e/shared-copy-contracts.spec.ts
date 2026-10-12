@@ -48,7 +48,7 @@ for (const theme of ["light", "dark"] as const) {
           },
         });
       });
-      await page.goto("/ui/models/");
+      await page.goto("/models/");
       const loading = page.getByRole("status", {
         name: "Loading your account",
       });
@@ -56,7 +56,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(loading).toHaveAttribute("aria-busy", "true");
       // A session that has not answered is not signed out. Keep private
       // content and navigation unmounted until the account is known.
-      await expect(page).toHaveURL(/\/ui\/models\/$/);
+      await expect(page).toHaveURL(/\/models\/$/);
       await expect(page.getByRole("navigation")).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Models" })).toHaveCount(
         0,
@@ -75,7 +75,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(failure).toContainText(
         "We couldn't tell why your account didn't load. Try again.",
       );
-      await expect(page).toHaveURL(/\/ui\/models\/$/);
+      await expect(page).toHaveURL(/\/models\/$/);
       await expect(page.getByRole("navigation")).toHaveCount(0);
       await checkAccessibility(page);
       await page.screenshot({
@@ -116,7 +116,7 @@ for (const theme of ["light", "dark"] as const) {
           value: { writeText: async () => undefined },
         });
       });
-      await page.goto("/ui/design/");
+      await page.goto("/design/");
       const copy = page.getByRole("button", {
         name: "Copy gateway address",
         exact: true,
@@ -204,7 +204,7 @@ test("denied clipboard announces recovery and preserves the exact selectable add
       },
     });
   });
-  await page.goto("/ui/design/");
+  await page.goto("/design/");
   await page
     .getByRole("button", { name: "Copy gateway address", exact: true })
     .click();
@@ -265,7 +265,7 @@ test("global connection status describes reachability while engine diagnostics s
       },
     }),
   );
-  await page.goto("/ui/design/");
+  await page.goto("/design/");
   const connection = page.getByRole("button", { name: /Gateway status:/ });
   await expect(connection).not.toHaveAccessibleName(
     /Degraded|Models unavailable|Down/,

@@ -23,7 +23,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/home",
+  usePathname: () => "/",
   useSearchParams: () => new URLSearchParams(""),
   useRouter: () => ({ push: vi.fn() }),
 }));
@@ -105,7 +105,7 @@ function serve(rows: Row[]) {
 beforeEach(() => {
   clients.forEach((client) => client.clear());
   resetSessionCache();
-  window.history.replaceState(null, "", "/ui/home/");
+  window.history.replaceState(null, "", "/");
   localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     writable: true,

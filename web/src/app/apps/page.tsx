@@ -547,7 +547,7 @@ function AppsContents() {
           description="Each app gets a key with your account's access plan."
           action={
             <Button asChild>
-              <a href="/admin/login">Sign in</a>
+              <a href="/login">Sign in</a>
             </Button>
           }
         />

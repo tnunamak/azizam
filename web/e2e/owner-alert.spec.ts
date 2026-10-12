@@ -46,7 +46,7 @@ for (const mode of [
         },
       }),
     );
-    await page.goto("/ui/models/");
+    await page.goto("/models/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     const alert = page.getByText(
       "Image engine can’t take requests right now.",
@@ -62,7 +62,7 @@ for (const mode of [
       await page
         .getByRole("link", { name: "See Status", exact: true })
         .click();
-      await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
+      await expect(page).toHaveURL(/\/status\/?#engines$/);
       await expect(
         page.getByRole("heading", {
           name: "Engines and providers",
@@ -95,7 +95,7 @@ test("provider alerts use explicit enabled and reachability data", async ({
       },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(
     page.getByText(
       "Remote provider can’t take requests right now.",
@@ -111,7 +111,7 @@ test("provider alerts use explicit enabled and reachability data", async ({
   const action = banner.getByRole("link", { name: "See Status", exact: true });
   await action.focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui\/status\/?#providers$/);
+  await expect(page).toHaveURL(/\/status\/?#providers$/);
   // D1: engines and providers share one section on Status.
   await expect(
     page.getByRole("heading", {

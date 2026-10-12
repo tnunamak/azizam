@@ -52,7 +52,7 @@ class RequestSourceMiddleware:
         try:
             referer = urlsplit(headers.get(b"referer", ""))
             ui_origin = (referer.netloc == headers.get(b"host")
-                         and referer.path.rstrip("/") in {"/ui/try", "/ui/home"})
+                         and referer.path in {"/", "/try/"})
         except ValueError:
             ui_origin = False
         ui_token = _gateway_ui.set(current_gateway_ui() or ui_origin)

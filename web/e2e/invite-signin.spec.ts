@@ -48,12 +48,12 @@ test("invited member creates a password account and signs in again", async ({
     );
     expect(copied === key).toBe(true);
     await firstVisit.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(firstVisit).toHaveURL(/\/ui\/$/);
+    await expect(firstVisit).toHaveURL(/^https?:\/\/[^/]+\/$/);
 
     const returnVisit = await browser.newContext({ baseURL });
     try {
       const signIn = await returnVisit.newPage();
-      await signIn.goto("/ui/sign-in/");
+      await signIn.goto("/sign-in/");
       await signIn
         .getByLabel("Email", { exact: true })
         .fill("invited@example.test");
@@ -63,7 +63,7 @@ test("invited member creates a password account and signs in again", async ({
       await signIn
         .getByRole("button", { name: "Sign in", exact: true })
         .click();
-      await expect(signIn).toHaveURL(/\/ui\/home\/$/);
+      await expect(signIn).toHaveURL(/^https?:\/\/[^/]+\/$/);
     } finally {
       await returnVisit.close();
     }

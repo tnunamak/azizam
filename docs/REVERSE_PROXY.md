@@ -10,12 +10,14 @@ For client-address trust, first-owner claiming and the family-access checklist,
 read [Public exposure](ops/PUBLIC_EXPOSURE.md). The gateway applies forwarding
 trust itself; custom Uvicorn launch commands must use `--no-proxy-headers`.
 
-Use `HEAD /` or `HEAD /admin` for reverse-proxy health checks. Both return
-`200` with no body. The dedicated `GET /health` endpoint returns a JSON
-body with auth and credential status and is also suitable for upcheck polling.
+Use `GET /health` for reverse-proxy health checks. It returns a JSON body with
+auth and credential status.
 
-Do **not** use `GET /` or `GET /admin` as health check targets from a reverse
-proxy: those paths return HTML and require admin auth respectively.
+Do **not** use `HEAD /`, `GET /` or `HEAD /admin` as health check targets.
+`/` is the web app's Home page: it answers `503` when the web build is missing,
+which would mark a working API as down. `HEAD /admin` answers `405`. If your
+probe used `HEAD /admin` or `HEAD /`, change it to `GET /health` before you
+deploy the release that moves the web app to `/`.
 
 ## Recommended Nginx snippet
 

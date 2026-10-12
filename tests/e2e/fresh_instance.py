@@ -137,14 +137,13 @@ def snapshot(destination):
 
 def assert_fresh_setup_entry(client, compose):
     if not compose:
-        setup = expect(client.get("/setup"), 200)
+        # A source checkout has no web build; the server console still works.
+        setup = expect(client.get("/setup/console"), 200)
         assert '/setup/local-owner' in setup.text, "Fresh install has no owner claim form"
         print("PASS fresh setup renders the local owner claim form", flush=True)
         return
 
-    setup = expect(client.get("/setup"), 303)
-    assert setup.headers["location"] == "/ui/setup/", "Fresh setup did not redirect to exported UI"
-    exported = expect(client.get("/ui/setup/"), 200)
+    exported = expect(client.get("/setup/"), 200)
     assert "text/html" in exported.headers.get("content-type", ""), "Exported setup page is not HTML"
     state = expect(client.get("/setup/api/state"), 200).json()
     assert state["owner_exists"] is False, "Fresh setup API state already has an owner"

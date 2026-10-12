@@ -13,8 +13,8 @@ import {
   type RequestSignal,
   type Verdict,
 } from "@/lib/capability-state";
-import { homeApi, type HomeSnapshot } from "@/app/home/home-api";
-import { capabilityTiles } from "@/app/home/presentation";
+import { homeApi, type HomeSnapshot } from "@/app/_home/home-api";
+import { capabilityTiles } from "@/app/_home/presentation";
 import { appPlumbingCapabilities } from "@/lib/terms";
 
 /** People see these names (VOICE glossary); the gateway's own titles still match. */

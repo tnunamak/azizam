@@ -75,7 +75,7 @@ for (const theme of ["light", "dark"] as const) {
         route.fulfill({ json: seededSummary }),
       );
 
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       const decisions = page.locator('span[style*="--usage-decisions"]');
       await expect(decisions).toBeVisible();
       const colors = await decisions.evaluate((element) => ({
@@ -131,7 +131,7 @@ for (const theme of ["light", "dark"] as const) {
           },
         }),
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(page.getByText("No requests in this period")).toBeVisible();
       await expect(page.getByText(/90-day receipts appear here/)).toBeVisible();
       await inspect(page, `empty-${theme}-${width}`);
@@ -142,7 +142,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/me/api/usage/summary?**", (route) =>
         route.fulfill({ status: 503, json: { error: "Unavailable" } }),
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(page.getByText(/Usage could not be loaded/)).toBeVisible();
       await inspect(page, `error-${theme}-${width}`);
     });
@@ -153,7 +153,7 @@ for (const theme of ["light", "dark"] as const) {
         "**/me/api/usage/summary?**",
         () => new Promise(() => {}),
       );
-      await page.goto("/ui/usage/");
+      await page.goto("/usage/");
       await expect(page.getByRole("status")).toBeVisible();
       await page.screenshot({
         path: `${reviewRoot}/loading-${theme}-${width}.png`,
@@ -172,7 +172,7 @@ test("Usage preserves person and source filters in API requests", async ({
     return route.fulfill({ json: seededSummary });
   });
 
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await page.getByRole("combobox", { name: "Person" }).click();
   await page.getByRole("option", { name: "Mira" }).click();
   await page.getByRole("combobox", { name: "Source" }).click();
@@ -245,7 +245,7 @@ for (const [status, expected, summary, extra] of [
       }),
     );
 
-    await page.goto("/ui/usage/");
+    await page.goto("/usage/");
     await page.getByRole("button", { name: "View recent requests" }).click();
     await page.getByRole("button", { name: /Receipt details for/ }).click();
     const dialog = page.getByRole("dialog", { name: "Request receipt" });
@@ -279,7 +279,7 @@ test("Usage omits unavailable retention details", async ({
   await page.route("**/me/api/usage/summary?**", (route) =>
     route.fulfill({ json: withoutRetention }),
   );
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByText("Receipt coverage", { exact: true })).toBeVisible();
   await expect(page.getByText(/14 days/)).toHaveCount(0);
   await page.getByText("Receipt coverage", { exact: true }).click();
@@ -317,7 +317,7 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
     });
   });
 
-  await page.goto("/ui/usage/");
+  await page.goto("/usage/");
   await expect(page.getByText("Spend", { exact: true })).toBeVisible();
   await expect(page.getByText("Cost not recorded").first()).toBeVisible();
   await expect(page.getByText("Transcribe a recording", { exact: true }).first()).toBeVisible();

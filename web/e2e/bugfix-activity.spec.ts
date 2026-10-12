@@ -26,7 +26,7 @@ for (const status of ["error", "failed"]) {
         },
       }),
     );
-    await page.goto("/ui/activity/");
+    await page.goto("/activity/");
     await page.getByRole("tab", { name: "Requests", exact: true }).click();
     const row = page.getByRole("button", { name: /Request details:/ });
     await expect(row).toContainText("Failed");

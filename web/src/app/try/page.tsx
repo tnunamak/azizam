@@ -2467,7 +2467,7 @@ export default function TryPage() {
                         severity={currentError.lost ? "attention" : "critical"}
                         action={
                           currentError.library
-                            ? { label: "Open Library", href: "/ui/library/" }
+                            ? { label: "Open Library", href: "/library/" }
                             : {
                                 label: "Edit and run again",
                                 onClick: () => editFailedRun(tab.value),

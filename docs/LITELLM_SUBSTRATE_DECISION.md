@@ -108,7 +108,7 @@ fallbacks independently in the sidecar.
 The operator surface over the sidecar's `/key/*` management API lives under
 `/admin/api/operator/litellm/keys` (list, create) and `…/keys/delete`, with a
 legacy Python panel under **Services → LiteLLM execution keys**.
-Browser requests to `/admin` redirect to the new UI at `/ui/home/`.
+`/admin` serves no browser page; the web app is at `/`.
 The old Python panel requires an admin key in a request header; browser
 session access does not open that panel. The management APIs remain at the
 paths above. Properties:

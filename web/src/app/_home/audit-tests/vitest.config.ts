@@ -20,8 +20,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: [path.join(webRoot, "tests/vitest.setup.ts")],
     include: [
-      "src/app/home/audit-tests/**/*.spec.ts",
-      "src/app/home/audit-tests/**/*.spec.tsx",
+      "src/app/_home/audit-tests/**/*.spec.ts",
+      "src/app/_home/audit-tests/**/*.spec.tsx",
     ],
     clearMocks: true,
     restoreMocks: true,

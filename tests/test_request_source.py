@@ -60,7 +60,7 @@ def test_gateway_ui_tests_keep_app_identity_and_reset_attribution():
         middleware = RequestSourceMiddleware(app)
         async def call(referer):
             await middleware({"type": "http", "headers": [(b"host", b"gateway.test"), (b"referer", referer)]}, None, None)
-        await asyncio.gather(call(b"http://gateway.test/ui/try/"), call(b"http://external.test/ui/try/"), call(b"http://[malformed"))
+        await asyncio.gather(call(b"http://gateway.test/try/"), call(b"http://external.test/try/"), call(b"http://[malformed"))
         assert {row.source_kind for row in rows} == {"gateway-ui", "app"}
         assert all(row.app_id == "owned-app" for row in rows)
         with gateway_ui_request():

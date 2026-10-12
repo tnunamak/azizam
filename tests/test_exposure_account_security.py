@@ -320,7 +320,7 @@ def test_setup_local_owner_first_claim_is_atomic_under_race(
     assert winner_response.headers["location"] == "/"
     losers = [response for _, _, response in results if response is not winner_response]
     assert len(losers) == 1
-    assert losers[0].headers["location"] == "/setup"
+    assert losers[0].headers["location"] == "/setup/"
     assert "set-cookie" not in losers[0].headers
 
     users = admin_store.list_users(path=isolated_admin)
@@ -382,7 +382,7 @@ def test_setup_local_owner_same_email_race_preserves_winner_verifier(
     assert winner_response.headers["location"] == "/"
     losers = [response for _, response in results if response is not winner_response]
     assert len(losers) == 1
-    assert losers[0].headers["location"] == "/setup"
+    assert losers[0].headers["location"] == "/setup/"
     assert "set-cookie" not in losers[0].headers
 
     users = admin_store.list_users(path=isolated_admin)

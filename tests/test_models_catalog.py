@@ -402,7 +402,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(fast["cost"], {"kind": "free", "price": None})
         self.assertEqual(fast["timing"]["typical_seconds"], 2.0)
         self.assertEqual(fast["timing"]["source"], "receipts")
-        self.assertEqual(fast["recent_receipts"][0]["href"], "/r/req_1")
+        self.assertEqual(fast["recent_receipts"][0]["href"], "/usage/?receipt=req_1")
         self.assertFalse(fast["availability"]["available"])
         self.assertEqual(fast["availability"]["status"], "unknown")
         self.assertFalse(fast["availability"]["measured"])

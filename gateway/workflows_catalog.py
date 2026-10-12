@@ -200,7 +200,7 @@ def _workflow_row(
         "discovery_url": _join_url(base_url, f"/gateway/v1/workflows/{record.id}"),
         "machine_readable_discovery_url": _join_url(base_url, f"/openapi.json#x-azizam-workflows"),
         "recent_jobs_url": f"/me/api/media?workflow={record.id}",
-        "try_url": f"/ui/try/?workflow={record.id}",
+        "try_url": f"/try/?workflow={record.id}",
         "capabilities": [summarize_capability(cap, "client") for cap in capability_rows],
         "recent_jobs": jobs[:5],
         "recent_receipts": receipts[:5],

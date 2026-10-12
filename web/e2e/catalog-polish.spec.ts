@@ -73,7 +73,7 @@ test("polished model grouping fills width before and after filtering", async ({
       },
     }),
   );
-  await page.goto("/ui/models/");
+  await page.goto("/models/");
   await expect(
     page.getByRole("heading", { name: "Fast", exact: true }),
   ).toBeVisible();
@@ -120,7 +120,7 @@ for (const width of [390, 1440]) {
         },
       }),
     );
-    await page.goto("/ui/models/");
+    await page.goto("/models/");
     const cards = page.locator(
       'table[aria-label="Available model names"] tbody tr',
     );
@@ -251,7 +251,7 @@ for (const theme of ["light", "dark"] as const) {
             },
           }),
         );
-        await page.goto("/ui/models/");
+        await page.goto("/models/");
         // Below 640 px a row is two lines: the task name, then the alias. The
         // model's friendly title is a desktop column.
         await expect(
@@ -286,7 +286,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/admin/api/profiles", (route) =>
         route.fulfill({ json: { profiles: plans } }),
       );
-      await page.goto("/ui/people/");
+      await page.goto("/people/");
       await page.getByRole("tab", { name: "Access plans" }).click();
       await expect(
         page.getByRole("heading", { name: "Family", exact: true }),

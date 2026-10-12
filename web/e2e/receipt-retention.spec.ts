@@ -55,7 +55,7 @@ for (const width of [1440, 390]) {
         ).trim(),
       );
     await page.setViewportSize({ width, height: 1000 });
-    await page.goto("/ui/settings/");
+    await page.goto("/settings/");
     const section = page.getByRole("region", { name: "Receipts", exact: true });
     const select = section.getByRole("combobox", { name: "Keep receipts" });
     await expect(select).toHaveText("Forever");
@@ -106,17 +106,17 @@ for (const width of [1440, 390]) {
     expect(count()).toBe(0);
     await page.reload();
     await expect(select).toHaveText("30 days");
-    await page.goto("/ui/usage/");
+    await page.goto("/usage/");
     await page.getByText("Receipt coverage", { exact: true }).click();
     await expect(
       page.getByText("Receipts are kept for 30 days."),
     ).toBeVisible();
-    await page.goto("/ui/settings/");
+    await page.goto("/settings/");
     await select.click();
     await page.getByRole("option", { name: "Forever", exact: true }).click();
     await section.getByRole("button", { name: "Save receipt setting" }).click();
     await expect(section.getByText(/Saved: Forever/)).toBeVisible();
-    await page.goto("/ui/usage/");
+    await page.goto("/usage/");
     await page.getByText("Receipt coverage", { exact: true }).click();
     await expect(
       page.getByText("Receipts are kept until you delete them."),

@@ -41,7 +41,7 @@ def render_reference(schema: dict) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{title} · API reference</title><style>{_CSS}</style></head><body><main>'
         f'<h1>{title} API reference</h1><p>Requests, responses and authentication from this gateway’s OpenAPI schema.</p>'
-        '<p><a href="/openapi.json">Download OpenAPI JSON</a> · <a href="/ui/">Open gateway</a></p>'
+        '<p><a href="/openapi.json">Download OpenAPI JSON</a> · <a href="/">Open gateway</a></p>'
         f'<h2>Endpoints</h2>{"".join(sections)}'
         f'<h2>Shared schemas</h2><details><summary>Types and security schemes</summary><pre>{components}</pre></details>'
         '</main></body></html>'

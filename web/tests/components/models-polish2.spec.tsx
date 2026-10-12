@@ -151,7 +151,7 @@ it("provides actions for the initial empty catalog and filtered empty catalog", 
   renderCatalog([]);
   expect(
     await screen.findByRole("link", { name: "Review setup" }),
-  ).toHaveAttribute("href", "/ui/home/");
+  ).toHaveAttribute("href", "/");
   cleanup();
   renderCatalog([row()]);
   const search = await screen.findByRole("textbox", { name: "Search models" });

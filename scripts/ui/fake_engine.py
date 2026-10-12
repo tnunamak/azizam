@@ -148,7 +148,10 @@ async def speech(request: Request):
     body = await request.body()
     # Each text gets its own pitch, so different requests make different
     # files (assets are content-addressed) and the same text the same file.
-    pitch = 180 + hashlib.sha256(body).digest()[0]
+    # One digest byte gave 256 pitches: two prompts made the same file 1 time
+    # in 256 and became one Library item. Two bytes give 65,536 pitches
+    # 1/256 Hz apart; over two seconds that is about 100 sample steps apart.
+    pitch = 180 + int.from_bytes(hashlib.sha256(body).digest()[:2], "big") / 256
     rate = 16000
     frames = b"".join(
         struct.pack("<h", int(2000 * math.sin(2 * math.pi * pitch * n / rate) * min(1, n / 800, (2 * rate - n) / 800)))

@@ -127,7 +127,7 @@ it("keeps the member status sign-in action for HTTP 401", async () => {
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(401));
   mountHealthErrorPage(<MemberStatus />);
   expect(await screen.findByText("Sign in to see your status")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fstatus%2F");
   expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();
 });
 

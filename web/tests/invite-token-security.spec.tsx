@@ -12,7 +12,7 @@ afterEach(() => {
 
 it("captures the fragment, clears it, and inspects using a POST JSON body", async () => {
   const token = "private-invitation-bearer";
-  window.history.replaceState(null, "", `/ui/invite/?view=join#token=${token}`);
+  window.history.replaceState(null, "", `/invite/?view=join#token=${token}`);
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
     String(input) === "/auth/api/options"
       ? { built_in: true, oidc: false }

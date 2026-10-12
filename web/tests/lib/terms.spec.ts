@@ -75,7 +75,7 @@ const legacyCopy: Record<string, string[]> = {
     "Base URL",
     ", paste this base URL, and enter your saved key. The examples\n                below read the key from GATEWAY_API_KEY.",
   ],
-  "app/home/page.tsx": [
+  "app/_home/home-page.tsx": [
     "Base URL",
     "Choose another key, or ask the gateway owner to check this\n                      key’s access plan and chat aliases. Models without an\n                      alias may still be available. Your base URL stays the\n                      same.",
     "Voice",
@@ -132,7 +132,7 @@ const technicalExceptions: Record<string, { value: string; reason: string }[]> =
         reason: "Exact field label used in app setup recipes",
       },
     ],
-    "app/home/page.tsx": [
+    "app/_home/home-page.tsx": [
       {
         value: "Base URL",
         reason: "Exact field label used in app setup recipes",
@@ -153,7 +153,7 @@ const technicalExceptions: Record<string, { value: string; reason: string }[]> =
         reason: "Engine endpoint configuration field label",
       },
     ],
-    "app/home/recipes.ts": [
+    "app/_home/recipes.ts": [
       {
         value: "Base URL",
         reason: "Exact field label used by OpenAI-compatible app recipes",

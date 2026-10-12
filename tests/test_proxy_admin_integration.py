@@ -41,14 +41,9 @@ async def _test_backend_grid(_config):
 def assert_authenticated_admin_dashboard(
     test_case: unittest.TestCase, client: TestClient
 ) -> None:
-    """Assert authenticated browser access for both optional UI mount modes."""
-    for web_ui_mounted in (True, False):
-        with test_case.subTest(web_ui_mounted=web_ui_mounted), patch.object(
-            proxy, "WEB_UI_MOUNTED", web_ui_mounted
-        ):
-            dashboard = client.get("/admin", follow_redirects=False)
-            test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
-            test_case.assertEqual(dashboard.headers["location"], "/ui/home/")
+    """Assert the browser session is an admin session (the web app's admin pages use it)."""
+    session = client.get("/admin/api/session", follow_redirects=False)
+    test_case.assertEqual(session.status_code, 200, session.text)
 
 
 class ProxyAdminIntegrationTests(unittest.TestCase):
@@ -320,30 +315,17 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(admin_key_on_runtime.status_code, 401)
 
-    def test_admin_dashboard_renders_with_admin_key(self) -> None:
-        response = self.client.get("/admin", headers=self._auth())
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("Azizam Admin", response.text)
-        self.assertIn("Create App", response.text)
-        self.assertIn("No App keys yet", response.text)
-        self.assertIn("const policyCatalog=", response.text)
-        self.assertIn("profile-workflow-options", response.text)
-        self.assertIn("image.generate.flux2-klein-4b", response.text)
-        self.assertIn("User-owned Apps and keys", response.text)
-        self.assertIn(">Workflows</h3>", response.text)
-        self.assertNotIn("Mint runtime key", response.text)
-
-    def test_admin_dashboard_requires_admin_auth(self) -> None:
+    def test_admin_page_requires_admin_auth(self) -> None:
         # Signed-out browsers retain their destination through the shared sign-in entry.
-        response = self.client.get("/admin", follow_redirects=False)
+        response = self.client.get("/settings/", follow_redirects=False)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fhome%2F")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fsettings%2F")
         # An API caller (Bearer token) still gets the JSON 401.
-        api = self.client.get("/admin", headers={"Authorization": "Bearer nope"})
+        api = self.client.get("/settings/", headers={"Authorization": "Bearer nope"})
         self.assertEqual(api.status_code, 401)
         self.assertEqual(api.json()["error"]["code"], "admin_unauthenticated")
 
-    def test_admin_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
+    def test_admin_page_redirects_browser_to_login_when_oidc_enabled(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -363,9 +345,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
-        response = self.client.get("/admin", follow_redirects=False)
+        response = self.client.get("/people/?tab=plans", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fhome%2F")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fpeople%2F%3Ftab%3Dplans")
 
     def test_oidc_login_callback_creates_signed_admin_session(self) -> None:
         cfg = OIDCConfig(
@@ -615,12 +597,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             return {"generated_at": 0, "banner": "ok", "errors": {}}
 
         with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
-            response = self.client.get("/status")
+            response = self.client.get("/status/raw")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
         self.assertIn("owner@example.com", response.text)
-        self.assertIn('href="/me/logout">Sign out</a>', response.text)
-        self.assertIn('href="/status" aria-current="page">Status</a>', response.text)
+        self.assertIn('href="/auth/logout-confirm">Sign out</a>', response.text)
+        self.assertIn('href="/status/" aria-current="page">Status</a>', response.text)
 
     def test_status_dashboard_redirects_browser_to_login_when_oidc_enabled(self) -> None:
         cfg = OIDCConfig(
@@ -642,9 +624,9 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
 
-        response = self.client.get("/status", follow_redirects=False)
+        response = self.client.get("/status/raw", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fstatus%2F")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fstatus%2Fraw")
 
     def test_v1_status_accepts_admin_key(self) -> None:
         async def fake_status(_config):
@@ -670,7 +652,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
-        html = client.get("/status")
+        html = client.get("/status/raw")
         self.assertEqual(html.status_code, 401, html.text)
         self.assertEqual(html.json()["error"]["code"], "admin_unauthenticated")
 
@@ -782,7 +764,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/ui/home/")
+        self.assertEqual(record.return_to, "/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -807,20 +789,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/ui/home/")
+        self.assertEqual(callback.headers["location"], "/")
 
-    def test_legacy_login_routes_redirect_to_single_login_entrypoint(self) -> None:
-        self.assertEqual(
-            self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2Fui%2Fhome%2F",
-        )
-        self.assertEqual(
-            self.client.get(
-                "/admin/login?return_to=/admin",
-                follow_redirects=False,
-            ).headers["location"],
-            "/login?return_to=%2Fui%2Fhome%2F",
-        )
+    def test_old_login_aliases_are_gone(self) -> None:
+        for path in ("/me/login", "/admin/login?return_to=/admin"):
+            response = self.client.get(path, headers={"accept": "application/json"}, follow_redirects=False)
+            self.assertNotEqual(response.status_code // 100, 3, path)
 
     def test_oidc_return_to_allows_user_portal(self) -> None:
         cfg = OIDCConfig(
@@ -847,7 +821,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/ui/home/")
+        self.assertEqual(record.return_to, "/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -872,16 +846,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/ui/home/")
-        # A signed-in NON-admin browser hitting /admin is sent to their home
-        # (the portal), not shown a raw JSON 403.
-        admin = self.client.get("/admin", follow_redirects=False)
+        self.assertEqual(callback.headers["location"], "/")
+        # A signed-in NON-admin browser opening an admin page is sent to
+        # Home, not shown a raw JSON 403.
+        admin = self.client.get("/settings/", follow_redirects=False)
         self.assertEqual(admin.status_code, 302)
         self.assertEqual(admin.headers["location"], "/")
-        self.assertEqual(
-            self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2Fui%2Fhome%2F",
-        )
 
     def test_user_models_catalog_requires_session(self) -> None:
         response = self.client.get("/me/api/models/catalog")
@@ -1219,13 +1189,11 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
 
-        page = self.client.get("/")
-        self.assertEqual(page.status_code, 200, page.text)
-        self.assertIn("brother@example.com", page.text)
-        self.assertIn("brother-laptop", page.text)
-
+        # Home (the web app at /) renders from this session snapshot.
         session_resp = self.client.get("/me/api/session")
         self.assertEqual(session_resp.status_code, 200, session_resp.text)
+        self.assertIn("brother@example.com", session_resp.text)
+        self.assertIn("brother-laptop", session_resp.text)
         self.assertEqual(session_resp.json()["apps"][0]["id"], app_id)
         self.assertEqual(session_resp.json()["csrf_token"], csrf)
         self.assertNotIn("hash", repr(session_resp.json()))
@@ -1267,10 +1235,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(revoked.status_code, 200, revoked.text)
         self.assertFalse(revoked.json()["credential"]["active"])
 
-        logout = self.client.get("/me/logout", follow_redirects=False)
-        self.assertEqual(logout.status_code, 303)
-        self.assertEqual(logout.headers["location"], "/auth/logout-confirm")
-        self.assertNotIn("set-cookie", logout.headers)
+        confirm = self.client.get("/auth/logout-confirm", follow_redirects=False)
+        self.assertEqual(confirm.status_code, 200)
+        self.assertIn('action="/logout"', confirm.text)
+        self.assertNotIn("set-cookie", confirm.headers)
 
     def test_user_activity_feed_is_owner_scoped_and_receipts_dont_leak(self) -> None:
         # The activity feed and receipt-detail endpoint must show a user ONLY
@@ -1658,10 +1626,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             self.client.cookies.clear()
             receipt_store.DB_PATH = old_receipts_path
 
-    def test_receipt_deep_link_route_and_detail_for_owner(self) -> None:
-        # /r/:id serves the portal page (the JS opens the receipt sheet from the
-        # path); /me/api/receipts/:id returns the owner-scoped detail with the
-        # "why" fields for a failed call.
+    def test_receipt_detail_for_owner(self) -> None:
+        # Receipt links open /usage/?receipt=:id, which reads
+        # /me/api/receipts/:id: the owner-scoped detail with the "why" fields
+        # for a failed call.
         from gateway import receipt_store
         from gateway.receipts import RouteReceipt
 
@@ -1712,11 +1680,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 encode_session_cookie(session, signing_key=cfg.signing_key),
             )
             try:
-                # The deep-link route serves the portal HTML (200), not a 404.
-                page = self.client.get(f"/r/{rid}")
-                self.assertEqual(page.status_code, 200, page.text)
-                self.assertIn("openReceiptSheet", page.text)
-
+                # Receipt links open Usage (/usage/?receipt=...), which reads this.
                 # The owner-scoped detail carries the why-fields.
                 detail = self.client.get(f"/me/api/receipts/{rid}")
                 self.assertEqual(detail.status_code, 200, detail.text)
@@ -2224,7 +2188,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
 
     def test_setup_renders_claim_card_when_oidc_enabled_and_no_owner(self) -> None:
         self._enable_oidc()
-        response = self.client.get("/setup")
+        response = self.client.get("/setup/console")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(
             response.headers.get("content-type"),
@@ -2232,13 +2196,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertIn("Claim this gateway", response.text)
         self.assertIn("Sign in to claim owner", response.text)
-        self.assertIn("/login?return_to=%2Fsetup", response.text)
+        self.assertIn("/login?return_to=%2Fsetup%2F", response.text)
         self.assertIn("first allowed OIDC login", response.text)
         self.assertNotIn("Setup complete", response.text)
 
     def test_setup_explains_oidc_setup_when_disabled_and_no_owner(self) -> None:
         # OIDC is disabled by default in this fixture (no _enable_oidc()).
-        response = self.client.get("/setup")
+        response = self.client.get("/setup/console")
         self.assertEqual(response.status_code, 200, response.text)
         # The primary first-run path is the web local-owner form, not the
         # host-side CLI recipe.
@@ -2254,21 +2218,21 @@ class SetupRouteIntegrationTests(unittest.TestCase):
     def test_setup_shows_complete_card_when_owner_exists(self) -> None:
         # Bootstrap a service-account owner -> _owner_or_admin_exists() is True.
         create_admin_service_account_key("real-owner", path=self.db)
-        response = self.client.get("/setup")
+        response = self.client.get("/setup/console")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("Setup complete", response.text)
         self.assertIn("This gateway has an owner", response.text)
-        self.assertIn('href="/"', response.text)
-        self.assertIn('href="/admin"', response.text)
+        self.assertIn('href="/">Open Azizam</a>', response.text)
+        self.assertNotIn('href="/admin"', response.text)
         self.assertNotIn("Sign in to claim owner", response.text)
 
     def test_safe_return_to_accepts_setup(self) -> None:
-        self.assertEqual(proxy._safe_admin_return_to("/setup"), "/setup")
+        self.assertEqual(proxy._safe_admin_return_to("/setup/"), "/setup/")
 
     def test_safe_return_to_still_rejects_external_redirects(self) -> None:
         self.assertEqual(
             proxy._safe_admin_return_to("//evil.example/setup"),
-            "/ui/home/",
+            "/",
         )
 
     def test_login_redirects_to_setup_when_oidc_disabled(self) -> None:
@@ -2276,7 +2240,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # local-owner sign-in or first-run creation lives.
         response = self.client.get("/login", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/setup")
+        self.assertEqual(response.headers["location"], "/setup/")
 
     def test_login_returns_501_for_api_callers_when_oidc_disabled(self) -> None:
         # OIDC disabled + API caller -> explicit machine-readable failure.
@@ -2292,11 +2256,11 @@ class SetupRouteIntegrationTests(unittest.TestCase):
 
     def test_setup_login_link_uses_setup_return_to(self) -> None:
         self._enable_oidc()
-        response = self.client.get("/setup")
+        response = self.client.get("/setup/console")
         self.assertEqual(response.status_code, 200)
-        # The primary CTA's href is /login?return_to=%2Fsetup; after OIDC
-        # login the callback redirects back to /setup.
-        self.assertIn('href="/login?return_to=%2Fsetup"', response.text)
+        # The primary CTA's href is /login?return_to=%2Fsetup%2F; after OIDC
+        # login the callback redirects back to /setup/.
+        self.assertIn('href="/login?return_to=%2Fsetup%2F"', response.text)
 
     def test_setup_login_round_trip_redirects_back_to_setup(self) -> None:
         # Confirm that the return_to value the page emits actually round-trips
@@ -2304,7 +2268,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # _safe_admin_return_to drops /setup from its whitelist.
         cfg = self._enable_oidc()
         login = self.client.get(
-            "/login?return_to=/setup", follow_redirects=False
+            "/login?return_to=/setup/", follow_redirects=False
         )
         self.assertEqual(login.status_code, 302, login.text)
         if "redirect_uri=" not in login.headers["location"]:
@@ -2314,7 +2278,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertIn("https://idp.example/authorize", login.headers["location"])
 
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/setup")
+        self.assertEqual(record.return_to, "/setup/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -2339,11 +2303,11 @@ class SetupRouteIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/setup")
+        self.assertEqual(callback.headers["location"], "/setup/")
 
     def test_setup_does_not_leak_private_admin_data(self) -> None:
         create_admin_service_account_key("real-owner", path=self.db)
-        response = self.client.get("/setup")
+        response = self.client.get("/setup/console")
         body = response.text
         # No secret-shaped material should ever appear on /setup.
         for needle in ("sk-", "client_secret_value", "Bearer oak_", "Bearer opk_"):
@@ -2371,78 +2335,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 303, response.text)
         self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
-        self.assertEqual(response.headers["location"], "/ui/home/")
+        self.assertEqual(response.headers["location"], "/")
         self.assertEqual(admin_store.list_users(path=self.db), [])
-        # A service-account recovery session landing on /setup is bounced to
-        # the admin console, not to a fake user portal.
-        bounced = self.client.get("/setup", follow_redirects=False)
-        self.assertEqual(bounced.status_code, 303)
-        self.assertEqual(bounced.headers["location"], "/ui/home/")
         # The operator console is still reachable deliberately for recovery.
-        console = self.client.get("/setup?operator=1")
+        console = self.client.get("/setup/console")
         self.assertEqual(console.status_code, 200, console.text)
         self.assertIn("Mint a key from the console", console.text)
         assert_authenticated_admin_dashboard(self, self.client)
-
-    def test_admin_section_aliases_require_auth_and_redirect_signed_in_admin(self) -> None:
-        unauth = self.client.get("/admin/services", follow_redirects=False)
-        self.assertEqual(unauth.status_code, 302, unauth.text)
-        self.assertEqual(unauth.headers["location"], "/login?return_to=%2Fui%2Fengines%2F")
-
-        direct_ui = self.client.get("/ui/admin/services/", follow_redirects=False)
-        self.assertEqual(direct_ui.status_code, 302, direct_ui.text)
-        self.assertEqual(direct_ui.headers["location"], "/login?return_to=%2Fui%2Fengines%2F")
-
-        admin_key, _, _ = create_admin_service_account_key(
-            "section-owner",
-            path=self.db,
-        )
-        claimed = self.client.post(
-            "/setup/claim",
-            data={"admin_key": admin_key},
-            follow_redirects=False,
-        )
-        self.assertEqual(claimed.status_code, 303, claimed.text)
-
-        for section in (
-            "status",
-            "services",
-            "apps",
-            "profiles",
-            "users",
-            "audit",
-            "settings",
-        ):
-            with self.subTest(section=section):
-                response = self.client.get(f"/admin/{section}", follow_redirects=False)
-                self.assertEqual(response.status_code, 302, response.text)
-                self.assertEqual(response.headers["location"], proxy.admin_destination(f"/admin/{section}"))
-        for path, expected in (
-            (
-                "/admin/status?service=svc_123&source=attention",
-                "/ui/status/?service=svc_123&source=attention",
-            ),
-            (
-                "/admin/status/?service=svc_123&source=attention",
-                "/ui/status/?service=svc_123&source=attention",
-            ),
-            (
-                "/admin/services?service=tts",
-                "/ui/engines/?service=tts",
-            ),
-            (
-                "/admin/apps?app=app_123",
-                "/ui/apps/?app=app_123",
-            ),
-            (
-                "/admin/audit?event=evt_123",
-                "/ui/activity/?event=evt_123",
-            ),
-        ):
-            with self.subTest(path=path):
-                response = self.client.get(path, follow_redirects=False)
-                self.assertEqual(response.status_code, 302, response.text)
-                self.assertEqual(response.headers["location"], expected)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -2460,9 +2359,8 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             return {"backends": [{"name": "loopback", "status": "up"}]}
 
         with patch.object(proxy.status_endpoint, "get_cached_status", fake_status):
-            # The operator console (mint-a-key, doctor) is reached deliberately
-            # via ?operator=1 — a plain GET /setup bounces signed-in admins home.
-            setup = self.client.get("/setup?operator=1")
+            # The operator console (mint-a-key, doctor) is /setup/console.
+            setup = self.client.get("/setup/console")
             self.assertEqual(setup.status_code, 200, setup.text)
             self.assertIn("Mint a key from the console", setup.text)
             self.assertIn("Is the gateway wired up?", setup.text)
@@ -2504,7 +2402,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             ]
             self.assertIn("setup.first_app_key", audit_actions)
 
-            refreshed = self.client.get("/setup?operator=1")
+            refreshed = self.client.get("/setup/console")
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
             self.assertNotIn(api_key, refreshed.text)
             self.assertIn("Active runtime keys: 1", refreshed.text)
@@ -2565,11 +2463,8 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # The persisted verifier is never the plaintext password.
         self.assertNotIn("correct-horse-battery", str(verifier))
 
-        # The freshly-created owner, now signed in, is bounced from /setup to
-        # their portal — no "operator setup" card to dismiss.
-        setup = self.client.get("/setup", follow_redirects=False)
-        self.assertEqual(setup.status_code, 303)
-        self.assertEqual(setup.headers["location"], "/")
+        # The freshly-created owner is signed in with an owner session.
+        self.assertEqual(self.client.get("/admin/api/session").status_code, 200)
         try:
             self.client.cookies.clear()
         except Exception:
@@ -2697,7 +2592,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # signed in" branch on /setup.
         self.client.cookies.clear()
 
-        setup = self.client.get("/setup")
+        setup = self.client.get("/setup/console")
         self.assertEqual(setup.status_code, 200, setup.text)
         self.assertIn('action="/setup/local-login"', setup.text)
 
@@ -2710,15 +2605,11 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(signin.status_code, 303, signin.text)
-        # A returning owner lands on the portal, their home — not /setup.
-        self.assertEqual(signin.headers["location"], "/ui/home/")
+        # A returning owner lands on Home, not /setup/.
+        self.assertEqual(signin.headers["location"], "/")
         self.assertIn(
             proxy.ADMIN_AUTH.cookie.name, signin.headers.get("set-cookie", "")
         )
-        # And a revisit to /setup bounces them to the portal (not a card).
-        landed = self.client.get("/setup", follow_redirects=False)
-        self.assertEqual(landed.status_code, 303)
-        self.assertEqual(landed.headers["location"], "/")
         self.client.cookies.clear()
 
     def test_setup_local_login_rejects_wrong_password(self) -> None:
@@ -2785,8 +2676,8 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(old_db_path, proxy.ADMIN_DB_PATH)
 
     def test_signed_in_admin_sees_actor_label_and_sign_out_on_operator_console(self) -> None:
-        # A plain GET /setup bounces a signed-in admin (real user) to the portal;
-        # the operator console (?operator=1) still carries their label + Sign out.
+        # The operator console (/setup/console) carries a signed-in admin's
+        # label and Sign out.
         cfg = self._enable_oidc()
         user = admin_store.upsert_oidc_user(
             cfg.issuer, "owner-sub", email="owner@example.com", path=self.db
@@ -2806,10 +2697,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         cookie_value = encode_session_cookie(session, signing_key=cfg.signing_key)
         self.client.cookies.set(cfg.cookie.name, cookie_value)
         try:
-            bounced = self.client.get("/setup", follow_redirects=False)
-            self.assertEqual(bounced.status_code, 303)
-            self.assertEqual(bounced.headers["location"], "/")
-            response = self.client.get("/setup?operator=1")
+            response = self.client.get("/setup/console")
         finally:
             self.client.cookies.clear()
         self.assertEqual(response.status_code, 200, response.text)
@@ -2818,7 +2706,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertNotIn("You own this gateway", response.text)
         self.assertIn("owner@example.com", response.text)
         self.assertIn("Sign out", response.text)
-        self.assertIn('href="/logout"', response.text)
+        self.assertIn('href="/auth/logout-confirm"', response.text)
 
     def test_stale_cookie_for_missing_user_does_not_loop_on_setup(self) -> None:
         # Regression: a cookie that's signed + has an admin role but whose user
@@ -2837,7 +2725,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             encode_session_cookie(session, signing_key=cfg.signing_key),
         )
         try:
-            resp = self.client.get("/setup", follow_redirects=False)
+            resp = self.client.get("/setup/console", follow_redirects=False)
         finally:
             self.client.cookies.clear()
         # No redirect — the page renders so the loop can't happen.

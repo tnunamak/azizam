@@ -249,7 +249,7 @@ test("empty rules reach an activated person and app grant through the real fixtu
   const personName = person.display_name || person.name || person.email || person.id;
   const serviceId = service.stem + "@r1";
   const sent = writes(page);
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
   await openEditor(page);
   const form = editor(page);
   await expect(form.getByText("No models or workflows are saved in these rules yet. Add one below.", { exact: true })).toBeVisible();
@@ -317,7 +317,7 @@ test.describe("Categories editor real fixture journeys", () => {
     const sent = writes(page);
     for (const width of widths) {
       await surface(page, width);
-      await page.goto("/ui/categories/");
+      await page.goto("/categories/");
       await expect(page.getByText("Add your first category", { exact: true })).toBeVisible();
       await accessible(page, width);
       await openEditor(page);
@@ -356,7 +356,7 @@ test.describe("Categories editor real fixture journeys", () => {
       await surface(page, width);
       const base = await seed(request, "editor-plans-" + width, "embed");
       const serviceId = Object.keys(base.snapshot.services)[0];
-            await page.goto("/ui/categories/");
+            await page.goto("/categories/");
       await openEditor(page);
       const form = editor(page);
       const sent = writes(page);
@@ -444,7 +444,7 @@ test.describe("Categories editor real fixture journeys", () => {
         test.setTimeout(180_000);
         await surface(page, width);
         const base = await seed(request, "editor-base-" + stage + "-" + width, "embed");
-        await page.goto("/ui/categories/");
+        await page.goto("/categories/");
         await openEditor(page);
         const form = editor(page);
         await form.getByLabel("Label for Data location", { exact: true }).fill("Reviewed data location");
@@ -511,7 +511,7 @@ test("catalog service can be added, granted and previewed with category APIs stu
     }
     throw new Error("Unexpected category API: " + path);
   });
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
   await openEditor(page);
   const form = editor(page);
   await pick(page, form, "Model or workflow to add", "Paint workflow");
@@ -548,7 +548,7 @@ test("category labels, dual limits and safe draft dismissal at 390 px", async ({
     { stem: "paint", label: "Paint workflow", kind: "workflow", capabilities: ["chat"] },
   ] } }));
   const sent = writes(page);
-  await page.goto("/ui/categories/");
+  await page.goto("/categories/");
   await expect(page.getByText(/Active rules apply to the people and apps listed in them/)).toBeVisible();
   await expect(page.getByText(/Nothing is enforced|enforcement comes later/)).toHaveCount(0);
   await expect(page.locator('details:has(> section[aria-labelledby="current-rules"])')).not.toHaveAttribute("open");

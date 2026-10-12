@@ -185,8 +185,8 @@ for (const theme of ["light", "dark"] as const) {
         );
         const status = await installStatusSnapshot(page, state);
 
-        await page.goto("/ui/status/");
-        await expect(page).toHaveURL(/\/ui\/status\/$/);
+        await page.goto("/status/");
+        await expect(page).toHaveURL(/\/status\/$/);
         await expect(
           page.getByRole("heading", { name: "Status", level: 1 }),
         ).toBeVisible();
@@ -215,7 +215,7 @@ for (const theme of ["light", "dark"] as const) {
           }
           await expect(
             page.getByRole("link", { name: "View receipt failed-request" }),
-          ).toHaveAttribute("href", "/ui/usage/?receipt=failed-request");
+          ).toHaveAttribute("href", "/usage/?receipt=failed-request");
           await expect(page.getByText("Not measured yet")).toBeHidden();
           await expect(
             page.getByText("Ask the owner", { exact: true }),
@@ -290,13 +290,13 @@ test("member Status offers sign-in after an expired session without retrying", a
     if (new URL(request.url()).pathname === "/me/api/status") calls += 1;
   });
 
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByText("Sign in to see your status", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toHaveAttribute(
     "href",
-    "/ui/sign-in/?return_to=%2Fui%2Fstatus%2F",
+    "/sign-in/?return_to=%2Fstatus%2F",
   );
   expect(calls).toBe(1);
   expect(ownerCalls).toEqual([]);
@@ -306,7 +306,7 @@ test("member Status exposes a loading skeleton while the scoped request is pendi
   page,
 }) => {
   await installStatusSnapshot(page, "loading");
-  await page.goto("/ui/status/");
+  await page.goto("/status/");
   await expect(
     page.getByRole("status", { name: "Loading your model status" }),
   ).toHaveAttribute("aria-busy", "true");
@@ -365,7 +365,7 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     const accepted = await (await acceptedResponse).json();
     expect(accepted.credential.api_key).toBeTruthy();
     await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(memberPage).toHaveURL(/\/ui\/$/);
+    await expect(memberPage).toHaveURL(/^https?:\/\/[^/]+\/$/);
 
     const status = await memberContext.request.get("/me/api/status");
     expect(status.ok()).toBe(true);
@@ -382,8 +382,8 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     expect(chat.recommended_model.trim()).not.toBe("");
 
     ownerCalls.length = 0;
-    await memberPage.goto("/ui/status/");
-    await expect(memberPage).toHaveURL(/\/ui\/status\/$/);
+    await memberPage.goto("/status/");
+    await expect(memberPage).toHaveURL(/\/status\/$/);
     await expect(
       memberPage.getByRole("heading", { name: "Chat", exact: true }).first(),
     ).toBeVisible();
