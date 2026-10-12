@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import sqlite3
@@ -604,31 +605,34 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "models": [{"id": "openai/gpt-4.1-mini"}],
             },
         )
-        payload = provider_execution._paid_priced_outbound_payload(
-            {
-                "model": "openrouter/openai/gpt-4.1-mini",
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "save",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "cache_control": {"type": "string"},
-                                    "file": {"type": "string"},
-                                },
+        body = {
+            "model": "openrouter/openai/gpt-4.1-mini",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "save",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "cache_control": {"type": "string"},
+                                "file": {"type": "string"},
                             },
                         },
-                    }
-                ],
-            },
-            provider=provider,
+                    },
+                }
+            ],
+        }
+        before = copy.deepcopy(body)
+
+        payload = provider_execution._paid_priced_outbound_payload(
+            body, provider=provider,
         )
 
-        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload, before)
+        self.assertEqual(body, before)
 
     async def test_paid_guard_rejects_operational_payload_that_looks_like_schema(self) -> None:
         self.body = {
@@ -679,31 +683,34 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+        body = {
+            "model": "openrouter/openai/gpt-4.1-mini:online",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {"type": "url", "url": "https://example.test/a.pdf"},
+                        },
+                        {
+                            "type": "text",
+                            "text": "cache this",
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": 1,
+        }
+        before = copy.deepcopy(body)
+
         payload = provider_execution._paid_priced_outbound_payload(
-            {
-                "model": "openrouter/openai/gpt-4.1-mini:online",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {"type": "url", "url": "https://example.test/a.pdf"},
-                            },
-                            {
-                                "type": "text",
-                                "text": "cache this",
-                                "cache_control": {"type": "ephemeral"},
-                            },
-                        ],
-                    }
-                ],
-                "max_tokens": 1,
-            },
-            provider=provider,
+            body, provider=provider,
         )
 
-        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload, before)
+        self.assertEqual(body, before)
 
     async def test_paid_estimator_sees_sanitized_payload_with_resolved_model(self) -> None:
         self.body = {
@@ -874,6 +881,39 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "SELECT status, actual_usd FROM provider_spend"
             ).fetchall()
         self.assertEqual(rows, [("settled", "0.000222000")])
+
+    async def test_fragmented_sse_preserves_wire_settles_once_and_closes(self) -> None:
+        self.body = {**self.body, "stream": True}
+        wire = (
+            'data: {"choices":[{"delta":{"content":"caf\u00e9"}}]}\n\n'
+            'data: {"usage":{"cost":"0.000222",'
+            '"input_tokens":10,"output_tokens":4}}\n\n'
+            'data: [DONE]\n\n'
+        ).encode("utf-8")
+        upstream_client = _Client()
+        upstream_response = _Response(
+            headers={"content-type": "text/event-stream"},
+            chunks=[wire[index:index + 1] for index in range(len(wire))],
+        )
+        send = AsyncMock(return_value=(upstream_client, upstream_response))
+
+        response, _ = await self._execute(send=send)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(await _body(response), wire)
+        send.assert_awaited_once()
+        self.assertTrue(upstream_response.closed)
+        self.assertTrue(upstream_client.closed)
+        self.assertEqual(len(self.receipts), 1)
+        self.assertEqual(self.receipts[0].status, "succeeded")
+        self.assertEqual(self.receipts[0].cost["usd"], "0.000222000")
+        self.assertEqual(self.receipts[0].cost["reconciliation_status"], "settled")
+        with sqlite3.connect(self.ledger) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT status, actual_usd FROM provider_spend ORDER BY id"
+                ).fetchall(),
+                [("settled", "0.000222000")],
+            )
 
     async def test_stream_cost_settlement_accounts_for_cache_write_usage(self) -> None:
         import litellm
@@ -1277,16 +1317,19 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+        body = {
+            "model": "openrouter/openai/gpt-4o-search-preview",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+        }
+        before = copy.deepcopy(body)
+
         payload = provider_execution._paid_priced_outbound_payload(
-            {
-                "model": "openrouter/openai/gpt-4o-search-preview",
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-            },
-            provider=provider,
+            body, provider=provider,
         )
 
-        self.assertIsInstance(payload, dict)
+        self.assertEqual(payload, before)
+        self.assertEqual(body, before)
 
     async def test_stream_success_without_actual_cost_marks_reconciliation(self) -> None:
         self.body = {**self.body, "stream": True}
