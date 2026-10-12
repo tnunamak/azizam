@@ -29335,6 +29335,8 @@ from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
+from gateway.request_connections import RequestConnectionsMiddleware
+app.add_middleware(RequestConnectionsMiddleware)
 
 
 # =============================================================================

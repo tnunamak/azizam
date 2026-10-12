@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 import proxy
+from gateway import media_jobs
 from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
 
 MAX_OPENS = 3
@@ -61,6 +62,13 @@ async def _measure(path, headers, cookies, delay):
 def _p(times, q):
     ordered = sorted(times)
     return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+
+@pytest.fixture(autouse=True)
+def media_store(tmp_path, monkeypatch):
+    db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(db)
+    monkeypatch.setattr(media_jobs, "DB_PATH", db)
 
 
 @pytest.mark.parametrize("path,auth", ENDPOINTS)

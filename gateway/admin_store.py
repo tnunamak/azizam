@@ -31,6 +31,7 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
 from gateway.sqlite_startup import check_quarantine_pending, connect, store_startup
 
@@ -583,13 +584,18 @@ def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> N
 def _conn(path: Path = DB_PATH):
     if path not in _SECURED_STATE_PATHS:
         secure_state_path(path)
-    conn = connect(path, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    try:
-        _apply_pragmas(conn)
+    def open_connection() -> sqlite3.Connection:
+        conn = connect(path, timeout=5.0, check_same_thread=not request_connections.active())
+        conn.row_factory = sqlite3.Row
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("admin", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 @contextmanager
