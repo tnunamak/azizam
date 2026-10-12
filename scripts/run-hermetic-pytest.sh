@@ -106,6 +106,15 @@ if [[ -e "/proc/$HERMETIC_HOST_RUNNER_PID" ]] || [[ $(readlink /proc/1/ns/pid) =
 if [[ -e "$HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
 exec "$@"'
 
+# --junit-xml-out PATH: pytest writes JUnit XML inside the sandbox, which
+# cannot write to the host; the runner copies it to PATH afterwards, also
+# when tests fail.
+junit_out=
+if [[ ${1:-} == "--junit-xml-out" ]]; then
+  (($# >= 2)) || { echo "error: --junit-xml-out requires a path" >&2; exit 2; }
+  junit_out=$2; shift 2
+  set -- --junitxml="$state_dir/tmp/junit.xml" "$@"
+fi
 if [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
   test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB")')
@@ -113,4 +122,9 @@ else
   # Plugin autoload is off, so load pytest-xdist explicitly; `-n N` opts in.
   test_command=("$python_bin" -m pytest -p no:cacheprovider -p xdist "$@")
 fi
-bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}"
+rc=0
+bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}" || rc=$?
+if [[ -n $junit_out ]]; then
+  cp -- "$state_dir/tmp/junit.xml" "$junit_out" || { echo "error: pytest wrote no JUnit XML" >&2; ((rc)) || rc=1; }
+fi
+exit "$rc"
