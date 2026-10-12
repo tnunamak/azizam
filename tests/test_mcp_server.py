@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from types import SimpleNamespace
@@ -448,6 +449,76 @@ def test_run_slow_job_returns_a_job_id_after_wait(env):
     out = call(env, "run", {"target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 0})["structuredContent"]
     assert out["status"] == "running" and out["job_id"] == "video_9" and out["progress"] == 10 and "next" in out
     assert env.core.calls[0][2]["json"] == {"model": "video-ltx", "prompt": "waves"}
+
+
+def test_run_slow_job_waits_until_positive_deadline(monkeypatch):
+    async def scenario():
+        core = Core()
+        core.routes[("POST", "/v1/videos")] = httpx.Response(
+            200, json={"id": "video_9", "status": "queued"})
+        core.polls["/v1/videos/video_9"] = [
+            {"id": "video_9", "status": "in_progress", "progress": 10}]
+        now = [100.0]
+        sleeps = asyncio.Queue()
+
+        async def controlled_sleep(delay):
+            assert delay > 0, "S6: polling must not busy-loop"
+            wake = asyncio.get_running_loop().create_future()
+            await sleeps.put((delay, wake))
+            await wake
+
+        # Rebind this module's references, never mutate global asyncio/time.
+        monkeypatch.setattr(mcp_server, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        monkeypatch.setattr(mcp_server, "asyncio", SimpleNamespace(
+            sleep=controlled_sleep, wait_for=asyncio.wait_for,
+            TimeoutError=asyncio.TimeoutError, to_thread=asyncio.to_thread))
+        deps = McpDeps(
+            authenticate=lambda request, path: SimpleNamespace(identity="k"),
+            call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+            store_asset=core.store_asset, read_asset=core.read_asset,
+            public_base_url=lambda request: "https://gw.test", poll_interval=1.0)
+        app = FastAPI()
+        mcp_server.register_mcp_routes(app, deps)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://gw.test"
+        ) as client:
+            task = asyncio.create_task(client.post("/mcp", headers=H, json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "run", "arguments": {
+                    "target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 5}}}))
+            try:
+                delay, wake = await asyncio.wait_for(sleeps.get(), timeout=1)
+                assert delay == 1.0
+                assert now[0] == 100.0 and not task.done()
+                now[0] = 104.999
+                wake.set_result(None)
+                delay, wake = await asyncio.wait_for(sleeps.get(), timeout=1)
+                assert delay == pytest.approx(0.001)
+                assert not task.done(), "S6: running job returned before its requested deadline"
+                now[0] = 105.0
+                wake.set_result(None)
+                response = await asyncio.wait_for(task, timeout=1)
+                assert response.status_code == 200
+                result = response.json()["result"]
+                assert not result.get("isError", False)
+                out = result["structuredContent"]
+                assert (out["status"], out["job_id"], out["progress"], out["target"]) == (
+                    "running", "video_9", 10, "ltx")
+                assert out["next"] == "Call `job` with this job_id to keep waiting (set wait_seconds)."
+                assert core.calls == [
+                    ("POST", "/v1/videos", {"json": {"model": "video-ltx", "prompt": "waves"}}),
+                    ("GET", "/v1/videos/video_9", {}),
+                    ("GET", "/v1/videos/video_9", {}),
+                    ("GET", "/v1/videos/video_9", {}),
+                ]
+                assert core.stored == []
+                assert sleeps.empty()
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=1)
+
+    asyncio.run(scenario())
 
 
 def test_job_returns_a_finished_video_as_a_stored_link(env):

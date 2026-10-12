@@ -33,9 +33,11 @@ class _ClosableClient:
 class _BlockingResponse:
     def __init__(self) -> None:
         self.release = asyncio.Event()
+        self.read_started = asyncio.Event()
         self.closed = False
 
     async def aread(self) -> bytes:
+        self.read_started.set()
         await self.release.wait()
         return b"late"
 
@@ -46,12 +48,14 @@ class _BlockingResponse:
 class _ChunkResponse:
     def __init__(self) -> None:
         self.release = asyncio.Event()
+        self.read_started = asyncio.Event()
         self.closed = False
 
     def aiter_bytes(self):
         return self._iter()
 
     async def _iter(self):
+        self.read_started.set()
         await self.release.wait()
         yield b"late"
 
@@ -72,6 +76,56 @@ class _FiniteChunkResponse:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class _EofWithoutDoneResponse:
+    def __init__(self) -> None:
+        self.eof_observed = False
+        self.closed = False
+
+    def aiter_bytes(self):
+        return self._iter()
+
+    async def _iter(self):
+        yield b"data: first\n\n"
+        yield b"data: last\n\n"
+        self.eof_observed = True
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def _finish_probe(task, *, releases=(), watcher=None, handle=None, chunks=None):
+    """Release transport blocks and drain tasks even when an assertion fails."""
+    for event in releases:
+        event.set()
+    try:
+        if not task.done():
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=1)
+        if chunks is not None:
+            await asyncio.wait_for(chunks.aclose(), timeout=1)
+    finally:
+        try:
+            if watcher is not None:
+                await watcher.aclose()
+        finally:
+            if handle is not None:
+                handle.release()
+
+
+async def _bounded_chunks(iterator, message):
+    async def collect():
+        return [chunk async for chunk in iterator]
+
+    task = asyncio.create_task(collect())
+    try:
+        try:
+            return await asyncio.wait_for(task, timeout=1)
+        except asyncio.TimeoutError as exc:
+            raise AssertionError(message) from exc
+    finally:
+        await _finish_probe(task, chunks=iterator)
 
 
 class _CompletedButUnfinalizedResponse:
@@ -324,13 +378,10 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             b"data: [DONE]\n\n",
         ])
 
-        chunks = [
-            chunk
-            async for chunk in iter_llm_response_bytes(
-                client,
-                upstream,
-            )
-        ]
+        chunks = await _bounded_chunks(
+            iter_llm_response_bytes(client, upstream),
+            "S6: DONE must finish tool-call stream without another upstream read",
+        )
 
         self.assertEqual(chunks, [
             b'data: {"choices":[{"delta":{"tool_calls":[{}]},"finish_reason":"tool_calls"}]}\n\n',
@@ -347,13 +398,10 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             b"NE]\r\n\r\ndata: must-not-reach-client\n\n",
         ])
 
-        chunks = [
-            chunk
-            async for chunk in iter_llm_response_bytes(
-                client,
-                upstream,
-            )
-        ]
+        chunks = await _bounded_chunks(
+            iter_llm_response_bytes(client, upstream),
+            "S6: fragmented DONE must terminate exactly at sentinel",
+        )
 
         self.assertEqual(chunks, [b"data: [DO", b"NE]\r\n\r\n"])
         self.assertFalse(upstream.post_done_read_started.is_set())
@@ -506,7 +554,7 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(upstream.closed.is_set())
         self.assertTrue(client.closed)
 
-    async def test_stream_forwards_all_bytes_and_closes_at_upstream_eof(self) -> None:
+    async def test_stream_forwards_all_bytes_and_closes_at_finite_done(self) -> None:
         client = _ClosableClient()
         response = _FiniteChunkResponse()
 
@@ -521,6 +569,24 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks, [b"data: first\n\n", b"data: [DONE]\n\n"])
         self.assertTrue(response.closed)
         self.assertTrue(client.closed)
+
+    async def test_stream_forwards_all_bytes_and_closes_at_eof_without_done(self) -> None:
+        client = _ClosableClient()
+        response = _EofWithoutDoneResponse()
+        signals = []
+
+        async def on_signal():
+            signals.append("cancelled")
+
+        chunks = await _bounded_chunks(
+            iter_llm_response_bytes(client, response, on_signal=on_signal),
+            "S6: EOF without DONE must preserve all bytes and close both resources",
+        )
+        self.assertEqual(chunks, [b"data: first\n\n", b"data: last\n\n"])
+        self.assertTrue(response.eof_observed)
+        self.assertTrue(response.closed)
+        self.assertTrue(client.closed)
+        self.assertEqual(signals, [])
 
     async def test_body_read_closes_upstream_when_downstream_disconnects(self) -> None:
         client = _ClosableClient()
@@ -539,13 +605,16 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
                 disconnect_watcher=watcher,
             )
         )
-        await asyncio.sleep(0.01)
-        disconnect_event.set()
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            disconnect_event.set()
 
-        self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
-        await watcher.aclose()
+            self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+            await watcher.aclose()
+        finally:
+            await _finish_probe(read_task, releases=(response.release,), watcher=watcher)
 
     async def test_stream_iteration_closes_upstream_when_handler_is_cancelled(self) -> None:
         client = _ClosableClient()
@@ -553,13 +622,16 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
 
         chunks = iter_llm_response_bytes(client, response)
         next_chunk = asyncio.create_task(chunks.__anext__())
-        await asyncio.sleep(0.01)
-        next_chunk.cancel()
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            next_chunk.cancel()
 
-        with self.assertRaises(asyncio.CancelledError):
-            await next_chunk
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
+            with self.assertRaises(asyncio.CancelledError):
+                await next_chunk
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+        finally:
+            await _finish_probe(next_chunk, releases=(response.release,), chunks=chunks)
 
     async def test_body_read_closes_upstream_when_handler_is_cancelled(self) -> None:
         client = _ClosableClient()
@@ -571,13 +643,16 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
                 response,
             )
         )
-        await asyncio.sleep(0.01)
-        read_task.cancel()
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            read_task.cancel()
 
-        with self.assertRaises(asyncio.CancelledError):
-            await read_task
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
+            with self.assertRaises(asyncio.CancelledError):
+                await read_task
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+        finally:
+            await _finish_probe(read_task, releases=(response.release,))
 
     async def test_body_read_closes_upstream_when_cancellation_token_signals(self) -> None:
         """A cross-hop cancel (see gateway/backends/cancellation.py) must stop
@@ -601,13 +676,16 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
                 cancellation_token=handle.token,
             )
         )
-        await asyncio.sleep(0.01)
-        registry.signal("req-nonstream")
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            registry.signal("req-nonstream")
 
-        self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
-        await watcher.aclose()
+            self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+            await watcher.aclose()
+        finally:
+            await _finish_probe(read_task, releases=(response.release,), watcher=watcher, handle=handle)
 
     async def test_body_read_ignores_cancellation_token_for_a_different_request(self) -> None:
         client = _ClosableClient()
@@ -639,13 +717,16 @@ class LlmExecutionLifetimeTests(unittest.IsolatedAsyncioTestCase):
             cancellation_token=handle.token,
         )
         next_chunk = asyncio.create_task(chunks.__anext__())
-        await asyncio.sleep(0.01)
-        registry.signal("req-stream")
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            registry.signal("req-stream")
 
-        with self.assertRaises(StopAsyncIteration):
-            await asyncio.wait_for(next_chunk, timeout=1)
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
+            with self.assertRaises(StopAsyncIteration):
+                await asyncio.wait_for(next_chunk, timeout=1)
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+        finally:
+            await _finish_probe(next_chunk, releases=(response.release,), handle=handle, chunks=chunks)
 
     async def test_stream_ignores_cancellation_token_for_a_different_request(self) -> None:
         client = _ClosableClient()
@@ -1062,14 +1143,17 @@ class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):
         class _StallingClient:
             def __init__(self) -> None:
                 self.closed = False
+                self.send_started = asyncio.Event()
+                self.release_send = asyncio.Event()
                 self.send_cancelled = asyncio.Event()
 
             def build_request(self, **kwargs):
                 return object()
 
             async def send(self, req, stream=True):
+                self.send_started.set()
                 try:
-                    await asyncio.Event().wait()
+                    await self.release_send.wait()
                 except asyncio.CancelledError:
                     self.send_cancelled.set()
                     raise
@@ -1098,14 +1182,17 @@ class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):
             dispatch_task = asyncio.create_task(
                 send_llm_execution_request(execution_request, disconnect_watcher=watcher)
             )
-            await asyncio.sleep(0.01)
-            disconnect_now.set()
+            try:
+                await asyncio.wait_for(stalling_client.send_started.wait(), timeout=1)
+                disconnect_now.set()
 
-            with self.assertRaises(ClientDisconnectedBeforeHeaders):
-                await asyncio.wait_for(dispatch_task, timeout=1)
-            self.assertTrue(await asyncio.wait_for(stalling_client.send_cancelled.wait(), timeout=1))
-            self.assertTrue(stalling_client.closed)
-            await watcher.aclose()
+                with self.assertRaises(ClientDisconnectedBeforeHeaders):
+                    await asyncio.wait_for(dispatch_task, timeout=1)
+                self.assertTrue(await asyncio.wait_for(stalling_client.send_cancelled.wait(), timeout=1))
+                self.assertTrue(stalling_client.closed)
+                await watcher.aclose()
+            finally:
+                await _finish_probe(dispatch_task, releases=(stalling_client.release_send,), watcher=watcher)
         finally:
             llm_execution_module.httpx.AsyncClient = original_async_client
 
@@ -1362,12 +1449,15 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
                 self.close_started = asyncio.Event()
                 self.release_close = asyncio.Event()
                 self.closed = False
+                self.send_started = asyncio.Event()
+                self.release_send = asyncio.Event()
 
             def build_request(self, **kwargs):
                 return object()
 
             async def send(self, req, stream=True):
-                await asyncio.Event().wait()
+                self.send_started.set()
+                await self.release_send.wait()
 
             async def aclose(self) -> None:
                 self.close_started.set()
@@ -1401,22 +1491,25 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
                     execution_request, disconnect_watcher=watcher, on_signal=on_signal
                 )
             )
-            await asyncio.sleep(0.01)
-            disconnect_now.set()
+            try:
+                await asyncio.wait_for(blocking_client.send_started.wait(), timeout=1)
+                disconnect_now.set()
 
-            # The signal must be observable while the client's own close is
-            # still provably stuck — not merely "eventually", which could
-            # also be explained by the rejected after-teardown ordering
-            # racing a fast test.
-            await asyncio.wait_for(blocking_client.close_started.wait(), timeout=1)
-            await asyncio.wait_for(signalled.wait(), timeout=1)
-            self.assertFalse(blocking_client.closed)
+                # The signal must be observable while the client's own close is
+                # still provably stuck — not merely "eventually", which could
+                # also be explained by the rejected after-teardown ordering
+                # racing a fast test.
+                await asyncio.wait_for(blocking_client.close_started.wait(), timeout=1)
+                await asyncio.wait_for(signalled.wait(), timeout=1)
+                self.assertFalse(blocking_client.closed)
 
-            blocking_client.release_close.set()
-            with self.assertRaises(ClientDisconnectedBeforeHeaders):
-                await asyncio.wait_for(dispatch_task, timeout=1)
-            self.assertTrue(blocking_client.closed)
-            await watcher.aclose()
+                blocking_client.release_close.set()
+                with self.assertRaises(ClientDisconnectedBeforeHeaders):
+                    await asyncio.wait_for(dispatch_task, timeout=1)
+                self.assertTrue(blocking_client.closed)
+                await watcher.aclose()
+            finally:
+                await _finish_probe(dispatch_task, releases=(blocking_client.release_send, blocking_client.release_close), watcher=watcher)
         finally:
             llm_execution_module.httpx.AsyncClient = original_async_client
 
@@ -1426,8 +1519,10 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
                 self.close_started = asyncio.Event()
                 self.release_close = asyncio.Event()
                 self.closed = False
+                self.read_started = asyncio.Event()
 
             async def aread(self) -> bytes:
+                self.read_started.set()
                 await asyncio.Event().wait()
 
             async def aclose(self) -> None:
@@ -1453,19 +1548,22 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
                 client, response, disconnect_watcher=watcher, on_signal=on_signal
             )
         )
-        await asyncio.sleep(0.01)
-        disconnect_event.set()
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            disconnect_event.set()
 
-        await asyncio.wait_for(response.close_started.wait(), timeout=1)
-        await asyncio.wait_for(signalled.wait(), timeout=1)
-        self.assertFalse(response.closed)
-        self.assertFalse(client.closed)
+            await asyncio.wait_for(response.close_started.wait(), timeout=1)
+            await asyncio.wait_for(signalled.wait(), timeout=1)
+            self.assertFalse(response.closed)
+            self.assertFalse(client.closed)
 
-        response.release_close.set()
-        self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
-        await watcher.aclose()
+            response.release_close.set()
+            self.assertIsNone(await asyncio.wait_for(read_task, timeout=1))
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+            await watcher.aclose()
+        finally:
+            await _finish_probe(read_task, releases=(response.release_close,), watcher=watcher)
 
     async def test_stream_signal_fires_while_upstream_close_is_still_blocked(self) -> None:
         class _BlockingCloseChunkResponse:
@@ -1473,11 +1571,13 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
                 self.close_started = asyncio.Event()
                 self.release_close = asyncio.Event()
                 self.closed = False
+                self.read_started = asyncio.Event()
 
             def aiter_bytes(self):
                 return self._iter()
 
             async def _iter(self):
+                self.read_started.set()
                 await asyncio.Event().wait()
                 yield b"unreachable"
 
@@ -1499,20 +1599,23 @@ class BlockedTeardownSignalOrderingTests(unittest.IsolatedAsyncioTestCase):
             client, response, cancellation_token=handle.token, on_signal=on_signal
         )
         next_chunk = asyncio.create_task(chunks.__anext__())
-        await asyncio.sleep(0.01)
-        registry.signal("req-blocked-teardown")
+        try:
+            await asyncio.wait_for(response.read_started.wait(), timeout=1)
+            registry.signal("req-blocked-teardown")
 
-        await asyncio.wait_for(response.close_started.wait(), timeout=1)
-        await asyncio.wait_for(signalled.wait(), timeout=1)
-        self.assertFalse(response.closed)
-        self.assertFalse(client.closed)
+            await asyncio.wait_for(response.close_started.wait(), timeout=1)
+            await asyncio.wait_for(signalled.wait(), timeout=1)
+            self.assertFalse(response.closed)
+            self.assertFalse(client.closed)
 
-        response.release_close.set()
-        with self.assertRaises(StopAsyncIteration):
-            await asyncio.wait_for(next_chunk, timeout=1)
-        self.assertTrue(response.closed)
-        self.assertTrue(client.closed)
-        handle.release()
+            response.release_close.set()
+            with self.assertRaises(StopAsyncIteration):
+                await asyncio.wait_for(next_chunk, timeout=1)
+            self.assertTrue(response.closed)
+            self.assertTrue(client.closed)
+            handle.release()
+        finally:
+            await _finish_probe(next_chunk, releases=(response.release_close,), handle=handle, chunks=chunks)
 
     async def test_stream_signal_fires_on_generator_cancellation_while_upstream_close_is_blocked(self) -> None:
         """The local-ASGI-disconnect path (Starlette cancelling this

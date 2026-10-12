@@ -8,6 +8,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -187,16 +188,40 @@ class TestSpendReservations(unittest.TestCase):
         self.assertEqual(provider_concurrency_limit({"concurrency_limit": 5}), 5)
 
     def test_concurrent_requests_cannot_reserve_the_same_remaining_budget(self) -> None:
+        ensure_ledger(path=self.ledger)
+        start = threading.Barrier(3, timeout=5)
+
         def reserve():
+            start.wait()
             try:
-                reserve_provider_spend(profile(budget_usd_per_day=Decimal("0.01")), provider(),
-                    Cost(Decimal("0.006"), "price-table", "typesafe"), path=self.ledger)
+                reserve_provider_spend(
+                    profile(budget_usd_per_day=Decimal("0.01")),
+                    provider(config={"concurrency_limit": 10}),
+                    Cost(Decimal("0.006"), "price-table", "typesafe"),
+                    path=self.ledger,
+                    now=1000,
+                    admin_db_path=self.admin_db,
+                )
                 return "allowed"
             except BudgetExceeded:
                 return "denied"
+
         with ThreadPoolExecutor(max_workers=2) as pool:
-            results = list(pool.map(lambda _: reserve(), range(2)))
+            futures = [pool.submit(reserve) for _ in range(2)]
+            try:
+                start.wait()
+                results = [future.result(timeout=10) for future in futures]
+            finally:
+                start.abort()
         self.assertEqual(sorted(results), ["allowed", "denied"])
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, estimated_usd, created_at FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "reserved")
+        self.assertEqual(Decimal(rows[0][1]), Decimal("0.006"))
+        self.assertEqual(rows[0][2], 1000)
 
     def test_provider_default_concurrency_limit_releases_on_terminal_states(self) -> None:
         first_profile = DEFAULT_PROFILE.with_overrides(
