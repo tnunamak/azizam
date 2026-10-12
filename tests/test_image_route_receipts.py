@@ -572,7 +572,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
                 headers={"Authorization": f"Bearer {raw_key}"},
             )
             self.assertEqual(denied.status_code, 403, denied.text)
-            self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+            self.assertEqual(denied.json()["error"]["code"], "not_in_access_plan")
 
         with patch.object(
             proxy,
@@ -672,7 +672,7 @@ class TestStartImageRouteReceipt(unittest.TestCase):
         self.assertEqual(receipt.api_key_name, "alice")
         self.assertEqual(receipt.policy_decision, "allowed")
         self.assertTrue(
-            any(source.startswith("profile:") for source in receipt.policy_sources),
+            any(source.startswith("access_plan:") for source in receipt.policy_sources),
             receipt.policy_sources,
         )
         self.assertTrue(receipt.policy_reasons)
@@ -686,7 +686,7 @@ class TestStartImageRouteReceipt(unittest.TestCase):
         )
 
         self.assertEqual(receipt.intent, "image.edit")
-        self.assertIsNone(receipt.api_key_name)
+        self.assertEqual(receipt.api_key_name, "test-app")
         self.assertEqual(receipt.policy_decision, "allowed")
 
     def test_unknown_path_defaults_to_image_generate(self) -> None:
@@ -1542,7 +1542,8 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             proxy, "IMAGE_CACHE_DIR", Path(cache_dir)
         ):
             control_bytes = _png_bytes((0, 0, 0, 255))
-            asset_id = proxy.store_image_bytes(control_bytes)
+            # The caller's own asset: the owner key is the one the test key reads.
+            asset_id = proxy.store_image_bytes(control_bytes, owner_key_hash=ownership.owner_key(OWNER_CONTEXT))
 
             receipt, response, captured = await self._run_edit_with_manifest(
                 extension_block={
