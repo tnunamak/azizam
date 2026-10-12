@@ -988,6 +988,8 @@ elif path == "":
     content_type, body = "text/html", '<script src="/_next/static/a123456789abcdef.js"></script>'
 elif path == "library":
     code, redirect, body = "308", "/library/", ""
+elif path == "showcase/":
+    content_type, body = "text/html", "<title>Azizam: your own AI gateway</title>"
 elif path.startswith("_next/static/"):
     headers, body = "HTTP/1.1 200 OK\nCache-Control: public, immutable\n", ""
 elif path == "v1/models":
