@@ -161,7 +161,7 @@ test("examplesByCard groups and orders", () => {
   assert.deepEqual(Object.keys(g).sort(), ["x", "y"]);
 });
 
-test("isSameOrigin: only the gateway origin may receive the stored API key", () => {
+test("isSameOrigin: only the gateway origin may receive the page-memory API key", () => {
   const base = "https://gw.example:5000/showcase";
   for (const ok of ["/v1/videos/1/content", "v1/x", "https://gw.example:5000/files/a.png", "?q=1", ""]) {
     assert.equal(C.isSameOrigin(ok, base), true, ok);
@@ -183,4 +183,119 @@ test("app.js api() attaches the Bearer key only after the same-origin check", ()
   assert.match(body, /if \(C\.isSameOrigin\(path, location\.href\)\) o\.headers = authHeaders\(o\.headers\)/);
   assert.doesNotMatch(body.replace(/if \(C\.isSameOrigin[^\n]*\n/, ""), /authHeaders\(/);
   assert.match(body, /credentials = "omit"/);
+});
+
+test("announcements suppress repeated timer and streaming status updates", () => {
+  const messages = [];
+  const announce = C.createAnnouncer((message) => messages.push(message));
+  assert.equal(announce("Rendering"), true);
+  for (let i = 0; i < 100; i++) assert.equal(announce("Rendering"), false);
+  announce("Downloading result");
+  announce("Request finished");
+  assert.deepEqual(messages, ["Rendering", "Downloading result", "Request finished"]);
+  announce("");
+  assert.equal(announce("Rendering"), true);
+});
+
+test("tabs support arrows, wraparound, Home and End without trapping other keys", () => {
+  assert.equal(C.tabIndexForKey("ArrowRight", 2, 3), 0);
+  assert.equal(C.tabIndexForKey("ArrowLeft", 0, 3), 2);
+  assert.equal(C.tabIndexForKey("Home", 2, 3), 0);
+  assert.equal(C.tabIndexForKey("End", 0, 3), 2);
+  assert.equal(C.tabIndexForKey("Tab", 1, 3), null);
+  assert.equal(C.tabIndexForKey("ArrowRight", 0, 0), null);
+});
+
+test("key controls use memory only, tolerate denied storage, and restore focus", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /localStorage\.(?:getItem|setItem)|sessionStorage|location\.reload/);
+  const nodes = {};
+  for (const id of ["apikey", "keypanel", "keytoggle", "keysave", "keyclear", "base", "status-text", "status"]) {
+    nodes["#" + id] = {
+      value: "", hidden: id === "keypanel", attrs: {}, events: {},
+      setAttribute(k, v) { this.attrs[k] = v; },
+      removeAttribute(k) { delete this.attrs[k]; },
+      addEventListener(k, fn) { this.events[k] = fn; },
+      focus() { nodes.focus = id; },
+      click() { this.events.click(); },
+    };
+  }
+  const body = src.slice(src.indexOf("  function initKey()"), src.indexOf("  initKey();"));
+  let loads = 0;
+  const run = new Function("$", "localStorage", "loadAll", "pollStatus",
+    'let pageKey = ""; const KEY_STORE = "legacy"; const BASE = "https://example.test"; ' +
+    body + '; initKey(); return () => pageKey;');
+  const key = run((id) => nodes[id], { removeItem() { throw new Error("Storage blocked"); } }, () => loads++, () => {});
+  nodes["#keytoggle"].click();
+  assert.equal(nodes["#keypanel"].hidden, false);
+  assert.equal(nodes.focus, "apikey");
+  nodes["#apikey"].value = " dummy-test-value ";
+  nodes["#keysave"].click();
+  assert.equal(key(), "dummy-test-value");
+  assert.equal(nodes["#apikey"].value, "");
+  assert.equal(nodes["#keytoggle"].attrs["aria-expanded"], "false");
+  assert.equal(nodes.focus, "keytoggle");
+  nodes["#keyclear"].click();
+  assert.equal(key(), "");
+  assert.equal(loads, 2);
+});
+
+test("result live region excludes output, timers and streamed tokens", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  const result = src.slice(src.indexOf("  function resultBox()"), src.indexOf("  /** Run a thing"));
+  assert.match(result, /class: "result" \}/);
+  assert.match(result, /role: "status", "aria-live": "polite"/);
+  assert.match(result, /box.append\(live, content\)/);
+  assert.match(result, /C.createAnnouncer/);
+  assert.match(src, /announcement: text/);
+  assert.match(src, /if \(statusText.textContent !== sum.text\)/);
+});
+
+test("media and panel contracts support lazy loading and keyboard recovery", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  assert.match(src, /loading: "lazy", decoding: "async"/);
+  assert.doesNotMatch(src, /preload: "metadata"/);
+  assert.match(src, /preload: "none"/);
+  assert.match(src, /event.key !== "Escape"/);
+  assert.match(src, /panel._returnFocus.isConnected/);
+  assert.match(src, /"aria-controls": id/);
+  assert.match(src, /button.tabIndex = i === index \? 0 : -1/);
+  assert.match(src, /version !== loadVersion/);
+  assert.match(src, /Retry discovery/);
+});
+
+test("app parses without executing discovery or generation requests", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  assert.doesNotThrow(() => new Function(src));
+});
+
+test("Try it Escape returns focus to the opener without intercepting other keys", () => {
+  const src = readFileSync(new URL("../../showcase/app.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("  function focusPanel("), src.indexOf("  /** Build the code tabs"));
+  let focused = null, prevented = 0, stopped = 0;
+  const summary = { focus() { focused = "summary"; } };
+  const field = { focus() { focused = "field"; } };
+  const opener = { isConnected: true, focus() { focused = "opener"; } };
+  const doc = { activeElement: summary };
+  const events = {};
+  const panel = {
+    open: true, _returnFocus: null,
+    querySelector(sel) { return sel === "summary" ? summary : field; },
+    addEventListener(k, fn) { events[k] = fn; },
+    contains(el) { return el === summary || el === field; },
+  };
+  new Function("document", "panel", body + "; managePanel(panel);")(doc, panel);
+  events.toggle();
+  assert.equal(focused, "field");
+  panel._returnFocus = opener;
+  events.keydown({ key: "Tab" });
+  assert.equal(panel.open, true);
+  events.keydown({ key: "Escape", preventDefault() { prevented++; }, stopPropagation() { stopped++; } });
+  assert.equal(panel.open, false);
+  assert.equal(focused, "opener");
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 1);
+  panel.open = true; panel._returnFocus = { isConnected: false };
+  events.keydown({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(focused, "summary");
 });

@@ -432,7 +432,7 @@
 
   /** True only when `target` resolves to the same origin as `base`. Anything
    * unparseable or opaque (data:, javascript:, about:) counts as cross-origin.
-   * app.js uses this so the stored API key never leaves the gateway origin. */
+   * app.js uses this so the page-memory API key never leaves the gateway origin. */
   function isSameOrigin(target, base) {
     try {
       const b = new URL(base);
@@ -441,7 +441,28 @@
     } catch (e) { return false; }
   }
 
+  /** Suppress identical updates; callers keep elapsed time and streamed tokens out. */
+  function createAnnouncer(write) {
+    let previous;
+    return (message) => {
+      const text = String(message || "");
+      if (text === previous) return false;
+      previous = text; write(text); return true;
+    };
+  }
+
+  /** Keyboard navigation for a horizontal, automatically activated tab list. */
+  function tabIndexForKey(key, index, length) {
+    if (!length) return null;
+    if (key === "Home") return 0;
+    if (key === "End") return length - 1;
+    if (key === "ArrowRight") return (index + 1) % length;
+    if (key === "ArrowLeft") return (index + length - 1) % length;
+    return null;
+  }
+
   return {
+    createAnnouncer, tabIndexForKey,
     EXT_KEY, isSameOrigin, shortId, classifyWorkflow, resolveRef, formFields, planWorkflow, fillPath,
     curlFor, pythonFor, jsFor, buildSections, capabilityIndex, aliasesByWorkflow,
     statusSummary, examplesByCard, PROTOCOLS, isBlank,
