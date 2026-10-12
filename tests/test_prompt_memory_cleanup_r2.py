@@ -8,6 +8,7 @@ import threading
 import time
 from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -133,23 +134,59 @@ def test_maintenance_ignores_stale_kill_switch_reading(hh, monkeypatch):
 
 # --- P2-20: rows now, files queued ----------------------------------------
 
+class _WatchedScanLock:
+    """The migration scan lock, reporting a blocking acquire by the watched thread."""
+
+    def __init__(self, real, settled):
+        self._real = real
+        self._settled = settled
+        self.watched = None
+        self.blocked = False
+
+    def acquire(self, blocking=True, timeout=-1):
+        if blocking and threading.get_ident() == self.watched:
+            self.blocked = True
+            self._settled.set()
+        return self._real.acquire(blocking, timeout)
+
+    def release(self):
+        self._real.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc):
+        self.release()
+
+
 def _run_with_scan_lock_held(fn):
+    """Run fn on a thread while the scan lock is held; report whether it returned.
+
+    Success is the thread finishing, a failure is its blocking on the lock.
+    The 30 s wait only bounds a hang; it is not the oracle.
+    """
+    settled = threading.Event()
     done = threading.Event()
     out = {}
+    lock = _WatchedScanLock(pmm._SCAN_LOCK, settled)
 
     def run():
+        lock.watched = threading.get_ident()
         out["result"] = fn()
         done.set()
+        settled.set()
 
-    assert pmm._SCAN_LOCK.acquire(timeout=5)
-    try:
-        threading.Thread(target=run, daemon=True).start()
-        finished = done.wait(3.0)
-    finally:
-        pmm._SCAN_LOCK.release()
-    if not finished:
-        done.wait(30)
-    return finished, out.get("result")
+    with patch.object(pmm, "_SCAN_LOCK", lock):
+        assert lock.acquire(timeout=5)
+        worker = threading.Thread(target=run, daemon=True)
+        try:
+            worker.start()
+            settled.wait(30)
+        finally:
+            lock.release()
+        worker.join(30)
+    return done.is_set() and not lock.blocked, out.get("result")
 
 
 def test_member_erasure_returns_while_scan_lock_is_held_and_rows_are_gone(hh):
@@ -273,13 +310,9 @@ def test_settings_api_reports_queued_file_cleanup_until_it_finishes(hh):
     client = _me_client(hh)
     assert "prompt_purge" not in client.get("/me/api/prompt-memory").json()
 
-    assert pmm._SCAN_LOCK.acquire(timeout=5)
-    try:
-        started = time.monotonic()
-        deleted = client.delete("/me/api/prompt-memory/prompts")
-        assert time.monotonic() - started < 3
-    finally:
-        pmm._SCAN_LOCK.release()
+    finished, deleted = _run_with_scan_lock_held(
+        lambda: client.delete("/me/api/prompt-memory/prompts"))
+    assert finished, "the delete route waited for the migration scan lock"
     assert deleted.status_code == 202
     assert deleted.json()["deleted_prompts"] == 1
     assert deleted.json()["prompt_purge"]["retry_scheduled"] is True
