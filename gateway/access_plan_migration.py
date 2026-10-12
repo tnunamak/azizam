@@ -39,6 +39,7 @@ from typing import Any, Iterable, Mapping
 from gateway.access_plans import (
     CAPABILITIES,
     PERSON,
+    RECEIPT_DETAIL_LEVELS,
     AccessPlan,
     CapabilityGrant,
     DirectEngineAccess,
@@ -427,7 +428,8 @@ def migrate(conn: sqlite3.Connection, *, now: int | None = None) -> MigrationRep
         if app_id in ever_keyed and not ever_used.get(app_id) and gives_more \
                 and not TEST_ARTIFACT.search(str(apps[app_id]["name"])):
             plan = replace(plan, paid_providers=frozenset(), provider_fallback=False,
-                           direct_engine_access=DirectEngineAccess())
+                           direct_engine_access=DirectEngineAccess(),
+                           receipt_detail=min(plan.receipt_detail, "basic", key=RECEIPT_DETAIL_LEVELS.index))
             report.apps_narrowed.append({
                 "id": app_id, "name": apps[app_id]["name"], "reason": "its keys were never used",
             })
