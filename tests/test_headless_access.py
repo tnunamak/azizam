@@ -235,7 +235,10 @@ def principals():
         accounts.initialize(case.db)
         providers.ensure_ledger(path=proxy.ADMIN_DB_PATH.parent / "provider_spend.db")
         receipt_store.init_db()
-        app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "auth-fixture", "access_plan": "person"})
+        accountable = admin_store.upsert_oidc_user("https://idp.example", "headless-accountable",
+                                                  email="accountable@example.com", path=case.db)
+        app = case.client.post("/admin/api/apps", headers=case._auth(), json={
+            "name": "auth-fixture", "access_plan": "person", "owner_user_id": accountable["id"]})
         assert app.status_code == 201, app.text
         minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
                                  headers=case._auth(), json={"label": "auth-fixture"})
