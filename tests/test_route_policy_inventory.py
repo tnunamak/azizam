@@ -7,7 +7,6 @@ All backend I/O is a recording tripwire; this module never contacts a model.
 from __future__ import annotations
 
 import json
-import os
 import re
 import socket
 import time
@@ -1404,12 +1403,6 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         assert not gateway.calls, (path, gateway.calls)
         responses[path] = response.content.decode()
     expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
-    import difflib
-    for path in expected:
-        if responses[path] != expected[path]:
-            a = json.dumps(json.loads(expected[path]), indent=1, sort_keys=True).splitlines()
-            b = json.dumps(json.loads(responses[path]), indent=1, sort_keys=True).splitlines()
-            raise AssertionError(path + "\n" + "\n".join(list(difflib.unified_diff(a, b, lineterm="", n=0))[:40]))
     assert responses == expected
     # An active snapshot governing other identities must preserve the same bytes.
     from tests.test_category_enforcement import _activate, _snapshot
