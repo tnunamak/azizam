@@ -17,8 +17,8 @@ import httpx
 import pytest
 
 import proxy
-from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario  # noqa: F401
-from tests.support.gateway import READ_BUDGET_SECONDS, LITELLM_MASTER_KEY, gateway_client, register_litellm, use_admin_db
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
+from tests.support.gateway import LITELLM_MASTER_KEY, gateway_client, register_litellm, use_admin_db
 
 MODEL = "fk-model"
 MESSAGES = [{"role": "user", "content": "hi"}]
@@ -190,20 +190,47 @@ def test_rate_limit_keeps_status_retry_after_and_error_body(fake_upstreams, monk
     assert forwarded.json == {"model": MODEL, "messages": MESSAGES, "stream": stream}
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B3: the LLM substrate read timeout answers {'detail': ...}, not the OpenAI error envelope (fix/fk-upstream-faults)")
-@pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
-def test_first_byte_past_the_read_budget_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
-    """One real-clock wiring case: the read budget is the gateway's own setting, shortened."""
-    fake = _serve(fake_upstreams, monkeypatch, tmp_path, "slow-first-byte", wire=True)
-    monkeypatch.setattr(proxy, "UPSTREAM_READ_TIMEOUT", READ_BUDGET_SECONDS)
-
+def _slow_first_byte_call(stream: bool):
     async def call() -> httpx.Response:
         async with asyncio.timeout(HANG_BOUND_SECONDS), gateway_client() as client:
             return await client.post("/v1/chat/completions", json={"model": MODEL, "messages": MESSAGES, "stream": stream})
 
-    response = asyncio.run(call())
+    return asyncio.run(call())
 
+
+_B3 = "FK-B3: the LLM substrate read timeout answers {'detail': ...}, not the OpenAI error envelope (fix/fk-upstream-faults)"
+_B3_ENVELOPE = {"error": {"message": "LiteLLM execution timed out.", "type": "api_error", "param": None, "code": "timeout"}}
+
+
+@pytest.mark.xfail(strict=True, raises=KnownBug, reason=_B3)
+@pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
+def test_first_byte_past_the_read_budget_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
+    """The read deadline passes once the fake has logged the request and holds the response."""
+    fake = _serve(fake_upstreams, monkeypatch, tmp_path, "slow-first-byte", wire=True)
+    deadline = read_deadline(monkeypatch, fake_upstreams.clock)
+
+    response = _slow_first_byte_call(stream)
+
+    assert deadline.read_fired == 1
     assert response.status_code == 504
     assert response.headers["content-type"].startswith("application/json")
     assert _forwarded_stream(fake) == {"model": MODEL, "messages": MESSAGES, "stream": stream}
-    expect_fixed("FK-B3", response.json(), {"error": {"message": "LiteLLM execution timed out.", "type": "api_error", "param": None, "code": "timeout"}})
+    expect_fixed("FK-B3", response.json(), _B3_ENVELOPE)
+
+
+@pytest.mark.xfail(strict=True, raises=KnownBug, reason=_B3)
+def test_read_budget_wiring_on_the_real_clock_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path) -> None:
+    """The one real-clock case: the gateway's own UPSTREAM_READ_TIMEOUT, shortened.
+
+    The budget may expire before the fake logged the request, so this case does
+    not assert the forwarded request; it asserts only what the client sees.
+    """
+    fake = _serve(fake_upstreams, monkeypatch, tmp_path, "slow-first-byte", wire=True)
+    fake.waive("chat")
+    monkeypatch.setattr(proxy, "UPSTREAM_READ_TIMEOUT", 0.2)
+
+    response = _slow_first_byte_call(False)
+
+    assert response.status_code == 504
+    assert response.headers["content-type"].startswith("application/json")
+    expect_fixed("FK-B3", response.json(), _B3_ENVELOPE)

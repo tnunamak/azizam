@@ -17,8 +17,7 @@ import httpx
 import pytest
 
 import proxy
-from tests.support.gateway import READ_BUDGET_SECONDS
-from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario  # noqa: F401
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
 WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "a red fox"}}}
 PNG_SIGNATURE = bytes.fromhex("89504e470d0a1a0a")
@@ -32,7 +31,7 @@ def _serve(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False) 
     return fake
 
 
-async def _round(fakes: FakeUpstreams, *, release_waits: int = 0) -> tuple[Any, list[bytes]]:
+async def _round(fakes: FakeUpstreams, *, release_waits: int = 0, read_budget: float = 60.0) -> tuple[Any, list[bytes]]:
     """Run one image round; advance the clock ``release_waits`` times, each once the fake is blocked on it."""
 
     async def pump() -> None:
@@ -40,7 +39,7 @@ async def _round(fakes: FakeUpstreams, *, release_waits: int = 0) -> tuple[Any, 
             await fakes.clock.until_waiting()
             fakes.clock.advance(1)
 
-    async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(HANG_BOUND_SECONDS, read=READ_BUDGET_SECONDS)) as client:
+    async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(HANG_BOUND_SECONDS, read=read_budget)) as client:
         releaser = asyncio.create_task(pump())
         result = await proxy._comfy_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2)
         await releaser
@@ -96,14 +95,32 @@ def test_submit_rate_limit_becomes_a_502_that_carries_the_upstream_body(fake_ups
 
 
 def test_submit_first_byte_past_the_read_budget_gives_a_504(fake_upstreams, monkeypatch) -> None:
+    """The read deadline passes once the fake has logged the submit and holds the response."""
     fake = _serve(fake_upstreams, monkeypatch, "prompt-slow-first-byte", wire=True)
+    deadline = read_deadline(monkeypatch, fake_upstreams.clock)
 
     error, images = asyncio.run(_round(fake_upstreams))
 
+    assert deadline.read_fired == 1
     assert images == []
     assert _error(error) == (504, {"error": {"message": "ComfyUI request timeout", "type": "api_error"}})
     [submit] = fake.calls("prompt")
     assert submit.json["prompt"] == WORKFLOW
+
+
+def test_submit_read_budget_wiring_on_the_real_clock_gives_a_504(fake_upstreams, monkeypatch) -> None:
+    """The one real-clock case: the client's own read budget, shortened.
+
+    The budget may expire before the fake logged the request, so only the
+    caller-visible result is asserted.
+    """
+    fake = _serve(fake_upstreams, monkeypatch, "prompt-slow-first-byte", wire=True)
+    fake.waive("prompt")
+
+    error, images = asyncio.run(_round(fake_upstreams, read_budget=0.2))
+
+    assert images == []
+    assert _error(error) == (504, {"error": {"message": "ComfyUI request timeout", "type": "api_error"}})
 
 
 @pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B7: a peer drop during the image download raises httpx.RemoteProtocolError out of the image round (fix/fk-upstream-faults)")

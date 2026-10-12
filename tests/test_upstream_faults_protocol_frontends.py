@@ -19,8 +19,8 @@ import httpx
 import pytest
 
 import proxy
-from tests.support.fake_upstream import FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario  # noqa: F401 - fixture
-from tests.support.gateway import READ_BUDGET_SECONDS, ResponseTap, gateway_client, register_litellm, use_admin_db
+from tests.support.fake_upstream import FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401 - fixture
+from tests.support.gateway import ResponseTap, gateway_client, register_litellm, use_admin_db
 
 MODEL = "fk-model"
 MESSAGES = [{"role": "user", "content": "hi"}]
@@ -249,9 +249,11 @@ def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_
 def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upstreams, monkeypatch, frontend, stream) -> None:
     serve, hop = frontend_gateway
     fake = serve("slow-first-byte", wire=True)
-    monkeypatch.setattr(proxy, "UPSTREAM_READ_TIMEOUT", READ_BUDGET_SECONDS)
+    deadline = read_deadline(monkeypatch, fake_upstreams.clock)
 
     response, raw = _run(fake_upstreams, hop, frontend, stream=stream)
+
+    assert deadline.read_fired == 1
 
     assert response.status_code == 504
     assert response.headers["content-type"].startswith("application/json")

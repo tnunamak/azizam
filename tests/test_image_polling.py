@@ -16,8 +16,7 @@ import httpx
 import pytest
 
 import proxy
-from tests.support.gateway import READ_BUDGET_SECONDS
-from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario  # noqa: F401
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
 WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "poll test"}}}
 HANG_BOUND_SECONDS = 10
@@ -33,22 +32,25 @@ class _Round:
         return [request.exchange for request in self.fake.requests if request.path.startswith("/history/")]
 
 
-def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False, host: str | None = None) -> _Round:
+def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False, hold_deadline: bool = False) -> _Round:
     scenario = load_scenario(f"comfyui/{name}", text="poll test")
     fake = fakes.loopback(scenario) if wire else fakes.asgi(scenario, host="comfy.fk.test")
-    monkeypatch.setattr(proxy, "COMFY_HOST", host or fake.base_url)
+    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    deadline = read_deadline(monkeypatch, fakes.clock) if hold_deadline else None
     sleeps: list[float] = []
 
     async def sleep(delay: float) -> None:
         sleeps.append(delay)
 
     async def call():
-        timeout = httpx.Timeout(HANG_BOUND_SECONDS, read=READ_BUDGET_SECONDS)
+        timeout = httpx.Timeout(HANG_BOUND_SECONDS, read=60.0)
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=timeout) as client:
             return await proxy._comfy_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2)
 
     with patch.object(proxy.asyncio, "sleep", sleep), patch.object(proxy, "COMFY_TIMEOUT", 100):
         error, images = asyncio.run(call())
+    if deadline is not None:
+        assert deadline.read_fired == 1
     return _Round(error, images, sleeps, fake)
 
 
@@ -73,7 +75,7 @@ def test_slow_completion_keeps_polling(fake_upstreams, monkeypatch) -> None:
 
 def test_slow_job_times_out_with_original_wait_budget(fake_upstreams, monkeypatch) -> None:
     """A 503 and a check that gets no answer within the read budget are polled past; the 2 s budget then ends the job."""
-    result = _run_round(fake_upstreams, monkeypatch, "image-job-timeout", wire=True)
+    result = _run_round(fake_upstreams, monkeypatch, "image-job-timeout", wire=True, hold_deadline=True)
 
     assert result.images == []
     assert result.error.status_code == 504

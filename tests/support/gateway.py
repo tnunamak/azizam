@@ -16,11 +16,6 @@ from tests.support.fake_upstream import StreamingASGITransport
 
 LITELLM_KEY_ENV = "FK_LITELLM_MASTER_KEY"
 LITELLM_MASTER_KEY = "fk-litellm-master-key"
-# The gateway's own read budget in a slow-first-byte case is real time. The
-# request must reach the fake before it expires (0.2 s and 1 s both lost that
-# race under gate load), so the budget is far above a loaded host's delivery
-# time of one local request. Cost: each such case waits this long.
-READ_BUDGET_SECONDS = 5.0
 
 
 def use_admin_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
