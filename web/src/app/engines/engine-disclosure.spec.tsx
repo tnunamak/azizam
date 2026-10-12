@@ -463,3 +463,64 @@ it("shows each detected model once with its engine name in technical details", a
   expect(within(second).getByRole("textbox", { name: "Model name" })).toHaveValue("second-model");
   expect(screen.getByText(/Access plans that allow all models may use these models immediately/)).toBeVisible();
 });
+
+it("stops showing cached Ready after a failed health refresh and recovers", async () => {
+  const { queryKeys } = await import("@/lib/api");
+  const healthy: Awaited<ReturnType<typeof api.status>> = {
+    current_health: {
+      state: "ok",
+      tone: "ok",
+      label: "Ready",
+      detail: "Fixture engine is reachable.",
+      observation_available: true,
+      services: [{
+        service_id: "primary",
+        name: "primary",
+        configured: true,
+        enabled: true,
+        role: "primary",
+        routable: true,
+        observation: "up",
+        tone: "ok",
+        last_error: null,
+      }],
+    },
+    backends: [{ service_id: "primary", status: "up" }],
+  };
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  const status = vi.spyOn(api, "status").mockResolvedValue(healthy);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const view = render(
+    <QueryClientProvider client={client}>
+      <Page />
+    </QueryClientProvider>,
+  );
+
+  try {
+    const heading = await screen.findByRole("heading", { name: "primary" });
+    const row = within(heading.closest("tr")!);
+    await waitFor(() => expect(row.getByText("Ready", { exact: true })).toBeVisible());
+
+    status.mockRejectedValue(new Error("Fixture health is unavailable"));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: queryKeys.status, exact: true });
+    });
+
+    expect(await screen.findByText("Live status unavailable")).toBeVisible();
+    expect(client.getQueryData(queryKeys.status)).toEqual(healthy);
+    expect(row.queryByText("Ready", { exact: true })).toBeNull();
+
+    status.mockResolvedValue(healthy);
+    await act(async () => {
+      await client.refetchQueries({ queryKey: queryKeys.status, exact: true });
+    });
+
+    await waitFor(() => expect(row.getByText("Ready", { exact: true })).toBeVisible());
+    expect(screen.queryByText("Live status unavailable")).toBeNull();
+  } finally {
+    view.unmount();
+    client.clear();
+  }
+});

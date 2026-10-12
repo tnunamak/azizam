@@ -163,25 +163,39 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("Usage preserves person and source filters in API requests", async ({
-  page,
-}) => {
-  const urls: string[] = [];
-  await page.route("**/me/api/usage/summary?**", (route) => {
-    urls.push(route.request().url());
-    return route.fulfill({ json: seededSummary });
-  });
-
+test("Usage preserves the selected person in the new source-filtered request", async ({ page }) => {
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    route.fulfill({ json: seededSummary }),
+  );
   await page.goto("/usage/");
-  await page.getByRole("combobox", { name: "Person" }).click();
-  await page.getByRole("option", { name: "Mira" }).click();
-  await page.getByRole("combobox", { name: "Source" }).click();
-  await page.getByRole("option", { name: "Open WebUI" }).click();
 
-  await expect
-    .poll(() => urls.some((url) => url.includes("person=person-a")))
-    .toBe(true);
-  expect(urls.some((url) => url.includes("source=app-a"))).toBe(true);
+  const person = page.getByRole("combobox", { name: "Person", exact: true });
+  await person.click();
+  const personRequest = page.waitForRequest((request) =>
+    request.method() === "GET" &&
+    new URL(request.url()).pathname === "/me/api/usage/summary" &&
+    new URL(request.url()).searchParams.get("person") === "person-a",
+  );
+  await page.getByRole("option", { name: "Mira", exact: true }).click();
+  const afterPerson = new URL((await personRequest).url());
+  expect(afterPerson.searchParams.get("source")).toBeNull();
+
+  const source = page.getByRole("combobox", { name: "Source", exact: true });
+  await expect(source).toBeEnabled();
+  await source.click();
+  const combinedRequest = page.waitForRequest((request) =>
+    request.method() === "GET" &&
+    new URL(request.url()).pathname === "/me/api/usage/summary" &&
+    new URL(request.url()).searchParams.get("source") === "app-a",
+  );
+  await page.getByRole("option", { name: "Open WebUI", exact: true }).click();
+
+  const combined = new URL((await combinedRequest).url());
+  expect(combined.searchParams.get("period")).toBe("month");
+  expect(combined.searchParams.get("person")).toBe("person-a");
+  expect(combined.searchParams.get("source")).toBe("app-a");
+  await expect(person).toContainText("Mira");
+  await expect(source).toContainText("Open WebUI");
 });
 
 for (const [status, expected, summary, extra] of [

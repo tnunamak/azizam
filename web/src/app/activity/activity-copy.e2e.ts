@@ -278,31 +278,47 @@ test("Activity receipt shows both models only when a different one served, and k
   await expect(dialog.getByText(/safe-chat/)).toBeVisible();
 });
 
-test("Activity request filters preserve person and source", async ({
-  page,
-}) => {
-  const urls: string[] = [];
+test("Activity preserves the selected person in the new source-filtered request", async ({ page }) => {
   await page.route("**/admin/api/audit?*", (route) =>
     route.fulfill({ json: { records: [], next_cursor: null } }),
   );
-  await page.route("**/admin/api/activity/requests?*", (route) => {
-    urls.push(route.request().url());
-    return route.fulfill({
+  await page.route("**/admin/api/activity/requests?*", (route) =>
+    route.fulfill({
       json: {
         records: [requestRecord("succeeded")],
         next_cursor: null,
         people: [{ id: "owner", label: "Owner" }],
         sources: [{ id: "app-a", label: "Open WebUI" }],
       },
-    });
-  });
+    }),
+  );
   await page.goto("/activity/");
-  await page.getByRole("combobox", { name: "Person" }).click();
-  await page.getByRole("option", { name: "Owner" }).click();
-  await page.getByRole("combobox", { name: "Source" }).click();
-  await page.getByRole("option", { name: "Open WebUI" }).click();
-  await expect
-    .poll(() => urls.some((url) => url.includes("person_id=owner")))
-    .toBe(true);
-  expect(urls.some((url) => url.includes("source=app-a"))).toBe(true);
+
+  const person = page.getByRole("combobox", { name: "Person", exact: true });
+  await person.click();
+  const personRequest = page.waitForRequest((request) =>
+    request.method() === "GET" &&
+    new URL(request.url()).pathname === "/admin/api/activity/requests" &&
+    new URL(request.url()).searchParams.get("person_id") === "owner",
+  );
+  await page.getByRole("option", { name: "Owner", exact: true }).click();
+  const afterPerson = new URL((await personRequest).url());
+  expect(afterPerson.searchParams.get("source")).toBeNull();
+
+  const source = page.getByRole("combobox", { name: "Source", exact: true });
+  await expect(source).toBeEnabled();
+  await source.click();
+  const combinedRequest = page.waitForRequest((request) =>
+    request.method() === "GET" &&
+    new URL(request.url()).pathname === "/admin/api/activity/requests" &&
+    new URL(request.url()).searchParams.get("source") === "app-a",
+  );
+  await page.getByRole("option", { name: "Open WebUI", exact: true }).click();
+
+  const combined = new URL((await combinedRequest).url());
+  expect(combined.searchParams.get("person_id")).toBe("owner");
+  expect(combined.searchParams.get("source")).toBe("app-a");
+  expect(combined.searchParams.get("before")).toBeNull();
+  await expect(person).toContainText("Owner");
+  await expect(source).toContainText("Open WebUI");
 });
