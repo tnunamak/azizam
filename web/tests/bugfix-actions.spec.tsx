@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AppsPage from "@/app/apps/page";
 import ProvidersPage from "@/app/providers/page";
-import ShowcasePage from "@/app/showcase/page";
 
 const accountMocks = vi.hoisted(() => ({
   discovery: vi.fn(),
@@ -43,55 +42,6 @@ describe("bugfix actions", () => {
         openai: { canonical_base_url: "https://gateway.example/openai/v1" },
       },
     });
-  });
-
-  it("renders structured Showcase recorded inputs as formatted text", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.endsWith("/showcase/static/sections.json")) {
-          return new Response(
-            JSON.stringify({
-              sections: [{ id: "chat", title: "Chat", source: "aliases:chat" }],
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }
-        if (url.endsWith("/showcase/examples/index.json")) {
-          return new Response(
-            JSON.stringify({
-              data: [
-                {
-                  id: "structured-chat",
-                  base: "/showcase/examples/structured-chat/",
-                  card: "chat",
-                  title: "Structured request",
-                  inputs: [
-                    {
-                      value: {
-                        model: "fast",
-                        max_tokens: 32,
-                        messages: [{ role: "user", content: "hello" }],
-                      },
-                    },
-                  ],
-                  outputs: [{ kind: "text", text: "Hello back." }],
-                },
-              ],
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }
-        return new Response("{}", { status: 404 });
-      }),
-    );
-
-    renderWithQuery(<ShowcasePage />);
-    expect(await screen.findByText("Hello back.")).toBeVisible();
-    await userEvent.click(screen.getByText("Recorded input"));
-    expect(screen.getByText(/"model": "fast"/)).toBeVisible();
-    expect(screen.getByText(/"messages": \[/)).toBeVisible();
   });
 
   it("removes an existing app through the account API", async () => {

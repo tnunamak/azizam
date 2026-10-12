@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/_home/home-page";
 import ProvidersPage from "@/app/providers/page";
-import ShowcasePage from "@/app/showcase/page";
 import { canonicalDestinationPath } from "@/lib/product";
 
 function renderWithQuery(ui: React.ReactElement) {
@@ -26,18 +25,6 @@ describe("integrated UI coherence", () => {
     expect(canonicalDestinationPath("/")).toBe("/");
     expect(canonicalDestinationPath("/models/")).toBe("/models");
     expect(canonicalDestinationPath("/models")).toBe("/models");
-  });
-
-  it("announces Showcase recorded-example loading as a status", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise<Response>(() => {})),
-    );
-    renderWithQuery(<ShowcasePage />);
-    const loading = screen.getByRole("status", {
-      name: "Loading recorded examples",
-    });
-    expect(loading).toHaveAttribute("aria-busy", "true");
   });
 
   it("treats an unexplained provider API failure as a load failure with a retry", async () => {

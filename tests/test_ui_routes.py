@@ -239,7 +239,7 @@ def test_hashed_assets_are_immutable_and_html_revalidates(export, client):
 
 # -- API errors stay API errors (design test 5) ---------------------------------------------
 
-HTML_ALLOWED = {"/docs", "/redoc", "/status/raw", "/status/raw/", "/auth/logout-confirm", "/setup/console",
+HTML_ALLOWED = {"/docs", "/redoc", "/status/raw", "/status/raw/", "/auth/logout-confirm", "/setup/console", "/showcase/",
                 "/setup/claim", "/setup/local-owner", "/setup/local-login", "/setup/first-app"}
 
 

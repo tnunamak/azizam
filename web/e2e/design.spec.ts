@@ -61,7 +61,7 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 test("design demonstrations use capability and app vocabulary", async ({ page }) => {
-  await page.goto("/ui/design/");
+  await page.goto("/design/");
   for (const state of ["Default", "Disabled", "Error"]) {
     await expect(
       page.getByRole("combobox", { name: `${state} capability`, exact: true }),
@@ -98,7 +98,7 @@ test("design demonstrations use capability and app vocabulary", async ({ page })
 test("design errors identify their layer, action and demonstration status", async ({
   page,
 }) => {
-  await page.goto("/ui/design/");
+  await page.goto("/design/");
   await expect(
     page.getByRole("heading", { name: "Combobox · error demonstration" }),
   ).toBeVisible();
