@@ -303,9 +303,9 @@ class AdminRuntimeTests(unittest.TestCase):
 
         disabled = client.delete(f"/admin/api/apps/{app_id}")
         self.assertEqual(disabled.status_code, 200, disabled.text)
-        self.assertIsNone(
-            runtime_identity_for_app_credential_hash(key_hash, path=self.db)
-        )
+        # The key still names its App, which is refused with the reason.
+        identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertEqual(identity.denial, "app_disabled")
 
     def test_app_key_cannot_administer_gateway(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -393,7 +393,8 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         allowed = client.get("/admin/api/overview")
         self.assertEqual(allowed.status_code, 200, allowed.text)
-        self.assertEqual(admin_store.list_users(path=self.db), [])
+        # Signing in as a service account creates no person.
+        self.assertEqual([user["id"] for user in admin_store.list_users(path=self.db)], [self.owner["id"]])
 
     def test_admin_store_hides_legacy_local_admin_key_personal_apps(self) -> None:
         placeholder = admin_store.upsert_oidc_user(
@@ -539,14 +540,13 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = self._client(admin_key)
 
-        access_resp = client.put(
-            "/admin/api/operator/user-access-defaults",
-            json={"self_service_apps": False},
-        )
-        self.assertEqual(access_resp.status_code, 200, access_resp.text)
         reopened = AdminSQLiteStore(self.db)
-        overrides = reopened.operator_overrides()
-        self.assertFalse(overrides["user_access_defaults"]["self_service_apps"])
+        self.assertNotIn("user_access_defaults", reopened.operator_overrides())
+        # The old defaults endpoint is gone; there is no runtime default plan.
+        self.assertEqual(
+            client.put("/admin/api/operator/user-access-defaults", json={"self_service_apps": False}).status_code,
+            404,
+        )
 
         resp = client.put(
             "/admin/api/operator/service-availability",
@@ -579,7 +579,6 @@ class AdminRuntimeTests(unittest.TestCase):
             ["gpu"],
         )
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
-        self.assertIn("operator.user_access_defaults.update", actions)
         self.assertIn("operator.service_availability.update", actions)
         self.assertIn("operator.media_job_admission.update", actions)
 
@@ -1031,11 +1030,11 @@ class AdminOidcSettingsTests(unittest.TestCase):
         )
         service = admin_store.ensure_service_account("release-bot", path=self.db)
         self.store.create_app(
-            data={"name": "human-app"},
+            data={"name": "human-app", "access_plan": "person"},
             actor=AdminContext(subject=human["id"], actor_kind="user", roles=frozenset({"owner"})),
         )
         self.store.create_app(
-            data={"name": "service-app"},
+            data={"name": "service-app", "access_plan": "person", "owner_user_id": human["id"]},
             actor=AdminContext(subject=service["id"], actor_kind="service_account", roles=frozenset({"owner"})),
         )
         admin_store.record_audit(
@@ -1086,7 +1085,9 @@ class AdminOidcSettingsTests(unittest.TestCase):
             actor_kind="service_account", actor_label="Release bot",
             roles=frozenset({"owner"}),
         )
-        self.store.create_app(data={"name": "opaque-actor-app"}, actor=actor)
+        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="owner@example.com", path=self.db)
+        self.store.create_app(
+            data={"name": "opaque-actor-app", "access_plan": "person", "owner_user_id": owner["id"]}, actor=actor)
         event = next(event for event in admin_store.list_audit(path=self.db)
                      if event["action"] == "app.create")
         self.assertEqual(event["actor_id"], "opaque-automation-id")
