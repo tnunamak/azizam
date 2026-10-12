@@ -2512,9 +2512,7 @@ class AdminAuditEventsEndpointTests(AdminAppFixtures, unittest.TestCase):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
     def test_audit_events_returns_recent_events(self) -> None:
-        self.client.post(
-            "/admin/api/apps", json={"name": "Audit App"}, headers=self._auth()
-        )
+        self._create_app("Audit App")
         resp = self.client.get(
             "/admin/api/audit-events?show_automated=true", headers=self._auth()
         )
