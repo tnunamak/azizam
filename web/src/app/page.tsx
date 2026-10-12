@@ -19,9 +19,12 @@ export default function RootPage() {
           <Skeleton className="h-48 w-full" />
         </div>
       ) : viewer.isError ? (
+        // Same copy as the shell's session failure on every other page.
         <ErrorState
-          message="Your account could not be loaded. Try again."
+          heading="Couldn’t load your account"
+          message="Check your connection and try again."
           onRetry={() => void viewer.refetch()}
+          retrying={viewer.isFetching}
         />
       ) : (
         <EmptyState
