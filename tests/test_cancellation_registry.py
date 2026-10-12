@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from gateway.backends.cancellation import CancellationRegistry, CancellationRegistryFull
 
@@ -12,20 +13,27 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
         handle = registry.register("req-1")
         self.assertFalse(handle.token.cancelled)
 
+        waiter_entered = asyncio.Event()
         waited = asyncio.Event()
 
         async def waiter() -> None:
+            waiter_entered.set()
             await handle.token.wait()
             waited.set()
 
         task = asyncio.create_task(waiter())
-        await asyncio.sleep(0)
-        self.assertFalse(waited.is_set())
+        try:
+            await asyncio.wait_for(waiter_entered.wait(), timeout=1)
+            self.assertFalse(waited.is_set())
 
-        registry.signal("req-1")
-        await asyncio.wait_for(task, timeout=1)
-        self.assertTrue(handle.token.cancelled)
-        self.assertTrue(waited.is_set())
+            registry.signal("req-1")
+            await asyncio.wait_for(task, timeout=1)
+            self.assertTrue(handle.token.cancelled)
+            self.assertTrue(waited.is_set())
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            handle.release()
 
     async def test_signal_before_register_is_observed(self) -> None:
         registry = CancellationRegistry()
@@ -250,6 +258,55 @@ class CancellationRegistryLiveDurationTests(unittest.IsolatedAsyncioTestCase):
         other.release()
         registry.register("req-sweep-trigger-3")
         self.assertNotIn("req-two-owners", registry._entries)
+
+
+class CancellationRegistryPositiveTTLTests(unittest.TestCase):
+    def test_unowned_signal_expires_at_positive_ttl_boundary(self) -> None:
+        for now, cancelled in ((109.0, True), (110.0, False), (111.0, False)):
+            with self.subTest(now=now, cancelled=cancelled):
+                with patch("gateway.backends.cancellation.time") as clock:
+                    clock.monotonic.return_value = 100.0
+                    registry = CancellationRegistry(ttl_seconds=10.0)
+                    registry.signal("req-boundary")
+                    self.assertTrue(registry.is_cancelled("req-boundary"))
+
+                    clock.monotonic.return_value = now
+                    handle = registry.register("req-boundary")
+                    try:
+                        self.assertEqual(handle.token.cancelled, cancelled)
+                        self.assertEqual(registry.is_cancelled("req-boundary"), cancelled)
+                    finally:
+                        handle.release()
+
+    def test_positive_ttl_never_evicts_live_owners(self) -> None:
+        with patch("gateway.backends.cancellation.time") as clock:
+            clock.monotonic.return_value = 100.0
+            registry = CancellationRegistry(ttl_seconds=10.0)
+            first = registry.register("req-live")
+            second = registry.register("req-live")
+            try:
+                clock.monotonic.return_value = 2001.0
+                traffic = registry.register("req-traffic")
+                traffic.release()
+                self.assertIn("req-live", registry._entries)
+                self.assertFalse(first.token.cancelled)
+                self.assertFalse(second.token.cancelled)
+
+                first.release()
+                registry.signal("req-live")
+                self.assertTrue(second.token.cancelled)
+                second.release()
+                self.assertTrue(registry.is_cancelled("req-live"))
+
+                fresh = registry.register("req-live")
+                try:
+                    self.assertFalse(fresh.token.cancelled)
+                    self.assertNotEqual(fresh._generation, second._generation)
+                finally:
+                    fresh.release()
+            finally:
+                first.release()
+                second.release()
 
 
 class CancellationRegistryGenerationIdentityTests(unittest.IsolatedAsyncioTestCase):
