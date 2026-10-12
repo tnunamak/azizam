@@ -369,6 +369,20 @@ def test_startable_stopped_probe_projects_idle():
     assert projection.idle_startable is True
 
 
+def test_on_demand_residency_projects_a_stopped_probe_as_idle_without_a_lifecycle_driver():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "base_url": "http://svc/v1",
+            "residency": "on_demand",
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "health"}},
+    )
+
+    assert projection.status == "idle"
+    assert projection.idle_startable is True
+
+
 def test_projected_idle_capability_is_available():
     caps = project_capabilities(
         [Capability(intent="decision", backend="svc")],

@@ -44,7 +44,7 @@ from gateway.policy import (
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
-from gateway.model_presentation import service_presentation
+from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import admin_catalog, admin_store, extension_packages, service_registry
@@ -634,6 +634,7 @@ def derive_admin_health_projection(
             "role": role,
             **({"in_use": in_use} if in_use is not None else {}),
             **({"usage_label": "Not in use"} if in_use is False else {}),
+            **({"starts_on_demand": True} if starts_on_demand(raw_service) else {}),
             "observation": observation,
             "routable": routable,
             "tone": tone,

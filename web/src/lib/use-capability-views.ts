@@ -194,6 +194,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
           observation: unreachable.has(service.service_id) ? "down" : service.observation,
           tone: unreachable.has(service.service_id) ? "bad" : service.tone,
           inUse: service.in_use ?? null,
+          startsOnDemand: service.starts_on_demand === true,
           lastError: service.last_error,
           isProvider: providerIds.has(service.service_id),
           checkedAt: backendChecks.get(service.service_id) ?? null,

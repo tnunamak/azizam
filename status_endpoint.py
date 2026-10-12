@@ -24,6 +24,7 @@ import importlib
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import threading
@@ -37,7 +38,7 @@ import yaml
 
 from gateway import lifecycle_drivers
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
-from gateway.model_presentation import declared_health_success, service_health_endpoint
+from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -62,7 +63,23 @@ def _resolve_commit_hash() -> Optional[str]:
 
 
 _COMMIT_HASH: Optional[str] = _resolve_commit_hash()
-_HTTP_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
+# A refused connection fails at once; a connect that merely takes long means a
+# slow or loaded host. 3 s lets a busy host finish its handshake without
+# stretching the whole-status budget (probes run concurrently).
+_HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
+
+# httpx builds an SSL context (reads the CA bundle) for every client it creates.
+# That is seconds of CPU on a loaded host, so build it once, off the event loop.
+_probe_ssl_context: ssl.SSLContext | None = None
+
+
+async def _shared_probe_ssl_context() -> ssl.SSLContext:
+    global _probe_ssl_context
+    if _probe_ssl_context is None:
+        _probe_ssl_context = await asyncio.to_thread(ssl.create_default_context)
+    return _probe_ssl_context
+
+
 _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
 
 # Cached budget read (60s TTL — file rarely changes).
@@ -255,7 +272,9 @@ async def _probe(
             "latency_ms": dt,
             "last_error": f"HTTP {r.status_code}",
         }
-    except (httpx.ConnectError, httpx.ConnectTimeout):
+    except httpx.ConnectError:
+        if starts_on_demand(service or {}):
+            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process"}
         return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
@@ -380,7 +399,8 @@ async def _backend_grid(config: dict) -> list[dict]:
     targets = _resolve_backend_targets(config)
     lifecycle_targets = _lifecycle_backend_targets(config)
     backends = config.get("backends", {}) or {}
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    ssl_context = await _shared_probe_ssl_context()
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
         async def configured_probe(target):
             service = backends.get(target["key"], {})
             row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
