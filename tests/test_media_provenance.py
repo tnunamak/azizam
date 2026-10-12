@@ -120,14 +120,14 @@ class PlanBoundTests(unittest.TestCase):
     def test_runtime_bound_by_identity(self) -> None:
         owner = proxy.AuthContext(identity=auth_identity(
             name="o", key_hash="sha256:o", access=access(plan_for("owner", metadata="full"))))
-        plain = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
+        plain = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p", access=access(plan_for("plain"))))
         mixed = proxy.AuthContext(identity=auth_identity(
             name="m", key_hash="sha256:m",
             access=access(plan_for("owner", metadata="full"), plan_for("app", metadata="none"))))
         self.assertEqual(proxy._media_metadata_bound(owner), "full")
         self.assertEqual(proxy._media_metadata_bound(plain), "none")
         self.assertEqual(proxy._media_metadata_bound(mixed), "none")
-        self.assertEqual(proxy._media_metadata_bound(access_context()), "none")
+        self.assertEqual(proxy._media_metadata_bound(proxy.NO_AUTH_CONTEXT), "none")
 
 
 class ControlParsingTests(unittest.TestCase):
@@ -138,10 +138,10 @@ class ControlParsingTests(unittest.TestCase):
             with self.assertRaises(provenance.MetadataModeError):
                 provenance.parse_metadata_mode(bad)
 
-    def test_request_override_beats_plan_bound(self) -> None:
+    def test_request_may_lower_the_plan_bound_but_never_raise_it(self) -> None:
         resolve = provenance.resolve_metadata_mode
         self.assertEqual(resolve("none", "full"), "none")
-        self.assertEqual(resolve("full", "none"), "full")
+        self.assertEqual(resolve("full", "none"), "none")  # the bound wins (design N5)
         self.assertEqual(resolve(None, "full"), "full")
         self.assertEqual(resolve(None, None), "none")
 
