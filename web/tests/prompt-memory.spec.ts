@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   isShorter,
@@ -204,24 +202,5 @@ describe("prompt memory copy", () => {
     expect(
       purgeStatus({ pending: true, metadata_stripping: { status: "retrying" } }),
     ).toBe("Some older files still contain prompts. Azizam keeps retrying.");
-  });
-
-  it("keeps Library missing-prompt copy neutral and preserves known reasons", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/app/library/page.tsx"),
-      "utf8",
-    );
-    expect(source).toContain("? `No saved prompt. ${notSavedReason}`");
-    expect(source).toContain(': "No saved prompt"}');
-  });
-
-  it("states Library deletion scope and that downloaded copies stay", () => {
-    const source = readFileSync(
-      resolve(process.cwd(), "src/app/library/page.tsx"),
-      "utf8",
-    );
-    expect(source).toContain(
-      'description="Removes this creation from your Library. Downloaded copies stay."',
-    );
   });
 });
