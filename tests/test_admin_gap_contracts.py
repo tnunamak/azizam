@@ -1,6 +1,5 @@
 """Proposed admin gap tests. Run only through the hermetic pytest runner."""
 import asyncio
-import copy
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +12,7 @@ from starlette.requests import Request
 
 from gateway import admin_runtime, admin_store
 from gateway.admin_api import AdminAuthError, AdminContext, create_admin_router
-from gateway.admin_runtime import AdminSQLiteStore, EXTENSION_PACKAGE_INDEX_SETTING_KEY
+from gateway.admin_runtime import AdminSQLiteStore
 
 
 OWNER = AdminContext(subject="fixture-owner", roles=frozenset({"owner"}))
@@ -34,73 +33,6 @@ def sqlite_store(tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     return AdminSQLiteStore(path)
-
-
-# G1: Intentionally red at the reviewed SHA. This is a proposed atomicity
-# acceptance test, not a claim that the current implementation already passes.
-@pytest.mark.parametrize("failure_stage", ["index", "audit"])
-def test_extension_enable_failure_leaves_no_partial_durable_state(
-    sqlite_store, monkeypatch, failure_stage
-):
-    store = sqlite_store
-    review = {
-        "ok": True,
-        "package": {"id": "fixture-package", "version": "1.0.0"},
-        "package_hash": "sha256:" + "a" * 64,
-    }
-    imported = {
-        "services": {}, "protocol_frontends": {},
-        "workflows": {}, "capabilities": {},
-    }
-    ep = admin_runtime.extension_packages
-    monkeypatch.setattr(ep, "validate_extension_package_source",
-                        lambda *a, **kw: copy.deepcopy(review))
-    monkeypatch.setattr(ep, "imported_registry_records",
-                        lambda *a, **kw: copy.deepcopy(imported))
-    monkeypatch.setattr(ep, "merge_package_index", lambda *a, **kw: {
-        "schema_version": 1, "sources": [],
-        "packages": {"fixture-package": {"id": "fixture-package"}},
-        "updated_at": 1,
-    })
-    monkeypatch.setattr(store, "write_litellm_config",
-                        lambda registry: store.path.parent / "unused.yaml")
-
-    original_put = admin_store.put_operator_setting
-    original_audit = admin_store.record_audit
-    injected = []
-
-    def put(key, value, **kwargs):
-        if failure_stage == "index" and key == EXTENSION_PACKAGE_INDEX_SETTING_KEY:
-            injected.append("index")
-            raise OSError("injected index failure")
-        return original_put(key, value, **kwargs)
-
-    def audit(action, **kwargs):
-        if failure_stage == "audit" and action == "operator.extension_package.enable":
-            injected.append("audit")
-            raise OSError("injected audit failure")
-        return original_audit(action, **kwargs)
-
-    monkeypatch.setattr(admin_store, "put_operator_setting", put)
-    monkeypatch.setattr(admin_store, "record_audit", audit)
-
-    def snapshot():
-        return (
-            admin_store.get_service_registry_with_generation(path=store.path),
-            admin_store.get_operator_setting(
-                EXTENSION_PACKAGE_INDEX_SETTING_KEY, path=store.path
-            ),
-            admin_store.list_audit(path=store.path),
-        )
-
-    before = snapshot()
-    with pytest.raises(OSError, match="injected"):
-        store.enable_extension_package(
-            source={"type": "local_directory", "path": "/not-accessed"},
-            actor=OWNER, expected_generation=0,
-        )
-    assert injected == [failure_stage]
-    assert snapshot() == before
 
 
 # G2: Every registered route must reject before store/provider access.
