@@ -307,14 +307,20 @@ def test_delete_person_before_preserves_later_and_other_person_responses(tmp_pat
 
 
 def test_home_identity_uses_session_person_or_personal_app_owner_key(tmp_path):
-    from gateway.home_api import _identity
+    from gateway import accounts
+    from gateway.home_api import _identity, _new_app_identity
+    from tests.support.access import store_plan
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
-    native = _identity({}, None, None, path, person_id="native-person")
-    assert native.person_id == "native-person"
-    other_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"created_by": "owner", "hash": "sha256:key"},
-                              None, path, person_id="native-person")
+    accounts.initialize(path)
+    person = admin_store.upsert_oidc_user("iss", "native", path=path)
+    accounts.change_person(person["id"], "test", path=path, plan_id=store_plan("Everything", path=path)["id"])
+    native = _new_app_identity(path, person_id=person["id"])
+    assert native.person_id == person["id"]
+    app = admin_store.create_app("member-app", kind="personal", owner_user_id=person["id"], access_plan="person", path=path)
+    other_creator = _identity(app, {"created_by": "owner", "hash": "sha256:key"}, path, person_id=person["id"])
     assert other_creator.person_id is None
-    unknown_creator = _identity({"id": "member-app", "kind": "personal", "owner_user_id": "native-person"}, {"hash": "sha256:old"},
-                                None, path, person_id="native-person")
+    unknown_creator = _identity(app, {"hash": "sha256:old"}, path, person_id=person["id"])
     assert unknown_creator.person_id is None
+    own_key = _identity(app, {"created_by": person["id"], "hash": "sha256:mine"}, path, person_id=person["id"])
+    assert own_key.person_id == person["id"]

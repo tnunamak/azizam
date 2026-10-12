@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from tests.support.access import access, plan_for, service_app  # noqa: E402
-from gateway import admin_store, media_jobs, prompt_memory, receipt_store
+from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
+from gateway import accounts, admin_store, media_jobs, prompt_memory, receipt_store
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 from tests.test_anthropic_schema_conformance import chat_completion
 
@@ -45,6 +45,8 @@ def responses_gateway(tmp_path, monkeypatch):
     user = admin_store.upsert_oidc_user(
         "local", "maker", email="maker@example.test", path=admin_db
     )
+    accounts.initialize(admin_db)
+    accounts.change_person(user["id"], "test", path=admin_db, plan_id=store_plan("Everything", path=admin_db)["id"])
     app = admin_store.create_app(
         "Maker app", kind="personal", owner_user_id=user["id"], access_plan="person", path=admin_db
     )
@@ -54,7 +56,7 @@ def responses_gateway(tmp_path, monkeypatch):
         name="Maker app key",
         key_hash=key_hash,
         downstream={},
-        access=access(plan_for("default-local")),
+        access=access(plan_for("everything")),
         app_id=app["id"],
         person_id=user["id"],
     )
