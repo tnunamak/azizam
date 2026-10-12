@@ -1,0 +1,64 @@
+{
+  "openai-compatible": {
+    "paths": [
+      "/v1/chat/completions",
+      "/v1/completions",
+      "/v1/embeddings",
+      "/v1/models",
+      "/v1/models/{model}",
+      "/v1/responses",
+      "/v1/audio/speech",
+      "/v1/audio/transcriptions",
+      "/v1/audio/translations",
+      "/v1/images/generations",
+      "/v1/images/edits",
+      "/v1/rerank",
+      "/health",
+      "/v1/health"
+    ],
+    "framing": "sse-data",
+    "stream_media_type": "text/event-stream",
+    "stream_end": "data: [DONE]\n\n"
+  },
+  "comfyui": {
+    "paths": [
+      "/prompt",
+      "/history",
+      "/history/{prompt_id}",
+      "/view",
+      "/object_info",
+      "/object_info/{node_class}",
+      "/queue",
+      "/interrupt",
+      "/upload/image",
+      "/system_stats",
+      "/api/jobs/{job_id}/cancel",
+      "/free"
+    ],
+    "framing": "none"
+  },
+  "litellm-admin": {
+    "paths": [
+      "/key/generate",
+      "/key/info",
+      "/key/list",
+      "/key/delete",
+      "/key/update",
+      "/key/block",
+      "/key/unblock",
+      "/user/new",
+      "/user/info",
+      "/model/info",
+      "/v1/model/info",
+      "/health/liveliness",
+      "/health/readiness"
+    ],
+    "framing": "none"
+  },
+  "typesafe-systemone": {
+    "paths": [
+      "/v1/systemone"
+    ],
+    "framing": "none"
+  }
+}

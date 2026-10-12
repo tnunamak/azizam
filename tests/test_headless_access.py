@@ -16,7 +16,7 @@ from fastapi.routing import APIRoute
 from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
-from gateway import accounts, admin_store, providers, receipt_store
+from gateway import accounts, admin_store, metrics_writer, providers, receipt_store
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
 from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
@@ -279,7 +279,20 @@ def _drain_state():
     return snapshot
 
 
+def _settle_metrics_writer():
+    """The metrics writer creates and commits metrics.db on its own thread,
+    started by whichever earlier test in this worker first recorded a sample.
+    Wait for that work so a snapshot never catches the file mid-creation;
+    anything the request under test records is still flushed into the next
+    snapshot and still fails the comparison."""
+    writer = metrics_writer._writer
+    if writer is not None and writer.stats["accepting"]:
+        writer.wait_ready()
+        writer.flush()
+
+
 def _database_contents(root):
+    _settle_metrics_writer()
     result = {}
     for path in sorted(root.rglob("*.db")):
         try:

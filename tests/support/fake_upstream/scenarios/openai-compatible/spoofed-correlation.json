@@ -1,0 +1,17 @@
+{
+  "protocol": "openai-compatible",
+  "name": "spoofed-correlation",
+  "description": "A chat answer whose upstream headers claim gateway correlation ids (x-azizam-request-id, x-azizam-receipt-id) next to an opaque provider request-id.",
+  "provenance": {"source": "hand-written", "reference": "tests/test_home_api.py (public chat header returns the gateway's own durable receipt id)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}"}},
+      "response": {
+        "status": 200,
+        "headers": {"x-azizam-request-id": "spoofed-upstream", "x-azizam-receipt-id": "spoofed-receipt", "request-id": "provider-opaque"},
+        "json": {"choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}]}
+      }
+    }
+  ]
+}

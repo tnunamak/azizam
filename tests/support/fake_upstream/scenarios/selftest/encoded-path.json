@@ -1,0 +1,11 @@
+{
+  "protocol": "openai-compatible",
+  "name": "encoded-path",
+  "description": "Self-test: a model id with non-ASCII and reserved characters must reach the fake as the same decoded path in both modes.",
+  "provenance": {"source": "hand-written", "reference": "tests/test_fake_upstream_lifecycle.py"},
+  "exchanges": [
+    {"id": "accent", "match": {"method": "GET", "path": "/v1/models/café"}, "response": {"json": {"id": "café"}}},
+    {"id": "space", "match": {"method": "GET", "path": "/v1/models/a b"}, "response": {"json": {"id": "a b"}}},
+    {"id": "slash", "match": {"method": "GET", "path": "/v1/models/x%2Fy"}, "response": {"json": {"id": "x%2Fy"}}}
+  ]
+}

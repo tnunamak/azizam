@@ -1,0 +1,9 @@
+{
+  "protocol": "litellm-admin",
+  "name": "key-list-dropped",
+  "description": "The sidecar accepts the /key/list request and closes the connection before any response.",
+  "provenance": {"source": "hand-written", "reference": "TEST_STRATEGY 4.6 (disconnect)"},
+  "exchanges": [
+    {"id": "list", "match": {"method": "GET", "path": "/key/list"}, "response": {"disconnect_before_headers": true}}
+  ]
+}
