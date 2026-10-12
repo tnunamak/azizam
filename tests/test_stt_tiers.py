@@ -110,6 +110,10 @@ class SttServiceSelectionTests(SttCase):
         seen = self._json_upstream()
 
         class Decision:
+            code = "not_in_access_plan"
+            side = "person"
+            sources: tuple[str, ...] = ()
+
             def __init__(self, denied):
                 self.denied = denied
                 self.reasons = ["target policy denied"] if denied else []
