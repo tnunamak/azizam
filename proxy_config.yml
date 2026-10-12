@@ -1413,9 +1413,12 @@ auth:
   # Env override: OLLAMA_COMPAT_DISCOVERY=true
   ollama_compat_discovery: false
 
-  # ---- Optional frictionless-auth features (all OFF by default) -------------
-  # With every option below left at its default, auth is unchanged: a valid
-  # Authorization: Bearer / x-api-key is required on every non-public route.
+  # Optional frictionless-auth settings are listed below.
+  # This checked-in deployment enables LAN bypass.
+  # Cloudflare mode, query-parameter keys and Ollama discovery are disabled.
+  # No path tokens are configured.
+  # Review these values for your own network.
+  # Do not treat this file as an all-features-off baseline.
   #
   # 1) LAN / localhost bypass — clients whose REAL IP is in lan_bypass_cidrs skip
   #    the API key. The public URL still requires it. Real IP defaults to the raw

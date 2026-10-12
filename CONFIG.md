@@ -6,6 +6,15 @@ silently disabled (they return empty data rather than crashing).
 
 ## Core gateway
 
+The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0`.
+It enables `auth.lan_bypass_enabled` for loopback, `192.168.0.0/16`,
+`10.0.0.0/8` and `100.64.0.0/10`.
+It sets `auth.trusted_proxies` to `192.168.1.4`.
+These are deployment-specific values, not an all-features-off baseline.
+Environment variables and Compose port publishing can override them. Check
+the effective listener, published ports, trusted proxies and bypass networks
+before exposing the gateway.
+
 | Env var | What it controls | Default |
 |---|---|---|
 | `AZIZAM_PORT` | Listener port | `5000` |

@@ -34,7 +34,7 @@ Allow about five minutes for owner setup after the containers are ready. The fir
 
 On Linux, Compose provides `host.docker.internal` for the host. For example, an engine with a reachable port 8080 can use `http://host.docker.internal:8080/v1`. A host engine bound only to loopback is not reachable from the container; use a reachable host address and restrict access with your firewall.
 
-The gateway listens on host loopback by default. A client on another device needs a reachable HTTPS address. The localhost recipe uses non-secure cookies for HTTP setup; enable secure cookies before exposing it over HTTPS. Follow [reverse-proxy setup](docs/REVERSE_PROXY.md), [configuration ownership](docs/CONFIG_SOURCE_OF_TRUTH.md), and the [operator guide](docs/guides/OPERATOR.md).
+The loopback description here is specific to the Compose quickstart. Do not assume every launch mode binds only to loopback. The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0` and enables LAN bypass. Check the effective listener, published ports, trusted proxies and bypass networks before exposing the gateway. A client on another device needs a reachable HTTPS address. The localhost recipe uses non-secure cookies for HTTP setup; enable secure cookies before exposing it over HTTPS. Follow [reverse-proxy setup](docs/REVERSE_PROXY.md), [configuration ownership](docs/CONFIG_SOURCE_OF_TRUTH.md), and the [operator guide](docs/guides/OPERATOR.md).
 
 ## Connect your apps
 
@@ -104,7 +104,7 @@ The member opens Home, picks a connection recipe, and uses their own key. Give t
 
 App keys are bearer credentials with access-plan permissions. Browser accounts use signed sessions and CSRF protection. Admin credentials grant control-plane access and must not be pasted into client apps. Enter provider credentials as write-only keys in Providers, or reference the gateway service environment. See [key custody](docs/REMOTE_PROVIDERS.md#key-custody-and-threat-model) for encryption and backup requirements.
 
-Authenticated member access scopes jobs, assets and receipts to their App ownership. Complete signed asset URLs remain bearer capabilities until expiry, so treat shared download links as private. Historical records without trusted ownership are hidden from scoped users. Disabling authentication removes that isolation boundary.
+Signed-in Library, Jobs and Usage access defaults to the person's own work. Ownership can come from owned Apps or trusted user/App principal and credential-hash records. Owners and superadmins can explicitly inspect broader Library or Usage scopes. The Jobs endpoints and Library deletion stay self-scoped. Broader media visibility does not grant another person's saved prompt or full-metadata download. Complete signed asset URLs remain bearer capabilities until expiry, so treat shared download links as private. Historical records without trusted ownership are hidden from scoped users. Disabling authentication removes that isolation boundary.
 
 Put remote access behind TLS, keep secure cookies enabled there, and back up durable state and signing secrets. Review [the security policy](SECURITY.md), [authentication guide](AUTH_GUIDE.md), and [operator guide](docs/guides/OPERATOR.md) before sharing an instance.
 

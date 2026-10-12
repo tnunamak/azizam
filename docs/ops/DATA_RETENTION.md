@@ -24,7 +24,7 @@ actions. This change adds no bulk cleanup command or hidden disk-pressure expiry
 | Metrics database (`metrics_store.init_db`, `verify_integrity`) | Previously unlinked the database on a failed move and always removed WAL/SHM | Startup after corruption or a failure marker | (a) | Fixed. Preserve database and journals; recheck a previous failure marker before quarantine. Keep the normal startup header/schema check inexpensive. |
 | Jobs and events (`media_jobs`) | Jobs and their append-only events older than 14 days, including queued/running jobs | Every gateway startup | (a) | Removed the pruning API and startup call. Keep all states and events. Job writes update by job ID; a request ID held by another job fails the write instead of deleting that job, and a stale copy cannot restore a released ID. The deletion also ended request-ID replay; `REPLAY_WINDOW_S` keeps that 14-day replay limit. A finished job older than that gives its request ID to the new job, so a repeated seeded or idempotent request runs again. Active jobs always replay. The released ID is cleared, not copied: a seeded ID is a prompt derivative that erasure must be able to remove. Jobs keep the creating request's receipt ID in `parent_request_id`; Library and Usage fall back to it when the job's own request ID is cleared or derived. |
 | Video records (`video_job_records`, proxy hydration and GC) | Ownership, extension lineage and job metadata after 14 days | Startup and runtime GC | (a) | Removed both age-based deletion paths and the age-filtered load option. Explicit DELETE still removes its tombstone after five minutes. |
-| Receipt schema upgrade (`receipt_store._exec_schema`) | All receipts without the newer owning-App column | First opening of an older schema | (a) | Replace table recreation with additive columns. Preserve original rows and JSON; NULL ownership excludes them from member feeds. |
+| Receipt schema upgrade (`receipt_store._exec_schema`) | All receipts without the newer owning-App column | First opening of an older schema | (a) | Preserve original rows and JSON with additive columns. A missing App ID alone does not make a receipt invisible. Library and Usage may still admit it through a trusted owner-key or principal match. Rows without any trusted ownership match stay hidden from scoped users. |
 | Receipts / Usage / request cost history (`receipt_store.maintain`) | Rows before the owner's selected cutoff | Startup and hourly, only after an explicit finite setting | (a) | Keep existing forever default and preview-checked owner setting. History floor and cost coverage rules remain; no new expiry. |
 | Library assets and ownership sidecars (`proxy` media storage) | Image, video and audio bytes, metadata and prompts after a default 24 hours | Background cache eviction | (a) | Removed eviction, its settings and expiry UI. These files can be the only copy of generated output. Signed-link expiry still limits a link, not the stored asset. Existing authorized Library DELETE remains. |
 | Saved prompts inferred to be orphaned (`prompt_memory.prune`) | Video placeholders after 14 days; prompts missing from a supplied asset inventory | Prompt maintenance | (a) | Removed both inferred deletions. A partial inventory, absent disk or old video does not authorize erasure. Explicit privacy deadlines still apply. |
@@ -53,6 +53,16 @@ actions. This change adds no bulk cleanup command or hidden disk-pressure expiry
 | Database maintenance markers (`sqlite_startup`, `metrics_store`) | Completed quarantine marker or rechecked integrity marker | Successful recovery/check | (b) | Keep marker cleanup only. A partial quarantine leaves a marker that blocks the next startup; it never falls back to deleting database or journal files. |
 
 Inventory totals: **16 class (a), 14 class (b), 2 class (c)**. Totals count audited paths; most class (a) rows no longer delete anything.
+
+Library deletion is scoped to the signed-in person's own assets, including for
+an owner. The response's `deleted` field records the person's deletion.
+`physical_removed` separately reports whether the deleter removed files.
+The gateway's asset deleter (`me_media.conservative_asset_deleter`) preserves
+bytes and sidecars shared by multiple owner-key hashes or maker people. The API
+also deletes that person's saved prompt for the asset.
+The API records an audit entry that hides the item from that person's Library.
+The everyone view does not apply those per-person hiding entries.
+This endpoint does not itself delete job or receipt rows.
 
 A quarantine uses a new private `<database>.broken-<time>-<unique-id>/`
 directory on the same filesystem. If any rename fails, startup raises and the

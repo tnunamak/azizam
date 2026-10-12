@@ -150,10 +150,12 @@ verbose output with credentials; it can include request headers.
 
 ## Registered route inventory
 
-Captured by walking `proxy.app.routes` at base `33810bda`. Counts are per
-registered method/path, including trailing-slash aliases: **126 owner-bearer**
-(104 JSON/YAML owner API operations, 22 browser/HTML routes), **32 session-only**,
-**2 session-view**, **19 browser/public**; **179 total**.
+The original inventory came from a walk of `proxy.app.routes` at base `33810bda`.
+The table below now lists **126 owner-bearer** entries
+(104 owner-schema operations and 22 hidden routes), **35 session-only**,
+**2 session-view** and **19 browser/public** entries: **182 total**.
+These counts describe the table's method/path entries, including trailing-slash aliases.
+Re-walk `proxy.app.routes` for the current live inventory.
 
 FastAPI dependency lists are empty on these routes. Auth is an imperative
 handler call or injected callback, shown below. `owner-bearer` rejects app keys
@@ -359,6 +361,14 @@ Selected successful workflows are exercised separately.
 | `GET /status/` | owner-bearer | denied | `proxy.status_dashboard_index`; AdminAuthenticator / _require_admin; owner/admin/superadmin; HTML without Authorization redirects before auth | hidden |
 | `GET /status/raw` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
 | `GET /status/raw/` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
+
+For Library reads, owners and superadmins can use `scope=everyone` or `person=all`.
+They can also use `person=self`, `person=local-network`, or a specific person ID.
+For Usage, the broader selector is `person`.
+`scope=everyone` alone does not expand Usage.
+Ordinary members cannot use `person` selectors.
+Both Jobs endpoints remain own-jobs-only for owners too.
+These routes require a browser session. An owner key does not replace that session.
 
 ## Recorded Restish fixture run
 

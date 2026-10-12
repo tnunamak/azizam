@@ -25,6 +25,23 @@ A fresh store starts at installation. Usage marks the month as partial when
 the floor cuts into it; the floor is a conservative boundary, not a reconstruction
 of pre-upgrade history.
 
+Usage spend sums finite, nonnegative `metadata.litellm.response_cost` values
+on the selected receipts. It does not reconcile the provider ledger.
+A zero `remote_spend` with `remote_spend_available=false` means no usable cost
+was recorded. It does not mean that service was free.
+Check `spend_measured_requests`, `spend_total_requests` and
+`unknown_paid_requests` as well as the total. Retaining all receipts does not
+guarantee that every provider charge has a recorded receipt cost.
+
+The Usage summary supports the current UTC calendar month only.
+Request totals aggregate retained top-level receipts. They exclude child receipts.
+The embedded `receipts` list contains at most the 50 most recent selected receipts.
+Use `receipt_list_has_more` rather than treating the list length as the total.
+Creation totals also use successful jobs and surviving Library files.
+A catalog file without a recorded creation time can count by its file modification time.
+`aggregate_complete` describes the history-floor boundary.
+It does not guarantee complete billing or route coverage.
+
 ## Reclaim unused database space
 
 SQLite reuses free pages, so a large file does not mean all its bytes contain
