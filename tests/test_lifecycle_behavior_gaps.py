@@ -80,6 +80,9 @@ def test_explicit_params_skip_the_live_provider(monkeypatch):
     [
         (b'{"status":"finished"}', "different", True, 0),
         (b'{"status":"error","message":"fake failure"}', "wanted", False, 0),
+        # The operator-declared success marker is authoritative: a later error
+        # line does not turn a finished load into a failure.
+        (b'{"status":"finished"}\n{"status":"error","message":"fake failure"}', "wanted", True, 0),
         (b'{"status":"loading"}', "wanted", True, 1),
         (b'{"status":"loading"}', "different", False, 1),
         (b'{"status":"loading"}', None, False, 1),
