@@ -8072,6 +8072,13 @@ async def proxy_comfy_request(
             status_code=400,
             media_type="application/json"
         )
+    if not isinstance(body, dict):
+        _record_image_input(receipt, "body", rejected_reason="invalid_json")
+        return Response(
+            content=json.dumps({"error": {"message": "Request body must be a JSON object", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
     unknown_response = _record_unknown_image_fields(
         receipt,
         body,
@@ -9042,6 +9049,7 @@ async def proxy_comfy_edit_request(
                 output_background="transparent" if background_decision.remove_background else "opaque",
                 output_quality=quality,
                 output_size=effective_size,
+                fixed_seed=_workflow_extension_integer(form_dict, "seed"),
             )
 
     except httpx.TimeoutException:
@@ -19707,14 +19715,19 @@ def _image_receipt_status(status_code: int) -> str:
 
 def finish_image_route_receipt(
     receipt: RouteReceipt,
-    response: Response,
+    response: Response | None,
+    *,
+    status: str | None = None,
 ) -> None:
-    """Finish the receipt and emit a body-free firehose event."""
+    """Finish the receipt and emit a body-free firehose event.
+
+    ``status`` overrides the one derived from the response; a cancelled
+    request has no response."""
     status_code = int(getattr(response, "status_code", 0) or 0)
     response_headers = getattr(response, "headers", {})
     if response_headers.get("X-ComfyUI-Models-Freed") == "true":
         receipt.metadata["comfyui_models_freed_for_vram"] = True
-    receipt.finish(_image_receipt_status(status_code))
+    receipt.finish(status or _image_receipt_status(status_code))
     try:
         receipt_store.record(receipt)
     except Exception as e:
@@ -22637,7 +22650,11 @@ async def images_generations(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -22660,7 +22677,11 @@ async def images_variations(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -22678,7 +22699,11 @@ async def images_edits(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
