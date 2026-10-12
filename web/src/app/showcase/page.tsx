@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ImageIcon } from "lucide-react";
 import { PageHeader } from "@/components/product/page-header";
@@ -20,7 +21,7 @@ type Example = {
   model?: string;
   seconds?: number;
   inputs?: RecordedInput[];
-  outputs?: Output[];
+  outputs?: (Output | null)[];
 };
 type Section = {
   id: string;
@@ -71,8 +72,10 @@ function belongsTo(example: Example, sections: Section[]): string | undefined {
 
 function mediaUrl(example: Example, file?: string): string | undefined {
   if (
+    typeof file !== "string" ||
     !file ||
     !/^[A-Za-z0-9_.-]+$/.test(file) ||
+    typeof example.id !== "string" ||
     !/^[a-z0-9][a-z0-9._-]{0,95}$/.test(example.id)
   )
     return undefined;
@@ -82,34 +85,52 @@ function mediaUrl(example: Example, file?: string): string | undefined {
 function RecordedOutput({
   example,
   output,
+  onRetry,
+  retrying,
 }: {
   example: Example;
-  output: Output;
+  output: Output | null;
+  onRetry: () => void;
+  retrying: boolean;
 }) {
-  const src = mediaUrl(example, output.file);
-  if (output.kind === "image" && src) {
+  const [failed, setFailed] = useState(false);
+  const src = mediaUrl(example, output?.file);
+  const error = (
+    <ErrorState
+      message="This recording could not be loaded."
+      onRetry={() => {
+        setFailed(false);
+        onRetry();
+      }}
+      retrying={retrying}
+    />
+  );
+  if (failed) return error;
+  if (output?.kind === "image" && src) {
     // Recorded media dimensions vary; keep native images within the card.
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={src}
+        onError={() => setFailed(true)}
         alt={output.label || example.title || "Recorded image output"}
         loading="lazy"
         className="bg-muted max-h-96 w-full rounded-md object-contain"
       />
     );
   }
-  if (output.kind === "audio" && src)
+  if (output?.kind === "audio" && src)
     return (
       <audio
         controls
         preload="none"
         src={src}
+        onError={() => setFailed(true)}
         aria-label={output.label || "Recorded audio output"}
         className="w-full min-w-0"
       />
     );
-  if (output.kind === "video" && src)
+  if (output?.kind === "video" && src)
     return (
       <div className="space-y-2">
         {/* The recorded-example contract supplies no caption file. */}
@@ -117,6 +138,7 @@ function RecordedOutput({
           controls
           preload="metadata"
           src={src}
+          onError={() => setFailed(true)}
           aria-label={output.label || "Recorded video output"}
           className="w-full rounded-md"
         />
@@ -125,7 +147,7 @@ function RecordedOutput({
         </p>
       </div>
     );
-  if (typeof output.text === "string")
+  if (typeof output?.text === "string" && output.text.trim())
     return (
       // Long outputs scroll, so keyboard users must be able to focus the region to scroll it.
       <pre
@@ -137,7 +159,7 @@ function RecordedOutput({
         {output.text}
       </pre>
     );
-  return null;
+  return error;
 }
 
 export default function GalleryPage() {
@@ -159,6 +181,7 @@ export default function GalleryPage() {
       return {
         examples: (examples.data as Example[]).filter(
           (example) =>
+            example != null &&
             typeof example.card === "string" &&
             Array.isArray(example.outputs) &&
             example.outputs.length > 0,
@@ -167,6 +190,21 @@ export default function GalleryPage() {
       };
     },
   });
+  const groups = (data?.sections ?? [])
+    .map((section) => ({
+      section,
+      examples: (data?.examples ?? [])
+        .filter(
+          (example) => belongsTo(example, data?.sections ?? []) === section.id,
+        )
+        .map((example) => ({
+          ...example,
+          recordedInputs: (Array.isArray(example.inputs) ? example.inputs : [])
+            .map((input) => recordedValue(input?.value))
+            .filter((value) => value.trim()),
+        })),
+    }))
+    .filter(({ examples }) => examples.length > 0);
   return (
     <div className="mx-auto max-w-5xl space-y-8 py-6">
       <PageHeader
@@ -186,11 +224,11 @@ export default function GalleryPage() {
         </div>
       ) : isError ? (
         <ErrorState
-          message="Recorded examples could not be loaded. Check your connection and try again."
+          message="Recorded examples could not be loaded from the gateway. Try again."
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
-      ) : data.examples.length === 0 ? (
+      ) : groups.length === 0 ? (
         <EmptyState
           icon={ImageIcon}
           title="No recorded examples yet"
@@ -202,13 +240,7 @@ export default function GalleryPage() {
           }
         />
       ) : (
-        data.sections.map((section) => {
-          const examples = data.examples.filter(
-            (example) =>
-              belongsTo(example, data.sections) === section.id &&
-              (example.outputs?.length ?? 0) > 0,
-          );
-          if (!examples.length) return null;
+        groups.map(({ section, examples }) => {
           return (
             <section
               key={section.id}
@@ -244,30 +276,32 @@ export default function GalleryPage() {
                     <CardContent className="min-w-0 space-y-4">
                       {example.outputs?.map((output, index) => (
                         <RecordedOutput
-                          key={index}
+                          key={`${index}-${output?.kind}-${output?.file}`}
                           example={example}
                           output={output}
+                          onRetry={() => void refetch()}
+                          retrying={isFetching}
                         />
                       ))}
-                      <details className="min-w-0">
-                        <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-sm">
-                          Recorded input
-                        </summary>
-                        {example.inputs
-                          ?.map((input) => ({
-                            ...input,
-                            renderedValue: recordedValue(input.value),
-                          }))
-                          .filter((input) => input.renderedValue)
-                          .map((input, index) => (
+                      {example.recordedInputs.length > 0 ? (
+                        <details className="min-w-0">
+                          <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-sm">
+                            Recorded input
+                          </summary>
+                          {example.recordedInputs.map((input, index) => (
                             <pre
                               key={index}
                               className="text-muted-foreground pb-3 font-sans text-sm [overflow-wrap:anywhere] whitespace-pre-wrap"
                             >
-                              {input.renderedValue}
+                              {input}
                             </pre>
                           ))}
-                      </details>
+                        </details>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">
+                          Input was not recorded.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
