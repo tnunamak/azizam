@@ -128,7 +128,7 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
 CAPABILITY_LABELS = {
     "chat": "Chat", "image": "Images", "video": "Video", "speech": "Speech",
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Rerank",
+    "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Rerank",
 }
 # Generic audio generation has no honest music/speech subtype. Its neutral
 # waveform glyph shares the sound-effects icon without changing its taxonomy.
