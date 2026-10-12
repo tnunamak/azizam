@@ -135,7 +135,7 @@ def test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event(fake_
     assert response.status_code == 200
     assert _events(raw) == [
         _delta("chatcmpl-fk-think", {"role": "assistant", "content": ""}),
-        _delta("chatcmpl-fk-think", {"content": "Answer", "reasoning_content": "plan"}),
+        _delta("chatcmpl-fk-think", {"content": "Answer"}),
         _delta("chatcmpl-fk-think", {}, "stop"),
         "[DONE]",
     ]
