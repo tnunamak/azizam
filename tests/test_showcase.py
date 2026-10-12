@@ -6,8 +6,6 @@ import importlib.machinery
 import importlib.util
 import json
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -189,13 +187,6 @@ class SectionRulesTests(unittest.TestCase):
         ids = [s["id"] for s in self.sections]
         order = ["chat", "images", "image-edits", "video-create", "speech", "transcription", "music", "songs", "sfx", "embeddings", "protocols"]
         self.assertEqual([i for i in ids if i in order], order)
-
-
-@unittest.skipUnless(shutil.which("node"), "node is not installed; JS logic tests run where it is")
-class ShowcaseCoreJsTests(unittest.TestCase):
-    def test_node_suite_passes(self) -> None:
-        r = subprocess.run(["node", "--test", str(ROOT / "tests" / "showcase" / "core.test.mjs")], capture_output=True, text=True, timeout=120)
-        self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-2000:])
 
 
 class ExampleScriptTests(unittest.TestCase):

@@ -78,8 +78,11 @@ The `policy` step (`scripts/ci/policy.py`) fails the run when:
   the literal `0` (a computed value fails), a Playwright config the run used
   without `retries: 0`, the vitest config without `retry: 0`, or an attempt
   index above 0;
-- a test file ran in no gate step and is not an `[[orphan]]` in
-  `tests/suites.toml` with an unexpired `expires_on`;
+- a test file ran in no gate step and is not listed in `tests/suites.toml`
+  as a `[[scheduled]]` file (run by `scripts/test-scheduled`, below), a
+  `[[live]]` file (needs real upstreams) or an `[[orphan]]` with an
+  unexpired `expires_on`. No `[[orphan]]` is left; a new unrun test file
+  fails until it is wired into a gate step or listed;
 - a case skipped (or xfailed) without a `[[skip]]` (`[[xfail]]`) entry for
   its framework, config, project and case ID in `tests/suites.toml`;
 - a quarantine manifest or marker exists (TEST_STRATEGY.md 3.2);
@@ -91,6 +94,22 @@ injects each violation into a copy of the tree and checks that the policy
 fails, and that the clean copy passes. The policy reads source text, not the
 resolved configuration: a retry set somewhere it does not scan is caught
 only by the attempt index in the receipts.
+
+## Scheduled tier
+
+`scripts/test-scheduled nightly` runs what the gate cannot afford, on a
+detached worktree of `--ref` (default `HEAD`): the Node SDK probes
+(`tests/compat/node`) against a disposable gateway on 185xx whose upstream is
+the scenario-driven fake upstream, and the quality sweep. The files it runs
+are the `[[scheduled]]` entries of `tests/suites.toml`. The receipt is
+`~/.tmp/azizam-ci-receipts/scheduled/nightly-<UTC time>/receipt.json`. The
+outcome is PASS (exit 0), FAIL (1), SKIPPED (3: load over 24, or a job in the
+media queue) or INCOMPLETE (4: a task timed out, could not start, or a listed
+file ran no case or skipped one). Only PASS exits 0, and a scheduled pass is
+never gate evidence. Each task takes the host lock alone and starts no task
+while a gate waits (`~/.tmp/azizam-ci.gate-waiting`). The units
+`docs/ops/azizam-test-nightly.{service,timer}` run it at 04:00 local; the
+owner enables them.
 
 ## Signoff
 

@@ -64,7 +64,8 @@ class Tree:
             shutil.copyfile(ROOT / relative, target)
         suites = tomllib.loads((root / "tests/suites.toml").read_text(encoding="utf-8"))
         self.orphans = [entry["path"] for entry in suites.get("orphan", [])]
-        self.cases = [_row(path, f"{path}::case") for path in policy.discover(files) if path not in self.orphans]
+        unrun = {entry["path"] for table in ("orphan", "scheduled", "live") for entry in suites.get(table, [])}
+        self.cases = [_row(path, f"{path}::case") for path in policy.discover(files) if path not in unrun]
         for table, outcome in (("skip", "skipped"), ("xfail", "xfailed")):
             for entry in suites.get(table, []):
                 assert entry["framework"] == "pytest", "extend _row for browser entries"
@@ -162,7 +163,38 @@ def _inject_unrun_test_file(tree: Tree) -> None:
 
 
 def _inject_stale_orphan(tree: Tree) -> None:
-    tree.cases.append(_row(tree.orphans[0], f"{tree.orphans[0]} > now runs"))
+    tree.append("tests/suites.toml", '\n[[orphan]]\npath = "tests/test_injected_orphan.py"\n'
+                'expires_on = 2026-11-12\nreason = "test"\n')
+    tree.append("tests/test_injected_orphan.py", "def test_runs(): pass\n")
+    tree.cases.append(_row("tests/test_injected_orphan.py", "tests/test_injected_orphan.py::test_runs"))
+
+
+def _list_injected(tree: Tree, table: str, extra: str = 'reason = "test"\n') -> None:
+    tree.append("tests/test_injected_listed.py", "def test_listed(): pass\n")
+    tree.append("tests/suites.toml", f'\n[[{table}]]\npath = "tests/test_injected_listed.py"\n{extra}')
+
+
+def _inject_scheduled_file_that_ran_in_the_gate(tree: Tree) -> None:
+    _list_injected(tree, "scheduled", 'task = "sdk-probes"\nreason = "test"\n')
+    tree.cases.append(_row("tests/test_injected_listed.py", "tests/test_injected_listed.py::test_listed"))
+
+
+def _inject_scheduled_unknown_task(tree: Tree) -> None:
+    _list_injected(tree, "scheduled", 'task = "nobody-runs-this"\nreason = "test"\n')
+
+
+def _inject_scheduled_without_reason(tree: Tree) -> None:
+    _list_injected(tree, "scheduled", 'task = "sweep"\n')
+
+
+def _inject_live_file_that_no_longer_exists(tree: Tree) -> None:
+    tree.append("tests/suites.toml", '\n[[live]]\npath = "tests/test_deleted_live.py"\nreason = "test"\n')
+
+
+def _inject_file_in_two_tiers(tree: Tree) -> None:
+    _list_injected(tree, "live")
+    tree.append("tests/suites.toml", '\n[[scheduled]]\npath = "tests/test_injected_listed.py"\n'
+                'task = "sweep"\nreason = "test"\n')
 
 
 def _inject_new_skip(tree: Tree) -> None:
@@ -206,6 +238,11 @@ def _inject_count_over_ceiling(tree: Tree) -> None:
     (_inject_second_attempt, "ran attempt 1"),
     (_inject_unrun_test_file, "discovery: tests/test_injected_orphan.py ran in no gate step"),
     (_inject_stale_orphan, "now runs in the gate; remove its tests/suites.toml entry"),
+    (_inject_scheduled_file_that_ran_in_the_gate, "scheduled tests/test_injected_listed.py now runs in the gate"),
+    (_inject_scheduled_unknown_task, "scheduled tests/test_injected_listed.py has task 'nobody-runs-this'"),
+    (_inject_scheduled_without_reason, "scheduled tests/test_injected_listed.py needs a reason"),
+    (_inject_live_file_that_no_longer_exists, "live tests/test_deleted_live.py does not exist"),
+    (_inject_file_in_two_tiers, "tests/test_injected_listed.py is listed in [[scheduled]] and [[live]]"),
     (_inject_new_skip, "was skipped but is not a [[skip]] entry"),
     (_inject_new_xfail, "was xfailed but is not a [[xfail]] entry"),
     (_inject_stale_skip, "was not skipped in this run"),
@@ -222,7 +259,27 @@ def test_injected_violation_fails(tree: Tree, inject, message: str) -> None:
     assert "policy: FAILED" in result.stdout
 
 
+def test_scheduled_and_live_files_need_no_gate_run(tree: Tree) -> None:
+    """A file that scripts/test-scheduled runs, or a live file, is not an orphan."""
+    _list_injected(tree, "scheduled", 'task = "sdk-probes"\nreason = "test"\n')
+    tree.append("tests/test_injected_live.py", "def test_live(): pass\n")
+    tree.append("tests/suites.toml", '\n[[live]]\npath = "tests/test_injected_live.py"\nreason = "test"\n')
+    result = tree.run()
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_test_file_in_no_tier_fails(tree: Tree) -> None:
+    """The tree has no [[orphan]] left: a new test file that no tier runs fails the policy."""
+    tree.append("tests/test_injected_unlisted.py", "def test_nobody_runs_me(): pass\n")
+    result = tree.run()
+    assert result.returncode == 1, result.stdout
+    assert "discovery: tests/test_injected_unlisted.py ran in no gate step" in result.stdout
+
+
 def test_expired_orphan_fails(tree: Tree) -> None:
+    tree.append("tests/suites.toml", '\n[[orphan]]\npath = "tests/test_injected_orphan.py"\n'
+                'expires_on = 2026-11-12\nreason = "test"\n')
+    tree.append("tests/test_injected_orphan.py", "def test_never_run(): pass\n")
     suites = tomllib.loads((tree.root / "tests/suites.toml").read_text(encoding="utf-8"))
     expiry = min(entry["expires_on"] for entry in suites["orphan"])
     result = tree.run(today=expiry + datetime.timedelta(days=1))

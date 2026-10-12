@@ -13,7 +13,13 @@
 pytest = 8216
 vitest = 1641  # +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
-node = 5
+
+# Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
+# node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
+# cases (tests/showcase/core.test.mjs). 5 + 78 + 20 = 103. The showcase file's
+# Python wrapper (test_node_suite_passes, always skipped in the sandbox) is
+# deleted; pytest is left at its ceiling for S14 to lower.
+node = 103
 
 # Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
 # new upstream fakes belong in tests/support/fake_upstream/). It may only fall:

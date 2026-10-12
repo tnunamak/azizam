@@ -13,9 +13,12 @@ merge_cases.py. Rules, each failing the step with one line per violation:
   `retries: 0` in every Playwright config the run used and `retry: 0` in the
   vitest config; no attempt index above 0 in cases.jsonl, which also
   catches a second run into the same receipts.
-- discovery: every test file under CHECKOUT ran in this gate, or is an
-  [[orphan]] in tests/suites.toml whose expires_on has not passed. An entry
-  for a file that ran or no longer exists is stale and fails too.
+- discovery: every test file under CHECKOUT ran in this gate, or is listed in
+  tests/suites.toml: an [[orphan]] whose expires_on has not passed, a
+  [[scheduled]] file that `scripts/test-scheduled` runs (its `task` must be a
+  task that script knows), or a [[live]] file that needs real upstreams
+  (TEST_STRATEGY.md 1.3, 1.4). An entry for a file that ran in the gate, no
+  longer exists, or is listed twice is stale and fails too.
 - skips: every skipped (xfailed) case is a [[skip]] ([[xfail]]) entry in
   tests/suites.toml for its framework, config and project, and every entry
   was skipped (xfailed) in this run.
@@ -47,6 +50,9 @@ PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fres
 PYTHON_TEST = re.compile(r"^(test_.*|.*_test)\.py$")
 WEB_TEST = re.compile(r"^.*\.(spec|test|e2e)\.[cm]?[jt]sx?$|^.*\.household\.ts$")
 TEST_CONFIG = re.compile(r"^(playwright|vitest)\b.*\.config\.[cm]?[jt]s$")
+# The tasks scripts/test-scheduled runs files for (tests/test_test_scheduled.py
+# keeps this set equal to the script's own).
+SCHEDULED_TASKS = {"sdk-probes", "sweep"}
 RERUN_PACKAGES = {"pytest-rerunfailures", "pytest-retry", "flaky", "pytest-flaky"}
 PYTHON_RETRY_MARKER = re.compile(r"\bmark\.flaky\b|@flaky\b|\breruns\s*=")
 RETRY_FLAG = re.compile(r"--(retries|retry|reruns)\b")
@@ -124,22 +130,40 @@ def check_retries(root: Path, code: list[str], cases: list[dict]) -> list[str]:
 def check_discovery(tests: list[str], cases: list[dict], suites: dict, today: datetime.date) -> list[str]:
     problems = []
     ran = {row["file"] for row in cases}
-    listed = {}
-    for entry in suites.get("orphan", []):
+    listed: dict[str, str] = {}
+
+    def list_file(table: str, entry: dict) -> str:
         path = entry.get("path", "")
-        listed[path] = entry
+        if path in listed:
+            problems.append(f"discovery: {path} is listed in [[{listed[path]}]] and [[{table}]]; list it once")
+        listed.setdefault(path, table)
+        if path in ran:
+            problems.append(f"discovery: {table} {path} now runs in the gate; remove its tests/suites.toml entry")
+        elif path not in tests:
+            problems.append(f"discovery: {table} {path} does not exist; remove its tests/suites.toml entry")
+        if not entry.get("reason"):
+            problems.append(f"discovery: {table} {path} needs a reason")
+        return path
+
+    for entry in suites.get("orphan", []):
+        path = list_file("orphan", entry)
         expires = entry.get("expires_on")
         if not isinstance(expires, datetime.date):
             problems.append(f"discovery: orphan {path} needs an expires_on date")
         elif expires < today:
             problems.append(f"discovery: orphan {path} expired on {expires}; run it in a gate step or delete it")
-        if path in ran:
-            problems.append(f"discovery: orphan {path} now runs in the gate; remove its tests/suites.toml entry")
-        elif path not in tests:
-            problems.append(f"discovery: orphan {path} does not exist; remove its tests/suites.toml entry")
+    for entry in suites.get("scheduled", []):
+        path = list_file("scheduled", entry)
+        if entry.get("task") not in SCHEDULED_TASKS:
+            problems.append(f"discovery: scheduled {path} has task {entry.get('task')!r}; "
+                            f"scripts/test-scheduled runs {sorted(SCHEDULED_TASKS)}")
+    for entry in suites.get("live", []):
+        list_file("live", entry)
     for path in tests:
         if path not in ran and path not in listed:
-            problems.append(f"discovery: {path} ran in no gate step; run it, or list it as an [[orphan]] with expires_on")
+            problems.append(f"discovery: {path} ran in no gate step; run it in the gate, list it as a "
+                            "[[scheduled]] file that scripts/test-scheduled runs or a [[live]] file, "
+                            "or as an [[orphan]] with expires_on")
     return problems
 
 

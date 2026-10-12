@@ -66,7 +66,12 @@ export default defineConfig({
   retries: 0,
   timeout: 600_000,
   expect: { timeout: 10_000 },
-  reporter: [["dot"], ["json", { outputFile: path.join(paths.dir, "playwright.json") }]],
+  reporter: [
+    ["dot"],
+    ["json", { outputFile: path.join(paths.dir, "playwright.json") }],
+    // Case receipts for scripts/test-scheduled; writes only when CASE_RECEIPTS_FILE is set.
+    ["./e2e/case-receipts.ts"],
+  ],
   use: {
     baseURL: target.baseURL,
     headless: true,
