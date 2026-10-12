@@ -324,8 +324,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.get("/me/api/home", include_in_schema=False)
     async def home(request: Request):
         try:
-            session = require_session(request)
-            inherited = default_profile_id(session)
+            session = (await asyncio.to_thread(require_session, request))
+            inherited = (await asyncio.to_thread(default_profile_id, session))
             account = await asyncio.to_thread(
                 build_user_portal_snapshot, session, default_profile_id=inherited, path=store.path)
             if not account.get("authenticated"):
@@ -427,10 +427,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/admin/api/setup-evidence", include_in_schema=False)
     async def setup_evidence(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -464,7 +464,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/me/api/connection-test", include_in_schema=False)
     async def connection_test(request: Request):
         try:
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -484,7 +484,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             if credential.get("expires_at") is not None and int(credential["expires_at"]) <= int(time.time()):
                 raise UserPortalError("credential_not_found", "API key not found for this account", status_code=404)
             app = admin_store.get_app(credential["app_id"], path=store.path)
-            inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else default_profile_id(session)
+            inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else (await asyncio.to_thread(default_profile_id, session))
             identity = _identity(app, credential, inherited, store.path, person_id=session.subject)
             if identity is None:
                 raise UserPortalError("credential_unavailable", "This key's access plan is unavailable.", status_code=403)
@@ -524,10 +524,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.post("/admin/api/setup-dismiss", include_in_schema=False)
     async def dismiss_setup(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
-            session = require_session(request)
+            session = (await asyncio.to_thread(require_session, request))
             action_error = require_action(request, session)
             if action_error is not None:
                 return action_error
@@ -541,7 +541,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     @router.get("/admin/api/setup-progress", include_in_schema=False)
     async def setup_progress(request: Request):
         try:
-            context = admin_auth(request)
+            context = (await asyncio.to_thread(admin_auth, request))
             if "owner" not in context.roles:
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
         except AdminAuthError as exc:
