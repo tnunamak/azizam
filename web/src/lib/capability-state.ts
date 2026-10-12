@@ -158,7 +158,7 @@ export function requestCapability(
   if (/music/.test(value)) return "music";
   if (/embed/.test(value) || route.includes("/embeddings")) return "embed";
   if (/rerank/.test(value)) return "rerank";
-  if (/decision|systemone/.test(value)) return "decide";
+  if (/decision|decide|systemone/.test(value)) return "decide";
   if (value.startsWith("audio")) return "audio";
   return null;
 }

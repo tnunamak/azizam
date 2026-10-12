@@ -35,7 +35,7 @@ const categories = [
   { value: "credential.", label: "Keys" },
   { value: "profile.", label: "Access plans" },
   { value: "operator.", label: "Gateway settings" },
-  { value: "runtime_profile_mapping.", label: "Access mappings" },
+  { value: "runtime_profile_mapping.", label: "Access assignments" },
 ];
 
 function auditSummary(entry: AuditEntry) {
@@ -57,10 +57,18 @@ function changedName(entry: AuditEntry) {
     user: "Person",
     operator_setting: "Gateway settings",
     service: "Engine",
-    runtime_profile_mapping: "Access mapping",
+    runtime_profile_mapping: "Access assignment",
     app: "App",
   };
   return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
+}
+
+function personLabel(person: {
+  display_name?: string | null;
+  name?: string | null;
+  email?: string | null;
+}) {
+  return person.display_name || person.name || person.email || "Person";
 }
 
 function activityActorName(
@@ -131,11 +139,19 @@ export default function ActivityPage() {
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
   const entries = auditData?.pages.flatMap((page) => page.records) ?? [];
+  // One name per person: the people list wins, so the selector, the rows and
+  // the sheet never disagree about who made a change.
+  const personNames = new Map(
+    (people ?? []).map((person) => [person.id, personLabel(person)] as const),
+  );
+  const actorName = (row: AuditEntry) =>
+    personNames.get(row.actor_id) ??
+    activityActorName(row.actor_label, row.actor_kind);
   const actors = Array.from(
     new Map([
       ...(people ?? []).map((person) => [
         person.id,
-        person.display_name || person.name || person.email || "Person",
+        personLabel(person),
       ] as const),
       ...(optionsData?.records ?? [])
         .filter((row) => !people?.some((person) => person.id === row.actor_id))
@@ -252,7 +268,13 @@ export default function ActivityPage() {
                 </Button>
               }
             >
-              <p>Recent activity names are still available.</p>
+              <p>
+                The gateway&apos;s people list could not be loaded. We could not
+                identify the cause.
+                {optionsData?.records.length
+                  ? " Names from recent changes are still shown."
+                  : " Try again."}
+              </p>
             </Callout>
           )}
           <div className="flex flex-wrap items-center gap-3">
@@ -283,7 +305,7 @@ export default function ActivityPage() {
               aria-pressed={showAccessAudit}
               onClick={() => setShowAccessAudit((value) => !value)}
             >
-              {showAccessAudit ? "Hide access audit" : "Show access audit"}
+              {showAccessAudit ? "Hide access history" : "Show access history"}
             </Button>
             <details className="text-muted-foreground text-sm">
               <summary className="cursor-pointer">Technical: filter by person ID</summary>
@@ -317,7 +339,11 @@ export default function ActivityPage() {
                 </Button>
               }
             >
-              <p>The changes already loaded are still shown.</p>
+              <p>
+                The gateway&apos;s changes list could not be refreshed. We could
+                not identify the cause. The changes already loaded are still
+                shown.
+              </p>
             </Callout>
           )}
           {auditPending ? (
@@ -341,7 +367,12 @@ export default function ActivityPage() {
                   Try again
                 </Button>
               }
-            />
+            >
+              <p>
+                The gateway&apos;s changes list could not be loaded. We could not
+                identify the cause. Try again.
+              </p>
+            </Callout>
           ) : !entries.length ? (
             <EmptyState
               icon={History}
@@ -377,7 +408,7 @@ export default function ActivityPage() {
                   <button
                     type="button"
                     key={row.id}
-                    aria-label={`Details: ${auditSummary(row)} by ${activityActorName(row.actor_label, row.actor_kind)}`}
+                    aria-label={`Details: ${auditSummary(row)} by ${actorName(row)}`}
                     onClick={() => setEntry(row)}
                     className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
                   >
@@ -390,7 +421,7 @@ export default function ActivityPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
-                        {activityActorName(row.actor_label, row.actor_kind)}
+                        {actorName(row)}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                     </div>
@@ -416,7 +447,11 @@ export default function ActivityPage() {
                       </Button>
                     }
                   >
-                    <p>The changes already loaded are still shown.</p>
+                    <p>
+                      The gateway&apos;s next changes could not be loaded. We
+                      could not identify the cause. The changes already loaded
+                      are still shown.
+                    </p>
                   </Callout>
                 )}
                 {hasNextPage ? (
@@ -430,8 +465,8 @@ export default function ActivityPage() {
                 ) : (
                   <p className="text-muted-foreground text-xs">
                     {category || actor
-                      ? "No more matching events"
-                      : "End of audit log"}
+                      ? "No more matching changes"
+                      : "End of changes"}
                   </p>
                 )}
               </div>
@@ -453,15 +488,15 @@ export default function ActivityPage() {
             <>
               <SheetHeader className="pr-14">
                 <SheetTitle>{auditSummary(entry)}</SheetTitle>
-                <SheetDescription>
-                  {activityActorName(entry.actor_label, entry.actor_kind)} · <RelativeTime ts={entry.created_at} />
+                <SheetDescription className="sr-only">
+                  Details of this change
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
                 <dl className="space-y-4 text-sm">
                   <div>
                     <dt className="text-muted-foreground">Changed by</dt>
-                    <dd className="mt-1">{activityActorName(entry.actor_label, entry.actor_kind)}</dd>
+                    <dd className="mt-1">{actorName(entry)}</dd>
                   </div>
                   {changedName(entry) && (
                     <div>
@@ -483,7 +518,7 @@ export default function ActivityPage() {
                   <div className="mt-4">
                     <pre
                       tabIndex={0}
-                      aria-label="Technical audit details"
+                      aria-label="Technical change details"
                       className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
                     >
                       <code>

@@ -3,13 +3,14 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdirSync } from "node:fs";
 
 const reviewRoot =
-  "/home/tnunamak/.tmp/gw-product/ui-review/gw-copy-c/activity";
+  process.env.ACTIVITY_REVIEW_DIR ?? "/home/tnunamak/.tmp/wp-7-18-shots/activity";
 mkdirSync(reviewRoot, { recursive: true });
 
 const auditRecord = {
   id: "aud-1",
   actor_id: "owner",
   actor_label: "Owner",
+  actor_kind: "user",
   action: "app.create",
   target_kind: "app",
   target_id: "app-a",
@@ -58,10 +59,11 @@ test("owner access views stay out of Activity until revealed", async ({
     });
   });
   await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Changes" }).click();
   await expect(page.getByText("Viewed everyone’s usage")).toHaveCount(0);
   await expect(page.getByText("owner@example.test")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Show access audit" })).toBeVisible();
-  await page.getByRole("button", { name: "Show access audit" }).click();
+  await expect(page.getByRole("button", { name: "Show access history" })).toBeVisible();
+  await page.getByRole("button", { name: "Show access history" }).click();
   await expect(page.getByText("Viewed everyone’s usage")).toBeVisible();
   await expect(page.getByText("owner@example.test")).toHaveCount(0);
   expect(auditUrls.some((url) => url.includes("exclude_access_audit=true"))).toBe(true);
@@ -104,6 +106,14 @@ for (const theme of ["light", "dark"] as const) {
           json: {
             records: [
               requestRecord("succeeded", { metadata: { status_code: 200 } }),
+              {
+                ...requestRecord("succeeded", {
+                  request_id: "req_nested",
+                  intent: "audio.sfx",
+                  parent_request_id: "req_succeeded",
+                }),
+                created_at: 1790860000,
+              },
             ],
             next_cursor: null,
             people: [{ id: "owner", label: "Owner" }],
@@ -113,17 +123,31 @@ for (const theme of ["light", "dark"] as const) {
       );
 
       await page.goto("/ui/activity/");
-      await expect(page.getByRole("tab", { name: "Changes" })).toBeVisible();
+      // Activity opens on Requests; Changes is one tap away.
+      await expect(page.getByRole("tab", { name: "Requests" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.getByRole("tab", { name: "Changes" }).click();
       await expect(page.getByText("Created an app")).toBeVisible();
+      await page.getByRole("button", { name: /Details: Created an app/ }).click();
+      const change = page.getByRole("dialog");
+      await expect(change).toContainText("Changed by");
+      await expect(change).toContainText("Open WebUI");
+      // Who and when are fields; the title area does not repeat them.
+      await expect(change.getByText("Owner", { exact: true })).toHaveCount(1);
+      await inspect(page, `seeded-change-${theme}-${width}`);
+      await page.keyboard.press("Escape");
       await page.getByRole("tab", { name: "Requests" }).click();
-      await page.getByRole("button", { name: /Request details:/ }).click();
+      await expect(page.getByText(/^Sound effect/)).toBeVisible();
+      await expect(page.getByText("Part of another request")).toBeVisible();
+      await page.screenshot({
+        path: `${reviewRoot}/requests-list-${theme}-${width}.png`,
+      });
+      await page.getByRole("button", { name: /Request details:/ }).first().click();
       const dialog = page.getByRole("dialog");
       await expect(dialog).toContainText("Completed");
-      await expect(dialog).toContainText("The gateway completed this request.");
-      await expect(dialog).not.toContainText(
-        "The request could not be completed.",
-      );
-      await expect(dialog).not.toContainText("Use Technical details only");
+      await expect(dialog.getByText("Declared fallback")).toBeHidden();
       await inspect(page, `seeded-${theme}-${width}`);
     });
 
@@ -136,9 +160,9 @@ for (const theme of ["light", "dark"] as const) {
         route.fulfill({ json: { records: [], next_cursor: null, people: [] } }),
       );
       await page.goto("/ui/activity/");
-      await expect(page.getByText("No changes yet")).toBeVisible();
-      await page.getByRole("tab", { name: "Requests" }).click();
       await expect(page.getByText("No request receipts yet")).toBeVisible();
+      await page.getByRole("tab", { name: "Changes" }).click();
+      await expect(page.getByText("No changes yet")).toBeVisible();
       await inspect(page, `empty-${theme}-${width}`);
     });
 
@@ -151,10 +175,12 @@ for (const theme of ["light", "dark"] as const) {
         route.fulfill({ status: 503, json: { error: "Unavailable" } }),
       );
       await page.goto("/ui/activity/");
-      await expect(page.getByText(/Changes could not be loaded/)).toBeVisible();
-      await page.getByRole("tab", { name: "Requests" }).click();
       await expect(
-        page.getByText(/Requests could not be loaded/),
+        page.getByText(/The gateway.s request list could not be loaded/),
+      ).toBeVisible();
+      await page.getByRole("tab", { name: "Changes" }).click();
+      await expect(
+        page.getByText(/The gateway.s changes list could not be loaded/),
       ).toBeVisible();
       await inspect(page, `error-${theme}-${width}`);
     });
@@ -163,7 +189,8 @@ for (const theme of ["light", "dark"] as const) {
       await setDisplay(page, theme, width);
       await page.route("**/admin/api/audit?*", () => new Promise(() => {}));
       await page.goto("/ui/activity/");
-      await expect(page.getByLabel("Loading audit events")).toBeVisible();
+      await page.getByRole("tab", { name: "Changes" }).click();
+      await expect(page.getByLabel("Loading changes")).toBeVisible();
       await page.screenshot({
         path: `${reviewRoot}/loading-${theme}-${width}.png`,
         fullPage: true,
@@ -173,17 +200,17 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 for (const [status, expected, summary] of [
-  ["succeeded", "Completed", "The gateway completed this request."],
+  ["succeeded", "Completed", null],
   ["rejected", "Rejected", "The gateway rejected this request."],
   [
     "backend_failed",
-    "Engine or provider failed",
-    "The selected model or provider failed before returning a result.",
+    "Failed",
+    "We couldn't tell where this stopped. Try again.",
   ],
   [
     "stale_incomplete",
     "Outcome not recorded",
-    "The receipt does not include a final outcome.",
+    "We couldn't tell where this stopped. Check for a newer receipt, then try again.",
   ],
 ] as const) {
   test(`Activity request outcome ${status}`, async ({ page }) => {
@@ -193,14 +220,7 @@ for (const [status, expected, summary] of [
     await page.route("**/admin/api/activity/requests?*", (route) =>
       route.fulfill({
         json: {
-          records: [
-            requestRecord(
-              status,
-              status === "backend_failed"
-                ? { metadata: { status_code: 529 } }
-                : {},
-            ),
-          ],
+          records: [requestRecord(status)],
           next_cursor: null,
           people: [{ id: "owner", label: "Owner" }],
           sources: [{ id: "app-a", label: "Open WebUI" }],
@@ -209,22 +229,54 @@ for (const [status, expected, summary] of [
     );
 
     await page.goto("/ui/activity/");
-    await page.getByRole("tab", { name: "Requests" }).click();
     await page.getByRole("button", { name: /Request details:/ }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText(expected);
-    await expect(dialog).toContainText(summary);
-    if (status === "backend_failed") {
-      await expect(dialog).toContainText(
-        "The gateway could not complete this request.",
-      );
-    }
-    await expect(dialog).toContainText("Requested model");
-    await expect(dialog).toContainText("Served model");
-    await expect(dialog).toContainText("Declared fallback");
-    await expect(dialog).toContainText("safe-chat");
+    if (summary) await expect(dialog).toContainText(summary);
+    // Routing stays out of the plain view: one model, no fallback names.
+    await expect(dialog.getByText("Declared fallback")).toBeHidden();
+    await expect(dialog.getByText("safe-chat")).toBeHidden();
   });
 }
+
+test("Activity receipt shows both models only when a different one served, and keeps routing in Technical details", async ({
+  page,
+}) => {
+  await page.route("**/admin/api/audit?*", (route) =>
+    route.fulfill({ json: { records: [], next_cursor: null } }),
+  );
+  await page.route("**/admin/api/activity/requests?*", (route) =>
+    route.fulfill({
+      json: {
+        records: [
+          requestRecord("succeeded", { resolved_model: "backup-chat" }),
+          {
+            ...requestRecord("succeeded", {
+              request_id: "req_child",
+              parent_request_id: "req_parent",
+            }),
+            created_at: 1790870000,
+          },
+        ],
+        next_cursor: null,
+        people: [{ id: "owner", label: "Owner" }],
+        sources: [{ id: "app-a", label: "Open WebUI" }],
+      },
+    }),
+  );
+  await page.goto("/ui/activity/");
+  await expect(page.getByText("Part of another request")).toBeVisible();
+  await expect(page.getByText("Internal execution")).toHaveCount(0);
+  await page.getByRole("button", { name: /Request details:/ }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("A different model was used.");
+  await expect(dialog).toContainText("Requested model");
+  await expect(dialog).toContainText("Served model");
+  const technical = dialog.locator("details");
+  await expect(dialog.getByText("safe-chat")).toBeHidden();
+  await technical.locator("summary").click();
+  await expect(dialog.getByText(/safe-chat/)).toBeVisible();
+});
 
 test("Activity request filters preserve person and source", async ({
   page,
@@ -245,7 +297,6 @@ test("Activity request filters preserve person and source", async ({
     });
   });
   await page.goto("/ui/activity/");
-  await page.getByRole("tab", { name: "Requests" }).click();
   await page.getByRole("combobox", { name: "Person" }).click();
   await page.getByRole("option", { name: "Owner" }).click();
   await page.getByRole("combobox", { name: "Source" }).click();

@@ -35,9 +35,10 @@ afterEach(() => {
 function mount(
   auditResult?: () => ReturnType<typeof api.audit.list>,
   showChanges = true,
+  usersResult?: () => ReturnType<typeof api.users.list>,
 ) {
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
-  vi.spyOn(api.users, "list").mockResolvedValue([
+  vi.spyOn(api.users, "list").mockImplementation(usersResult ?? (async () => [
     {
       id: "person-beyond-audit-window",
       issuer: "",
@@ -49,7 +50,7 @@ function mount(
       last_login_at: null,
       roles: [],
     },
-  ]);
+  ]));
   const audit = vi
     .spyOn(api.audit, "list")
     .mockImplementation(auditResult ?? (async () => ({ records: [], next_cursor: null })));
@@ -143,12 +144,82 @@ it("shows people lookup errors with a retry action", async () => {
     button: 0,
     ctrlKey: false,
   });
-  expect(
-    await screen.findByText(
-      "Recent activity names are still available.",
-    ),
-  ).toBeVisible();
-  expect(screen.getByRole("heading", { name: "Couldn't load people" })).toBeVisible();
+  // The default mock holds no recent changes, so no fallback names exist and
+  // the page must not claim any (PF-141).
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Couldn't load people" })).toBeVisible();
+  expect(alert).toHaveTextContent(
+    "The gateway's people list could not be loaded. We could not identify the cause. Try again.",
+  );
+  expect(alert).not.toHaveTextContent("still shown");
+});
+
+it("says recent-change names are still shown only when there are some (PF-141)", async () => {
+  mount(async () => ({ records: [recordedChange], next_cursor: null }), true, () =>
+    Promise.reject(new Error("offline")),
+  );
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Names from recent changes are still shown.");
+});
+
+it("uses the people list's name for a person in rows, sheet and selector (PF-141)", async () => {
+  const user = userEvent.setup();
+  mount(async () => ({
+    records: [{ ...recordedChange, actor_id: "person-beyond-audit-window", actor_label: "owner@example.test" }],
+    next_cursor: null,
+  }));
+  const row = await screen.findByRole("button", { name: "Details: Created an app by Azizam Owner" });
+  expect(row).toHaveTextContent("Azizam Owner · Family app");
+  await user.click(row);
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("Changed by").nextElementSibling).toHaveTextContent("Azizam Owner");
+  // Who and when appear once, as fields, not again under the title.
+  expect(dialog).toHaveAccessibleDescription("Details of this change");
+  expect(within(dialog).getAllByText("Azizam Owner")).toHaveLength(1);
+  expect(within(dialog).getAllByText("When")).toHaveLength(1);
+});
+
+it("names the layer in change-list failures (PF-142)", async () => {
+  const user = userEvent.setup();
+  const audit = mount(() => Promise.reject(new Error("offline")));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "The gateway's changes list could not be loaded. We could not identify the cause. Try again.",
+  );
+  audit.mockResolvedValue({ records: [recordedChange], next_cursor: "older" });
+  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await screen.findByRole("button", { name: /^Details:/ });
+  audit.mockRejectedValue(new Error("offline"));
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The gateway's changes list could not be refreshed. We could not identify the cause.",
+  );
+});
+
+it("uses plain words for access history, assignments and the end of the list (PF-140)", async () => {
+  const user = userEvent.setup();
+  mount(async () => ({ records: [recordedChange], next_cursor: null }));
+  await screen.findByRole("button", { name: /^Details:/ });
+  expect(screen.getByText("End of changes")).toBeVisible();
+  expect(screen.queryByText(/audit/i)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show access history" }));
+  expect(screen.getByRole("button", { name: "Hide access history" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(screen.getByRole("combobox", { name: "Change type" }));
+  expect(screen.getByRole("option", { name: "Access assignments" })).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Access mappings" })).toBeNull();
+});
+
+it("never shows a stored action name as the change title (PF-140)", async () => {
+  mount(async () => ({
+    records: [
+      { ...recordedChange, id: "a", action: "runtime_profile_mapping.create" },
+      { ...recordedChange, id: "b", action: "operator.widget_registry.frobnicate" },
+    ],
+    next_cursor: null,
+  }));
+  expect(await screen.findByRole("button", { name: "Details: Added an access assignment by Sam" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Details: Recorded a change by Sam" })).toBeVisible();
+  expect(screen.queryByText(/frobnicate|widget registry/i)).toBeNull();
 });
 
 it("announces loading changes without claiming that an empty list is ready", () => {
@@ -242,7 +313,7 @@ it("keeps recorded changes visible when refreshing fails", async () => {
   await user.click(screen.getByRole("button", { name: "Refresh" }));
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByRole("heading", { name: "Couldn't refresh changes" })).toBeVisible();
-  expect(within(alert).getByText("The changes already loaded are still shown.")).toBeVisible();
+  expect(alert).toHaveTextContent("The changes already loaded are still shown.");
   expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
   audit.mockResolvedValue({ records: [recordedChange], next_cursor: null });
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
@@ -302,8 +373,8 @@ it("shows newest receipts first with person and app despite a source label, and 
   mountRequests();
   const table = await screen.findByRole("table", { name: "Request receipts" });
   const buttons = within(table).getAllByRole("button");
-  expect(buttons[0]).toHaveAccessibleName("Request details: Image request by Alex");
-  expect(buttons[1]).toHaveAccessibleName("Request details: Voice request by Sam");
+  expect(buttons[0]).toHaveAccessibleName("Request details: Image by Alex");
+  expect(buttons[1]).toHaveAccessibleName("Request details: Voice by Sam");
   expect(within(buttons[0]).getByText("Alex · Studio")).toBeVisible();
   expect(within(buttons[0]).getByText("Failed")).toBeVisible();
   expect(buttons[0]).toHaveTextContent("1.3 s");
@@ -323,6 +394,31 @@ it("shows newest receipts first with person and app despite a source label, and 
   expect(within(await screen.findByRole("dialog")).getByText("Request ID: older")).toBeInTheDocument();
 });
 
+it("marks a nested request in plain words, not as internal execution (PF-140)", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      records: [{
+        receipt: { request_id: "child", parent_request_id: "parent", intent: "chat", status: "success" },
+        person_label: "Sam", app_label: "Reader", created_at: 5,
+      }],
+      next_cursor: null, people: [], sources: [],
+    }),
+  }));
+  mountRequests();
+  const row = await screen.findByRole("button", { name: "Request details: Chat by Sam" });
+  expect(within(row).getByText("Part of another request")).toBeVisible();
+  expect(row).not.toHaveTextContent("Internal execution");
+});
+
+it("names the layer when the request list fails (PF-142)", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  mountRequests();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The gateway's request list could not be loaded. We could not identify the cause. Try again.",
+  );
+});
+
 it("labels unrecorded time and duration without inventing a zero duration", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
     ok: true,
@@ -335,7 +431,7 @@ it("labels unrecorded time and duration without inventing a zero duration", asyn
     }),
   }));
   mountRequests();
-  const row = await screen.findByRole("button", { name: "Request details: Voice request by Sam" });
+  const row = await screen.findByRole("button", { name: "Request details: Voice by Sam" });
   expect(row).toHaveTextContent("Outcome not recorded");
   expect(row).toHaveTextContent("Time not recorded · Duration not recorded");
   expect(row).not.toHaveTextContent("0 ms");
@@ -366,10 +462,15 @@ function serveCopyReceipt(receipt: Record<string, unknown>) {
 }
 
 it.each([
-  ["speech.synthesis", "Voice request"],
-  ["image.generate", "Image request"],
-  ["decide", "Decision request"],
-  ["embed", "Embedding request"],
+  ["speech.synthesis", "Voice"],
+  ["image.generate", "Image"],
+  ["decide", "Decision"],
+  ["embed", "Embedding"],
+  ["audio.sfx", "Sound effect"],
+  ["video.generate", "Video"],
+  ["audio.transcriptions", "Transcription"],
+  ["text.completions", "Chat"],
+  ["mystery.operation", "AI request"],
 ])("COPY-13 activity receipt name %s", async (intent, title) => {
   serveCopyReceipt({ intent });
   const user = userEvent.setup();
@@ -380,7 +481,7 @@ it.each([
 it.each(["success", "succeeded", "ok"])("COPY-11 activity completion once (%s)", async (status) => {
   serveCopyReceipt({ intent: "image", status });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Request details: Image request by Sam" }));
+  await user.click(await screen.findByRole("button", { name: "Request details: Image by Sam" }));
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getAllByText("Completed")).toHaveLength(1);
   expect(sheet.queryByText("The gateway completed this request.")).toBeNull();
@@ -415,7 +516,7 @@ it.each([
 it.each(["timed_out", "disconnected"])("points a media %s receipt to Library before a retry", async (status) => {
   serveCopyReceipt({ intent: "image.generate", status });
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Request details: Image request by Sam" }));
+  await user.click(await screen.findByRole("button", { name: "Request details: Image by Sam" }));
   expect(within(screen.getByRole("dialog")).getByText(/Check Library for a result before trying again\./)).toBeVisible();
 });
 

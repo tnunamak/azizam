@@ -21,8 +21,8 @@ const PHRASES: Record<string, string> = {
   "profile.update": "Updated an access plan",
   "profile.delete": "Deleted an access plan",
   "admin_key.create": "Created an admin key",
-  "runtime_profile_mapping.create": "Added an access mapping",
-  "runtime_profile_mapping.disable": "Removed an access mapping",
+  "runtime_profile_mapping.create": "Added an access assignment",
+  "runtime_profile_mapping.disable": "Removed an access assignment",
   "operator.user_access_defaults.update": "Updated access defaults",
   "operator.service_availability.update": "Updated engine availability",
   "operator.media_job_admission.update": "Updated media limits",
@@ -37,11 +37,31 @@ const PHRASES: Record<string, string> = {
   "operator.extension_package.remove": "Removed an extension",
   "operator.oidc_provider_config.update": "Updated sign-in settings",
 };
+const VERBS: Record<string, string> = {
+  create: "Created",
+  update: "Updated",
+  delete: "Deleted",
+  remove: "Removed",
+  revoke: "Revoked",
+  enable: "Enabled",
+  disable: "Disabled",
+};
+const NOUNS: Record<string, string> = {
+  app: "an app",
+  credential: "a key",
+  profile: "an access plan",
+  runtime_profile_mapping: "an access assignment",
+  admin_key: "an admin key",
+};
+/** A recorded action with no written phrase: say the plain verb and thing, or only that it changed. */
 export function auditDescription(entry: AuditEntry): string {
   const phrase = PHRASES[entry.action];
   if (phrase) return phrase;
-  const words = entry.action.replace(/[._]/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const dot = entry.action.lastIndexOf(".");
+  const verb = VERBS[entry.action.slice(dot + 1)];
+  const noun = NOUNS[entry.action.slice(0, dot)];
+  // The stored action name stays visible under Technical details.
+  return verb && noun ? `${verb} ${noun}` : "Recorded a change";
 }
 export function auditTargetName(entry: AuditEntry): string | null {
   if (typeof entry.metadata?.name === "string") return entry.metadata.name;
