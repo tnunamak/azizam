@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import asyncio
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import receipt_store  # noqa: E402
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, record_validation_result  # noqa: E402
 
 
@@ -86,19 +88,33 @@ class TestRouteReceipt(unittest.TestCase):
 
 class TestReceiptLifecycleOwner(unittest.IsolatedAsyncioTestCase):
     async def test_default_store_wiring_begins_and_finalizes(self) -> None:
-        begun: list[RouteReceipt] = []
-        finalized: list[RouteReceipt] = []
-        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "receipts.db"
+            receipt_store.init_db(db)
+            receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+            real_begin, real_finalize = receipt_store.begin, receipt_store.finalize
+            real_phases = receipt_store.update_phases
+            # The store functions bind ``path`` at definition time, so the
+            # spies route to this temporary store explicitly.
+            with patch.object(
+                receipt_store, "begin", side_effect=lambda r: real_begin(r, path=db)
+            ) as begun, patch.object(
+                receipt_store, "finalize", side_effect=lambda r: real_finalize(r, path=db)
+            ) as finalized, patch.object(
+                receipt_store, "update_phases", side_effect=lambda r: real_phases(r, path=db)
+            ):
+                owner = ReceiptLifecycleOwner(receipt)
+                async with owner:
+                    owner.report(status="succeeded", reason="completed")
 
-        with patch("gateway.receipt_store.begin", side_effect=begun.append), patch(
-            "gateway.receipt_store.finalize", side_effect=finalized.append
-        ):
-            owner = ReceiptLifecycleOwner(receipt)
-            async with owner:
-                owner.report(status="succeeded", reason="completed")
-
-        self.assertEqual(begun, [receipt])
-        self.assertEqual(finalized, [receipt])
+            begun.assert_called_once_with(receipt)
+            finalized.assert_called_once_with(receipt)
+            self.assertEqual(receipt_store.count(db), 1)
+            persisted = receipt_store.get(receipt.request_id, audience="internal", path=db)
+            self.assertIsNotNone(persisted)
+            self.assertEqual(persisted["request_id"], receipt.request_id)
+            self.assertEqual(persisted["status"], "succeeded")
+            self.assertEqual(persisted["metadata"]["terminal_reason"], "completed")
 
     async def test_cancellation_wins_and_store_errors_do_not_mask_it(self) -> None:
         begun: list[RouteReceipt] = []

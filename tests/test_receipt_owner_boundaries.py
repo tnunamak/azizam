@@ -5,13 +5,18 @@ from __future__ import annotations
 import ast
 import asyncio
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import receipt_store  # noqa: E402
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt  # noqa: E402
 
 
@@ -41,87 +46,145 @@ def _calls(node: ast.AST, dotted_name: str) -> list[ast.Call]:
     ]
 
 
-class ReceiptLifecycleOwnerMatrixTests(unittest.IsolatedAsyncioTestCase):
-    async def test_terminal_matrix_is_single_writer_and_preserves_exception_semantics(self) -> None:
-        """Every owner exit has one terminal CAS attempt and no later effect."""
-        cases = (
-            ("success", None, "succeeded", None),
-            ("upstream-error", RuntimeError("upstream"), "failed", RuntimeError),
-            ("timeout", TimeoutError("slow"), "failed", TimeoutError),
-            ("disconnect", asyncio.CancelledError(), "cancelled", asyncio.CancelledError),
-            ("base-exception", KeyboardInterrupt("stop"), "failed", KeyboardInterrupt),
+@pytest.mark.parametrize("error_type,expected_status", [
+    pytest.param(None, "succeeded", id="success"),
+    pytest.param(RuntimeError, "failed", id="upstream-error"),
+    pytest.param(TimeoutError, "failed", id="timeout"),
+    pytest.param(asyncio.CancelledError, "cancelled", id="disconnect"),
+    pytest.param(KeyboardInterrupt, "failed", id="base-exception"),
+])
+def test_terminal_owner_contract(error_type, expected_status):
+    async def run():
+        begun, finalized, effects = [], [], []
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
+        owner = ReceiptLifecycleOwner(
+            receipt, begin=begun.append,
+            finalize=lambda item: finalized.append(item) or True,
+            log=lambda _message: None,
         )
 
-        for name, error, expected_status, expected_exception in cases:
-            with self.subTest(name=name):
-                begun: list[RouteReceipt] = []
-                finalized: list[RouteReceipt] = []
-                effects: list[str] = []
-                receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate")
-                owner = ReceiptLifecycleOwner(
-                    receipt,
-                    begin=begun.append,
-                    finalize=lambda item: finalized.append(item) or True,
-                    log=lambda _message: None,
-                )
+        async def route_body():
+            async with owner:
+                if error_type is not None:
+                    raise error_type("terminal test")
+                owner.report(status="succeeded", reason="completed")
+            effects.append("after-owner")
 
-                async def route_body() -> None:
-                    async with owner:
-                        if error is not None:
-                            raise error
-                        owner.report(status="succeeded", reason="completed")
-                    effects.append("after-owner")
+        if error_type is None:
+            await route_body()
+            assert effects == ["after-owner"]
+        else:
+            # Catch BaseException subclasses inside this coroutine, rather
+            # than allowing KeyboardInterrupt to escape the event loop.
+            with pytest.raises(error_type):
+                await route_body()
+            assert effects == []
+        owner.report(status="succeeded", reason="late")
+        assert begun == [receipt]
+        assert finalized == [receipt]
+        assert receipt.status == expected_status
 
-                if expected_exception is None:
-                    await route_body()
-                    self.assertEqual(effects, ["after-owner"])
-                else:
-                    with self.assertRaises(expected_exception):
-                        await route_body()
-                    self.assertEqual(effects, [])
+    asyncio.run(run())
 
-                # A later report is descriptive only: the terminal CAS attempt
-                # remains exactly once and always targets the admitted receipt.
+
+@pytest.mark.parametrize("error_type,expected_status", [
+    pytest.param(None, "succeeded", id="stream-success"),
+    pytest.param(asyncio.CancelledError, "cancelled", id="stream-cancelled"),
+    pytest.param(KeyboardInterrupt, "failed", id="stream-base-exception"),
+])
+def test_stream_owner_contract(error_type, expected_status):
+    async def run():
+        finalized = []
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate", stream=True)
+        owner = ReceiptLifecycleOwner(
+            receipt, begin=lambda _item: None,
+            finalize=lambda item: finalized.append(item) or True,
+            log=lambda _message: None,
+        )
+
+        async def source():
+            if error_type is not None:
+                raise error_type("stream test")
+            yield b"chunk"
+            owner.report(status="succeeded", reason="completed")
+
+        async with owner:
+            stream = owner.handoff_stream(source())
+        assert finalized == [], "stream must remain open until iteration"
+        if error_type is None:
+            assert [item async for item in stream] == [b"chunk"]
+        else:
+            with pytest.raises(error_type):
+                async for _item in stream:
+                    pass
+        assert finalized == [receipt]
+        assert receipt.status == expected_status
+
+    asyncio.run(run())
+
+
+def test_stream_cancellation_persists_terminal_receipt():
+    async def run(db):
+        entered, release = asyncio.Event(), asyncio.Event()
+        receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate", stream=True)
+        real_begin, real_finalize = receipt_store.begin, receipt_store.finalize
+        real_phases = receipt_store.update_phases
+        # The store functions bind ``path`` at definition time, so the
+        # spies route to this temporary store explicitly.
+        with patch.object(
+            receipt_store, "begin", side_effect=lambda r: real_begin(r, path=db)
+        ) as begun, patch.object(
+            receipt_store, "finalize", side_effect=lambda r: real_finalize(r, path=db)
+        ) as finalized, patch.object(
+            receipt_store, "update_phases", side_effect=lambda r: real_phases(r, path=db)
+        ):
+            owner = ReceiptLifecycleOwner(receipt)
+
+            async def source():
+                entered.set()
+                await release.wait()
+                yield b"unreleased"
+                owner.report(status="succeeded", reason="completed")
+
+            async with owner:
+                stream = owner.handoff_stream(source())
+            finalized.assert_not_called()
+
+            async def consume():
+                return [item async for item in stream]
+
+            consumer = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                finalized.assert_not_called()
+                consumer.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await consumer
+                begun.assert_called_once_with(receipt)
+                finalized.assert_called_once_with(receipt)
+                assert receipt_store.count(db) == 1
+                persisted = receipt_store.get(receipt.request_id, audience="internal", path=db)
+                assert persisted is not None
+                assert persisted["status"] == "cancelled"
+                assert persisted["metadata"]["terminal_reason"] == "cancelled"
                 owner.report(status="succeeded", reason="late")
-                self.assertEqual(begun, [receipt])
-                self.assertEqual(finalized, [receipt])
-                self.assertEqual(receipt.status, expected_status)
+                assert receipt.status == "cancelled"
+                finalized.assert_called_once_with(receipt)
+                assert receipt_store.get(receipt.request_id, audience="internal", path=db) == persisted
+            finally:
+                release.set()
+                if not consumer.done():
+                    consumer.cancel()
+                try:
+                    await consumer
+                except asyncio.CancelledError:
+                    pass
+                await stream.aclose()
 
-    async def test_stream_matrix_owns_iteration_and_cleanup_failures(self) -> None:
-        cases = (
-            ("stream-success", None, None, "succeeded"),
-            ("stream-cancelled", asyncio.CancelledError(), asyncio.CancelledError, "cancelled"),
-            ("stream-base-exception", KeyboardInterrupt("stop"), KeyboardInterrupt, "failed"),
-        )
-
-        for name, error, expected_exception, expected_status in cases:
-            with self.subTest(name=name):
-                finalized: list[RouteReceipt] = []
-                receipt = RouteReceipt(protocol="openai.chat", intent="chat.generate", stream=True)
-                owner = ReceiptLifecycleOwner(
-                    receipt,
-                    begin=lambda _item: None,
-                    finalize=lambda item: finalized.append(item) or True,
-                    log=lambda _message: None,
-                )
-
-                async def source():
-                    if error is not None:
-                        raise error
-                    yield b"chunk"
-                    owner.report(status="succeeded", reason="completed")
-
-                async with owner:
-                    stream = owner.handoff_stream(source())
-
-                if expected_exception is None:
-                    self.assertEqual([item async for item in stream], [b"chunk"])
-                else:
-                    with self.assertRaises(expected_exception):
-                        async for _item in stream:
-                            pass
-                self.assertEqual(finalized, [receipt])
-                self.assertEqual(receipt.status, expected_status)
+    with tempfile.TemporaryDirectory() as directory:
+        db = Path(directory) / "receipts.db"
+        receipt_store.init_db(db)
+        asyncio.run(run(db))
 
 
 class ReceiptRouteOwnershipSourceTests(unittest.TestCase):

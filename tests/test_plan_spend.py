@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import calendar
 import sqlite3
-import time
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gateway import admin_store
+from gateway import admin_store, providers as providers_module
 from gateway.admin_api import AdminContext, create_admin_router
 from gateway.admin_runtime import AdminSQLiteStore
 from gateway.policy import AppProfile, RemoteProviderPolicy
@@ -115,27 +114,42 @@ def test_reported_spend_is_what_the_cap_barrier_enforces(tmp_path, spent, estima
         assert refused
 
 
-def test_admin_profiles_list_carries_each_plan_spend(tmp_path):
+@pytest.mark.parametrize("now,monthly_spent,next_month", [
+    pytest.param(NOW, "0.400000000", NEXT_MONTH, id="ordinary-month"),
+    pytest.param(calendar.timegm((2027, 4, 1, 0, 0, 30)), "0.000000000",
+                 calendar.timegm((2027, 5, 1, 0, 0, 0)), id="month-boundary"),
+])
+def test_admin_profiles_list_carries_each_plan_spend(tmp_path, monkeypatch, now, monthly_spent, next_month):
+    # plan_spend_many resolves its clock through gateway.providers.time.
+    monkeypatch.setattr(providers_module.time, "time", lambda: now)
     db, ledger = tmp_path / "admin.db", tmp_path / "provider_spend.db"
     admin_store.init_db(db)
     capped = admin_store.create_profile("Everyone", {"id": "everyone", "remote": {
         "providers": ["typesafe"], "budget_usd_per_day": "1", "budget_usd_per_month": "8"}}, path=db)
     uncapped = admin_store.create_profile("Local only", {"id": "local"}, path=db)
-    _charge(ledger, "0.40", int(time.time()) - 60, profile_id="everyone")
+    _charge(ledger, "0.40", now - 60, profile_id="everyone")
     actor = AdminContext(subject="owner", roles=frozenset({"owner"}), auth_method="bearer")
     app = FastAPI()
     app.include_router(create_admin_router(AdminSQLiteStore(db), auth=lambda request: actor, spend_ledger_path=lambda: ledger))
     rows = {row["id"]: row for row in TestClient(app).get("/admin/api/profiles").json()["profiles"]}
     spend = _by_period(rows[capped["id"]]["plan_spend"])
-    assert spend["daily"]["spent_usd"] == "0.400000000"
-    assert spend["monthly"]["spent_usd"] in {"0.400000000", "0.000000000"}  # 0 only in a month's first minute
-    assert spend["daily"]["cap_usd"] == "1" and spend["monthly"]["cap_usd"] == "8"
+    assert spend == {
+        "daily": {"period": "daily", "window": "rolling_24h", "spent_usd": "0.400000000",
+                  "cap_usd": "1", "resets_at": now - 60 + 86400},
+        "monthly": {"period": "monthly", "window": "calendar_month_utc", "spent_usd": monthly_spent,
+                    "cap_usd": "8", "resets_at": next_month},
+    }
     assert rows[uncapped["id"]]["plan_spend"] == []
     # Without a wired ledger the spend is unknown, never zero.
     app = FastAPI()
     app.include_router(create_admin_router(AdminSQLiteStore(db), auth=lambda request: actor))
     rows = {row["id"]: row for row in TestClient(app).get("/admin/api/profiles").json()["profiles"]}
-    assert all(entry["spent_usd"] is None for entry in rows[capped["id"]]["plan_spend"])
+    assert rows[capped["id"]]["plan_spend"] == [
+        {"period": "daily", "window": "rolling_24h", "spent_usd": None, "cap_usd": "1",
+         "resets_at": None, "unknown_reason": "ledger_unavailable"},
+        {"period": "monthly", "window": "calendar_month_utc", "spent_usd": None, "cap_usd": "8",
+         "resets_at": None, "unknown_reason": "ledger_unavailable"},
+    ]
 
 
 def _provider() -> ProviderRef:
@@ -199,3 +213,45 @@ def test_many_plans_share_one_ledger_connection(tmp_path, monkeypatch):
     assert spend["a"][0]["spent_usd"] == "0.100000000"
     assert spend["b"][0]["spent_usd"] == "0.200000000"
     assert spend["c"] == []
+
+
+
+def test_released_reservation_is_not_spend(tmp_path):
+    ledger = tmp_path / "ledger.db"
+    _charge(ledger, "7.00", NOW - 120, status="released", estimate="9.99")
+    _charge(ledger, "0.25", NOW - 60)
+    profile = _profile(budget_usd_per_day=Decimal("1"), budget_usd_per_month=Decimal("1"))
+    spend = _by_period(plan_spend(profile, path=ledger, now=NOW))
+    assert {period: Decimal(entry["spent_usd"]) for period, entry in spend.items()} == {
+        "daily": Decimal("0.25"), "monthly": Decimal("0.25"),
+    }
+    # Counting either the historical actual or estimate on the released row
+    # would reject this otherwise affordable reservation.
+    reservation = reserve_provider_spend(
+        profile, _provider(), Cost(Decimal("0.50"), "price-table", "typesafe"), path=ledger, now=NOW)
+    assert reservation.profile_id == "family"
+    with sqlite3.connect(ledger) as conn:
+        assert conn.execute("SELECT status FROM provider_spend WHERE id = ?", (reservation.id,)).fetchone() == ("reserved",)
+
+
+@pytest.mark.parametrize("actual,expected", [
+    pytest.param("0.00", "0.00", id="explicit-zero"),
+    pytest.param(None, "9.99", id="missing-actual"),
+])
+def test_zero_actual_does_not_fall_back_to_estimate(tmp_path, actual, expected):
+    ledger = tmp_path / "ledger.db"
+    _charge(ledger, actual, NOW - 60, estimate="9.99")
+    profile = _profile(budget_usd_per_day=Decimal("1"), budget_usd_per_month=Decimal("1"))
+    spend = _by_period(plan_spend(profile, path=ledger, now=NOW))
+    assert {period: Decimal(entry["spent_usd"]) for period, entry in spend.items()} == {
+        "daily": Decimal(expected), "monthly": Decimal(expected),
+    }
+    if actual is None:
+        with pytest.raises(BudgetExceeded):
+            reserve_provider_spend(
+                profile, _provider(), Cost(Decimal("0.50"), "price-table", "typesafe"), path=ledger, now=NOW)
+    else:
+        reservation = reserve_provider_spend(
+            profile, _provider(), Cost(Decimal("0.50"), "price-table", "typesafe"), path=ledger, now=NOW)
+        with sqlite3.connect(ledger) as conn:
+            assert conn.execute("SELECT status FROM provider_spend WHERE id = ?", (reservation.id,)).fetchone() == ("reserved",)
