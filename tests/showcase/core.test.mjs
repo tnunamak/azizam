@@ -146,6 +146,23 @@ test("snippets reflect the plan and never embed an inline file body", () => {
   assert.match(C.jsFor(plan, "http://h"), /new FormData\(\)/);
 });
 
+test("buildSections shows public recorded examples when discovery needs a key", () => {
+  const ctx = {
+    sectionsDoc, openapi: {}, workflows: [], capabilities: { capabilities: [] }, aliases: { operations: {} },
+    exampleCards: ["chat", "voices", "image.generate.flux-dev", "video.generate.ltx-t2v", "protocol-openai", "nope"],
+    live: false,
+  };
+  const secs = C.buildSections(ctx);
+  const cardIds = Object.fromEntries(secs.map((s) => [s.id, s.cards.map((c) => c.id)]));
+  assert.deepEqual(cardIds.chat, ["chat"]);
+  assert.deepEqual(cardIds.speech, ["voices"]);
+  assert.deepEqual(cardIds.images, ["image.generate.flux-dev"]);
+  assert.deepEqual(cardIds["video-create"], ["video.generate.ltx-t2v"]);
+  assert.deepEqual(cardIds.protocols, ["protocol-openai"]);
+  assert.equal(secs.find((s) => s.id === "images").cards[0].kind, "recorded");
+  assert.equal(secs.find((s) => s.id === "images").cards[0].title, "flux-dev");
+});
+
 test("statusSummary tells busy from broken", () => {
   assert.equal(C.statusSummary(null, null).level, "warn");
   assert.equal(C.statusSummary({}, { comfyui: { running: 1, pending: 2 }, llm: { processing: false } }).level, "busy");

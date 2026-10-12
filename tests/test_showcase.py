@@ -99,7 +99,8 @@ class ShowcaseRouteTests(unittest.TestCase):
     def test_page_uses_no_external_origins(self) -> None:
         for name in ("index.html", "app.js", "core.js", "showcase.css"):
             text = (STATIC / name).read_text(encoding="utf-8")
-            for url in re.findall(r"""(?:src|href)=["'](https?://[^"']+)""", text):
+            # Plain <a> links to the docs are navigation; anything the page loads stays same-origin.
+            for url in re.findall(r"""(?:\bsrc=|<link\b[^>]*\bhref=)["'](https?://[^"']+)""", text):
                 self.fail(f"{name} loads external resource {url}")
             self.assertNotIn("@import url(http", text)
 

@@ -3,40 +3,149 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Azizam: showcase</title>
-<meta name="description" content="Every capability of Azizam with real example inputs and outputs, and a live Try it panel for each.">
+<meta name="color-scheme" content="light dark">
+<title>Azizam: your own AI gateway</title>
+<meta name="description" content="Run one AI gateway for your apps, agents and the people you invite. Connect the engines on your hardware and the paid providers you choose, behind one OpenAI-compatible address.">
 <link rel="stylesheet" href="/showcase/static/showcase.css">
+<noscript><style>#status, .browse, .js-only { display: none !important; }</style></noscript>
 </head>
 <body>
-<div id="status" class="status" data-level="unknown" role="status">
+<a class="skip-link" href="#evidence">Skip to examples</a>
+<header class="hero">
+  <div class="hero-text">
+    <p class="brand"><span class="mark" aria-hidden="true"></span>Azizam</p>
+    <h1>One AI gateway for your apps and the people you invite.</h1>
+    <p class="lede">Azizam runs on a computer you control. It puts the AI engines you run, and any paid providers you choose, behind one OpenAI-compatible address. Each person and app gets its own key and access plan.</p>
+    <div class="hero-actions">
+      <a class="primary-link" href="#get-started">Get started</a>
+      <a class="secondary-link" href="#evidence">See recorded examples <span aria-hidden="true">↓</span></a>
+    </div>
+  </div>
+  <figure class="flow" aria-labelledby="flow-caption">
+    <figcaption id="flow-caption" class="visually-hidden">How requests move through Azizam</figcaption>
+    <div class="flow-step">
+      <p class="flow-title">Your apps, agents and people</p>
+      <p class="flow-detail">Chat apps, SDKs, coding agents, MCP clients, a phone</p>
+    </div>
+    <div class="flow-link" aria-hidden="true"><span>one address, one key each</span></div>
+    <div class="flow-step flow-gateway">
+      <p class="flow-title">Azizam</p>
+      <p class="flow-detail">Checks the key and access plan, routes the request, records a receipt</p>
+    </div>
+    <div class="flow-link" aria-hidden="true"><span>only what the plan allows</span></div>
+    <div class="flow-ends">
+      <div class="flow-step">
+        <p class="flow-title">Engines you run</p>
+        <p class="flow-detail">Chat, image, video, speech and music servers on your hardware</p>
+      </div>
+      <div class="flow-step">
+        <p class="flow-title">Providers you choose</p>
+        <p class="flow-detail">Paid models, with spend caps</p>
+      </div>
+    </div>
+  </figure>
+</header>
+
+<div id="status" class="status" data-level="unknown">
   <div class="status-inner">
     <span class="dot" aria-hidden="true"></span>
-    <strong id="status-text">Checking gateway...</strong>
+    <strong id="status-text" role="status" aria-live="polite" aria-atomic="true">Checking gateway...</strong>
+    <button id="keytoggle" class="mini" type="button" aria-controls="keypanel" aria-expanded="false">API key</button>
     <span id="engines" class="engines" aria-label="Engines"></span>
-    <span class="spacer"></span>
-    <button id="keytoggle" class="mini" type="button" aria-controls="keypanel">API key</button>
   </div>
   <div id="keypanel" class="keypanel" hidden>
-    <label for="apikey">Optional API key. Not needed from the home network. Stored only in this browser's localStorage and sent only to this host.</label>
-    <input id="apikey" type="password" autocomplete="off" placeholder="opk_...">
-    <button id="keysave" class="mini" type="button">Save and reload</button>
+    <label for="apikey">App key</label>
+    <p id="key-help" class="hint">Use an App key, not an admin key. This page keeps it in memory only; reloading clears it.</p>
+    <input id="apikey" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="key-help" placeholder="opk_...">
+    <button id="keysave" class="mini" type="button">Use for this page</button>
     <button id="keyclear" class="mini" type="button">Forget</button>
   </div>
 </div>
 
-<header class="hero">
-  <p class="eyebrow">Azizam</p>
-  <h1>One local endpoint for chat, images, video, speech, music and more.</h1>
-  <p class="lede">Real inputs and real outputs from this machine, with timings. Press <em>Try it live</em> on any card to run it yourself. The cards come from the gateway's own discovery endpoints, so new workflows show up here without a code change.</p>
-  <p class="meta"><span>Base URL <code id="base"></code></span> <span id="stats"></span> <a href="/openapi.json">OpenAPI</a></p>
-  <nav id="nav" class="nav" aria-label="Sections"></nav>
-</header>
+<main>
+  <section id="evidence" class="evidence" tabindex="-1" aria-labelledby="evidence-title">
+    <div class="evidence-heading">
+      <h2 id="evidence-title">Recorded examples</h2>
+      <p class="lede">Each example is a real request recorded through the gateway: the input, the output, the model name, the date and the run time. Open Try it live to run your own. What you can run depends on your key.</p>
+      <p class="meta"><span id="stats"></span></p>
+      <details class="browse">
+        <summary>Jump to a capability</summary>
+        <nav id="nav" class="nav" aria-label="Capabilities"></nav>
+      </details>
+    </div>
+    <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+    <noscript><p class="banner">The examples and live panels need JavaScript. The <a href="/openapi.json">API reference</a> works without it.</p></noscript>
+    <div id="sections"></div>
+  </section>
 
-<div id="banner" class="banner" hidden></div>
-<main id="sections"></main>
+  <section id="how" class="band" aria-labelledby="how-title">
+    <h2 id="how-title">How it fits together</h2>
+    <div class="cols">
+      <div class="col">
+        <h3>You run the gateway</h3>
+        <p>Install Azizam on a computer you control. Add the engines you run, and paid providers only if you want them. Engines and model names are settings, not code, so you can swap them when better ones come out.</p>
+      </div>
+      <div class="col">
+        <h3>People get their own access</h3>
+        <p>Invite family or friends with a link. Each person gets their own key and an access plan that sets which models they can use and how much they can spend. Their requests, creations and receipts are tied to their own apps.</p>
+      </div>
+      <div class="col">
+        <h3>Apps and agents connect</h3>
+        <p>Point an OpenAI-compatible app at <code>/openai/v1</code> with its key. Anthropic and Ollama clients have their own routes, and agents can use the MCP server at <code>/mcp</code>. Home in the gateway has connection recipes.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="privacy" class="band" aria-labelledby="privacy-title">
+    <h2 id="privacy-title">Know where requests go</h2>
+    <ul class="facts">
+      <li><strong>Local engines.</strong> A request to an engine you run goes from the gateway to that engine, on hardware you control.</li>
+      <li><strong>Paid providers.</strong> A request to a paid model goes to that provider, under its terms, and only when the access plan allows paid use. If a local engine is down, the request does not move to a paid provider unless you set that up.</li>
+      <li><strong>Keys.</strong> Every request needs a key by default, on your home network too. Give each app its own key so you can revoke one without breaking the others. Keep admin keys out of apps.</li>
+      <li><strong>Download links.</strong> A signed link to a creation works for anyone who has the full link until it expires. Share it as carefully as a key.</li>
+    </ul>
+  </section>
+
+  <section id="get-started" class="band" tabindex="-1" aria-labelledby="start-title">
+    <h2 id="start-title">Get started</h2>
+    <p class="lede">You need Docker with Compose, and an engine that serves an OpenAI-compatible chat API with a model already loaded. Azizam connects to engines; it does not download models.</p>
+    <ol class="steps">
+      <li>
+        <h3>Start the gateway</h3>
+        <p>In a copy of the repository, run:</p>
+        <pre class="cmd"><code>docker compose up -d</code></pre>
+        <p>The first build takes the longest. Then open <code>http://127.0.0.1:5000/setup</code> on the same computer.</p>
+      </li>
+      <li>
+        <h3>Add your engine and a key</h3>
+        <p>Create the owner account. In <strong>Gateway → Engines</strong>, add your engine's address and map a model name, such as <code>my-model</code>, to the engine's own model. On <strong>Home</strong>, create a key for your app and save it; it is shown once.</p>
+      </li>
+      <li>
+        <h3>Send the first request</h3>
+        <p>In your app, set the base URL to <code>http://127.0.0.1:5000/openai/v1</code>, paste the key and choose <code>my-model</code>. Send a short message. A reply in your app means it works. Then invite people from <strong>Gateway → People</strong>.</p>
+      </li>
+    </ol>
+    <p class="next"><a href="https://github.com/tnunamak/azizam/blob/main/docs/FIRST_RUN_SETUP.md">Read the setup guide</a> for other devices, HTTPS and engines in containers.</p>
+  </section>
+
+  <section id="limits" class="band" aria-labelledby="limits-title">
+    <h2 id="limits-title">Before you rely on it</h2>
+    <ul class="facts">
+      <li>What you can make depends on the engines and model files you connect. The examples above show what this gateway did when they were recorded.</li>
+      <li>A route that accepts a vendor's API format does not mean every feature of that API works. The <a href="https://github.com/tnunamak/azizam/blob/main/docs/SUPPORT_MATRIX.md">support matrix</a> lists what each route does.</li>
+      <li>Paid use is estimated and reserved before a request, then settled after. A final cost can stay unknown until it is reconciled, and requests already running can take spend past a cap. Set a credit limit with the provider too.</li>
+      <li>You run the computer: updates, backups and HTTPS for access from other devices are yours to set up.</li>
+    </ul>
+  </section>
+</main>
 
 <footer class="foot">
-  <p>Generated from <code>/gateway/v1/capabilities</code>, <code>/gateway/v1/workflows</code>, <code>/gateway/v1/aliases</code> and <code>/openapi.json</code>. Examples are recorded by <code>scripts/build-showcase-examples</code> from benign prompts only.</p>
+  <p class="foot-links"><strong>Azizam</strong> <a href="https://github.com/tnunamak/azizam">Source</a> <a href="https://github.com/tnunamak/azizam/blob/main/docs/FIRST_RUN_SETUP.md">Setup guide</a> <a href="/openapi.json">API reference</a></p>
+  <p class="meta js-only">This gateway: <code id="base"></code></p>
+  <details>
+    <summary>About the examples</summary>
+    <p>The capability list comes from this gateway's discovery routes: <code>/gateway/v1/capabilities</code>, <code>/gateway/v1/workflows</code>, <code>/gateway/v1/aliases</code> and <code>/openapi.json</code>. Recorded examples were made with a script and stored on this gateway; a live run is a new request and can differ.</p>
+  </details>
 </footer>
 <script src="/showcase/static/core.js"></script>
 <script src="/showcase/static/app.js"></script>

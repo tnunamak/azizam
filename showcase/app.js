@@ -732,9 +732,16 @@
     return h("div", { class: "io" }, label, mediaEl(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
   }
 
+  function recordedDay(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+  }
+
   function renderExample(card, ex, form) {
     const meta = [];
-    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this run through the gateway", text: ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s" }));
+    const day = recordedDay(ex.recorded_at);
+    if (day) meta.push(h("span", { class: "chip", text: "Recorded " + day }));
+    if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
     if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model + (ex.resolves_to && ex.resolves_to !== ex.model ? " -> " + ex.resolves_to : "") }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
     const load = form && form._load && (ex.inputs || []).some((i) => i.name)
@@ -778,14 +785,14 @@
   function cardDescription(card) {
     if (card.kind === "workflow") return card.description;
     return {
-      chat: "OpenAI-compatible chat completions on the local LLM. Reasoning is on for default; fast turns it off.",
-      vision: "Send an image plus a question. The same model answers; no separate vision endpoint.",
-      embeddings: "768-dimension CPU embeddings. Not vector-compatible with OpenAI's embedding models.",
-      tts: "Three speed and quality tiers. The 13 OpenAI voice names work on every tier; streaming PCM is available.",
-      voices: "Every built-in voice, straight from GET /v1/voices.",
-      "custom-voices": "Clone a voice from a short sample and use it with the same speech endpoint. Voices belong to the API key that made them.",
-      stt: "Speech to text. stt is the default tier, stt-fast streams, stt-quality is the highest accuracy tier.",
-      "stt-diarize": "Who spoke when. OpenAI diarized_json shape: speaker, start, end, text per segment.",
+      chat: "OpenAI-compatible chat completions with this gateway's chat model names.",
+      vision: "Send an image with a question to a model that accepts images.",
+      embeddings: "Turn text into vectors for search and similarity.",
+      tts: "Turn text into speech with the voices this gateway offers.",
+      voices: "The voices this gateway lists at GET /v1/voices.",
+      "custom-voices": "Make a voice from a short sample, then use it with the speech endpoint. A custom voice belongs to the key that made it.",
+      stt: "Turn speech into text.",
+      "stt-diarize": "Transcribe audio and label who spoke when, in OpenAI's diarized_json shape.",
       protocol: card.note,
     }[card.kind] || "";
   }
@@ -811,7 +818,7 @@
 
     const exBlocks = examples.length
       ? examples.map((ex) => renderExample(card, ex, form))
-      : [h("div", { class: "example pending" }, h("p", { text: "Example pending: it has not been generated yet. Use Try it to run it now." }))];
+      : [h("div", { class: "example pending" }, h("p", { text: "No recorded example for this item. Use Try it live to run one." }))];
 
     const tryLabel = card.kind === "voices" ? "Browse and play voices" : "Try it live";
     const tryBody = card.kind === "voices" ? voicesTable() : form;
@@ -821,7 +828,7 @@
       card.kind === "workflow" ? h("p", { class: "desc" }, shortDesc(card.description)) : h("p", { class: "desc", text: cardDescription(card) }),
       aliasLine(card),
       tryBody ? h("details", { class: "try" }, h("summary", { text: tryLabel }), tryBody) : null,
-      snippetsPanel(card, examples[0]));
+      card.kind === "recorded" ? null : snippetsPanel(card, examples[0]));
     const panel = node.querySelector("details.try");
     if (panel) managePanel(panel);
     return node;
@@ -873,6 +880,7 @@
     const sections = C.buildSections({
       sectionsDoc: state.data.sectionsDoc, workflows: state.data.workflows.workflows,
       openapi: state.data.openapi, capabilities: state.data.capabilities, aliases: state.data.aliases,
+      exampleCards: Object.keys(state.examplesByCard), live: state.live,
     });
     state.sections = sections;
     const main = $("#sections");
@@ -886,14 +894,20 @@
         h("div", { class: "grid" }, s.cards.map(renderCard))));
     }
     const cards = sections.flatMap((s) => s.cards);
-    const withEx = cards.filter((c) => (state.examplesByCard[c.id] || []).length).length;
-    $("#stats").textContent = cards.length + " capabilities in " + sections.length + " groups, " + state.data.workflows.workflows.length + " manifest workflows, " + withEx + " with recorded examples";
+    const shown = cards.reduce((n, c) => n + (state.examplesByCard[c.id] || []).length, 0);
+    const live = cards.filter((c) => c.kind !== "recorded").length;
+    $("#stats").textContent = plural(shown, "recorded example") + " in " + plural(sections.length, "group")
+      + (state.live ? ". " + plural(live, "capability", "capabilities") + " you can try live." : ".");
     // Deep link.
     if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }
   }
 
   async function refreshVoices() {
     try { state.voices = await apiJson("/v1/voices"); } catch (e) { state.voices = state.voices || null; }
+  }
+
+  function plural(n, one, many) {
+    return n + " " + (n === 1 ? one : many || one + "s");
   }
 
   let loadVersion = 0;
@@ -929,6 +943,7 @@
       sectionsDoc,
     };
     state.voices = voices.__error ? null : voices;
+    state.live = !authFail && !workflows.__error;
     state.examples = ex.data || [];
     state.examplesByCard = C.examplesByCard(state.examples);
     renderPage();
