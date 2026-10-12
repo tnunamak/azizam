@@ -21,25 +21,52 @@ const routes = [
   "/design/",
 ];
 
-for (const theme of ["dark", "light"] as const) {
-  for (const route of routes) {
-    test(`${route} has no horizontal page overflow at 390 px (${theme})`, async ({ page }) => {
-      await page.setViewportSize({ width: 390, height: 844 });
-      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-      await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
-      await page.goto(route);
-      await page.waitForLoadState("networkidle");
-      const widths = await page.evaluate(() => {
-        const root = document.scrollingElement ?? document.documentElement;
-        const wide = [...document.querySelectorAll<HTMLElement>("body *")]
-          .filter((node) => node.getBoundingClientRect().right > window.innerWidth + 1)
-          .slice(0, 5)
-          .map((node) => `${node.tagName.toLowerCase()}.${String(node.className).slice(0, 60)}`);
-        return { scroll: root.scrollWidth, inner: window.innerWidth, wide };
-      });
-      expect(widths.scroll, `wide elements: ${widths.wide.join(" | ")}`).toBeLessThanOrEqual(
-        widths.inner,
-      );
-    });
-  }
+// Layout geometry does not depend on the colour scheme (themes only swap
+// colour tokens), so every route is measured once in dark. One light run on the
+// home route keeps the light bootstrap path covered.
+const cases = [
+  ...routes.map((route) => ({ route, theme: "dark" as const })),
+  { route: "/", theme: "light" as const },
+];
+
+for (const { route, theme } of cases) {
+  test(`${route} has no horizontal page overflow at 390 px (${theme})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript(
+      (value) => localStorage.setItem("theme", value),
+      theme,
+    );
+    await page.goto(route);
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+    await expect(
+      page.locator(
+        '[aria-busy="true"]:visible, [data-slot="skeleton"]:visible',
+      ),
+    ).toHaveCount(0);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const root = document.scrollingElement ?? document.documentElement;
+            const wide = [...document.querySelectorAll<HTMLElement>("body *")]
+              .filter(
+                (node) =>
+                  node.getBoundingClientRect().right > window.innerWidth + 1,
+              )
+              .slice(0, 5)
+              .map(
+                (node) =>
+                  `${node.tagName.toLowerCase()}.${String(node.className).slice(0, 60)}`,
+              );
+            return root.scrollWidth <= window.innerWidth
+              ? "fits"
+              : `wide elements: ${wide.join(" | ")}`;
+          }),
+        { message: `${route} (${theme}) overflows 390 px` },
+      )
+      .toBe("fits");
+  });
 }
