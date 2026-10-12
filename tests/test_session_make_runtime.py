@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import accounts, admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from tests.support.access import store_plan  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
 MADE_PNG = base64.b64decode(
@@ -51,6 +52,9 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         proxy.asset_cache_path(SOURCE).write_bytes(PNG)
         self.root = root
         self.user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=self.admin)
+        accounts.initialize(self.admin)
+        accounts.change_person(self.user["id"], "test", path=self.admin,
+                               plan_id=store_plan("Everything", path=self.admin)["id"])
         self.app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         self.runtime = proxy._SessionMakeRuntime()
         # The source picture is in the person's Library: an earlier job of theirs made it.
