@@ -28,7 +28,7 @@ SCHEMA_V6 = (ROOT / "tests" / "fixtures" / "admin_db_schema_v6.sql").read_text(e
 T = 1_790_000_000
 
 PROFILES = {
-    "prof_librechat_full": ("LibreChat vivid.fish full runtime", {"fallback": {"cloud_allowed": True}, "id": "librechat-vivid-fish-full-runtime", "native_passthrough": {"audit": True, "enabled": True}, "status_visibility": {"level": "full"}}),
+    "prof_librechat_full": ("LibreChat vivid.fish full runtime", {"fallback": {"cloud_allowed": True}, "id": "librechat-full-runtime", "native_passthrough": {"audit": True, "enabled": True}, "status_visibility": {"level": "full"}}),
     "prof_simon": ("Legacy simon", {"fallback": {"cloud_allowed": False}, "id": "simon", "native_passthrough": {"enabled": False}, "protocols": ["openai", "anthropic", "ollama"], "status_visibility": {"level": "standard"}}),
     "prof_daisy": ("Legacy daisy", {"fallback": {"cloud_allowed": False}, "id": "daisy", "native_passthrough": {"enabled": True}, "protocols": ["openai", "anthropic", "ollama", "gateway", "provider-native"], "status_visibility": {"level": "standard"}}),
     "prof_librechat": ("Legacy librechat", {"fallback": {"cloud_allowed": False}, "id": "librechat", "native_passthrough": {"enabled": False}, "protocols": ["anthropic", "openai"], "status_visibility": {"level": "basic"}}),
