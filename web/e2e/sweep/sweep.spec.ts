@@ -5,7 +5,7 @@ import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { ROUTES, discoverAppRoutes, type SweepContext, type SweepRoute, type SweepState } from "./routes";
+import { DEV_REFERENCE_ROUTES, ROUTES, discoverAppRoutes, type SweepContext, type SweepRoute, type SweepState } from "./routes";
 import { lintText, loadTermList, type Role, type RuleId, type Severity, type TextItem } from "./rules";
 import { sweepPaths, sweepTarget } from "./target";
 
@@ -110,7 +110,7 @@ const stateRoles = (route: SweepRoute, state: SweepState) =>
   (state.roles ?? route.roles).filter((role) => route.roles.includes(role));
 
 test("every app route has a sweep entry", () => {
-  const covered = new Set(ROUTES.map((route) => route.appRoute));
+  const covered = new Set([...ROUTES, ...DEV_REFERENCE_ROUTES].map((route) => route.appRoute));
   const discovered = discoverAppRoutes();
   const missing = discovered.filter((route) => !covered.has(route));
   const stale = [...covered].filter((route) => !discovered.includes(route));
@@ -257,9 +257,8 @@ for (const route of ROUTES) {
                 flaggedRefs.add(hit.ref);
               }
               const contextByRef = new Map(probe.texts.map((item) => [item.ref, item.context]));
-              const textRole = route.dev ? "owner" : role === "anonymous" ? "member" : role;
+              const textRole = role === "anonymous" ? "member" : role;
               for (const hit of lintText(probe.texts, { role: textRole, research, jargon })) {
-                if (route.dev && !["raw-error", "path"].includes(hit.rule)) continue;
                 const note =
                   hit.rule === "unknown"
                     ? apiUnknown.length
