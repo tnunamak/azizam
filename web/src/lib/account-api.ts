@@ -68,11 +68,18 @@ async function accountRequest<T>(
   }
   return payload as T;
 }
+/** The parts of /.well-known/azizam the UI reads. */
+export type GatewayDiscovery = {
+  recipes: Record<string, { canonical_base_url?: string } | undefined>;
+  mcp?: {
+    url: string;
+    transport: string;
+    tools: { name: string; title: string; description: string }[];
+  };
+};
 export const accountApi = {
   discovery: () =>
-    accountRequest<{ recipes: { openai?: { canonical_base_url?: string } } }>(
-      "/.well-known/azizam",
-    ),
+    accountRequest<GatewayDiscovery>("/.well-known/azizam"),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
   createApp: (name: string) =>
     accountRequest<{ app: AccountApp }>("/me/api/apps", {

@@ -17816,6 +17816,7 @@ async def well_known_azizam(request: Request):
     metadata = build_gateway_discovery_metadata(
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
+        mcp_tools=mcp_server.TOOLS,
     )
     metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {
