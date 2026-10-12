@@ -13,8 +13,10 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from gateway import a1111_api
+from tests.support.access import identity
 from gateway.a1111_api import A1111Deps
 
+IDENTITY = identity()  # an App whose plans allow everything
 PNG_B64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
 
 
@@ -65,7 +67,7 @@ def env():
     def authenticate(request, _path):
         if request.headers.get("authorization") != "Bearer good":
             return JSONResponse({"error": {"message": "Invalid API key."}}, status_code=401)
-        return SimpleNamespace(owner="k1")
+        return SimpleNamespace(owner="k1", identity=IDENTITY)
 
     deps = A1111Deps(authenticate=authenticate, call=core.call, catalog=lambda: [KREA, KLEIN, TILE, EDIT],
                      aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
@@ -134,7 +136,7 @@ def test_sd_models_reads_one_catalog_snapshot_for_large_catalog(tmp_path, monkey
 
     gate = category_enforcement.CategoryGate(tmp_path / "categories.db") if gate_configured else None
     monkeypatch.setattr(category_enforcement, "_GATE", gate)
-    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY), call=Core().call,
                      catalog=catalog, aliases=lambda: {}, owner_of=lambda auth: auth.owner)
     app = FastAPI()
     a1111_api.register_a1111_routes(app, deps)
@@ -155,8 +157,8 @@ def test_sd_models_preserves_title_order_and_first_entry_resolution(monkeypatch)
         resolved.append((request.model, request.workflow))
         return request.workflow == "image.generate.shared"
 
-    monkeypatch.setattr(category_enforcement, "visible", visible)
-    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+    monkeypatch.setattr(a1111_api, "discovery_allows", visible)
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY), call=Core().call,
                      catalog=lambda: entries,
                      aliases=lambda: {"images": {"stable": [{"alias": "shared"}, {"alias": "late"}]}},
                      owner_of=lambda auth: auth.owner)
@@ -180,7 +182,7 @@ def test_sd_models_does_not_refresh_catalog_between_titles(monkeypatch):
         catalog_calls.append(True)
         return [KREA, KLEIN] if len(catalog_calls) == 1 else []
 
-    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=Core().call,
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY), call=Core().call,
                      catalog=catalog, aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
     app = FastAPI()
     a1111_api.register_a1111_routes(app, deps)
@@ -359,7 +361,7 @@ def test_interrupt_cancels_the_running_request_and_answers_like_a1111():
             cancelled.append(True)
             raise
 
-    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1"), call=slow_call, catalog=lambda: [KREA],
+    deps = A1111Deps(authenticate=lambda r, p: SimpleNamespace(owner="k1", identity=IDENTITY), call=slow_call, catalog=lambda: [KREA],
                      aliases=lambda: ALIASES, owner_of=lambda auth: auth.owner)
     app = FastAPI()
     a1111_api.register_a1111_routes(app, deps)
