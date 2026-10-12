@@ -47,6 +47,7 @@ def test_record_event_drops_prompt_shaped_extra_fields(tmp_path: Path) -> None:
         )
 
         events = firehose_metrics.snapshot_recent_events()
+        firehose_metrics.flush_persisted()
 
     assert events == [{"ts": events[0]["ts"], "type": "image_route_receipt", "summary": "image request", "model": "default"}]
     assert secret not in json.dumps(events)
