@@ -308,7 +308,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         backends = [dict(row) for row in status.get("backends", []) if isinstance(row, Mapping)]
         # Probe responses can exist for disabled services. Their enablement
         # remains authoritative in the registry, even when an endpoint answers.
-        services = store.get_service_registry().get("services") or {}
+        services = (await asyncio.to_thread(store.get_service_registry)).get("services") or {}
         known = {str(row.get("service_id") or row.get("key") or row.get("name")) for row in backends}
         for service_id, service in services.items():
             if not isinstance(service, Mapping) or service_id in known:
@@ -326,68 +326,75 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         try:
             session = require_session(request)
             inherited = default_profile_id(session)
-            account = build_user_portal_snapshot(session, default_profile_id=inherited, path=store.path)
+            account = await asyncio.to_thread(
+                build_user_portal_snapshot, session, default_profile_id=inherited, path=store.path)
             if not account.get("authenticated"):
                 raise UserPortalError("login_required", "Sign in to view Home.", status_code=401)
         except UserPortalError as exc:
             return _error(exc)
-        registry = store.get_service_registry()
+        registry = await asyncio.to_thread(store.get_service_registry)
         status_payload = await live_status_payload()
-        injected = status_payload.get("_availability_evidence")
-        availability_evidence = (
-            dict(injected)
-            if isinstance(injected, Mapping)
-            else availability_evidence_snapshot(
-                service_records=registry,
-                status_payload=status_payload,
-                receipt_store_path=receipts_path(),
+
+        # Everything below is synchronous SQLite and file work. Run it on a
+        # worker thread so a slow disk cannot stall the gateway's event loop.
+        def build_home() -> JSONResponse:
+            injected = status_payload.get("_availability_evidence")
+            availability_evidence = (
+                dict(injected)
+                if isinstance(injected, Mapping)
+                else availability_evidence_snapshot(
+                    service_records=registry,
+                    status_payload=status_payload,
+                    receipt_store_path=receipts_path(),
+                )
             )
-        )
-        alias_views = aliases()
-        rows_registry = availability_services(registry)
-        records = tuple(workflow_records())
-        allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
-        credential_aliases: dict[str, list[dict[str, Any]]] = {}
-        owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
-        for app in owned_apps:
-            if app.get("disabled_at"):
-                continue
-            credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
-            for credential in credentials or [None]:
-                app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
-                identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
-                if identity is None:
+            alias_views = aliases()
+            rows_registry = availability_services(registry)
+            records = tuple(workflow_records())
+            allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
+            credential_aliases: dict[str, list[dict[str, Any]]] = {}
+            owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
+            for app in owned_apps:
+                if app.get("disabled_at"):
                     continue
-                scoped = _resolved_capabilities(identity, capabilities, registry)
-                if credential is not None:
-                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
-                for cap in scoped:
-                    if cap.policy_available:
-                        allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
-        new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
-        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
-        for cap in new_caps:
-            if cap.policy_available:
-                allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
-        alias_rows = _alias_rows(rows, alias_views)
-        rows = group_product_capabilities(rows)
-        summary = product_status_summary(rows)
-        base = (public_base_url(request) or "").rstrip("/")
-        activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
-        gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
-        # The person's own plan: the access plan their keys inherit. Spend is
-        # the plan's total across everyone on it, because the caps are shared.
-        plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
-        plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
-                      if plan_identity is not None else None)
-        return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
-                      "csrf_token": csrf_token(session), "public_base_url": base,
-                      "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
-                      "aliases": alias_rows, "credential_aliases": credential_aliases,
-                      "new_app_aliases": new_app_aliases, "status": summary,
-                      "receipts": activity["receipts"], "creations": None})
+                credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
+                for credential in credentials or [None]:
+                    app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
+                    identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
+                    if identity is None:
+                        continue
+                    scoped = _resolved_capabilities(identity, capabilities, registry)
+                    if credential is not None:
+                        credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
+                    for cap in scoped:
+                        if cap.policy_available:
+                            allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+            new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
+            new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
+            new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
+            for cap in new_caps:
+                if cap.policy_available:
+                    allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+            rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
+            alias_rows = _alias_rows(rows, alias_views)
+            rows = group_product_capabilities(rows)
+            summary = product_status_summary(rows)
+            base = (public_base_url(request) or "").rstrip("/")
+            activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
+            gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
+            # The person's own plan: the access plan their keys inherit. Spend is
+            # the plan's total across everyone on it, because the caps are shared.
+            plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
+            plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
+                          if plan_identity is not None else None)
+            return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
+                          "csrf_token": csrf_token(session), "public_base_url": base,
+                          "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
+                          "aliases": alias_rows, "credential_aliases": credential_aliases,
+                          "new_app_aliases": new_app_aliases, "status": summary,
+                          "receipts": activity["receipts"], "creations": None})
+
+        return await asyncio.to_thread(build_home)
 
     @router.get("/me/api/status", include_in_schema=False)
     async def member_status(request: Request):

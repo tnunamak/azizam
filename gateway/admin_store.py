@@ -479,6 +479,12 @@ def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {table}")
 
 
+# Paths whose directory and sidecar modes are already tightened. Every
+# connection used to repeat the mkdir/chmod/open syscalls on the event loop.
+# ``init_db`` always re-secures, so startup and recovery refresh the entry.
+_SECURED_STATE_PATHS: set[Path] = set()
+
+
 def secure_state_path(path: Path) -> None:
     """Create private SQLite state and tighten existing database sidecars.
 
@@ -486,6 +492,8 @@ def secure_state_path(path: Path) -> None:
     database avoids a process-wide umask change in this multithreaded gateway.
     """
     check_quarantine_pending(path)
+    if path in _SECURED_STATE_PATHS:
+        return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.parent.chmod(0o700)
     try:
@@ -499,6 +507,7 @@ def secure_state_path(path: Path) -> None:
             state_file.chmod(0o600)
         except FileNotFoundError:
             pass
+    _SECURED_STATE_PATHS.add(path)
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -507,6 +516,7 @@ def init_db(path: Path = DB_PATH) -> None:
     Idempotent: running it twice on the same file is a no-op.
     """
     with store_startup(path):
+        _SECURED_STATE_PATHS.discard(path)
         secure_state_path(path)
         conn = sqlite3.connect(str(path), timeout=5.0)
         try:

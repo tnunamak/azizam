@@ -13778,17 +13778,25 @@ def _capability_for_profile(
     auth_context: AuthContext,
     *,
     protocol: str | None = None,
+    registry: Mapping[str, Any] | None = None,
+    provider_admin_state: Callable[[], Mapping[str, Any]] | None = None,
 ) -> Capability:
+    """Evaluate one capability for a profile.
+
+    Batch callers pass ``registry`` (and a memoized ``provider_admin_state``)
+    so a request reads each once instead of once per capability.
+    """
     profile = _profile_for_auth_context(auth_context)
     if "alias" in capability.tags and capability.backend == "gateway":
         return replace(capability, policy_available=False)
     remote_provider_id = None
-    provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+    provider = provider_lookup(registry if registry is not None else ADMIN_STORE.get_service_registry(), capability.backend)
     if "remote" in capability.tags or (provider is not None and service_registry.is_remote_provider_config(provider.config)):
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
         remote_provider_id = provider.id
-        provider_policy = ADMIN_STORE.get_provider_admin_state().get("providers", {}).get(provider.id, {})
+        admin_state = provider_admin_state() if provider_admin_state else ADMIN_STORE.get_provider_admin_state()
+        provider_policy = admin_state.get("providers", {}).get(provider.id, {})
         if "allowed_plans" in provider_policy and profile.id not in (provider_policy["allowed_plans"] or []):
             return replace(capability, policy_available=False, policy_reasons=("Provider is not allowed by this access plan.",))
     return capability_with_policy_view(
@@ -13841,7 +13849,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities.extend(decision_capabilities)
 
     for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
-        provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), model.id)
+        provider = decision_provider_execution.systemone_provider_for_model(live_registry, model.id)
         if provider:
             capabilities.append(decision_provider_execution.capability_for(provider, model.id))
 
@@ -13874,8 +13882,18 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         )
     ]
 
+    admin_state: dict[str, Mapping[str, Any]] = {}
+
+    def provider_admin_state() -> Mapping[str, Any]:
+        if "value" not in admin_state:
+            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
+        return admin_state["value"]
+
     return [
-        _capability_for_profile(capability, auth_context)
+        _capability_for_profile(
+            capability, auth_context,
+            registry=live_registry, provider_admin_state=provider_admin_state,
+        )
         for capability in capabilities
     ]
 
