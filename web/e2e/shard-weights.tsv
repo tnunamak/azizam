@@ -1,7 +1,6 @@
 # spec file	seconds (summed test durations; regenerate with plan_shards.py weights)
 activity.spec.ts	106.1
 bugfix-actions.spec.ts	9.0
-bugfix-activity.spec.ts	2.9
 bugfix-home.spec.ts	8.2
 catalog-polish.spec.ts	47.8
 categories-editor.spec.ts	133.3
