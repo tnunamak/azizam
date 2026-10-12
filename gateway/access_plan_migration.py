@@ -15,6 +15,8 @@ What it does, in one transaction on the caller's connection:
    and exactly one assignment; gives every person a plan that covers their
    apps, so nobody loses access they use today.
 4. Disables apps that look like test artifacts (reversible: Apps -> Turn on).
+   An app whose keys were never used keeps no paid providers and no direct
+   engine access: it has shown no need for them.
 5. Rebuilds the tables without the old columns and deletes the old tables,
    settings and service accounts that only owned apps.
 
@@ -30,7 +32,7 @@ import re
 import secrets
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
@@ -68,6 +70,7 @@ class MigrationReport:
     people: list[dict[str, Any]] = field(default_factory=list)
     apps: list[dict[str, Any]] = field(default_factory=list)
     revoked_keys: list[dict[str, Any]] = field(default_factory=list)
+    apps_narrowed: list[dict[str, Any]] = field(default_factory=list)
     disabled_apps: list[dict[str, Any]] = field(default_factory=list)
     renamed_keys: list[dict[str, Any]] = field(default_factory=list)
     deleted_profiles: list[dict[str, Any]] = field(default_factory=list)
@@ -90,6 +93,8 @@ class MigrationReport:
             out.append(f"  revoked key {key['name']!r} ({key['id']}) on {key['app']!r}: {key['reason']}")
         for app in self.disabled_apps:
             out.append(f"  disabled app {app['name']!r} ({app['id']}): {app['reason']}")
+        for app in self.apps_narrowed:
+            out.append(f"  narrowed app {app['name']!r} ({app['id']}) to this gateway's engines: {app['reason']}")
         for key in self.renamed_keys:
             out.append(f"  renamed key {key['id']}: {key['from']!r} -> {key['to']!r}")
         for profile in self.deleted_profiles:
@@ -407,6 +412,27 @@ def migrate(conn: sqlite3.Connection, *, now: int | None = None) -> MigrationRep
             )
         app_effective[app_id] = sorted(effective)[0]
 
+    # An App whose keys were never used shows no need for paid providers or
+    # direct engine access, so its plan is narrowed to what runs here.
+    ever_used: dict[str, bool] = {}
+    ever_keyed: set[str] = set()
+    for key in keys:
+        app_ref = str(key["app_id"] or key["subject_id"])
+        ever_keyed.add(app_ref)
+        ever_used[app_ref] = ever_used.get(app_ref, False) or key["last_used_at"] is not None
+    app_plan_object: dict[str, AccessPlan] = {}
+    for app_id, plan_id in app_effective.items():
+        plan = translated[plan_id]
+        gives_more = bool(plan.paid_providers) or plan.provider_fallback or plan.direct_engine_access.granted
+        if app_id in ever_keyed and not ever_used.get(app_id) and gives_more \
+                and not TEST_ARTIFACT.search(str(apps[app_id]["name"])):
+            plan = replace(plan, paid_providers=frozenset(), provider_fallback=False,
+                           direct_engine_access=DirectEngineAccess())
+            report.apps_narrowed.append({
+                "id": app_id, "name": apps[app_id]["name"], "reason": "its keys were never used",
+            })
+        app_plan_object[app_id] = plan
+
     # 3. Accountable people.
     accountable: dict[str, str] = {}
     for app_id, app in apps.items():
@@ -443,7 +469,7 @@ def migrate(conn: sqlite3.Connection, *, now: int | None = None) -> MigrationRep
             person_rules[user_id] = translated[assigned]
             continue
         used = [translated[person_plan_today(user_id)]]
-        used += [translated[app_effective[a]] for a, who in accountable.items()
+        used += [app_plan_object[a] for a, who in accountable.items()
                  if who == user_id and apps[a].get("disabled_at") is None]
         person_rules[user_id] = union_plans("", "", used)
 
@@ -467,7 +493,7 @@ def migrate(conn: sqlite3.Connection, *, now: int | None = None) -> MigrationRep
         person_assignment[user_id] = stored_plan(plan, source_name(assigned) if assigned else None)
     app_assignment: dict[str, str] = {}
     for app_id, app in apps.items():
-        plan = translated[app_effective[app_id]]
+        plan = app_plan_object[app_id]
         person = accountable[app_id]
         if app["kind"] == "personal" and plan_rules_json(plan) == plan_rules_json(person_rules[person]):
             app_assignment[app_id] = PERSON

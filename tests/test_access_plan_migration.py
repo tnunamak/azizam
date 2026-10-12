@@ -185,12 +185,26 @@ def test_plans_people_and_apps_keep_todays_access(migrated):
         "app_tim_personal": "Local only", "app_openwhispr": "Local only", "app_sillytavern": "Local only",
         "app_tim_try": "Local only", "app_librechat": "Local with direct engine access",
         "app_daisy": "Local with direct engine access (standard receipts)", "app_openwebui": "Local only",
-        "app_museum": "Local and paid", "app_pi": "Local and paid", "app_paperless": "Assistant (chat + RAG)",
+        "app_museum": "Local only", "app_pi": "Local and paid", "app_paperless": "Assistant (chat + RAG)",
         "app_simon_personal": "person:Local only", "app_simon_try": "person:Local only",
         "app_odl_first": "person:Assistant (chat + RAG)",
     }
     assert {app: _assignment_name(conn, app) for app in expected} == expected
     assert conn.execute("SELECT COUNT(*) FROM apps WHERE access_plan IS NULL").fetchone()[0] == 0
+
+
+def test_an_app_whose_keys_were_never_used_keeps_no_paid_access(migrated):
+    path, conn, _ = migrated
+    event = json.loads(conn.execute(
+        "SELECT metadata_json FROM audit_events WHERE action='access_plans.migrate'").fetchone()[0])
+    assert [a["name"] for a in event["apps_narrowed"]] == ["Anna's Museum App"]
+    paid = PolicyRequest(intent="decision.systemone", model="typesafe/x", remote_provider="typesafe")
+    museum = runtime_identity_for_app_credential_hash(key_hash("cred_museum"), path=path)
+    assert evaluate(museum.access, paid).denied
+    # A used key keeps its paid access, and so does the person's plan.
+    pi = runtime_identity_for_app_credential_hash(key_hash("cred_pi"), path=path)
+    assert evaluate(pi.access, paid).allowed
+    assert "openrouter" in museum.access.person_plan.paid_providers
 
 
 def test_service_apps_get_the_owner_as_accountable_person_and_stay_service(migrated):
