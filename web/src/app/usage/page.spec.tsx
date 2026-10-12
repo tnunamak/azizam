@@ -849,3 +849,252 @@ test("PF-040 accepts explicit numeric strings including genuine zero", async () 
   const stat = (await screen.findByText("Failed", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
   expect(within(stat).getByText("0 · 0%")).toBeVisible();
 });
+
+// ---- Moved from the usage browser spec (e2e/usage.spec.ts) ----
+// The summary the browser spec intercepted.
+const seededSummary = {
+  requests: 4,
+  media_count: 1,
+  remote_spend: 0.023,
+  remote_spend_available: true,
+  paid_requests: 3,
+  spend_measured_requests: 3,
+  spend_total_requests: 4,
+  retention_days: null,
+  coverage_start: "2026-10-01T00:00:00Z",
+  coverage_note: "Provider spend is available for matched receipts.",
+  by_day: [
+    { date: "2026-10-01", chat: 1, image: 1 },
+    { date: "2026-10-02", chat: 1, embeddings: 1 },
+  ],
+  by_model: [
+    { model: "demo-chat", capability: "chat", requests: 2, remote_spend: 0.01 },
+    { model: "image", capability: "image", requests: 1, remote_spend: 0.013 },
+  ],
+  receipts: [
+    {
+      request_id: "req_demo_chat",
+      accepted_at_ms: 1790870400000,
+      requested_model: "demo-chat",
+      resolved_model: "demo-chat",
+      intent: "chat",
+      capability: "chat",
+      status: "success",
+      latency_ms: 104,
+      remote_spend: null,
+    },
+  ],
+};
+
+test("Usage lists a receipt by display name and keeps the raw model id in Technical details", async () => {
+  renderUsage(seededSummary);
+  const user = userEvent.setup();
+  expect(await screen.findByRole("heading", { name: "Usage" })).toBeVisible();
+  await screen.findByText("Top models by requests");
+  await user.click(screen.getByText("Receipt coverage", { exact: true }));
+  expect(screen.getByText("Receipts are kept until you delete them.")).toBeVisible();
+  expect(screen.getByText("Coverage starts Oct 1, 2026.")).toBeVisible();
+  expect(screen.getByText("Provider spend is available for matched receipts.")).toBeVisible();
+  expect(screen.getAllByText("Demo Chat").length).toBeGreaterThan(0);
+  expect(screen.queryByRole("columnheader", { name: "Typical time" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  const receipt = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  expect(receipt).toHaveTextContent("104 ms");
+  expect(receipt.querySelector("p.font-medium")).toHaveTextContent(/^Chat request$/);
+  expect(within(receipt).getByText("Demo Chat")).toHaveAttribute("title", "Demo Chat");
+  await user.click(receipt);
+  const sheet = within(screen.getByRole("dialog", { name: "Request receipt" }));
+  expect(sheet.getByText("Demo Chat")).toBeVisible();
+  expect(sheet.getByText("104 ms")).toBeVisible();
+  await user.click(sheet.getByText("Technical details", { exact: true }));
+  const technical = sheet.getByText("Technical details").closest("details")!;
+  expect(technical).toHaveTextContent("request_id");
+  expect(technical).toHaveTextContent("requested_model");
+  expect(technical).toHaveTextContent('"demo-chat"');
+});
+
+test("Usage omits the model line when only the capability is known", async () => {
+  renderUsage({
+    ...seededSummary,
+    by_model: [{ model: null, capability: "transcribe", requests: 6, remote_spend: null }],
+  });
+  const row = within(await screen.findByRole("table", { name: "Models" })).getByRole("row", {
+    name: /Transcribe a recording/,
+  });
+  expect(row.querySelector("code")).toBeNull();
+  expect(row).not.toHaveTextContent("Unknown model");
+});
+
+test("Usage failed load shows the error callout, no placeholder summary, and recovers on retry", async () => {
+  let failed = true;
+  renderUsage({}, async () => {
+    if (failed) {
+      failed = false;
+      return Response.json({ error: { message: "Unavailable for this test" } }, { status: 503 });
+    }
+    return Response.json(seededSummary);
+  });
+  expect(await screen.findByText("Usage could not be loaded", { exact: true })).toBeVisible();
+  expect(screen.queryByText("Unknown · Usage unavailable", { exact: true })).toBeNull();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry usage" }));
+  expect((await screen.findAllByText("Demo Chat")).length).toBeGreaterThan(0);
+});
+
+test("Usage seeded view shows Spend and the Receipts panel once receipts are opened", async () => {
+  renderUsage(seededSummary);
+  expect(await screen.findByRole("heading", { name: "Usage" })).toBeVisible();
+  await screen.findByText("Top models by requests");
+  expect(screen.queryByLabelText("Loading your account")).toBeNull();
+  expect(screen.getAllByText("Spend", { exact: true }).length).toBeGreaterThan(0);
+  await userEvent.setup().click(screen.getByRole("button", { name: "View recent requests" }));
+  expect(screen.getByText("Receipts", { exact: true })).toBeVisible();
+});
+
+test("Usage labels unavailable remote spend as Cost not recorded, never $0", async () => {
+  renderUsage({
+    ...seededSummary,
+    remote_spend: 0,
+    remote_spend_available: false,
+    paid_requests: 0,
+    spend_measured_requests: 0,
+    spend_total_requests: 4,
+  });
+  const spend = within(await screen.findByLabelText("This month"))
+    .getByText("Spend", { exact: true })
+    .closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(spend).toHaveTextContent("Cost not recorded");
+  expect(spend).not.toHaveTextContent("$0");
+});
+
+test("Usage person filter does not promote an email-shaped name or label to a person name", async () => {
+  renderUsage({
+    ...seededSummary,
+    people: [
+      { id: "person-email", name: "person@example.test" },
+      { id: "person-second", label: "second@example.test" },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  const user = userEvent.setup();
+  screen.getByRole("combobox", { name: "Person" }).focus();
+  await user.keyboard("{Enter}");
+  const people = await screen.findAllByRole("option", { name: /^Person name not recorded/ });
+  expect(people).toHaveLength(2);
+  const labels = people.map((option) => option.textContent ?? "");
+  expect(new Set(labels).size).toBe(2);
+  expect(labels.join(" ")).not.toContain("@example.test");
+  expect(screen.queryByRole("option", { name: "person@example.test" })).toBeNull();
+  await user.click(people[1]);
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("person=person-second")),
+  ).toBe(true);
+});
+
+const phoneSummary = {
+  ...seededSummary,
+  requests: 8264,
+  by_model: [
+    { model: GGUF, capability: "chat", requests: 3402, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: null, capability: "transcribe", requests: 2322, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "Qwen3 (Q4)", capability: "chat", requests: 505, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "default", capability: "chat", requests: 408, remote_spend: 0, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "decide-quality", capability: "decide", requests: 377, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0 },
+    { model: "paid-remote-model", capability: "image", requests: 300, remote_spend: null, paid_requests: 0, unknown_paid_requests: 4 },
+  ],
+  by_day: [
+    { date: "2026-10-01", chat: 5, image: 1, audio: 2, transcribe: 3, decide: 4, embeddings: 5 },
+    { date: "2026-10-02", chat: 1 },
+  ],
+  receipts: [{ ...seededSummary.receipts[0], requested_model: "default", resolved_model: GGUF }],
+};
+
+test("Usage model table shows names, never a path or packing tag, and a Cost in every row", async () => {
+  renderUsage(phoneSummary, undefined, { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] });
+  const table = await screen.findByRole("table", { name: "Models" });
+  await waitFor(() => expect(table).toHaveTextContent("Careful choices"));
+  expect(table.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);
+  expect(table.textContent).not.toMatch(/Q4 K M|Q4_K_M/);
+  expect(table).toHaveTextContent("Qwen3.8 27B Uncensored");
+  expect(table).toHaveTextContent("Transcribe a recording");
+  expect(within(table).getByTitle("Qwen3.8 27B Uncensored")).toBeVisible();
+  expect(table.querySelector('[title*="gguf" i], [title*="Q4_K_M"]')).toBeNull();
+  // One header row and the five busiest models (the sixth is cut); none is blank in the Spend column.
+  const rows = within(table).getAllByRole("row");
+  expect(rows).toHaveLength(6);
+  for (const row of rows.slice(1)) {
+    expect(within(row).getAllByRole("cell").at(-1)!.textContent!.trim()).toMatch(/^(Cost not recorded|\$[\d.]+)/);
+  }
+  expect(table).toHaveTextContent("$0.00");
+  expect(screen.queryByText("Local: no provider charge.")).toBeNull();
+  // The legend uses the names Home and Try use, inside a visible disclosure.
+  await userEvent.setup().click(screen.getByText("View daily totals", { exact: true }));
+  expect(screen.getAllByText("Make a picture").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Choose an option").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Decisions", { exact: true })).toBeNull();
+  expect(screen.queryByText("Embeddings", { exact: true })).toBeNull();
+});
+
+const manySources = [
+  { id: "local-network", label: "Local network · no key", kind: "local-network", requests: 60, disabled: false, created_at: null },
+  { id: "app:1", label: "tim.nunamaker@gmail.com personal access with a rather long name", kind: "app", requests: 90, disabled: false, created_at: 1 },
+  ...Array.from({ length: 20 }, (_, index) => ({
+    id: `app:tmp${index}`,
+    label: index < 3 ? "Temporary empathy Jev triage" : `copy-triage-17911237${index}`,
+    kind: "app",
+    requests: index < 3 ? 6 : 1,
+    disabled: true,
+    created_at: 1000 + index,
+  })),
+  ...Array.from({ length: 6 }, (_, index) => ({
+    id: `app:live${index}`,
+    label: `Household app ${index}`,
+    kind: "app",
+    requests: 20 - index,
+    disabled: false,
+    created_at: 100 + index,
+  })),
+];
+
+test("Usage Source list ranks busy apps first, numbers same-named apps and puts turned-off apps last", async () => {
+  renderUsage({ ...phoneSummary, sources: manySources });
+  await screen.findByText("Top models by requests");
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await userEvent.setup().keyboard("{Enter}");
+  const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(labels.slice(0, 4)).toEqual([
+    "All sources",
+    "tim.nunamaker@gmail.com personal access with a rather long name",
+    "Local network · no key",
+    "Household app 0",
+  ]);
+  expect(labels.filter((label) => label?.startsWith("Temporary empathy"))).toEqual([
+    "Temporary empathy Jev triage (1)",
+    "Temporary empathy Jev triage (2)",
+    "Temporary empathy Jev triage (3)",
+  ]);
+  expect(labels.indexOf("Household app 5")).toBeLessThan(
+    labels.indexOf("Temporary empathy Jev triage (1)"),
+  );
+  expect(screen.getByText("Turned off or no requests")).toBeVisible();
+});
+
+test("Usage tells a partial total from a missing breakdown and from a genuine zero", async () => {
+  let partial = true;
+  renderUsage({}, async () =>
+    Response.json(
+      partial
+        ? { requests: null, media_count: 0 }
+        : { requests: 2, media_count: 0, by_day: [], by_model: [], receipts: [] },
+    ),
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByText("Usage totals weren’t included in the response. Try again.")).toBeVisible();
+  expect(screen.queryByText("No requests in this period")).toBeNull();
+  partial = false;
+  await user.click(screen.getByRole("button", { name: "Retry usage" }));
+  expect(await screen.findByText("Daily totals weren’t recorded for these requests.")).toBeVisible();
+  expect(screen.getByText("Model totals weren’t recorded.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  expect(screen.getByText("No receipts are available for this view.")).toBeVisible();
+  expect(screen.queryByText("$0.00")).toBeNull();
+});

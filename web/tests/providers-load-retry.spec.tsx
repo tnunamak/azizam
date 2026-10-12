@@ -686,3 +686,52 @@ it("keeps multiple providers as collapsed management rows", async () => {
     client.clear();
   }
 });
+
+// Moved from the integrated-missing-screens browser matrix: the provider list's
+// seeded and failed states, with the shapes that spec intercepted.
+async function renderProvidersList(listResponse: () => Response) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/admin/api/providers")) return listResponse();
+      return Response.json(path.includes("profiles") ? { plans: [] } : { providers: [] });
+    }),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ProvidersPage />
+    </QueryClientProvider>,
+  );
+  return client;
+}
+
+it("lists a configured provider by name", async () => {
+  const client = await renderProvidersList(() =>
+    Response.json({
+      providers: [
+        { id: "openrouter", name: "OpenRouter", enabled: true, reachable: true, key_set: true, spend_usd: 1.25, cap_usd: 10 },
+      ],
+    }),
+  );
+  try {
+    expect(await screen.findByRole("heading", { name: "OpenRouter" })).toBeVisible();
+    expect(screen.queryByText("No providers yet")).toBeNull();
+  } finally {
+    client.clear();
+  }
+});
+
+it("offers Retry providers when the provider list cannot load", async () => {
+  const client = await renderProvidersList(() =>
+    Response.json({ error: { message: "Provider API unavailable" } }, { status: 503 }),
+  );
+  try {
+    expect(await screen.findByRole("button", { name: "Retry providers" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Provider API unavailable");
+    expect(screen.queryByText("No providers yet")).toBeNull();
+  } finally {
+    client.clear();
+  }
+});

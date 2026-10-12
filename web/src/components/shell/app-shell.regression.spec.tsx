@@ -395,6 +395,9 @@ describe("Signed-out private pages", () => {
       </AppShell>,
     );
     expect(await screen.findByText("Couldn’t load your account")).toBeVisible();
+    expect(
+      screen.getByText("We couldn't tell why your account didn't load. Try again."),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByText("Private consumer")).toBeNull();
