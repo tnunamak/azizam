@@ -1651,12 +1651,18 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             },
         )
         self.assertEqual(requested.status_code, 201, requested.text)
-        self.assertFalse(requested.json()["app"]["profile_required"])
-        self.assertEqual(
-            requested.json()["app"]["effective_profile_id"],
-            "default-local",
-        )
+        # The person has no plan yet, so the new App denies until the owner chooses one.
+        self.assertIsNone(requested.json()["app"]["access_plan"])
         self.assertEqual(requested.json()["app"]["name"], "New user laptop")
+        admin_store_app = admin_store.get_app(requested.json()["app"]["id"], path=self.db)
+        self.assertEqual(admin_store_app["access_plan"], "person")
+        chat_plan = store_plan("New user plan", path=self.db, caps=("chat",))
+        accounts.initialize(self.db)
+        accounts.change_person(user["id"], "test", path=self.db, plan_id=chat_plan["id"])
+        listed = self.client.get("/me/api/session").json()["apps"]
+        [shown] = [app for app in listed if app["id"] == requested.json()["app"]["id"]]
+        self.assertEqual(shown["access_plan"]["name"], "New user plan")
+        self.assertTrue(shown["access_plan"]["same_as_person"])
 
         minted = self.client.post(
             f"/me/api/apps/{requested.json()['app']['id']}/keys",
