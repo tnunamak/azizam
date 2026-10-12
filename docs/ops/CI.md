@@ -51,9 +51,11 @@ same order, so `scripts/ci-local --force --order-seed N` reproduces a failure.
   only on the seed and the node IDs, so every xdist worker collects the same
   list (xdist aborts the run when two workers' ordered lists differ).
 - vitest: `--sequence.shuffle --sequence.seed N`.
-- Playwright: `plan_shards.py` places each spec file on a seeded choice among
-  the lanes within half the file's estimate of the least-loaded lane, so the
-  seed changes which files share a fixture server.
+- Playwright: the lane plan stays the legacy grouping (`plan_shards.py` without
+  a seed), so no stateful spec meets new neighbors before it is isolated
+  (TEST_STRATEGY.md 7, T0 item 1). `plan_shards.py plan` accepts a seed for the
+  last BI2 batch to turn on: it then places each spec file on a seeded choice
+  among the lanes within half the file's estimate of the least-loaded lane.
 
 ## Case receipts and policy
 

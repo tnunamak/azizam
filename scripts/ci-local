@@ -256,7 +256,7 @@ start_job "$work" bash -c '
   step e2e-browser bash -c "cd web && npx playwright install chromium"
   # Split spec files by measured time; --shard splits by test count, which
   # left one of 12 lanes running 414 s and another 18 s.
-  step e2e-plan bash -c "cd web && ./node_modules/.bin/playwright test --list > \"\$1/e2e-list.txt\" && ../scripts/e2e/plan_shards.py plan \"\$1/e2e-list.txt\" e2e/shard-weights.tsv \"\$2\" \"\$1/shards\" \"\$3\"" _ "$run" "$shards" "$seed"
+  step e2e-plan bash -c "cd web && ./node_modules/.bin/playwright test --list > \"\$1/e2e-list.txt\" && ../scripts/e2e/plan_shards.py plan \"\$1/e2e-list.txt\" e2e/shard-weights.tsv \"\$2\" \"\$1/shards\"" _ "$run" "$shards"
   exit "$failed"
 '
 web_pid=$last_pid
