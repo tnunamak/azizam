@@ -366,7 +366,7 @@ def test_oidc_login_on_noncanonical_host_redirects_before_minting_state(
     assert response.status_code == 302, response.text
     target = urlsplit(response.headers["location"])
     assert f"{target.scheme}://{target.netloc}{target.path}" == f"{BASE_URL}/login"
-    assert parse_qs(target.query)["return_to"] == ["/ui/home/"]
+    assert parse_qs(target.query)["return_to"] == ["/"]
     assert proxy.ADMIN_OIDC_STATES == {}
 
 
@@ -421,7 +421,7 @@ def test_oidc_login_explicit_default_https_port_matches_host_without_port(
 
 def test_browser_provider_decline_returns_to_signin_without_a_session(oidc_gateway):
     with closing(_client()) as client:
-        response = client.get("/login?return_to=/ui/usage/?receipt=one", follow_redirects=False)
+        response = client.get("/login?return_to=/usage/?receipt=one", follow_redirects=False)
         state_value = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
         record = proxy.ADMIN_OIDC_STATES[state_value]
         failure = client.get(
@@ -430,8 +430,8 @@ def test_browser_provider_decline_returns_to_signin_without_a_session(oidc_gatew
         )
         assert failure.status_code == 303
         target = urlsplit(failure.headers["location"])
-        assert target.path == "/ui/sign-in/"
-        assert parse_qs(target.query) == {"error": ["provider"], "return_to": ["/ui/usage/?receipt=one"]}
+        assert target.path == "/sign-in/"
+        assert parse_qs(target.query) == {"error": ["provider"], "return_to": ["/usage/?receipt=one"]}
         assert "untrusted" not in failure.headers["location"]
         assert state_value not in proxy.ADMIN_OIDC_STATES
         _assert_flow_cookie_deleted(failure, record.browser_cookie_name)
@@ -446,7 +446,7 @@ def test_browser_invalid_state_cannot_supply_a_return_target(oidc_gateway):
             "/admin/oidc/callback?state=unknown&error=denied&return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False,
         )
         assert failure.status_code == 303
-        assert parse_qs(urlsplit(failure.headers["location"]).query) == {"error": ["provider"], "return_to": ["/ui/home/"]}
+        assert parse_qs(urlsplit(failure.headers["location"]).query) == {"error": ["provider"], "return_to": ["/"]}
         assert not client.cookies.get(_oidc_config().cookie.name)
 
 
@@ -457,6 +457,6 @@ def test_browser_provider_start_failure_keeps_safe_return_target(oidc_gateway, m
     with closing(_client()) as client:
         failure = client.get("/login?return_to=//evil.example", headers={"accept": "text/html"}, follow_redirects=False)
         assert failure.status_code == 303
-        assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/ui/home/"]
+        assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/"]
         assert "private" not in failure.text
         assert not client.cookies.get(_oidc_config().cookie.name)

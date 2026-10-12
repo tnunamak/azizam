@@ -86,9 +86,9 @@ def dispatch(app, method: str, path: str) -> str:
     return "unmatched"
 
 
-def routing_matrix(app) -> dict:
+def routing_matrix(app, extra_paths=()) -> dict:
     return {path: {method: dispatch(app, method, path) for method in METHODS}
-            for path in probe_paths(app)}
+            for path in sorted(set(probe_paths(app)) | set(extra_paths))}
 
 
 def is_catch_all(outcome: str) -> bool:
@@ -133,8 +133,8 @@ def live_matrix(client, targets, principals: dict[str, dict]) -> dict:
         rows[f"{method} {path}"] = "; ".join(cells)
     return rows
 
-def baseline(app, client, admin_key: str, app_key: str) -> dict:
-    routing = routing_matrix(app)
+def baseline(app, client, admin_key: str, app_key: str, extra_paths=()) -> dict:
+    routing = routing_matrix(app, extra_paths)
     principals = {"none": {}, "app": {"Authorization": f"Bearer {app_key}"},
                   "admin": {"Authorization": f"Bearer {admin_key}"}}
     return {"routing": routing, "live": live_matrix(client, live_targets(routing), principals)}

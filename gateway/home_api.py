@@ -411,7 +411,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                          "availability": {"evidence": dict(evidence)}})
         receipts = [{**{key: row.get(key) for key in ("request_id", "status", "intent")},
                      "created_at": row.get("created_at", row.get("_stored_at")),
-                     "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}
+                     "href": f"/usage/?receipt={quote(str(row['request_id']), safe='')}"}
                     for row in snapshot["receipts"]]
         return _json({"scope": "member", "gateway": snapshot["gateway"], "status": snapshot["status"], "capabilities": rows,
                       "receipts": receipts,
@@ -566,10 +566,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         invited = _invitation_created(store.path)
         steps = [
             {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
-            {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/ui/admin/services/"},
-            {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/ui/home/#connect"},
-            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
-            {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/ui/people/"},
+            {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/engines/"},
+            {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/#connect"},
+            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/#connect"},
+            {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/people/"},
         ]
         dismissed = "checklist_dismissed" in evidence
         evidence["observed_external_client"] = external_client

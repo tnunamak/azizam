@@ -54,7 +54,6 @@ from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData, Headers, UploadFile
-from gateway.ui_static import UIStaticFiles
 from starlette.requests import ClientDisconnect, HTTPConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -120,15 +119,12 @@ from gateway.admin_api import (
     AdminContext,
     _require_admin,
     create_admin_router,
-    derive_admin_attention,
 )
-from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
-from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
     IDTokenClaimsError,
     OIDCConfigError,
@@ -151,13 +147,13 @@ from gateway.admin_oidc import (
 from gateway.oidc_browser_flow import (
     begin_browser_login, callback_host_matches, clear_browser_binding, consume_browser_state,
 )
-from gateway.admin_render import render_admin_dashboard
 from gateway.local_owner import (
     hash_password as local_hash_password,
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
+    ADMIN_CONTROL_ROLES,
     AdminAuthenticator,
     AdminSQLiteStore,
     OIDC_PROVIDER_FIELDS,
@@ -184,7 +180,6 @@ from gateway.workflows_catalog import (
     create_workflows_catalog_router,
 )
 from gateway import engine_quarantine
-from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
@@ -13200,80 +13195,15 @@ from gateway.api_reference import register_api_reference
 register_api_reference(app)
 
 # -----------------------------------------------------------------------------
-# Static React UI (web/out) — strangler surfaces under /ui
-# (docs/design/WEB_UI_STEERING.md). The export is a build artifact
-# (`cd web && npm run build`), so a source checkout without it must still
-# boot: a missing directory means "no mount", never a crash.
+# The exported web app (web/out) is served at the root by one route just before
+# the catch-all (gateway/ui_routes.py, registered next to unmatched_route). The
+# export is a build artifact (`cd web && npm run build`), so a source checkout
+# without it must still boot; pages then answer 503.
 # -----------------------------------------------------------------------------
 
 WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
-from gateway.browser_routes import OWNER_UI_PAGES, accepts_html, admin_destination, with_query
-
-
-@app.middleware("http")
-async def _guard_admin_static_ui(request: Request, call_next):
-    path = request.url.path
-    legacy_admin = path == "/ui/admin" or path.startswith("/ui/admin/")
-    owner_page = path.removeprefix("/ui/").split("/", 1)[0] in OWNER_UI_PAGES
-    if legacy_admin or (path.startswith("/ui/") and owner_page):
-        try:
-            ADMIN_AUTH(request)
-        except AdminAuthError as exc:
-            return _admin_auth_failure_response(
-                request,
-                exc,
-                return_to=_path_with_query(request),
-            )
-        destination = admin_destination(path, request.url.query) if legacy_admin else None
-        if destination:
-            return RedirectResponse(destination, status_code=302, headers={"cache-control": "no-store"})
-        if legacy_admin:
-            return Response(status_code=404, headers={"cache-control": "no-store"})
-    return await call_next(request)
-
-
-def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
-    """Mount the static Next.js export at /ui when it exists.
-
-    Returns True if mounted. ``check_dir=False`` keeps StaticFiles itself from
-    raising if the directory disappears after boot (e.g. a rebuild in place);
-    the existence guard here is what makes boot-without-build safe.
-    """
-    if not directory.is_dir():
-        return False
-    target_app.mount(
-        "/ui",
-        UIStaticFiles(directory=str(directory), html=True, check_dir=False),
-        name="web_ui",
-    )
-    return True
-
-
-@app.middleware("http")
-async def _web_ui_trailing_slash(request: Request, call_next):
-    """Add the trailing slash for `/ui/<page>` with a RELATIVE Location.
-
-    StaticFiles builds an absolute redirect from the request scheme, which is `http`
-    behind a TLS-terminating proxy, so it would send browsers to plain HTTP.
-    """
-    path = request.url.path
-    if path == "/ui/admin" or path.startswith("/ui/admin/"):
-        return await call_next(request)
-    if path.startswith("/ui/") and not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
-        query = f"?{request.url.query}" if request.url.query else ""
-        return RedirectResponse(url=f"{path}/{query}", status_code=308)
-    return await call_next(request)
-
-
-@app.get("/ui", include_in_schema=False)
-async def _web_ui_root_redirect(request: Request):
-    """`/ui` (no slash) is what people type; the static mount only matches `/ui/...`."""
-    query = f"?{request.url.query}" if request.url.query else ""
-    return RedirectResponse(url=f"/ui/{query}", status_code=308)
-
-
-WEB_UI_MOUNTED = mount_web_ui(app)
+from gateway import ui_routes
 
 _PROTOCOL_ROUTE_REGISTRY = (
     service_registry.load_service_registry(path=ADMIN_DB_PATH)
@@ -14177,7 +14107,7 @@ async def _gateway_media_job_submitter(
 
 
 _HTML_CONTENT_TYPES = ("text/html",)
-_BROWSER_UI_PREFIXES = ("/admin", "/setup", "/login", "/me", "/status-page")
+_BROWSER_UI_PREFIXES = ("/admin", "/setup", "/login", "/logout", "/me", "/auth")
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -14197,12 +14127,27 @@ _SECURITY_HEADERS = {
 }
 
 
+# Browser sign-in and sign-out responses carry session cookies, one-time keys
+# or provider state: never cache them, never leak their URL as a referrer.
+_BROWSER_AUTH_PATHS = frozenset({
+    "/login", "/logout", "/auth/logout-confirm", "/admin/oidc/callback",
+    "/setup/claim", "/setup/local-owner", "/setup/local-login", "/setup/first-app",
+})
+
+
+def _mark_browser_auth_response(response: Response) -> None:
+    response.headers["cache-control"] = "no-store"
+    response.headers["referrer-policy"] = "no-referrer"
+
+
 @app.middleware("http")
 async def _security_headers_middleware(request: Request, call_next):
     """Inject browser security headers on HTML/admin/portal responses."""
     response = await call_next(request)
     ct = response.headers.get("content-type", "")
     path = request.url.path
+    if path in _BROWSER_AUTH_PATHS:
+        _mark_browser_auth_response(response)
     is_html = any(ct.startswith(t) for t in _HTML_CONTENT_TYPES)
     is_ui_path = any(path == p or path.startswith(p + "/") or path.startswith(p + "?")
                      for p in _BROWSER_UI_PREFIXES)
@@ -14304,7 +14249,6 @@ app.include_router(
         examples_dir=_SHOWCASE_EXAMPLES_DIR,
         authenticate=lambda request, path: authenticate_request(request, path),
         status_provider=_showcase_status,
-        gallery_ui_url=("/ui/showcase/" if (Path(__file__).resolve().parent / "web/out/showcase/index.html").is_file() else None),
     )
 )
 
@@ -15292,7 +15236,7 @@ def _existing_admin_grants(*, include_revoked: bool = False) -> dict[str, str]:
             for row in admin_store.list_admin_roles(include_revoked=include_revoked, path=ADMIN_STORE.path)}
 
 
-def _safe_admin_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
+def _safe_admin_return_to(value: str | None, *, default: str = "/") -> str:
     return safe_browser_return_to(value, default=default)
 
 
@@ -15617,79 +15561,32 @@ app.include_router(create_account_router(
 
 @app.middleware("http")
 async def _account_session_revocation(request: Request, call_next):
-    # Login routes must accept a revoked cookie so the person can sign in again.
-    public_auth = (request.url.path.startswith("/auth/api/")
-                   or request.url.path in {"/login", "/admin/login", "/admin/oidc/callback", "/me/logout", "/admin/logout"}
-                   or request.url.path.startswith("/ui/sign-in")
-                   or request.url.path.startswith("/ui/invite"))
-    if not public_auth:
-        key = _browser_admin_session_signing_key()
-        cookie = _browser_admin_cookie_config()
-        raw = request.cookies.get(cookie.name)
-        if key and raw:
-            try:
-                session = decode_session_cookie(raw, signing_key=key)
-            except SessionError:
-                session = None
-            if session and not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
-                response = JSONResponse({"error": {"code": "session_revoked", "message": "Sign in again to continue."}}, status_code=401)
-                if "/api/" not in request.url.path and not request.url.path.startswith("/gateway/"):
-                    response = RedirectResponse("/ui/sign-in/", status_code=303)
-                response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
-                return response
-    return await call_next(request)
+    """Clear a revoked session cookie; never deny the request.
 
-
-@app.get("/me/login", include_in_schema=False)
-async def user_portal_login():
-    return RedirectResponse(_login_url(return_to="/"), status_code=302)
-
-
-@app.get("/me/logout", include_in_schema=False)
-async def user_portal_logout():
-    # Sign-out must revoke the session and the keys bound to it, which needs
-    # the CSRF-checked POST. Deleting only the cookie left both usable.
-    return RedirectResponse("/auth/logout-confirm", status_code=303)
-
-
-@app.get("/logout", include_in_schema=False)
-async def browser_logout_alias():
-    return RedirectResponse("/auth/logout-confirm", status_code=303)
-
-
-def _render_user_portal_response(request: Request, *, login_return_to: str) -> Response:
-    session = _oidc_session_from_request(request)
-    account = build_user_portal_snapshot(
-        session,
-        default_profile_id=(
-            _default_profile_id_for_session(session) if session else None
-        ),
-        path=ADMIN_STORE.path,
-    )
-    brand_label, brand_wordmark = _brand_settings()
-    body = render_user_portal(
-        title="Azizam",
-        brand=brand_label,
-        wordmark=brand_wordmark,
-        public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
-        account=account,
-        oidc_enabled=_effective_admin_oidc_config().enabled,
-        owner_exists=_owner_or_admin_exists(),
-        login_url=_login_url(return_to=login_return_to),
-        csrf_token=_csrf_token_for_oidc_session(session) if session else "",
-    )
-    return Response(
-        content=body,
-        status_code=200,
-        media_type="text/html; charset=utf-8",
-        headers={"cache-control": "no-store"},
-    )
-
-
-@app.get("/me/", include_in_schema=False)
-@app.get("/me", include_in_schema=False)
-async def user_portal(request: Request):
-    return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
+    Every reader of the session cookie (ADMIN_AUTH, _oidc_session_from_request)
+    already treats a revoked session as no session, so session-authorized
+    actions fail closed there. Denying here instead broke requests that an app
+    key, admin key or signed media URL authorizes, whenever the browser also
+    sent a stale cookie.
+    """
+    response = await call_next(request)
+    key = _browser_admin_session_signing_key()
+    cookie = _browser_admin_cookie_config()
+    raw = request.cookies.get(cookie.name)
+    if not key or not raw or isinstance(ui_routes.classify(request.url.path), ui_routes.Asset):
+        return response
+    try:
+        session = decode_session_cookie(raw, signing_key=key)
+    except SessionError:
+        # Another gateway on the same host may own it; cookies are not port-scoped.
+        return response
+    if accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+        return response
+    # A sign-in response sets the new session; deleting after it would undo it.
+    if any(value.startswith(f"{cookie.name}=") for value in response.headers.getlist("set-cookie")):
+        return response
+    response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+    return response
 
 
 from gateway.home_api import create_home_router
@@ -16248,173 +16145,6 @@ async def user_portal_revoke_key(credential_id: str, request: Request):
     )
 
 
-def _admin_api_surfaces() -> list[dict[str, Any]]:
-    return admin_api_surfaces(registry=ADMIN_STORE.get_service_registry())
-
-
-def _status_by_service_name(status_payload: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
-    out: dict[str, Mapping[str, Any]] = {}
-    for row in status_payload.get("backends") or []:
-        if not isinstance(row, Mapping):
-            continue
-        name = str(row.get("name") or "")
-        if name:
-            out[name] = row
-    return out
-
-
-def _admin_service_runtime_summary(
-    key: str,
-    *,
-    status_payload: Mapping[str, Any],
-) -> str:
-    models = status_payload.get("models") if isinstance(status_payload, Mapping) else {}
-    if not isinstance(models, Mapping):
-        models = {}
-    if engine_quarantine.is_local_swap_backend(key):
-        loaded = models.get("loaded_llm_name")
-        ctx = models.get("ctx_size")
-        if loaded and ctx:
-            return f"loaded LLM: {loaded}; context {ctx}"
-        if loaded:
-            return f"loaded LLM: {loaded}"
-        return "loaded LLM: unknown"
-    if key == "tts":
-        tts = models.get("tts")
-        if isinstance(tts, Mapping):
-            label = tts.get("label") or tts.get("unit")
-            if label:
-                return f"active TTS: {label}"
-        return "speech synthesis backend"
-    if key == "stt":
-        return "speech transcription backend"
-    if key == "comfyui":
-        image_workflows = models.get("image_workflows")
-        video_aliases = models.get("video_aliases")
-        image_count = len(image_workflows) if isinstance(image_workflows, list) else 0
-        video_count = len(video_aliases) if isinstance(video_aliases, list) else 0
-        queue = status_payload.get("comfy_queue")
-        queue_text = ""
-        if isinstance(queue, Mapping):
-            queue_text = (
-                f"; queue {int(queue.get('running') or 0)} running/"
-                f"{int(queue.get('pending') or 0)} pending"
-            )
-        return f"{image_count} image workflows; {video_count} video aliases{queue_text}"
-    return ""
-
-
-def _admin_services(status_payload: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
-    payload: Mapping[str, Any] = status_payload or {}
-    status_by_name = _status_by_service_name(payload)
-    service_overrides = _operator_service_availability_overrides()
-    rows: list[dict[str, Any]] = []
-    # The DB service registry is the live source of truth for backends; iterate
-    # it as the primary source. Services not yet in the running config["backends"]
-    # (frozen at boot) are shown as "pending" so operators can see/edit them
-    # immediately after adding via the dashboard. Fall back to config["backends"]
-    # if the registry is unavailable to keep the dashboard non-fatal.
-    try:
-        registry = ADMIN_STORE.get_service_registry()
-        registry_services: Mapping[str, Any] = registry.get("services") or {}
-        if not isinstance(registry_services, Mapping):
-            registry_services = {}
-    except Exception:  # noqa: BLE001 — never break the dashboard over this
-        registry_services = None  # type: ignore[assignment]
-    if registry_services is None:
-        # Fallback: registry unavailable — iterate frozen boot config
-        registry_services = {}
-        for key, raw in (config.get("backends") or {}).items():
-            if isinstance(raw, Mapping):
-                registry_services[key] = raw
-    live_config_keys: set[str] = set((config.get("backends") or {}).keys())
-    for service_id, service in registry_services.items():
-        if not isinstance(service, Mapping):
-            continue
-        key = str(service_id)
-        cfg = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-        name = str(service.get("name") or key)
-        is_live = key in live_config_keys
-        if is_live:
-            live = status_by_name.get(name) or {}
-            live_status = str(live.get("live_status") or live.get("status") or "unknown")
-            last_error = live.get("last_error") or ""
-        else:
-            live = {}
-            live_status = "pending"
-            last_error = ""
-        role = str(service.get("role") or "required")
-        if role == "standby" and live_status == "down":
-            live_status = "standby"
-        override = service_overrides.get(key, {})
-        override_state = str(override.get("state") or "").strip()
-        note = service.get("note") or last_error or ""
-        if not is_live and not note:
-            note = "Added in the dashboard — routing is live; status will appear once the first health probe completes."
-        if override_state and override_state != "available":
-            live_status = override_state
-            override_reason = str(override.get("reason") or "").strip()
-            note = override_reason or f"Operator mode: {override_state}"
-        rows.append(
-            {
-                "key": key,
-                "id": key,
-                "name": name,
-                "source": str(service.get("source") or "ui"),
-                "editable": bool(service.get("editable", service.get("source") == "ui")),
-                "enabled": bool_from_config(service.get("enabled"), True),
-                "config": dict(cfg),
-                "priority": service.get("priority"),
-                "role": role,
-                "capabilities": service.get("capabilities") or [],
-                "status": live_status,
-                "last_error": last_error,
-                "note": note,
-                "runtime": _admin_service_runtime_summary(
-                    key,
-                    status_payload=payload,
-                ) if is_live else "pending health probe",
-            }
-        )
-    return rows
-
-
-def _admin_config_sources(
-    snapshot: Mapping[str, Any],
-    *,
-    workflow_inventory: list[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    admin_summary = {
-        "users": len(snapshot.get("users") or []),
-        "apps": len(snapshot.get("apps") or []),
-        "profiles": len(snapshot.get("profiles") or []),
-        "credentials": len(snapshot.get("credentials") or []),
-        "runtime_profile_mappings": len(_admin_identity_mappings()),
-        "operator_settings": len(admin_store.list_operator_settings(path=ADMIN_STORE.path)),
-    }
-    env_names = [name for name in KNOWN_ENV_SOURCE_NAMES if name in os.environ]
-    manifest_sources: list[Mapping[str, Any]] = []
-    if workflow_inventory:
-        manifest_sources.append(
-            {
-                "id": "workflow-manifests",
-                "label": "Workflow manifests",
-                "kind": "workflow",
-                "source_ref": f"{len(workflow_inventory)} discovered workflows",
-            }
-        )
-    oidc_db_setting = ADMIN_STORE.get_oidc_config_setting()
-    return inventory_config_sources(
-        config,
-        env=os.environ,
-        env_names=env_names,
-        manifest_rows=manifest_sources,
-        admin_db_summary=admin_summary,
-        admin_db_oidc=oidc_db_setting,
-        admin_db_service_registry=ADMIN_STORE.get_service_registry(),
-    )
-
-
 def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     bootstrap = _bootstrap_admin_oidc_cfg()
     cfg, accepted_db_setting = _resolved_admin_oidc_config()
@@ -16558,452 +16288,6 @@ def _effective_media_job_admission_cfg() -> dict[str, Any]:
     return cfg
 
 
-def _admin_service_override_controls(
-    status_payload: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    overrides = _operator_service_availability_overrides()
-    rows: list[dict[str, Any]] = []
-    # Use the live registry as the canonical service source; fall back to
-    # config["backends"] (frozen at boot) if the registry is unavailable.
-    try:
-        registry = ADMIN_STORE.get_service_registry()
-        registry_services: Mapping[str, Any] = registry.get("services") or {}
-        if not isinstance(registry_services, Mapping):
-            registry_services = {}
-    except Exception:  # noqa: BLE001
-        registry_services = {}
-        for key, raw in (config.get("backends") or {}).items():
-            if isinstance(raw, Mapping):
-                registry_services[key] = raw
-    registry_keys = [str(k) for k in registry_services if isinstance(registry_services[k], Mapping)]
-    for key in sorted(set(registry_keys) | set(overrides.keys())):
-        svc = registry_services.get(key) or {}
-        name = str(svc.get("name") or key) if isinstance(svc, Mapping) else key
-        override = overrides.get(key, {})
-        state = str(override.get("state") or "available")
-        reason = override.get("reason")
-        rows.append(
-            {
-                "key": key,
-                "service_id": key,
-                "label": f"{name} operator mode",
-                "form": "service_availability",
-                "action_url": "/admin/api/operator/service-availability",
-                "method": "PUT",
-                "current": state,
-                "scope": "service availability",
-                "source": "admin.db override" if key in overrides else "runtime default",
-                "reason": reason,
-                "retry_after_seconds": override.get("retry_after_seconds"),
-                "summary": (
-                    f"{state}; {reason}"
-                    if reason
-                    else f"{state}; applies to routes that use this service"
-                ),
-            }
-        )
-    return rows
-
-
-def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
-    revision = admin_store.operator_setting_revision(admin_store.get_operator_setting(
-        "media_job_admission_overrides", path=ADMIN_STORE.path))
-    effective = _effective_media_job_admission_cfg()
-    override_present = bool(_operator_media_job_admission_overrides())
-    summary_parts = []
-    for label, key in (
-        ("Disabled intents", "disabled_intents"),
-        ("Disabled resources", "disabled_resource_classes"),
-        ("Reserved tokens", "reserved_tokens"),
-        ("Max queue", "max_queue_depth"),
-    ):
-        value = effective.get(key)
-        if value not in (None, "", [], {}, ()):
-            summary_parts.append(f"{label}: {_format_admin_value(value)}")
-    return [
-        {
-            "key": "media-job-admission",
-            "label": "Media job admission",
-            "form": "media_job_admission",
-            "revision": revision,
-            "action_url": "/admin/api/operator/media-job-admission",
-            "method": "PUT",
-            "current": effective,
-            "scope": "image, audio, and video jobs",
-            "source": "admin.db override" if override_present else "proxy_config.yml default",
-            "summary": "; ".join(summary_parts) or "No runtime media admission limits",
-        }
-    ]
-
-
-def _admin_user_access_controls() -> list[dict[str, Any]]:
-    defaults = _runtime_user_access_defaults()
-    rows: list[dict[str, Any]] = []
-    for key, label, summary in (
-        (
-            "self_service_apps",
-            "User-owned Apps and keys",
-            "Allows signed-in users to create their own Personal Apps and opk_ keys.",
-        ),
-        (
-            "auto_create_personal_app",
-            "Auto-create Personal App",
-            "Creates a first Personal App automatically when a signed-in user needs one.",
-        ),
-    ):
-        enabled = bool_from_config(defaults.get(key), True)
-        rows.append(
-            {
-                "key": key,
-                "label": label,
-                "action_url": "/admin/api/operator/user-access-defaults",
-                "method": "PUT",
-                "field": key,
-                "current": "true" if enabled else "false",
-                "scope": "signed-in user access",
-                "source": (
-                    "admin.db user access defaults"
-                    if _user_defaults_seeded_in_admin_db()
-                    else "bootstrap default pending seed"
-                ),
-                "summary": summary,
-                "supported_values": [
-                    {"value": "true", "label": "Enabled"},
-                    {"value": "false", "label": "Disabled"},
-                ],
-            }
-        )
-    return rows
-
-
-def _format_admin_value(value: Any) -> str:
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return ", ".join(str(item) for item in value)
-    return str(value)
-
-
-def _inventory_item(
-    item_id: Any,
-    *,
-    label: Any = "",
-    description: Any = "",
-) -> dict[str, str]:
-    out = {"id": str(item_id)}
-    if label:
-        out["label"] = str(label)
-    if description:
-        out["description"] = str(description)
-    return out
-
-
-def _dedupe_inventory_items(items: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:
-    seen: set[str] = set()
-    out: list[dict[str, str]] = []
-    for item in items:
-        item_id = str(item.get("id") or "").strip()
-        if not item_id or item_id in seen:
-            continue
-        seen.add(item_id)
-        out.append({
-            key: str(value)
-            for key, value in item.items()
-            if key in {"id", "label", "description"} and value not in (None, "")
-        })
-    return out
-
-
-def _admin_model_inventory(status_payload: Mapping[str, Any]) -> list[dict[str, str]]:
-    items: list[dict[str, str]] = []
-    for entry in _build_role_catalog_entries() + _build_workflow_model_entries():
-        model_id = entry.get("id")
-        if not model_id:
-            continue
-        label = entry.get("description") or entry.get("owned_by") or ""
-        items.append(_inventory_item(model_id, label=label))
-
-    loaded = ""
-    models = status_payload.get("models") if isinstance(status_payload, Mapping) else {}
-    if isinstance(models, Mapping):
-        loaded = str(models.get("loaded_llm_name") or "")
-    if loaded:
-        items.append(_inventory_item(loaded, label="currently loaded LLM"))
-
-    for name in AUDIO_WORKFLOWS_CFG:
-        items.append(_inventory_item(name, label="audio workflow model"))
-    for alias, target in (AUDIO_ALIASES or {}).items():
-        items.append(_inventory_item(alias, label=f"audio alias for {target}"))
-
-    for name in VIDEO_WORKFLOWS:
-        items.append(_inventory_item(name, label="video workflow model"))
-    for alias, target in (videos_cfg.get("aliases", {}) or {}).items():
-        items.append(_inventory_item(alias, label=f"video alias for {target}"))
-
-    return _dedupe_inventory_items(items)
-
-
-def _admin_workflow_inventory() -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        manifest = record.manifest
-        rows.append({
-            "id": record.id,
-            "label": manifest.get("display_name") or record.id,
-            "description": manifest.get("description") or "",
-            "intent": record.intent,
-            "backends": record.supported_backends,
-            "resource_tier": manifest.get("resource_tier") or "batch",
-            "trust_tier": manifest.get("trust_tier")
-            or ("stable" if record.identity.trusted else "experimental"),
-        })
-    return rows
-
-
-def _admin_backend_inventory(status_payload: Mapping[str, Any]) -> list[dict[str, str]]:
-    status_by_name = _status_by_service_name(status_payload)
-    items: list[dict[str, str]] = []
-    # Read live registry; fall back to frozen boot config if unavailable.
-    try:
-        registry = ADMIN_STORE.get_service_registry()
-        registry_services: Mapping[str, Any] = registry.get("services") or {}
-        if not isinstance(registry_services, Mapping):
-            registry_services = {}
-    except Exception:  # noqa: BLE001
-        registry_services = {}
-        for k, v in (config.get("backends") or {}).items():
-            if isinstance(v, Mapping):
-                registry_services[k] = v
-    for service_id, service in registry_services.items():
-        if not isinstance(service, Mapping):
-            continue
-        key = str(service_id)
-        cfg = service.get("config") if isinstance(service.get("config"), Mapping) else service
-        name = str(service.get("name") or key)
-        live = status_by_name.get(name) or {}
-        status = live.get("live_status") or live.get("status") or "unknown"
-        capabilities = service.get("capabilities") or (cfg.get("capabilities") if isinstance(cfg, Mapping) else None) or []
-        description = ", ".join(str(item) for item in capabilities) if capabilities else ""
-        if status:
-            description = (description + "; " if description else "") + f"status {status}"
-        items.append(_inventory_item(key, label=name, description=description))
-    return _dedupe_inventory_items(items)
-
-
-def _admin_profile_inventory(
-    status_payload: Mapping[str, Any] | None = None,
-    *,
-    workflows: list[Mapping[str, Any]] | None = None,
-) -> dict[str, list[dict[str, str]]]:
-    payload: Mapping[str, Any] = status_payload or {}
-    workflow_rows = workflows if workflows is not None else _admin_workflow_inventory()
-    workflow_items = [
-        _inventory_item(row.get("id"), label=row.get("label"), description=row.get("intent"))
-        for row in workflow_rows
-    ]
-    return {
-        "models": _admin_model_inventory(payload),
-        "workflows": _dedupe_inventory_items(workflow_items),
-        "backends": _admin_backend_inventory(payload),
-    }
-
-
-def _admin_model_visibility(status_payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    payload: Mapping[str, Any] = status_payload or {}
-    models = payload.get("models") if isinstance(payload, Mapping) else {}
-    loaded = ""
-    if isinstance(models, Mapping):
-        loaded = str(models.get("loaded_llm_name") or "")
-    if not loaded:
-        loaded_path = currently_loaded_kobold_model()
-        loaded = os.path.basename(loaded_path) if loaded_path else ""
-    return {
-        "mode": "per-Profile catalog or current-loaded LLM",
-        "loaded_model": loaded or "unknown",
-        "list_behavior": (
-            "/v1/models is filtered by the caller's Profile; current-loaded "
-            "Profiles only see active loaded LLM ids."
-        ),
-        "route_behavior": (
-            "Allowed role/catalog requests may swap models"
-            if not PIN_LOADED_MODEL
-            else "Global pin_loaded_model prevents automatic LLM swaps"
-        ),
-    }
-
-
-def _admin_identity_mappings() -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-
-    source_labels = {
-        "email": "email",
-        "domain": "email domain",
-        "oidc_group": "OIDC group",
-        "oidc_role": "OIDC role",
-        "gateway_role": "gateway admin role",
-        "all_users": "all signed-in users",
-    }
-    active_mapping_keys: set[tuple[str, str, str]] = set()
-    for mapping in admin_store.list_runtime_profile_mappings(path=ADMIN_STORE.path):
-        source_kind = str(mapping.get("source_kind") or "")
-        source_value = str(mapping.get("source_value") or "")
-        profile_id = _profile_ref_to_store_id(mapping.get("profile_id")) or "default-local"
-        active_mapping_keys.add((source_kind, source_value, profile_id))
-        label = source_labels.get(source_kind, source_kind or "identity")
-        source = label if source_kind == "all_users" else f"{label}: {source_value}"
-        rows.append(
-            {
-                "id": mapping.get("id"),
-                "source": source,
-                "scope": "runtime Profile mapping",
-                "profile_id": profile_id,
-                "note": "Managed here. This does not grant admin access.",
-            }
-        )
-
-    bootstrap_defaults_seeded = _user_defaults_seeded_in_admin_db()
-
-    def add_mapping(scope: str, source_kind: str, mapping_name: str) -> None:
-        if bootstrap_defaults_seeded:
-            return
-        mapping = user_defaults_cfg.get(mapping_name)
-        if not isinstance(mapping, Mapping):
-            return
-        for source, profile in sorted(mapping.items()):
-            profile_id = _mapping_profile_id(profile)
-            if not profile_id:
-                continue
-            source_value = " ".join(str(source or "").strip().lower().strip("/").split())
-            if (source_kind, source_value, profile_id) in active_mapping_keys:
-                continue
-            rows.append(
-                {
-                    "source": f"{scope}: {source}",
-                    "scope": "bootstrap fallback",
-                    "profile_id": profile_id,
-                    "note": "Imported into admin.db on startup when no matching runtime mapping exists.",
-                }
-            )
-
-    add_mapping("gateway role", "gateway_role", "role_profile_ids")
-    add_mapping("email domain", "domain", "domain_profile_ids")
-    add_mapping("email", "email", "email_profile_ids")
-    default_profile = _mapping_profile_id(user_defaults_cfg.get("default_profile_id"))
-    if (
-        default_profile
-        and not bootstrap_defaults_seeded
-        and ("all_users", "*", default_profile) not in active_mapping_keys
-    ):
-        rows.append(
-            {
-                "source": "all signed-in users",
-                "scope": "bootstrap fallback",
-                "profile_id": default_profile,
-                "note": "Imported into admin.db on startup when no all-users runtime mapping exists.",
-            }
-        )
-    if not rows:
-        rows.append(
-            {
-                "source": "all signed-in users",
-                "scope": "runtime default",
-                "profile_id": "default-local",
-                "note": "No custom runtime default mapping is configured.",
-            }
-        )
-    return rows
-
-
-@app.get("/admin/", include_in_schema=False)
-@app.get("/admin", include_in_schema=False)
-async def admin_dashboard(request: Request):
-    try:
-        actor = ADMIN_AUTH(request)
-    except AdminAuthError as exc:
-        return _admin_auth_failure_response(
-            request,
-            exc,
-            return_to=_path_with_query(request),
-        )
-    if not request.headers.get("authorization"):
-        return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
-    snapshot = ADMIN_STORE.dashboard_snapshot(actor)
-    try:
-        status_payload = await status_endpoint.get_cached_status(config)
-    except Exception as e:  # noqa: BLE001
-        print(f"[proxy] admin status enrichment failed: {e}", flush=True)
-        status_payload = {}
-    snapshot["api_surfaces"] = _admin_api_surfaces()
-    snapshot["status"] = status_payload
-    snapshot["services"] = _admin_services(status_payload)
-    workflow_inventory = _admin_workflow_inventory()
-    snapshot["workflow_inventory"] = workflow_inventory
-    snapshot["config_sources"] = _admin_config_sources(
-        snapshot,
-        workflow_inventory=workflow_inventory,
-    )
-    snapshot["service_overrides"] = _admin_service_override_controls(status_payload)
-    snapshot["operator_overrides"] = _admin_user_access_controls()
-    snapshot["resource_overrides"] = _admin_media_job_admission_controls()
-    snapshot["profile_inventory"] = _admin_profile_inventory(
-        status_payload,
-        workflows=workflow_inventory,
-    )
-    snapshot["policy_catalog"] = profile_policy_catalog()
-    snapshot["model_visibility"] = _admin_model_visibility(status_payload)
-    snapshot["identity_mappings"] = _admin_identity_mappings()
-    try:
-        # Capture revision before values so a concurrent update fails closed.
-        snapshot["oidc_config_revision"] = admin_store.operator_setting_revision(
-            admin_store.get_operator_setting("oidc_provider_config", path=ADMIN_STORE.path))
-        snapshot["oidc_config"] = _admin_oidc_config_snapshot()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)
-        snapshot["oidc_config"] = None
-    # "Things that want a look" — derived from the same data the tables show
-    # (now including live service health). This is the operator's landing list.
-    snapshot["attention"] = derive_admin_attention(snapshot)
-    brand_label, brand_wordmark = _brand_settings()
-    body = render_admin_dashboard(
-        snapshot,
-        title="Azizam Admin",
-        brand=brand_label,
-        wordmark=brand_wordmark,
-    )
-    return Response(
-        content=body,
-        status_code=200,
-        media_type="text/html; charset=utf-8",
-        headers={"cache-control": "no-store"},
-    )
-
-
-@app.get("/admin/services", include_in_schema=False)
-@app.get("/admin/services/", include_in_schema=False)
-@app.get("/admin/status", include_in_schema=False)
-@app.get("/admin/status/", include_in_schema=False)
-@app.get("/admin/apps", include_in_schema=False)
-@app.get("/admin/apps/", include_in_schema=False)
-@app.get("/admin/profiles", include_in_schema=False)
-@app.get("/admin/profiles/", include_in_schema=False)
-@app.get("/admin/users", include_in_schema=False)
-@app.get("/admin/users/", include_in_schema=False)
-@app.get("/admin/audit", include_in_schema=False)
-@app.get("/admin/audit/", include_in_schema=False)
-@app.get("/admin/settings", include_in_schema=False)
-@app.get("/admin/settings/", include_in_schema=False)
-@app.get("/admin/overview", include_in_schema=False)
-@app.get("/admin/overview/", include_in_schema=False)
-async def admin_react_section_redirect(request: Request):
-    try:
-        ADMIN_AUTH(request)
-    except AdminAuthError as exc:
-        return _admin_auth_failure_response(
-            request,
-            exc,
-            return_to=_path_with_query(request),
-        )
-    return RedirectResponse(admin_destination(request.url.path, request.url.query), status_code=302, headers={"cache-control": "no-store"})
-
-
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
     if not _effective_admin_oidc_config().enabled:
         # OIDC is not configured. Browser users who land on /login should go
@@ -17011,13 +16295,13 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         # API callers keep the explicit machine-readable 501 below.
         if not request.headers.get("authorization"):
             if not _owner_or_admin_exists():
-                return RedirectResponse("/setup", status_code=302)
+                return RedirectResponse("/setup/", status_code=302)
             target = _safe_admin_return_to(request.query_params.get("return_to"), default=default_return_to)
-            return RedirectResponse(f"/ui/sign-in/?return_to={quote(target, safe='')}", status_code=302)
+            return RedirectResponse(f"/sign-in/?return_to={quote(target, safe='')}", status_code=302)
         return Response(
             content=(
                 "OIDC browser login is not configured on this gateway yet. "
-                "Open /setup to see what to configure. "
+                "Open /setup/ to see what to configure. "
                 "(`python proxy.py generate-admin-key <name>` is supported "
                 "for recovery and headless automation, not normal first-run "
                 "setup.)"
@@ -17101,28 +16385,6 @@ def _setup_personal_app_for_session(session) -> Mapping[str, Any] | None:
     ):
         if app.get("kind") == "personal" and not app.get("disabled_at"):
             return app
-    return None
-
-
-def _setup_live_admin_session_target(session) -> str | None:
-    """Return the post-setup landing target for a live admin browser session."""
-    if session is None or session.role not in {"owner", "admin", "superadmin"}:
-        return None
-    subject_kind, subject_id = session_admin_role_subject(
-        str(getattr(session, "subject", "") or "")
-    )
-    roles = admin_store.list_admin_roles(
-        subject_kind=subject_kind,
-        subject_id=subject_id,
-        path=ADMIN_STORE.path,
-    )
-    role_names = {str(role.get("role") or "") for role in roles}
-    if not {"owner", "admin", "superadmin"} & role_names:
-        return None
-    if subject_kind == "user" and admin_store.get_user(subject_id, path=ADMIN_STORE.path):
-        return "/"
-    if subject_kind == "service_account":
-        return "/ui/home/"
     return None
 
 
@@ -17285,10 +16547,10 @@ async def _setup_page_response(
         wordmark=brand_wordmark,
         owner_or_admin_exists=_owner_or_admin_exists(),
         oidc_enabled=_effective_admin_oidc_config().enabled,
-        login_url=_login_url(return_to="/setup"),
+        login_url=_login_url(return_to="/setup/"),
         is_admin_signed_in=is_admin_signed_in,
         actor_label=actor_label,
-        logout_url="/logout" if is_admin_signed_in else None,
+        logout_url="/auth/logout-confirm" if is_admin_signed_in else None,
         claim_error=claim_error,
         can_claim_with_admin_key=bool(_browser_admin_session_signing_key()),
         create_error=create_error,
@@ -17320,23 +16582,13 @@ async def _setup_page_response(
     )
 
 
-@app.get("/setup", include_in_schema=False)
-async def setup_page(request: Request):
-    # A signed-in owner/admin has no reason to LAND on the setup console — setup
-    # is done. Send them to their portal instead of an "operator setup" card
-    # that only costs attention to dismiss. The console's tools (mint a key from
-    # the console, gateway doctor) stay reachable deliberately via ?operator=1
-    # — for headless/recovery use — but they're never the default landing.
-    session = _oidc_session_from_request(request)
-    wants_operator_console = request.query_params.get("operator") == "1"
-    # Only redirect when the cookie resolves to a live admin principal. People
-    # go to their portal; service-account recovery sessions go to Admin. A
-    # stale/orphaned cookie falls through to the sign-in form instead of looping.
-    live_admin_target = _setup_live_admin_session_target(session)
-    if live_admin_target and not wants_operator_console:
-        return RedirectResponse(live_admin_target, status_code=303)
-    if not wants_operator_console and (Path(__file__).resolve().parent / "web/out/setup/index.html").is_file():
-        return RedirectResponse("/ui/setup/", status_code=303)
+@app.get("/setup/console", include_in_schema=False)
+async def setup_console(request: Request):
+    """Server-rendered setup console for headless and recovery use.
+
+    The setup page is the web app's /setup/. This console keeps the tools the
+    web page does not have (mint a key from the console, gateway doctor).
+    """
     return await _setup_page_response(request)
 
 
@@ -17446,7 +16698,7 @@ async def setup_claim_admin_key(request: Request):
         role=role,
         cookie=_browser_admin_cookie_config(),
     )
-    response = RedirectResponse("/ui/home/", status_code=303)
+    response = RedirectResponse("/", status_code=303)
     cookie = _browser_admin_cookie_config()
     response.set_cookie(
         cookie.name,
@@ -17501,7 +16753,7 @@ def _issue_browser_admin_session(
     email: str,
     role: str,
     signing_key: bytes,
-    redirect_to: str = "/setup",
+    redirect_to: str = "/setup/",
 ) -> Response:
     cookie = _browser_admin_cookie_config()
     session = session_from_claims(
@@ -17596,7 +16848,7 @@ async def setup_create_local_owner(request: Request):
     if _owner_or_admin_exists():
         # First-run is over. Redirect through /setup so the operator sees the
         # signed-in landing card and can sign in if needed.
-        return RedirectResponse("/setup", status_code=303)
+        return RedirectResponse("/setup/", status_code=303)
     if not _client_may_claim_first_owner(request):
         return await _setup_page_response(
             request,
@@ -17660,7 +16912,7 @@ async def setup_create_local_owner(request: Request):
         path=ADMIN_STORE.path,
     )
     if user is None:
-        return RedirectResponse("/setup", status_code=303)
+        return RedirectResponse("/setup/", status_code=303)
     # Parity with OIDC login: give the new owner a personal App up front so the
     # portal can hand them a working key without a separate "create App" step.
     _ensure_personal_app_for_owner(user, role="owner")
@@ -17894,25 +17146,16 @@ async def setup_create_first_app(request: Request):
 
 @app.get("/login", include_in_schema=False)
 async def browser_login(request: Request):
-    return await _start_browser_login(request, default_return_to="/ui/home/")
-
-
-@app.get("/admin/login", include_in_schema=False)
-async def admin_login_compat(request: Request):
-    return_to = _safe_admin_return_to(
-        request.query_params.get("return_to"),
-        default="/ui/home/",
-    )
-    return RedirectResponse(_login_url(return_to=return_to), status_code=302)
+    return await _start_browser_login(request, default_return_to="/")
 
 
 def _browser_signin_failure(request: Request, *, return_to: str | None = None):
     """Give browser navigations a safe retry page; never forward provider detail."""
     if "text/html" not in request.headers.get("accept", ""):
         return None
-    target = _safe_admin_return_to(return_to, default="/ui/home/")
+    target = _safe_admin_return_to(return_to)
     return RedirectResponse(
-        f"/ui/sign-in/?error=provider&return_to={quote(target, safe='')}",
+        f"/sign-in/?error=provider&return_to={quote(target, safe='')}",
         status_code=303,
         headers={"cache-control": "no-store", "referrer-policy": "no-referrer"},
     )
@@ -18056,7 +17299,7 @@ async def admin_oidc_callback(request: Request):
 async def logout_confirmation(request: Request):
     session = _oidc_session_from_request(request)
     if session is None:
-        return RedirectResponse("/ui/sign-in/", status_code=303)
+        return RedirectResponse("/sign-in/", status_code=303)
     csrf = _csrf_token_for_oidc_session(session)
     return HTMLResponse(
         '<!doctype html><title>Sign out of Azizam</title>'
@@ -18068,8 +17311,6 @@ async def logout_confirmation(request: Request):
 
 
 @app.post("/logout", include_in_schema=False)
-@app.post("/me/logout", include_in_schema=False)
-@app.post("/admin/logout", include_in_schema=False)
 async def admin_logout(request: Request):
     session = _oidc_session_from_request(request)
     if session is None:
@@ -18082,8 +17323,8 @@ async def admin_logout(request: Request):
     if not expected or not hmac.compare_digest(expected, supplied):
         return JSONResponse({"error": {"code": "csrf_required", "message": "Refresh the page before signing out."}}, status_code=403)
     accounts.revoke_session(session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
-    response = (JSONResponse({"next": "/ui/sign-in/"}) if "application/json" in request.headers.get("accept", "")
-                else RedirectResponse("/ui/sign-in/", status_code=303))
+    response = (JSONResponse({"next": "/sign-in/"}) if "application/json" in request.headers.get("accept", "")
+                else RedirectResponse("/sign-in/", status_code=303))
     cookie = _browser_admin_cookie_config()
     response.delete_cookie(
         cookie.name,
@@ -18403,8 +17644,6 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/v1/status",
     "/v1/audio/health",
     "/_next/",
-    "/ui/",
-    "/firehose",
     "/favicon.ico",
     "/static/",
     "/SKILL.md",
@@ -18412,7 +17651,7 @@ _FIREHOSE_NO_RECORD_PREFIXES = (
     "/.well-known/",
 )
 # Exact paths (not prefixes) that should be excluded too.
-_FIREHOSE_NO_RECORD_EXACT = {"/", "/me", "/ui", "/llms.txt"}
+_FIREHOSE_NO_RECORD_EXACT = {"/", "/llms.txt"}
 
 # Map known successful-response paths to a synthesized event-type for the
 # Recent activity timeline. We don't peek at request bodies — the path tells
@@ -18443,6 +17682,7 @@ async def _firehose_request_counter(request: Request, call_next):
     path = request.url.path
     skip = (
         path in _FIREHOSE_NO_RECORD_EXACT
+        or ui_routes.classify(path) is not None
         or any(path == p or path.startswith(p) for p in _FIREHOSE_NO_RECORD_PREFIXES)
     )
     t0 = time.monotonic()
@@ -18501,18 +17741,6 @@ async def _firehose_request_counter(request: Request, call_next):
                         )
             except Exception:
                 pass
-
-
-@app.head("/", include_in_schema=False)
-async def head_root():
-    """HEAD / — for reverse-proxy health checks that probe the root path."""
-    return Response(status_code=200)
-
-
-@app.head("/admin", include_in_schema=False)
-async def head_admin():
-    """HEAD /admin — for reverse-proxy health checks that probe the admin path."""
-    return Response(status_code=200)
 
 
 @app.get("/health")
@@ -25651,10 +24879,8 @@ async def v1_status(request: Request):
 # -----------------------------------------------------------------------------
 # Status dashboard
 #
-# HTML clients enter the product app at `/ui/home/`. The prior root response
-# remains available to API clients. `/me/api/*` stays the user account API.
-# Operator technical details remain owner-guarded at `/status/raw`.
-# The previous Next.js page under status-page/out is no longer served.
+# The web app's Status page is `/status/`. Operator technical details remain
+# admin-guarded at `/status/raw`. `/me/api/*` stays the user account API.
 # -----------------------------------------------------------------------------
 
 async def _render_status_html(request: Request) -> Response:
@@ -25690,7 +24916,7 @@ async def _render_status_html(request: Request) -> Response:
         # address bar (loopback dev vs. external ai.vivid.fish).
         host_hdr = request.headers.get("host") or ""
         actor_label = actor.email or actor.subject
-        logout_url = "/me/logout" if actor.auth_method == "session" else None
+        logout_url = "/auth/logout-confirm" if actor.auth_method == "session" else None
         body = render_html(
             payload,
             host=host_hdr,
@@ -25714,50 +24940,15 @@ async def _render_status_html(request: Request) -> Response:
     )
 
 
-@app.get("/", include_in_schema=False)
-async def root_browser_entrypoint(request: Request):
-    if accepts_html(request.headers.get("accept", "")):
-        return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
-    return _render_user_portal_response(request, login_return_to="/")
-
-
-@app.get("/r/{request_id}", include_in_schema=False)
-async def receipt_deep_link(request_id: str, request: Request):
-    # Addressable receipt detail: a shareable "why did this fail" URL. It serves
-    # the same portal page; the page's JS reads /r/:id from the path and opens
-    # the receipt sheet (fetching the owner-scoped /me/api/receipts/:id). The id
-    # is not used server-side here — ownership is enforced by that JSON endpoint.
-    return _render_user_portal_response(
-        request, login_return_to=f"/r/{request_id}"
-    )
-
-
-@app.get("/status", include_in_schema=False)
-@app.get("/status/", include_in_schema=False)
-async def status_dashboard_index(request: Request):
-    if accepts_html(request.headers.get("accept", "")) and not request.headers.get("authorization"):
-        return RedirectResponse(with_query("/ui/status/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
-    return await _render_status_html(request)
-
-
 @app.get("/status/raw/", include_in_schema=False)
 @app.get("/status/raw", include_in_schema=False)
 async def status_dashboard_raw(request: Request):
     return await _render_status_html(request)
 
 
-@app.get("/firehose", include_in_schema=False)
-async def status_dashboard_firehose(request: Request):
-    """Backwards compatibility for the operator technical details page."""
-    return Response(
-        status_code=301,
-        headers={"location": with_query("/status/raw", request.url.query), "cache-control": "no-store"},
-    )
-
-
 @app.get("/favicon.ico", include_in_schema=False)
 async def status_favicon():
-    # No bundled favicon now that the Next.js export is gone. 204 No Content.
+    # The web export ships no icon. 204 No Content keeps browsers quiet.
     return Response(status_code=204)
 
 
@@ -30099,6 +29290,31 @@ async def provider_native_request(
             headers=response_headers,
             media_type=upstream.headers.get("content-type"),
         )
+
+
+async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
+    """Admin pages and their payloads need an admin-control role."""
+    return_to = _path_with_query(request) if ui_routes.is_page_path(request.url.path) else f"/{name}/"
+    try:
+        actor = ADMIN_AUTH(request)
+    except AdminAuthError as exc:
+        return _admin_auth_failure_response(request, exc, return_to=return_to)
+    if not ADMIN_CONTROL_ROLES & set(actor.roles):
+        return _admin_auth_failure_response(
+            request,
+            AdminAuthError("admin role required", status_code=403, code="admin_forbidden"),
+            return_to=return_to,
+        )
+    return None
+
+
+# The web app: just before the catch-all, never a partial match (gateway/ui_routes.py).
+WEB_UI_ROUTE = ui_routes.UiRoute(
+    WEB_UI_DIR,
+    _ui_admin_page_guard,
+    registered_segments=ui_routes.registered_first_segments(app.router.routes),
+)
+app.router.routes.append(WEB_UI_ROUTE)
 
 
 @app.api_route(

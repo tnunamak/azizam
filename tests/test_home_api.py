@@ -397,7 +397,7 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert data["scope"] == "member"
     assert {row["capability"] for row in data["capabilities"]} == {"chat"}
     assert [row["request_id"] for row in data["receipts"]] == ["mine"]
-    assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
+    assert data["receipts"][0]["href"] == "/usage/?receipt=mine"
     assert isinstance(data["receipts"][0]["created_at"], int)
     for row in data["capabilities"]:
         expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured", "availability"}

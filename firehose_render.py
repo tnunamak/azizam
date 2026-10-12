@@ -1,7 +1,7 @@
 """
 Server-side HTML renderer for the ai.vivid.fish status dashboard.
 
-The operator dashboard is served at `/status`; `/firehose` redirects there.
+The operator's technical status page is served at `/status/raw`.
 
 Sections are grouped by purpose (banner & alerts → live activity → resources
 → capabilities → recent output → identity activity → diagnostics) and the
@@ -236,7 +236,6 @@ def render_html(
     actor_label: Optional[str] = None,
     logout_url: Optional[str] = None,
     show_account: bool = True,
-    show_admin: bool = True,
     show_status: bool = True,
 ) -> str:
     """Render the status page from a /v1/status payload.
@@ -270,7 +269,6 @@ def render_html(
     parts.append(render_shell_header(
         current="status",
         show_account=show_account,
-        show_admin=show_admin,
         show_status=show_status,
         actor_label=actor_label,
         logout_url=logout_url,

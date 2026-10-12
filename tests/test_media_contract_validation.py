@@ -208,7 +208,7 @@ class ModelRetrieveContractTests(unittest.IsolatedAsyncioTestCase):
                     for entry in entries:
                         model = await sdk.models.retrieve(entry["id"])
                         self.assertEqual(model.id, entry["id"])
-        routes = {route.path: route.endpoint for route in proxy.app.routes}
+        routes = {route.path: route.endpoint for route in proxy.app.routes if hasattr(route, "endpoint")}
         self.assertIs(routes["/openai/v1/models/{model_id:path}"], routes["/v1/models/{model_id:path}"])
 
 

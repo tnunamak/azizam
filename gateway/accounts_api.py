@@ -84,7 +84,7 @@ def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
     result = {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
             "oidc_label": oidc.get("label") or "single sign-on",
-            "oidc_url": "/admin/login?return_to=/ui/invite/", "instance_name": "Azizam",
+            "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
     if include_revision:
         result["revision"] = admin_store.operator_setting_revision(setting)
@@ -144,7 +144,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.get("/auth/api/options")
     def get_options(request: Request):
         result = options()
-        result["oidc_url"] = "/admin/login?" + urlencode({"return_to": safe_browser_return_to(request.query_params.get("return_to"))})
+        result["oidc_url"] = "/login?" + urlencode({"return_to": safe_browser_return_to(request.query_params.get("return_to"))})
         session = session_reader(request)
         if session:
             user = admin_store.get_user(session.subject, path=path_provider())
@@ -195,7 +195,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
                                                        path=path, oidc_user_id=oidc_user_id)
-        return issue(user, {"next": "/ui/", "app": app, "credential": credential})
+        return issue(user, {"next": "/", "app": app, "credential": credential})
 
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):
@@ -205,7 +205,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         link = hmac.new(b"reset-link", body.token.encode(), "sha256").hexdigest()
         accounts.throttle(client_ip(request), f"reset:{link}", path=path_provider())
         accounts.reset_password(body.token, body.password, path=path_provider())
-        response = JSONResponse({"next": "/ui/sign-in/"})
+        response = JSONResponse({"next": "/sign-in/"})
         cookie = cookie_provider()
         response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
         return response
@@ -242,7 +242,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if isinstance(ctx, JSONResponse):
             return ctx
         link, token = accounts.create_link("reset", ctx.audit_actor_id, user_id=user_id, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
-        return {"url": f"/ui/sign-in/#reset={token}", "expires_at": link["expires_at"]}
+        return {"url": f"/sign-in/#reset={token}", "expires_at": link["expires_at"]}
 
     @router.get("/admin/api/invites")
     def invites(request: Request):
@@ -261,7 +261,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), profile_id=body.profile_id,
                                              email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
-        return {"invite": invite, "url": f"/ui/invite/#token={token}"}
+        return {"invite": invite, "url": f"/invite/#token={token}"}
 
     @router.get("/admin/api/invites/{link_id}/link")
     def copy_invite(request: Request, link_id: str):
@@ -269,7 +269,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if isinstance(ctx, JSONResponse):
             return ctx
         token = accounts.copy_invite(link_id, ctx.audit_actor_id, signing_key_provider(), path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
-        return {"url": f"/ui/invite/#token={token}"}
+        return {"url": f"/invite/#token={token}"}
 
     @router.delete("/admin/api/invites/{link_id}")
     def revoke_invite(request: Request, link_id: str):

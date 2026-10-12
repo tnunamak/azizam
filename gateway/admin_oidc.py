@@ -50,7 +50,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, MutableMapping, Protocol
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
-from gateway.browser_routes import admin_destination, with_query
+from gateway import ui_routes
+
 
 __all__ = [
     "AdminRole",
@@ -102,8 +103,14 @@ class SessionError(ValueError):
     """Raised when a session cookie is malformed, tampered with, or expired."""
 
 
-def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
-    """Keep product return destinations local, including their query and fragment."""
+def safe_browser_return_to(value: str | None, *, default: str = "/") -> str:
+    """Keep return destinations on a web app page or /status/raw.
+
+    The query and fragment are kept. Everything else, including API paths,
+    other hosts and paths with dot segments, falls back to ``default``.
+    tests/fixtures/return_paths.json is shared with the web app's mirror,
+    safeContinuePath.
+    """
     if not value or not value.startswith("/"):
         return default
     decoded = unquote(value)
@@ -115,15 +122,8 @@ def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> 
         return default
     if target.netloc or target.scheme:
         return default
-    destination = admin_destination(target.path, target.query)
-    if destination:
-        return destination + (f"#{target.fragment}" if target.fragment else "")
-    if target.path in {"/", "/me", "/me/", "/ui", "/status", "/status/"}:
-        destination = "/ui/status/" if target.path.rstrip("/") == "/status" else "/ui/home/"
-        return with_query(destination, target.query) + (f"#{target.fragment}" if target.fragment else "")
-    if target.path in {"/status/raw", "/status/raw/", "/setup", "/setup/"}:
-        return value
-    if target.path.startswith("/ui/") and not target.path.startswith("/ui/admin/"):
+    path = unquote(target.path)
+    if ui_routes.is_page_path(path) or path in {"/status/raw", "/status/raw/"}:
         return value
     return default
 

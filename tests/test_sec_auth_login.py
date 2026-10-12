@@ -130,7 +130,7 @@ def test_sec10_post_logout_revokes_replayed_legacy_and_registered_cookies(oidc_g
     token = encode_session_cookie(session, signing_key=cfg.signing_key)
     with browser() as client:
         client.cookies.set(cfg.cookie.name, token)
-        assert client.post("/admin/logout").status_code == 403
+        assert client.post("/logout").status_code == 403
         assert accounts.session_allowed(user["id"], session.session_id, path=oidc_gateway)
         response = client.post("/logout", headers={"x-azizam-csrf": csrf_token_for_session(session, signing_key=cfg.signing_key)}, follow_redirects=False)
         assert response.status_code == 303

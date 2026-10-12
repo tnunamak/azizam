@@ -21,6 +21,7 @@ refusing work forever.
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import ui_routes
 
 import json
 import os
@@ -36,9 +37,9 @@ MAX_TTL_S = 7200.0
 DEFAULT_RETRY_AFTER_S = 30
 
 # Paths that are never counted and never rejected. Health and the admin plane
-# must work during a drain; the UI shells are static.
+# must work during a drain; the web app's pages and assets are static.
 EXEMPT_EXACT = frozenset({"/health", "/status", "/v1/status", "/favicon.ico", "/metrics"})
-EXEMPT_PREFIXES = ("/admin", "/ui", "/login", "/setup", "/static", "/.well-known")
+EXEMPT_PREFIXES = ("/admin", "/login", "/setup", "/static", "/.well-known")
 
 # Methods that start new work. GET/HEAD/OPTIONS are reads: model lists, job
 # polls and downloads of finished results must keep working while we drain.
@@ -74,7 +75,7 @@ def _retry_after_s() -> int:
 
 
 def is_exempt(path: str) -> bool:
-    return path in EXEMPT_EXACT or any(
+    return path in EXEMPT_EXACT or ui_routes.classify(path) is not None or any(
         path == prefix or path.startswith(prefix + "/") for prefix in EXEMPT_PREFIXES
     )
 

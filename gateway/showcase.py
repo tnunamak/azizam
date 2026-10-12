@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 SHOWCASE_PREFIX = "/showcase"
 _PUBLIC_API_PREFIX = f"{SHOWCASE_PREFIX}/api/"
@@ -112,24 +112,10 @@ def build_showcase_router(
     examples_dir: Path,
     authenticate: Callable[[Request, str], Any] | None = None,
     status_provider: StatusProvider | None = None,
-    gallery_ui_url: str | None = None,
 ) -> APIRouter:
     """Build the router. ``authenticate`` follows ``proxy.authenticate_request``:
     it returns a ``Response`` on failure and anything else on success."""
     router = APIRouter()
-
-    @router.get(SHOWCASE_PREFIX, include_in_schema=False)
-    async def showcase_index() -> Response:
-        if gallery_ui_url:
-            return RedirectResponse(gallery_ui_url, status_code=307)
-        index = static_dir / "index.html"
-        if not index.is_file():
-            return JSONResponse({"error": {"code": "showcase_missing"}}, status_code=404)
-        return _file_response(index, cache="no-cache")
-
-    @router.get(SHOWCASE_PREFIX + "/", include_in_schema=False)
-    async def showcase_index_slash() -> Response:
-        return RedirectResponse(SHOWCASE_PREFIX, status_code=307)
 
     @router.get(SHOWCASE_PREFIX + "/static/{name}", include_in_schema=False)
     async def showcase_static(name: str) -> Response:
