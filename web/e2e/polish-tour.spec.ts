@@ -67,7 +67,6 @@ async function inspect(page: Page, name: string) {
         ? page.getByRole("heading", { name: "Connect an app", level: 2 })
         : page.getByRole("heading", { level: 1 }),
   ).toBeVisible();
-  await page.waitForLoadState("networkidle");
   await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);
   await expect(page.locator('[data-slot="skeleton"]:visible')).toHaveCount(0);
   await page.evaluate(async () => {
@@ -76,14 +75,17 @@ async function inspect(page: Page, name: string) {
       Array.from(document.images, (image) => image.decode().catch(() => {})),
     );
   });
-  expect(
-    await page.evaluate(() =>
-      Array.from(document.images).every(
-        (image) => image.complete && image.naturalWidth > 0,
-      ),
-    ),
-    `${name} images must decode`,
-  ).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() =>
+          Array.from(document.images).every(
+            (image) => image.complete && image.naturalWidth > 0,
+          ),
+        ),
+      { message: `${name} images must decode` },
+    )
+    .toBe(true);
   if (name.startsWith("library-")) {
     // Exercise visible custom controls before the settled capture.
     const player = page.locator("article audio").first();
@@ -105,12 +107,15 @@ async function inspect(page: Page, name: string) {
       (audio as HTMLAudioElement).currentTime = 0;
     });
   }
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-    `${name} must fit the viewport`,
-  ).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      { message: `${name} must fit the viewport` },
+    )
+    .toBe(true);
   const serious = (await new AxeBuilder({ page }).analyze()).violations.filter(
     (violation) => ["serious", "critical"].includes(violation.impact ?? ""),
   );
