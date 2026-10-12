@@ -59,6 +59,15 @@ def ok_response() -> Response:
     )
 
 
+def routed_response(route: str) -> Response:
+    """A distinct body per delegate, so the response shows which one answered."""
+    return Response(
+        content=json.dumps({"route": route}),
+        status_code=200,
+        media_type="application/json",
+    )
+
+
 def _migrated_model_policy_config() -> dict:
     config = copy.deepcopy(proxy.config)
     for service in (config.get("backends") or {}).values():
@@ -490,25 +499,47 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                         "policy_denied",
                     )
 
+    def _assert_only_awaited(self, target: str, delegates: dict[str, AsyncMock]) -> AsyncMock:
+        """The allowed route awaited exactly its own delegate, once, and no other."""
+        for name, delegate in delegates.items():
+            if name == target:
+                delegate.assert_awaited_once()
+            else:
+                delegate.assert_not_awaited()
+        return delegates[target]
+
     def test_media_profile_allows_video_list_and_delete(self) -> None:
         media_profile = AppProfile(
             id="media",
             protocols=frozenset({"openai.video"}),
         )
+        delegates = {
+            "proxy_comfy_video_list": AsyncMock(return_value=routed_response("list")),
+            "proxy_comfy_video_delete": AsyncMock(return_value=routed_response("delete")),
+        }
 
-        with authenticated_profile(media_profile), patch.object(
-            proxy, "proxy_comfy_video_list", AsyncMock(return_value=ok_response())
+        with authenticated_profile(media_profile) as identity, patch.object(
+            proxy, "proxy_comfy_video_list", delegates["proxy_comfy_video_list"]
         ), patch.object(
-            proxy, "proxy_comfy_video_delete", AsyncMock(return_value=ok_response())
+            proxy, "proxy_comfy_video_delete", delegates["proxy_comfy_video_delete"]
         ):
             cases = [
-                ("get", "/v1/videos"),
-                ("delete", "/v1/videos/video_does-not-exist"),
+                ("get", "/v1/videos", "proxy_comfy_video_list", "list"),
+                ("delete", "/v1/videos/video_does-not-exist", "proxy_comfy_video_delete", "delete"),
             ]
-            for method, path in cases:
+            for method, path, target, route in cases:
                 with self.subTest(path=path):
+                    for delegate in delegates.values():
+                        delegate.reset_mock()
                     response = getattr(self.client, method)(path, headers=AUTH_HEADERS)
                     self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), {"route": route})
+                    args = self._assert_only_awaited(target, delegates).await_args.args
+                    self.assertIs(args[1].identity, identity)
+                    if route == "list":
+                        self.assertEqual((args[0].method, args[0].url.path), ("GET", path))
+                    else:
+                        self.assertEqual(args[0], "video_does-not-exist")
 
     def test_chat_only_opk_denies_media_job_content_before_lookup(self) -> None:
         chat_only = AppProfile(
@@ -623,30 +654,49 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             protocols=frozenset({"openai.audio", "openai.video"}),
         )
 
-        with authenticated_profile(media_profile), patch.object(
-            proxy, "proxy_tts_request", AsyncMock(return_value=ok_response())
+        delegates = {
+            name: AsyncMock(return_value=routed_response(name))
+            for name in ("proxy_tts_request", "proxy_stt_request",
+                         "proxy_comfy_video_create", "proxy_audio_generate")
+        }
+
+        with authenticated_profile(media_profile) as identity, patch.object(
+            proxy, "proxy_tts_request", delegates["proxy_tts_request"]
         ), patch.object(
-            proxy, "proxy_stt_request", AsyncMock(return_value=ok_response())
+            proxy, "proxy_stt_request", delegates["proxy_stt_request"]
         ), patch.object(
-            proxy, "proxy_comfy_video_create", AsyncMock(return_value=ok_response())
+            proxy, "proxy_comfy_video_create", delegates["proxy_comfy_video_create"]
         ), patch.object(
-            proxy, "proxy_audio_generate", AsyncMock(return_value=ok_response())
+            proxy, "proxy_audio_generate", delegates["proxy_audio_generate"]
         ):
+            # (path, payload, delegate, route-specific keyword arguments)
             cases = [
-                ("post", "/v1/audio/speech", {"input": "hello", "voice": "alloy"}),
-                ("post", "/v1/audio/transcriptions", None),
-                ("post", "/v1/audio/translations", None),
-                ("post", "/v1/videos", {"prompt": "waves"}),
-                ("post", "/v1/audio/generate", {"prompt": "piano"}),
+                ("/v1/audio/speech", {"input": "hello", "voice": "alloy"}, "proxy_tts_request", {"receipt"}),
+                ("/v1/audio/transcriptions", None, "proxy_stt_request", {"operation": "transcriptions"}),
+                ("/v1/audio/translations", None, "proxy_stt_request", {"operation": "translations"}),
+                ("/v1/videos", {"prompt": "waves"}, "proxy_comfy_video_create", {}),
+                ("/v1/audio/generate", {"prompt": "piano"}, "proxy_audio_generate", {"receipt"}),
             ]
-            for method, path, payload in cases:
+            for path, payload, target, keywords in cases:
                 with self.subTest(path=path):
-                    request = getattr(self.client, method)
+                    for delegate in delegates.values():
+                        delegate.reset_mock()
                     if payload is None:
-                        response = request(path, headers=AUTH_HEADERS)
+                        response = self.client.post(path, headers=AUTH_HEADERS)
                     else:
-                        response = request(path, headers=AUTH_HEADERS, json=payload)
+                        response = self.client.post(path, headers=AUTH_HEADERS, json=payload)
                     self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.json(), {"route": target})
+                    call = self._assert_only_awaited(target, delegates).await_args
+                    request, auth_context = call.args[:2]
+                    self.assertEqual((request.method, request.url.path), ("POST", path))
+                    self.assertIs(auth_context.identity, identity)
+                    if isinstance(keywords, dict):
+                        for name, value in keywords.items():
+                            self.assertEqual(call.kwargs.get(name), value, name)
+                    else:  # The route's own receipt travels with the request.
+                        for name in keywords:
+                            self.assertIsNotNone(call.kwargs.get(name), name)
 
     def test_service_availability_override_blocks_tts_and_stt_routes(self) -> None:
         media_profile = AppProfile(
