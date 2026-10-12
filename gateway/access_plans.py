@@ -5,20 +5,17 @@ people and apps. Nothing is allowed unless the plan lists it. This module
 holds the plan model and its JSON codec; :mod:`gateway.policy` evaluates
 requests against the plans of a person and an app.
 
-Two parts of the design are not in the document yet, and a document that
-names them is refused rather than silently ignored:
-
-* ``blocked`` / ``must_match`` (category rules) — they move into plans with
-  the categories store.
-* ``caps`` — per-person and per-app spending counters need the ledger to
-  record the person and app of every charge. Provider and global caps
-  (Providers page) still apply to every paid call.
+One part of the design is not in the document yet, and a document that
+names it is refused rather than silently ignored: ``blocked`` /
+``must_match`` (category rules) — they move into plans with the categories
+store.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES
@@ -42,12 +39,12 @@ UNSUPPORTED_INTENTS = frozenset({"models.pull", "models.push", "models.create", 
 
 _DOCUMENT_FIELDS = frozenset({
     "id", "name", "can_use", "direct_engine_access", "paid_providers",
-    "provider_fallback", "can_load_models", "receipt_detail", "media_metadata",
+    "provider_fallback", "caps", "can_load_models", "receipt_detail", "media_metadata",
 })
+CAP_PERIODS = ("usd_per_request", "usd_per_day", "usd_per_month")
 _NOT_YET = {
     "blocked": "Blocked categories are not available in access plans yet.",
     "must_match": "Must match rules are not available in access plans yet.",
-    "caps": "Spending caps per access plan are not available yet. Use the provider and gateway caps.",
 }
 
 
@@ -110,6 +107,23 @@ class DirectEngineAccess:
 
 
 @dataclass(frozen=True)
+class PlanCaps:
+    """Spending caps for paid routes, in USD. None means no cap for that period.
+
+    A cap applies to the counter of whoever holds the plan: the accountable
+    person's plan caps the person's total, the app's plan caps the app's
+    total (design §2.11).
+    """
+
+    usd_per_request: Decimal | None = None
+    usd_per_day: Decimal | None = None
+    usd_per_month: Decimal | None = None
+
+    def any(self) -> bool:
+        return any(value is not None for value in (self.usd_per_request, self.usd_per_day, self.usd_per_month))
+
+
+@dataclass(frozen=True)
 class AccessPlan:
     id: str
     name: str
@@ -117,6 +131,7 @@ class AccessPlan:
     direct_engine_access: DirectEngineAccess = field(default_factory=DirectEngineAccess)
     paid_providers: frozenset[str] = frozenset()
     provider_fallback: bool = False
+    caps: PlanCaps = field(default_factory=PlanCaps)
     can_load_models: bool = False
     receipt_detail: str = "basic"
     media_metadata: str = "none"
@@ -144,6 +159,27 @@ def _bool(value: Any, where: str) -> bool:
     if not isinstance(value, bool):
         raise PlanError(f"{where} must be true or false")
     return value
+
+
+def _caps_from_document(value: Any) -> PlanCaps:
+    if not isinstance(value, Mapping) or set(value) != set(CAP_PERIODS):
+        raise PlanError(f"caps must have exactly {', '.join(CAP_PERIODS)} (a number of US dollars or null)")
+    parsed: dict[str, Decimal | None] = {}
+    for period in CAP_PERIODS:
+        raw = value[period]
+        if raw is None:
+            parsed[period] = None
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            raise PlanError(f"caps.{period} must be a number of US dollars or null")
+        try:
+            amount = Decimal(str(raw))
+        except InvalidOperation as exc:
+            raise PlanError(f"caps.{period} must be a number of US dollars or null") from exc
+        if not amount.is_finite() or amount <= 0:
+            raise PlanError(f"caps.{period} must be greater than zero, or null for no cap")
+        parsed[period] = amount
+    return PlanCaps(**parsed)
 
 
 def _grant_from_document(capability: str, value: Any) -> CapabilityGrant:
@@ -218,6 +254,7 @@ def plan_from_document(doc: Any, *, plan_id: str | None = None) -> AccessPlan:
             ) if provider
         ),
         provider_fallback=_bool(_require(doc, "provider_fallback"), "provider_fallback"),
+        caps=_caps_from_document(_require(doc, "caps")),
         can_load_models=_bool(_require(doc, "can_load_models"), "can_load_models"),
         receipt_detail=receipt_detail,
         media_metadata=media_metadata,
@@ -248,6 +285,8 @@ def plan_to_document(plan: AccessPlan) -> dict[str, Any]:
         },
         "paid_providers": sorted(plan.paid_providers),
         "provider_fallback": plan.provider_fallback,
+        "caps": {period: None if getattr(plan.caps, period) is None else format(getattr(plan.caps, period), "f")
+                 for period in CAP_PERIODS},
         "can_load_models": plan.can_load_models,
         "receipt_detail": plan.receipt_detail,
         "media_metadata": plan.media_metadata,
@@ -290,6 +329,11 @@ def union_plans(plan_id: str, name: str, plans: Iterable[AccessPlan]) -> AccessP
         ),
         paid_providers=frozenset().union(*(p.paid_providers for p in plans)),
         provider_fallback=any(p.provider_fallback for p in plans),
+        caps=PlanCaps(**{
+            period: None if any(getattr(p.caps, period) is None for p in plans)
+            else max(getattr(p.caps, period) for p in plans)
+            for period in CAP_PERIODS
+        }) if plans else PlanCaps(),
         can_load_models=any(p.can_load_models for p in plans),
         receipt_detail=_level_max((p.receipt_detail for p in plans), RECEIPT_DETAIL_LEVELS) if plans else "none",
         media_metadata=_level_max((p.media_metadata for p in plans), MEDIA_METADATA_LEVELS) if plans else "none",
@@ -311,8 +355,8 @@ def plan_summary(plan: AccessPlan) -> str:
 
 
 __all__ = [
-    "ALL", "AccessPlan", "CAPABILITIES", "CapabilityGrant", "DIRECT_ENGINE_INTENT",
+    "ALL", "AccessPlan", "CAPABILITIES", "CAP_PERIODS", "CapabilityGrant", "DIRECT_ENGINE_INTENT",
     "DISCOVERY_INTENTS", "DirectEngineAccess", "UNSUPPORTED_INTENTS", "INTENT_CAPABILITIES", "MEDIA_METADATA_LEVELS",
-    "PERSON", "PlanError", "RECEIPT_DETAIL_LEVELS", "capability_for_intent", "plan_from_document",
+    "PERSON", "PlanCaps", "PlanError", "RECEIPT_DETAIL_LEVELS", "capability_for_intent", "plan_from_document",
     "plan_rules_json", "plan_summary", "plan_to_document", "union_plans",
 ]

@@ -5,7 +5,7 @@ not read the operator's config files, does not know live auth, and does not
 import proxy.py. Callers pass normalized registry records, the request's
 runtime identity (its access plans, App and accountable person) and the
 already-resolved request facts. Caps are per provider and for the gateway;
-per-plan caps are not available yet.
+plans cap the accountable person's and the App's totals (design §2.11).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from typing import Any, Mapping
 import httpx
 
 from gateway import admin_store, secret_store
+from gateway.access_plans import PlanCaps
 from gateway.policy import NO_ACCESS, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
 
@@ -100,7 +101,7 @@ class BudgetExceeded(ProviderError):
     ) -> None:
         super().__init__(message, retry_after=retry_after)
         # Which spending limit refused the request: period is daily, monthly
-        # or request; scope is plan, provider or global. Both are None when
+        # or request; scope is person, app, provider or global. Both are None when
         # no single limit applies (for example, an unknown price).
         self.period = period
         self.scope = scope
@@ -305,7 +306,6 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             CREATE TABLE IF NOT EXISTS provider_spend (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider TEXT NOT NULL,
-                profile_id TEXT NOT NULL,
                 status TEXT NOT NULL,
                 estimated_usd TEXT NOT NULL,
                 actual_usd TEXT,
@@ -320,6 +320,21 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+        if "profile_id" in columns:
+            backup = path.with_name(f"{path.name}.bak.pre-access-plans")
+            if not backup.exists():
+                target = sqlite3.connect(backup)
+                try:
+                    conn.backup(target)
+                finally:
+                    target.close()
+                backup.chmod(0o600)
+            # Charges are no longer counted by plan: a plan change must never
+            # reset a counter. Old rows stay in provider and gateway totals.
+            conn.execute("DROP INDEX IF EXISTS idx_provider_spend_window")
+            conn.execute("DROP INDEX IF EXISTS idx_provider_spend_profile_window")
+            conn.execute("ALTER TABLE provider_spend DROP COLUMN profile_id")
+            columns.discard("profile_id")
         # Each charge names its App and the App's accountable person, so a
         # plan change never resets a counter (design §2.11).
         for name in ("app_id", "person_id"):
@@ -342,7 +357,15 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
                 conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} {column_type}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
-            "ON provider_spend(provider, profile_id, created_at, status)"
+            "ON provider_spend(provider, created_at, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_spend_person_window "
+            "ON provider_spend(person_id, created_at, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_spend_app_window "
+            "ON provider_spend(app_id, created_at, status)"
         )
 
 
@@ -395,16 +418,23 @@ def reserve_provider_spend(
     provider_id = canonical_provider_id(provider.id)
     app_id = getattr(identity, "app_id", None)
     person_id = getattr(identity, "accountable_person_id", None)
+    plan_caps = _plan_caps(identity)
     estimate = estimated_cost.usd
     if estimated_cost.source == "missing-provider-price":
         raise BudgetExceeded(f"paid provider {provider.id!r} requires known model prices")
     if estimate is None:
-        if _has_any_cap(provider, provider_admin):
+        if _has_any_cap(provider, provider_admin, plan_caps):
             raise BudgetExceeded(
                 f"unknown cost is not allowed when provider {provider.id!r} has a spend cap"
             )
         estimate = Decimal("0")
     estimate = _quantize_usd(estimate)
+    for scope, caps in plan_caps:
+        if caps.usd_per_request is not None and estimate > caps.usd_per_request:
+            raise BudgetExceeded(
+                f"request estimate ${estimate} exceeds per-request cap ${caps.usd_per_request}",
+                period="request", scope=scope,
+            )
 
     ensure_ledger(path)
     timestamp = int(now if now is not None else time.time())
@@ -414,6 +444,18 @@ def reserve_provider_spend(
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            for scope, caps in plan_caps:
+                _enforce_window_cap(
+                    conn,
+                    provider=None,
+                    cap=caps.usd_per_day,
+                    since=timestamp - 24 * 60 * 60,
+                    estimate=estimate,
+                    label=f"daily {scope}",
+                    period="daily",
+                    scope=scope,
+                    **_counter(scope, person_id, app_id),
+                )
             _enforce_window_cap(
                 conn,
                 provider=provider_id,
@@ -447,6 +489,18 @@ def reserve_provider_spend(
                 scope="global",
             )
             month_start = _month_start_epoch(timestamp)
+            for scope, caps in plan_caps:
+                _enforce_window_cap(
+                    conn,
+                    provider=None,
+                    cap=caps.usd_per_month,
+                    since=month_start,
+                    estimate=estimate,
+                    label=f"monthly {scope}",
+                    period="monthly",
+                    scope=scope,
+                    **_counter(scope, person_id, app_id),
+                )
             _enforce_window_cap(
                 conn,
                 provider=provider_id,
@@ -483,9 +537,9 @@ def reserve_provider_spend(
             cursor = conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, app_id, person_id, status, estimated_usd, cost_source,
+                (provider, app_id, person_id, status, estimated_usd, cost_source,
                  created_at, process_generation, expires_at)
-                VALUES (?, '', ?, ?, 'reserved', ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, 'reserved', ?, ?, ?, ?, ?)
                 """,
                 (
                     provider_id,
@@ -960,10 +1014,30 @@ def attach_cost_to_receipt(receipt: object, cost: Cost, usage: Usage | None = No
         )
 
 
+def _plan_caps(identity: Any) -> list[tuple[str, PlanCaps]]:
+    """The caps of the accountable person's plan (on the person's counter) and
+    of the App's plan (on the App's counter), as ``(scope, caps)`` pairs."""
+    access = getattr(identity, "access", None)
+    pairs = [("person", getattr(access, "person_plan", None)), ("app", getattr(access, "app_plan", None))]
+    return [(scope, plan.caps) for scope, plan in pairs if plan is not None and plan.caps.any()]
+
+
+def _counter(scope: str, person_id: str | None, app_id: str | None) -> dict[str, Any]:
+    """Which ledger rows a plan cap counts. An unnamed subject cannot be counted."""
+    subject = person_id if scope == "person" else app_id
+    if not subject:
+        raise BudgetExceeded(f"the {scope} cannot be identified, so its spending cap cannot be checked",
+                             period="daily", scope=scope)
+    return {"person_id": subject} if scope == "person" else {"app_id": subject}
+
+
 def _has_any_cap(
     provider: ProviderRef,
     provider_admin: Mapping[str, Any],
+    plan_caps: list[tuple[str, PlanCaps]] = (),  # type: ignore[assignment]
 ) -> bool:
+    if plan_caps:
+        return True
     return any(
         cap is not None
         for cap in (
@@ -981,6 +1055,8 @@ def _enforce_window_cap(
     conn: sqlite3.Connection,
     *,
     provider: str | None,
+    person_id: str | None = None,
+    app_id: str | None = None,
     cap: Decimal | None,
     since: int,
     estimate: Decimal,
@@ -998,12 +1074,16 @@ def _enforce_window_cap(
     if provider is not None:
         where += " AND lower(provider) = ?"
         params.append(canonical_provider_id(provider))
+    for column, value in (("person_id", person_id), ("app_id", app_id)):
+        if value is not None:
+            where += f" AND {column} = ?"
+            params.append(value)
     if conn.execute(f"SELECT 1 FROM provider_spend WHERE {where} LIMIT 1", params).fetchone():
         raise ProviderNeedsReconciliation(
             f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests",
             period=period, scope=scope,
         )
-    provider_total = _window_total(conn, provider=provider, since=since)
+    provider_total = _window_total(conn, provider=provider, person_id=person_id, app_id=app_id, since=since)
     if provider_only:
         if provider_total >= cap or provider_total + estimate > cap:
             raise BudgetExceeded(
@@ -1012,13 +1092,16 @@ def _enforce_window_cap(
             )
         return
     if provider_total >= cap or provider_total + estimate > cap:
-        raise BudgetExceeded(f"{label} global cap would exceed ${cap}", period=period, scope=scope)
+        raise BudgetExceeded(f"{label} cap would exceed ${cap}" if scope in ("person", "app")
+                             else f"{label} global cap would exceed ${cap}", period=period, scope=scope)
 
 
 def _window_total(
     conn: sqlite3.Connection,
     *,
     provider: str | None,
+    person_id: str | None = None,
+    app_id: str | None = None,
     since: int,
 ) -> Decimal:
     where = "created_at >= ? AND status IN ('reserved', 'settled', 'needs_reconciliation')"
@@ -1026,6 +1109,10 @@ def _window_total(
     if provider is not None:
         where += " AND lower(provider) = ?"
         params.append(canonical_provider_id(provider))
+    for column, value in (("person_id", person_id), ("app_id", app_id)):
+        if value is not None:
+            where += f" AND {column} = ?"
+            params.append(value)
     rows = conn.execute(
         f"SELECT estimated_usd, actual_usd FROM provider_spend WHERE {where}",
         params,

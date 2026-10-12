@@ -31,6 +31,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
 from gateway.access_plans import (
@@ -39,6 +40,7 @@ from gateway.access_plans import (
     AccessPlan,
     CapabilityGrant,
     DirectEngineAccess,
+    PlanCaps,
     plan_rules_json,
     plan_to_document,
     union_plans,
@@ -160,9 +162,19 @@ def translate_profile(
     if doc.get("backends") is not None:
         raise MigrationError(f"{label}: backends has no access-plan form; remove it first")
     remote = _mapping(doc.get("remote"))
-    for key in ("max_usd_per_request", "budget_usd_per_day", "budget_usd_per_month"):
-        if remote.get(key) is not None:
-            raise MigrationError(f"{label}: remote.{key} is a per-plan cap; plan caps are not available yet")
+    caps = {}
+    for old, new in (("max_usd_per_request", "usd_per_request"), ("budget_usd_per_day", "usd_per_day"),
+                     ("budget_usd_per_month", "usd_per_month")):
+        value = remote.get(old)
+        if value is None:
+            caps[new] = None
+            continue
+        try:
+            caps[new] = Decimal(str(value))
+        except InvalidOperation as exc:
+            raise MigrationError(f"{label}: remote.{old} {value!r} is not a number of dollars") from exc
+        if not caps[new].is_finite() or caps[new] <= 0:
+            raise MigrationError(f"{label}: remote.{old} {value!r} is not a positive number of dollars")
     target = _mapping(doc.get("target_policy"))
     if str(_mapping(doc.get("model_access")).get("mode") or "") == "current_loaded" and not target:
         target = {"visibility": "available", "activation": "existing_only"}
@@ -202,6 +214,7 @@ def translate_profile(
         direct_engine_access=direct,
         paid_providers=frozenset(paid),
         provider_fallback=bool(_mapping(doc.get("fallback")).get("cloud_allowed")) and bool(remote.get("allow_paid_fallback")),
+        caps=PlanCaps(**caps),
         can_load_models=str(target.get("activation") or "may_activate") != "existing_only",
         receipt_detail=receipt_detail,
         media_metadata=media_metadata,
@@ -221,7 +234,7 @@ def _standard_name(plan: AccessPlan) -> str | None:
     A variant whose receipt detail differs from the standard plan's keeps
     today's detail and says so: "Local only (standard receipts)".
     """
-    if not all(plan.can_use.get(cap, CapabilityGrant()).all_items for cap in CAPABILITIES):
+    if plan.caps.any() or not all(plan.can_use.get(cap, CapabilityGrant()).all_items for cap in CAPABILITIES):
         return None
     direct, paid = plan.direct_engine_access.granted, bool(plan.paid_providers)
     if direct and paid:

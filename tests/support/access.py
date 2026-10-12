@@ -8,10 +8,11 @@ key) to ``identity``, the way a real key of that App would.
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
-from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, DirectEngineAccess
+from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, DirectEngineAccess, PlanCaps
 from gateway.policy import EffectiveAccess
 from gateway.runtime_auth import RuntimeIdentity
 
@@ -55,6 +56,9 @@ def plan_for(
     fallback: bool = False,
     receipts: str = "basic",
     metadata: str = "none",
+    usd_per_request: str | None = None,
+    usd_per_day: str | None = None,
+    usd_per_month: str | None = None,
 ) -> AccessPlan:
     """A plan described by what it allows; ``caps=None`` means every capability.
 
@@ -79,6 +83,8 @@ def plan_for(
         direct_engine_access=direct,
         paid_providers=frozenset(paid or ()),
         provider_fallback=fallback,
+        caps=PlanCaps(*(None if value is None else Decimal(value)
+                        for value in (usd_per_request, usd_per_day, usd_per_month))),
         can_load_models=load,
         receipt_detail=receipts,
         media_metadata=metadata,

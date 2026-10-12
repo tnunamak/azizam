@@ -61,7 +61,7 @@ CLIENT_VISIBLE_FIELDS = {
 # only: no amounts, provider names or other people's usage.
 REFUSAL_CODES = frozenset({"budget_exceeded", "provider_needs_reconciliation"})
 REFUSAL_PERIODS = frozenset({"daily", "monthly", "request"})
-REFUSAL_SCOPES = frozenset({"plan", "provider", "global"})
+REFUSAL_SCOPES = frozenset({"person", "app", "provider", "global"})
 
 
 def sanitize_refusal(value: Any) -> dict[str, Any] | None:
