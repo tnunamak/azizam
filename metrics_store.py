@@ -4,7 +4,7 @@ Single tag-based samples table with two pre-aggregated rollups (1min, 1hour).
 Stdlib sqlite3 only. WAL mode for concurrent read while one writer appends.
 
 Layout:
-    samples         - raw 10s samples, kept 7 days once rolled into samples_1min
+    samples         - raw 10s samples, kept 7 days once covered by hourly history
     samples_1min    - per-minute rollup, kept 30 days once rolled into samples_1hour
     samples_1hour   - per-hour rollup, no automatic expiry
 
@@ -38,7 +38,7 @@ DB_PATH = Path(get_env("AZIZAM_METRICS_DB", _default_db))
 RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -101,26 +101,31 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _add_rollup_marks(conn: sqlite3.Connection) -> None:
-    """Add ``rolled`` to version-4 tables and mark rows an old rollup summarized.
+    """Quarantine unverifiable pre-v6 coverage instead of guessing it.
 
-    Old rollups left no per-row record. Treat a row as summarized only when the
-    coarser table has a row for its own bucket, metric and tags; anything else
-    stays unmarked and is rolled up again. One transaction, so a crash leaves
-    the old schema to retry.
+    rolled = -1 retains legacy fine rows without appending them to existing
+    summaries or pruning them. Even a matching coarse bucket cannot establish
+    which observations it covers, especially after partial legacy pruning.
+    Reconciliation requires evidence this store does not have. New rows use 0.
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for table, coarse, width in (("samples", "samples_1min", 60), ("samples_1min", "samples_1hour", 3600)):
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
+        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        legacy = row is None or row[0] < SCHEMA_VERSION
+        for table in ("samples", "samples_1min"):
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-            if not columns or "rolled" in columns:
+            if not columns:
                 continue
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN rolled INTEGER NOT NULL DEFAULT 0")
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (coarse,)).fetchone():
-                conn.execute(
-                    f"UPDATE {table} SET rolled = 1 WHERE EXISTS (SELECT 1 FROM {coarse} c "
-                    f"WHERE c.metric = {table}.metric AND c.ts = {table}.ts - {table}.ts % {width} "
-                    f"AND c.tags = {table}.tags)"
-                )
+            if "rolled" not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN rolled INTEGER NOT NULL DEFAULT 0")
+            if legacy:
+                conn.execute(f"UPDATE {table} SET rolled = -1")
+        # Commit the version with quarantine so retry never freezes new rows.
+        if row is None:
+            conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
+        elif legacy:
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -458,26 +463,40 @@ def query_series(
 
 
 def _roll_up(c: sqlite3.Connection, source: str, target: str, width: int, before: int) -> int:
-    """Summarize every unmarked ``source`` row before ``before`` and mark it, in one write.
+    """Atomically summarize and mark unrolled rows, including late arrivals.
 
-    This catches up any buckets missed while the gateway was down or a rollup
-    failed. A row that arrives late for a bucket already summarized becomes an
-    extra rollup row for that bucket; readers weight rows by count.
+    Own a write transaction on autocommit connections. Inside a caller's
+    transaction, a savepoint isolates failure without committing caller work.
+    Legacy rows with unknown coverage (-1) require explicit reconciliation.
     """
     value = "AVG(value), MIN(value), MAX(value), COUNT(*)" if source == "samples" else (
         "SUM(avg_value*count)*1.0/NULLIF(SUM(count),0), MIN(min_value), MAX(max_value), SUM(count)")
-    # The INSERT is the first statement, so it reads under the write lock and the
-    # UPDATE marks exactly the rows it summarized.
-    cur = c.execute(
-        f"INSERT INTO {target} (ts, metric, tags, avg_value, min_value, max_value, count) "
-        f"SELECT ts - ts % {width}, metric, tags, {value} FROM {source} "
-        f"WHERE rolled = 0 AND ts < ? GROUP BY ts - ts % {width}, metric, tags",
-        (before,),
-    )
-    written = cur.rowcount or 0
-    c.execute(f"UPDATE {source} SET rolled = 1 WHERE rolled = 0 AND ts < ?", (before,))
-    c.commit() if hasattr(c, "commit") else None
-    return written
+    owned = not c.in_transaction
+    if owned:
+        c.execute("BEGIN IMMEDIATE")
+    else:
+        c.execute("SAVEPOINT metrics_rollup")
+    try:
+        cur = c.execute(
+            f"INSERT INTO {target} (ts, metric, tags, avg_value, min_value, max_value, count) "
+            f"SELECT ts - ts % {width}, metric, tags, {value} FROM {source} "
+            f"WHERE rolled = 0 AND ts < ? GROUP BY ts - ts % {width}, metric, tags",
+            (before,),
+        )
+        written = cur.rowcount or 0
+        c.execute(f"UPDATE {source} SET rolled = 1 WHERE rolled = 0 AND ts < ?", (before,))
+        if owned:
+            c.commit()
+        else:
+            c.execute("RELEASE SAVEPOINT metrics_rollup")
+        return written
+    except BaseException:
+        if owned:
+            c.rollback()
+        else:
+            c.execute("ROLLBACK TO SAVEPOINT metrics_rollup")
+            c.execute("RELEASE SAVEPOINT metrics_rollup")
+        raise
 
 
 def downsample_minute(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> int:
@@ -510,14 +529,22 @@ def downsample_hour(conn: Optional[sqlite3.Connection] = None, *, now: Optional[
 
 
 def prune_old(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> dict:
-    """Delete old raw and minute rows that a coarser rollup holds. Returns counts."""
+    """Delete old raw and minute rows only after hourly coverage. Returns counts."""
     now = int(time.time()) if now is None else int(now)
     raw_cut = now - RAW_RETAIN_S
     min_cut = now - MINUTE_RETAIN_S
 
     def _run(c: sqlite3.Connection) -> dict:
         out: dict[str, int] = {}
-        cur = c.execute("DELETE FROM samples WHERE ts < ? AND rolled = 1", (raw_cut,))
+        # A raw mark proves minute coverage. Wait until every retained minute
+        # contribution for that bucket is itself covered by hourly history.
+        # Missing minute rows were already pruned only after their hourly mark.
+        cur = c.execute(
+            "DELETE FROM samples WHERE ts < ? AND rolled = 1 AND NOT EXISTS ("
+            "SELECT 1 FROM samples_1min m WHERE m.metric = samples.metric "
+            "AND m.tags = samples.tags AND m.ts = samples.ts - samples.ts % 60 "
+            "AND m.rolled != 1)", (raw_cut,),
+        )
         out["raw"] = cur.rowcount or 0
         cur = c.execute("DELETE FROM samples_1min WHERE ts < ? AND rolled = 1", (min_cut,))
         out["minute"] = cur.rowcount or 0

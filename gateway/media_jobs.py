@@ -141,7 +141,7 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash"})
+INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id"})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -197,6 +197,8 @@ class MediaJob:
     finished_at: int | None = None
     attempt_number: int | None = None
     previous_attempts: list[dict[str, Any]] = field(default_factory=list)
+    # Durable provenance, independent of the reusable request/idempotency key.
+    creating_receipt_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -237,6 +239,7 @@ class MediaJob:
             "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
+            "creating_receipt_id": self.creating_receipt_id,
             "metadata": dict(self.metadata),
             "owner_scope": self.owner_scope,
             "input_hash": self.input_hash,
@@ -444,6 +447,7 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             owner_key_hash=data.get("owner_key_hash"),
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
+            creating_receipt_id=data.get("creating_receipt_id"),
             metadata=dict(data.get("metadata") or {}),
             owner_scope=data.get("owner_scope"),
             input_hash=data.get("input_hash"),
@@ -514,6 +518,19 @@ def _input_hash(job: MediaJob, input_data: Mapping[str, Any] | None = None) -> s
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def _receipt_link_candidate(data: Mapping[str, Any]) -> str | None:
+    """Keep an explicit receipt or parent before falling back to a legacy key.
+
+    A fallback is only a lookup candidate: projections must load a real receipt.
+    Seeded dedupe fingerprints are never receipts and must remain erasable.
+    """
+    for name in ("creating_receipt_id", "parent_request_id", "request_id"):
+        value = data.get(name)
+        if isinstance(value, str) and value and not value.startswith("imgjob_seeded_"):
+            return value
+    return None
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
@@ -552,9 +569,12 @@ def create(
                 (record.request_id,),
             ).fetchone()
             if existing and not _replays(existing[1], existing[2]):
+                retained = json.loads(existing[0])
+                retained["creating_receipt_id"] = _receipt_link_candidate(retained)
+                retained["request_id"] = ""
                 conn.execute(
-                    "UPDATE media_jobs SET request_id = NULL, job_json = json_set(job_json, '$.request_id', '') "
-                    "WHERE job_id = ?", (existing[3],),
+                    "UPDATE media_jobs SET request_id = NULL, job_json = ? WHERE job_id = ?",
+                    (json.dumps(retained, ensure_ascii=False, sort_keys=True), existing[3]),
                 )
                 existing = None
             if existing:
@@ -605,6 +625,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
     previous = conn.execute("SELECT job_json, request_id FROM media_jobs WHERE job_id=?", (job.job_id,)).fetchone()
+    job.creating_receipt_id = _receipt_link_candidate(
+        json.loads(previous[0]) if previous else job.to_dict("internal")
+    )
     if previous:
         # A stored request ID only changes by being cleared (replay release or
         # erasure). A stale caller copy must not restore or re-point it.

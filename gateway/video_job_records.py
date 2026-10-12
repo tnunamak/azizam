@@ -43,29 +43,34 @@ CREATE INDEX IF NOT EXISTS video_job_records_created_at ON video_job_records(cre
 
 
 def migrate(conn: sqlite3.Connection) -> bool:
-    """Apply the migration. Return True when it ran, False when already applied."""
+    """Apply idempotent DDL and atomically claim the migration marker."""
     conn.executescript(_DDL)
-    row = conn.execute(
-        "SELECT 1 FROM media_jobs_migrations WHERE name = ?", (MIGRATION_NAME,)
-    ).fetchone()
-    if row:
-        return False
-    conn.execute(
-        "INSERT INTO media_jobs_migrations(name, applied_at) VALUES (?, ?)",
-        (MIGRATION_NAME, int(time.time())),
-    )
-    conn.commit()
-    return True
+    try:
+        cur = conn.execute(
+            "INSERT INTO media_jobs_migrations(name, applied_at) VALUES (?, ?) "
+            "ON CONFLICT(name) DO NOTHING",
+            (MIGRATION_NAME, int(time.time())),
+        )
+        inserted = cur.rowcount == 1
+        conn.commit()
+        return inserted
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _connect(path: Path | None) -> sqlite3.Connection:
     target = Path(path) if path else Path(media_jobs.DB_PATH)
     target.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(target, timeout=5.0)
-    media_jobs._apply_pragmas(conn)
-    conn.execute("PRAGMA secure_delete=ON")
-    migrate(conn)
-    return conn
+    try:
+        media_jobs._apply_pragmas(conn)
+        conn.execute("PRAGMA secure_delete=ON")
+        migrate(conn)
+        return conn
+    except BaseException:
+        conn.close()
+        raise
 
 
 def save(prompt_id: str, record: Mapping[str, Any], *, path: Path | None = None) -> None:

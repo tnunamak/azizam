@@ -790,14 +790,15 @@ def _media_items(
 
 
 def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
-    """Receipt keys for a job: its request ID, then the request that created it.
+    """Try immutable creating provenance first, then legacy lookup candidates.
 
-    A finished job's request ID is cleared when a new job takes it over (replay
-    release) or by prompt erasure. Seeded and idempotent image jobs use a derived
-    request ID. ``parent_request_id`` still names the creating request's receipt.
+    Request IDs can be derived or reused; none is a receipt until lookup finds
+    it. The durable creating link survives replay release and prompt erasure.
     """
-    ids = [str(job.get("request_id") or ""), str(job.get("parent_request_id") or "")]
-    return [value for index, value in enumerate(ids) if value and value not in ids[:index]]
+    ids = [str(job.get(name) or "") for name in
+           ("creating_receipt_id", "parent_request_id", "request_id")]
+    return [value for index, value in enumerate(ids)
+            if value and not value.startswith("imgjob_seeded_") and value not in ids[:index]]
 
 
 def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[str, Mapping[str, Any]]:
