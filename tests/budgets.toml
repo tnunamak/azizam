@@ -16,8 +16,8 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8404  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
-vitest = 1873  # +165: VT moves from the browser. Before that, +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
+pytest = 8416  # +12: BX (ci-local browser-section and policy hygiene/fixture self-tests); +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
+vitest = 1874  # +1: BX (test-priority case for the isolation-proof config); +165: VT moves from the browser. Before that, +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 425
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
