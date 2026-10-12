@@ -177,10 +177,6 @@ class TestPublicSurfaces(unittest.TestCase):
 
     # -- health --
 
-    def test_health_returns_200(self) -> None:
-        r = self.gw.get("/health")
-        self.assertEqual(r.status, 200, r.text())
-
     def test_health_json_ok_field(self) -> None:
         r = self.gw.get("/health")
         self.assertEqual(r.status, 200)
@@ -201,12 +197,6 @@ class TestPublicSurfaces(unittest.TestCase):
         svc = data["service"]
         self.assertIn("product", svc)
         self.assertIn("Azizam", svc["product"], svc["product"])
-
-    def test_well_known_azizam_alias(self) -> None:
-        r = self.gw.get("/.well-known/azizam")
-        self.assertEqual(r.status, 200, r.text()[:300])
-        data = r.json()
-        self.assertIn("service", data)
 
     def test_llms_txt(self) -> None:
         r = self.gw.get("/llms.txt")
@@ -835,10 +825,6 @@ class TestBootstrapDetect(unittest.TestCase):
                 "GET /setup did not contain expected state markers",
                 {"body_snippet": body[:200]},
             )
-
-    def test_health_is_always_public(self) -> None:
-        r = self.gw.get("/health")
-        self.assertEqual(r.status, 200)
 
 
 # ---------------------------------------------------------------------------

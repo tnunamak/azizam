@@ -290,13 +290,11 @@ def _check_engine_flag_literals() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Check 4: _LOCAL_SWAP_BACKENDS is frozen at {kobold, tabby}
+# Check 4: quarantine tables and predicates are frozen
 #
-# If a third managed engine is added, the test fails — forcing an explicit
-# allowlist edit and reviewer sign-off before the lifecycle infra grows.
+# This includes LOCAL_SWAP_BACKENDS == {kobold, tabby}: a third managed engine
+# fails here and forces an explicit, reviewed edit of this inventory.
 # ---------------------------------------------------------------------------
-
-_EXPECTED_LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold", "tabby"})
 
 # P2-3 transitional inventory. Every table and its consumer predicate is
 # explicit; adding a capability must be reviewed as a service-data migration.
@@ -453,41 +451,6 @@ def _check_semantic_policy_anchors() -> list[str]:
                 violations.append(f"{finding}: {rel} missing reviewed anchors {sorted(missing)}")
     return violations
 
-# The frozen set now lives in the quarantine as LOCAL_SWAP_BACKENDS (proxy.py
-# aliases it). Match the quarantine definition.
-_LOCAL_SWAP_PATTERN = re.compile(
-    r'LOCAL_SWAP_BACKENDS\s*(?::\s*\S+)?\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)'
-)
-
-
-def _check_local_swap_backends_frozen() -> list[str]:
-    text = _QUARANTINE.read_text(encoding="utf-8")
-    match = _LOCAL_SWAP_PATTERN.search(text)
-    if match is None:
-        return [
-            "engine_quarantine.py: LOCAL_SWAP_BACKENDS definition not found — "
-            "did it move or get renamed?"
-        ]
-    # Parse the frozenset contents
-    contents = match.group(1)
-    found = {s.strip().strip('"\'') for s in contents.split(",") if s.strip()}
-    if found != _EXPECTED_LOCAL_SWAP_BACKENDS:
-        added = found - _EXPECTED_LOCAL_SWAP_BACKENDS
-        removed = _EXPECTED_LOCAL_SWAP_BACKENDS - found
-        parts = []
-        if added:
-            parts.append(f"added: {sorted(added)}")
-        if removed:
-            parts.append(f"removed: {sorted(removed)}")
-        return [
-            f"proxy.py: _LOCAL_SWAP_BACKENDS changed ({', '.join(parts)}). "
-            f"Expected exactly {sorted(_EXPECTED_LOCAL_SWAP_BACKENDS)}. "
-            "Adding a third managed engine requires updating the allowlist in this "
-            "test with a justification, and generalizing the lifecycle infra to a "
-            "DB capability flag (see docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md §4-E)."
-        ]
-    return []
-
 
 # ---------------------------------------------------------------------------
 # Check 5: Primitive vocabulary is closed
@@ -634,17 +597,6 @@ class TestEngineKnowledgeBoundary:
         """
         violations = _check_engine_flag_literals()
         assert not violations, _fail_message("engine CLI flag literals", violations)
-
-    def test_local_swap_backends_frozen(self) -> None:
-        """_LOCAL_SWAP_BACKENDS must equal exactly {'kobold', 'tabby'}.
-
-        Adding a third managed engine without review would extend the lifecycle
-        infra treadmill silently.  A third entry here forces an explicit
-        allowlist edit and reviewer sign-off.  The long-term fix is a DB
-        capability flag (see docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md §4-E).
-        """
-        violations = _check_local_swap_backends_frozen()
-        assert not violations, _fail_message("_LOCAL_SWAP_BACKENDS frozen set", violations)
 
     def test_quarantine_tables_and_predicates_frozen(self) -> None:
         violations = _check_quarantine_frozen()

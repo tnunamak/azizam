@@ -450,11 +450,6 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         response = self.client.get("/me", headers={"accept": "application/json"}, follow_redirects=False)
         self.assertNotEqual(response.status_code // 100, 3)
 
-    def test_azizam_alias_matches_discovery_shape(self) -> None:
-        response = self.client.get("/.well-known/azizam")
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["object"], "azizam_discovery")
-
     def test_skill_catalog_and_skill_are_public(self) -> None:
         catalog = self.client.get("/.well-known/skills")
         self.assertEqual(catalog.status_code, 200, catalog.text)

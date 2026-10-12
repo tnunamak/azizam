@@ -2997,16 +2997,6 @@ class ConfigExportTests(unittest.TestCase):
         resp = self.client.get("/admin/api/config/export")
         self.assertEqual(resp.status_code, 401)
 
-    def test_export_returns_valid_yaml(self) -> None:
-        """Authenticated request returns 200 with parseable YAML content."""
-        import yaml
-
-        resp = self.client.get("/admin/api/config/export", headers=self._auth())
-        self.assertEqual(resp.status_code, 200)
-        # Must be parseable YAML
-        doc = yaml.safe_load(resp.text)
-        self.assertIsInstance(doc, dict)
-
     def test_export_contains_services_key(self) -> None:
         """Exported YAML has a top-level 'services' mapping."""
         import yaml

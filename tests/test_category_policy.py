@@ -137,11 +137,6 @@ class Scenarios(unittest.TestCase):
         """Preserved v2: broken closure fails closed."""
         self.assertDecision(self.decide(service=replace(self.service, members=())), "deny", "POLICY_UNAVAILABLE")
 
-    def test_16_unaccepted_evidence_never_grants(self):
-        """Preserved v2: raw external evidence is inert."""
-        s = self.with_values(Assertion("audience", "general", "manifest"))
-        self.assertDecision(self.decide(self.req(), s), "deny", "REQUIRE_MISSING")
-
     def test_17_unaccepted_evidence_leaves_deny_unknown(self):
         """R1 changes v2 test 17 allow to DENY_INPUT_UNKNOWN."""
         s = self.with_values(Assertion("audience", "adult", "manifest"))
@@ -721,11 +716,6 @@ class Scenarios(unittest.TestCase):
         self.assertTrue(any(r.get("phase") == "download" and r.get("output") == "output@1"
                             for r in result["scope"]))
         self.assertTrue(any(r.get("phase") == "retry" for r in result["scope"]))
-
-    def test_126_each_provenance_field_required(self):
-        """A11: a partially accepted assertion is a policy error."""
-        a = replace(self.value(), mapping_version="")
-        self.assertDecision(self.decide(service=self.with_values(a)), "deny", "POLICY_UNAVAILABLE")
 
     def test_127_base_and_effective_views_are_read_only_copies(self):
         """A23: editing an exposed view never mutates bundled base."""

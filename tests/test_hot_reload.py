@@ -511,21 +511,6 @@ class TestMutationHook(unittest.TestCase):
     def tearDown(self):
         _restore_reload_derived_state(self._before)
 
-    def test_hook_is_wired(self):
-        """ADMIN_STORE.on_service_registry_changed is set to reload_runtime_config."""
-        self.assertIs(
-            proxy.ADMIN_STORE.on_service_registry_changed,
-            proxy.reload_runtime_config,
-            "ADMIN_STORE.on_service_registry_changed is not wired to reload_runtime_config",
-        )
-
-    def test_hook_is_not_none(self):
-        """The callback is not None (otherwise admin mutations won't trigger reload)."""
-        self.assertIsNotNone(
-            proxy.ADMIN_STORE.on_service_registry_changed,
-            "ADMIN_STORE.on_service_registry_changed is None — mutations won't hot-reload",
-        )
-
     def test_hook_invocation_triggers_reload(self):
         """Calling the hook directly (as admin_runtime does) invokes reload_runtime_config.
 

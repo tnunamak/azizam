@@ -428,26 +428,6 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
 
-    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_marks_reconciliation(self) -> None:
-        async def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"id": "dec_unknown", "usage": {"input_tokens": 1, "output_tokens": 0}})
-
-        real_client = httpx.AsyncClient
-        transport = httpx.MockTransport(handler)
-        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
-        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
-            response = await execution.openai(
-                _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
-            )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
-        with sqlite3.connect(self.ledger) as conn:
-            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("needs_reconciliation", None)])
-
-
     async def test_openai_opaque_hook_forwards_403_body_and_status_without_rewriting(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(403, json={"error": {"code": "not_enabled", "message": "disabled"}})

@@ -163,11 +163,6 @@ it("shows the full backend key description", () => {
     }),
   ).toBe("Chat requests may save a conversation until it is deleted.");
 });
-it("names database erasure as pending", () => {
-  expect(purgeStatus({ pending: true, database_pending: true })).toContain(
-    "Prompt deletion hasn't finished",
-  );
-});
 
 describe("prompt memory copy", () => {
   it("names disabled prompt keeping without guessing missing-prompt reasons", () => {

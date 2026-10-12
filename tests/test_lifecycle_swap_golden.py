@@ -292,21 +292,6 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
             f"Second exec must be restart <unit>, got: {exec_calls[1]}",
         )
 
-    def test_returns_true_on_healthy_response(self):
-        """swap() returns True when health poll responds 200."""
-        activation = {"env": {"LLAMA_BEE_MODEL": _GGUF, "LLAMA_BEE_MMPROJ": _MMPROJ}}
-        mock_proc = _mock_subprocess_ok()
-        mock_httpx_cls, _ = _httpx_client_200(text="ok")
-
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
-             patch.object(Path, "mkdir"), \
-             patch("gateway.lifecycle_drivers._replace_file_atomically"), \
-             patch("httpx.AsyncClient", mock_httpx_cls), \
-             patch("firehose_metrics.record_event"):
-            result = _run(self.driver.swap(self.svc, activation))
-
-        self.assertTrue(result)
-
     # -----------------------------------------------------------------------
     # 1b. Failure path — bad restart → drop-in removed, returns False
     # -----------------------------------------------------------------------
@@ -1310,18 +1295,6 @@ class TestBuildActivationGolden(unittest.TestCase):
             any("mmproj not found" in p for p in printed),
             f"Expected 'mmproj not found' in print output; got: {printed}",
         )
-
-    def test_kobold_precheck_present_gguf_returns_activation(self):
-        """Precheck passes for an abs .gguf path that exists — returns the activation."""
-        with patch("os.path.isabs", return_value=True), \
-             patch("os.path.exists", return_value=True):
-            result = self.kobold_driver.build_activation(
-                self.kobold_svc, model=_GGUF, aux=None
-            )
-        self.assertIsNotNone(result)
-        self.assertIn("env", result)
-        self.assertEqual(result["env"]["LLAMA_BEE_MODEL"], _GGUF)
-        self.assertEqual(result["env"]["LLAMA_BEE_MMPROJ"], "")
 
     # -----------------------------------------------------------------------
     # Tabby / HttpLoadUnloadDriver

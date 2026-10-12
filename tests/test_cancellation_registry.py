@@ -41,15 +41,6 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handle_a.token.cancelled)
         self.assertTrue(handle_b.token.cancelled)
 
-    async def test_release_drops_entry(self) -> None:
-        registry = CancellationRegistry()
-        handle = registry.register("req-4")
-        handle.release()
-        self.assertFalse(registry.is_cancelled("req-4"))
-        # A signal after release starts a fresh (uncancelled-until-signalled) entry.
-        fresh = registry.register("req-4")
-        self.assertFalse(fresh.token.cancelled)
-
     async def test_normal_completion_without_signal_leaves_token_uncancelled(self) -> None:
         registry = CancellationRegistry()
         handle = registry.register("req-5")
@@ -89,20 +80,6 @@ class CancellationRegistryTests(unittest.IsolatedAsyncioTestCase):
 class CancellationRegistryOwnershipTests(unittest.IsolatedAsyncioTestCase):
     """Duplicate outer/internal registration of the same id must be release-safe."""
 
-    async def test_one_owners_release_does_not_delete_the_others_live_waiter(self) -> None:
-        registry = CancellationRegistry()
-        outer = registry.register("req-dup")
-        inner = registry.register("req-dup")
-
-        # Outer finishes first (e.g. non-stream path completes before the
-        # internal LiteLLM hop's reader has released). Its release must not
-        # detach or delete the inner handle's still-live waiter.
-        outer.release()
-        self.assertTrue(registry.is_cancelled("req-dup") is False)
-
-        registry.signal("req-dup")
-        self.assertTrue(inner.token.cancelled)
-
     async def test_stale_handle_release_after_full_release_and_reregister_is_noop(self) -> None:
         registry = CancellationRegistry()
         first = registry.register("req-stale")
@@ -124,7 +101,10 @@ class CancellationRegistryOwnershipTests(unittest.IsolatedAsyncioTestCase):
         fresh = registry.register("req-idem")
         self.assertFalse(fresh.token.cancelled)
 
-    async def test_duplicate_registration_requires_both_releases_to_drop_entry(self) -> None:
+    async def test_outer_release_keeps_shared_entry_signalable_for_inner_waiter(self) -> None:
+        # Outer finishes first (e.g. the non-stream path completes before the
+        # internal LiteLLM hop's reader has released). Its release must not
+        # detach or delete the inner handle's still-live waiter.
         registry = CancellationRegistry()
         outer = registry.register("req-refcount")
         inner = registry.register("req-refcount")
