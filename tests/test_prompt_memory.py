@@ -223,11 +223,6 @@ def test_removed_or_disabled_person_cannot_persist_in_flight_prompt(tmp_path):
     admin_store.init_db(admin_db)
     disabled = admin_store.upsert_oidc_user("iss", "disabled", path=admin_db)
     removed = admin_store.upsert_oidc_user("iss", "removed", path=admin_db)
-    with admin_store._conn(admin_db) as conn:
-        conn.execute(
-            "CREATE TABLE account_access (user_id TEXT PRIMARY KEY, disabled_at INTEGER, removed_at INTEGER)",
-        )
-        conn.commit()
     decisions = {
         user["id"]: prompt_memory.decide_for_person(
             user["id"], {"prompt": "private prompt"}, admin_path=admin_db,
@@ -237,8 +232,8 @@ def test_removed_or_disabled_person_cannot_persist_in_flight_prompt(tmp_path):
     assert all(decision.keep for decision in decisions.values())
     with admin_store._conn(admin_db) as conn:
         conn.executemany(
-            "INSERT INTO account_access(user_id,disabled_at,removed_at) VALUES(?,?,?)",
-            [(disabled["id"], 100, None), (removed["id"], None, 100)],
+            "UPDATE account_access SET disabled_at = ?, removed_at = ? WHERE user_id = ?",
+            [(100, None, disabled["id"]), (None, 100, removed["id"])],
         )
         conn.commit()
 

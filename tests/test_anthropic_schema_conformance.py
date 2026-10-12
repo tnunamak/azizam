@@ -195,7 +195,7 @@ def keyed_auth(raw_key: str):
         name=raw_key,
         key_hash=key_hash,
         downstream={},
-        access=access(plan_for("conformance"), caps=('chat',)),
+        access=access(plan_for("conformance", caps=('chat',))),
     )
 
     def lookup(candidate_hash: str, **_kwargs):

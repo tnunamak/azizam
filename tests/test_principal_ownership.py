@@ -59,7 +59,7 @@ def test_owner_mapping_and_namespaces(owners):
     assert ownership.owner_key(old) == ownership.owner_key(new) == f"app:{owners.first['id']}"
     assert ownership.owner_key(other) != ownership.owner_key(old)
     assert ownership.principal_key("app", "same") != ownership.principal_key("user", "same")
-    assert ownership.owner_key(access_context()) is None
+    assert ownership.owner_key(proxy.NO_AUTH_CONTEXT) is None  # no identity: the unowned namespace
     assert custom_voices.owner_dir_name(None) == "local"
     service = admin_store.ensure_service_account("azizam-fixture", path=owners.db)
     credential = admin_store.create_credential_hash(
@@ -186,7 +186,7 @@ def test_unknown_credential_and_local_do_not_share_scoped_assets(owners):
     unknown = proxy.AuthContext(identity=SimpleNamespace(key_hash="sha256:unmapped"))
     assert ownership.readable_owner_keys(unknown) == ("sha256:unmapped",)
     asset = proxy.store_image_bytes(b"Azizam local image")
-    assert proxy._asset_access_allowed(asset, access_context())
+    assert proxy._asset_access_allowed(asset, proxy.NO_AUTH_CONTEXT)  # unowned assets belong to no identity
     assert not proxy._asset_access_allowed(asset, unknown)
     assert not proxy._asset_access_allowed(asset, owners.contexts[0])
 
