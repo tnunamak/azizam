@@ -7,6 +7,7 @@ All backend I/O is a recording tripwire; this module never contacts a model.
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import time
@@ -184,7 +185,7 @@ def gateway(monkeypatch, tmp_path, request):
         )
         decision = runtime_auth.evaluate_and_apply(auth.identity, resolved)
         assert decision.decision == POLICY_DENIED
-        assert any("workflow" in reason.lower() for reason in decision.reasons)
+        assert decision.code == "not_in_access_plan"
         assert category_enforcement.SOURCE not in decision.sources
     if category_mode:
         # Prove that a valid active deny-all snapshot, rather than the ordinary
@@ -1403,6 +1404,8 @@ def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
         assert not gateway.calls, (path, gateway.calls)
         responses[path] = response.content.decode()
     expected = json.loads((Path(__file__).parent / "fixtures/category_discovery_ungoverned.json").read_text())
+    if os.environ.get("AZIZAM_DUMP_DISCOVERY"):
+        Path(os.environ["AZIZAM_DUMP_DISCOVERY"]).write_text(json.dumps(responses, indent=2, sort_keys=True))
     assert responses == expected
     # An active snapshot governing other identities must preserve the same bytes.
     from tests.test_category_enforcement import _activate, _snapshot
