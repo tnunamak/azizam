@@ -4230,74 +4230,74 @@ async def _stream_tts_upstream(
     """
     client = httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10))
     upstream = None
+    streaming = False
+    # Until the body is handed to the StreamingResponse this function owns the
+    # client and the upstream body, on every exit including cancellation.
     try:
-        upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
-        if not 200 <= upstream.status_code < 300:
-            content = await upstream.aread()
-            if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
-                return _tts_gpu_memory_response()
-            return Response(
-                content=content,
-                status_code=upstream.status_code,
-                media_type=upstream.headers.get("content-type", "application/json"),
-            )
-    except httpx.TimeoutException:
-        await client.aclose()
-        return _tts_error("TTS request timeout", 504)
-    except httpx.ConnectError:
-        await client.aclose()
-        return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
-    except Exception as e:  # noqa: BLE001
-        await client.aclose()
-        return _tts_error(f"TTS proxy error: {e}", 502)
-
-    # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
-    # first and fails inside the stream when GPU0 is full, so the status alone cannot be
-    # trusted. Read the first chunk before committing a 200 to the client: a stream that
-    # dies before any audio becomes a 503 and the tier falls back to its next engine.
-    raw_chunks = upstream.aiter_raw()
-    try:
-        first_chunk = await anext(raw_chunks, b"")
-    except (httpx.TransportError, httpx.StreamError) as e:
-        await upstream.aclose()
-        await client.aclose()
-        print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
-        return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
-    except Exception:  # noqa: BLE001
-        await upstream.aclose()
-        await client.aclose()
-        raise
-    if not first_chunk:
-        await upstream.aclose()
-        await client.aclose()
-        return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
-
-    async def with_first_chunk() -> AsyncIterator[bytes]:
-        yield first_chunk
-        async for chunk in raw_chunks:
-            yield chunk
-
-    async def frames():
         try:
-            source = speech_stream.align_samples(with_first_chunk())
-            if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
-                source = speech_stream.transcode_pcm_stream(
-                    source, src_rate=native_rate, response_format=response_format
+            upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
+            if not 200 <= upstream.status_code < 300:
+                content = await upstream.aread()
+                if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+                    return _tts_gpu_memory_response()
+                return Response(
+                    content=content,
+                    status_code=upstream.status_code,
+                    media_type=upstream.headers.get("content-type", "application/json"),
                 )
-            if stream_format == "sse":
-                source = speech_stream.pcm_to_sse(source)
-            async for chunk in source:
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
+        except httpx.TimeoutException:
+            return _tts_error("TTS request timeout", 504)
+        except httpx.ConnectError:
+            return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+        except Exception as e:  # noqa: BLE001
+            return _tts_error(f"TTS proxy error: {e}", 502)
 
-    media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
-    return StreamingResponse(
-        frames(),
-        media_type=media_type,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+        # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
+        # first and fails inside the stream when GPU0 is full, so the status alone cannot be
+        # trusted. Read the first chunk before committing a 200 to the client: a stream that
+        # dies before any audio becomes a 503 and the tier falls back to its next engine.
+        raw_chunks = upstream.aiter_raw()
+        try:
+            first_chunk = await anext(raw_chunks, b"")
+        except (httpx.TransportError, httpx.StreamError) as e:
+            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
+            return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
+        if not first_chunk:
+            return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
+
+        async def with_first_chunk() -> AsyncIterator[bytes]:
+            yield first_chunk
+            async for chunk in raw_chunks:
+                yield chunk
+
+        async def frames():
+            try:
+                source = speech_stream.align_samples(with_first_chunk())
+                if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
+                    source = speech_stream.transcode_pcm_stream(
+                        source, src_rate=native_rate, response_format=response_format
+                    )
+                if stream_format == "sse":
+                    source = speech_stream.pcm_to_sse(source)
+                async for chunk in source:
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
+        response = StreamingResponse(
+            frames(),
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+        streaming = True
+        return response
+    finally:
+        if not streaming:
+            if upstream is not None:
+                await upstream.aclose()
+            await client.aclose()
 
 
 async def proxy_tts_request(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
