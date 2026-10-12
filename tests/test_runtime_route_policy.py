@@ -771,7 +771,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -793,7 +793,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 
@@ -831,7 +831,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "currently_loaded_model", lambda _backend: loaded_path
         ), patch.object(
-            proxy, "_kobold_context_window", AsyncMock(return_value=8192)
+            proxy, "_probed_context_window", AsyncMock(return_value=8192)
         ):
             response = self.client.get("/v1/models", headers=AUTH_HEADERS)
 

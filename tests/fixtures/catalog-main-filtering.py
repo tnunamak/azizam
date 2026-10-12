@@ -117,8 +117,8 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if engine_quarantine.context_window_from_live_probe(backend):
-        return await _kobold_context_window()
+    if _context_window_probe_endpoint(backend):
+        return await _probed_context_window(backend)
     return None
 
 async def _annotate_model_context_windows(data: list[Any]) -> None:

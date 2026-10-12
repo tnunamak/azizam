@@ -106,6 +106,15 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         self.assertNotIn("aux", registry["services"]["llm"]["config"])
         self.assertEqual(migration.migrate_registry(registry), [])
 
+    def test_seeds_the_context_window_probe_on_the_owner_service_only(self):
+        registry = registry_with()
+        registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}
+        migration.migrate_registry(registry)
+        self.assertEqual(registry["services"]["kobold"]["config"]["context_window_probe"],
+                         {"endpoint": "/v1/models"})
+        self.assertNotIn("context_window_probe", registry["services"]["llm"]["config"])
+        self.assertEqual(migration.migrate_registry(registry), [])
+
     def test_seeds_the_loaded_model_identity_on_the_owner_service_only(self):
         registry = registry_with()
         registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}

@@ -46,17 +46,9 @@ from __future__ import annotations
 # and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
-# Backends whose context-window size is read from a live probe of the backend
-# (the /v1/models endpoint) rather than a plain config field. The caller still
-# owns the probe call; this only flags which backends need that special path.
-_CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
-
 
 # ---------------------------------------------------------------------------
 # Predicates. proxy.py calls these instead of inlining `if backend == "..."`.
 # Each is a one-line lookup; the engine knowledge is the table it reads.
 # ---------------------------------------------------------------------------
 
-def context_window_from_live_probe(backend: str) -> bool:
-    """True if `backend`'s context window is read from a live backend probe."""
-    return backend in _CONTEXT_WINDOW_FROM_LIVE_PROBE

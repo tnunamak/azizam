@@ -23675,8 +23675,20 @@ def _configured_context_window_for_backend(backend: str | None) -> int | None:
     return None
 
 
-async def _kobold_context_window() -> int | None:
-    cached = _MODEL_CONTEXT_CACHE.get("kobold")
+def _context_window_probe_endpoint(backend: str | None) -> str | None:
+    """The service's ``context_window_probe.endpoint``, or None when it declares no probe."""
+    cfg = (config.get("backends") or {}).get(backend) if backend else None
+    probe = cfg.get("context_window_probe") if isinstance(cfg, Mapping) else None
+    endpoint = probe.get("endpoint") if isinstance(probe, Mapping) else None
+    return endpoint if isinstance(endpoint, str) and endpoint.startswith("/") else None
+
+
+async def _probed_context_window(backend: str) -> int | None:
+    """The context window the service itself reports at its declared probe endpoint."""
+    endpoint = _context_window_probe_endpoint(backend)
+    if endpoint is None:
+        return None
+    cached = _MODEL_CONTEXT_CACHE.get(backend)
     now = time.time()
     if cached and now - cached[0] < _MODEL_CONTEXT_CACHE_TTL_S:
         return cached[1]
@@ -23684,7 +23696,7 @@ async def _kobold_context_window() -> int | None:
     value: int | None = None
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
-            resp = await client.get(f"{KOBOLD_HOST}/v1/models")
+            resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
         if resp.status_code == 200:
             payload = resp.json()
             data = payload.get("data") if isinstance(payload, Mapping) else None
@@ -23698,9 +23710,9 @@ async def _kobold_context_window() -> int | None:
             if value is None and isinstance(payload, Mapping):
                 value = _context_window_from_mapping(payload)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] /v1/models: could not read kobold context window: {e}", flush=True)
+        print(f"[proxy] {endpoint}: could not read the context window of {backend!r}: {e}", flush=True)
 
-    _MODEL_CONTEXT_CACHE["kobold"] = (now, value)
+    _MODEL_CONTEXT_CACHE[backend] = (now, value)
     return value
 
 
@@ -23762,8 +23774,8 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if engine_quarantine.context_window_from_live_probe(backend):
-        found = await _kobold_context_window()
+    if _context_window_probe_endpoint(backend):
+        found = await _probed_context_window(backend)
         if found is not None and observed_windows is not None:
             observed_windows[model_id] = found
         return found

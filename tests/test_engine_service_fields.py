@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+import httpx
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import proxy
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 SERVICE_IDS = ["kobold", "brand-new-llm"]
 
@@ -221,3 +224,32 @@ class TestVisionViaAux:
                     body_json=body, activate_target=False,
                 ))
             assert present.called is asked, aux
+
+
+@pytest.mark.parametrize("service_id", SERVICE_IDS)
+class TestContextWindowProbe:
+    """`context_window_probe.endpoint` makes a service report its own context window."""
+
+    def _read(self, fake, service_id: str, **fields):
+        backends = {service_id: _path_service(5051, **fields), "other": _path_service(5052, **fields)}
+        with patch.object(proxy, "config", {"backends": backends}), patch.object(
+            proxy, "LLM_BACKEND_HOSTS", {service_id: fake.base_url, "other": "http://unreachable.fk.test"}
+        ), patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}):
+            first = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))
+            second = asyncio.run(proxy._context_window_for_model_id("m", {"azizam_backend": service_id}))
+            return first, second, sorted(proxy._MODEL_CONTEXT_CACHE)
+
+    def test_the_window_is_read_from_the_service_own_url_once_and_cached_per_service(self, service_id, fake_upstreams):
+        fake = fake_upstreams.asgi(load_scenario("openai-compatible/served-model-context", model="m"), host="ctx.fk.test")
+        first, second, cache_keys = self._read(fake, service_id, context_window_probe={"endpoint": "/v1/models"})
+        assert (first, second) == (32768, 32768)
+        assert cache_keys == [service_id]
+        assert [(call.method, call.path) for call in fake.calls("models")] == [("GET", "/v1/models")]
+
+    def test_no_probe_without_the_field_whatever_the_id(self, service_id, fake_upstreams):
+        fake = fake_upstreams.asgi(load_scenario("openai-compatible/no-calls"), host="ctx2.fk.test")
+        assert self._read(fake, service_id)[:2] == (None, None)
+
+    def test_an_endpoint_that_is_not_a_path_is_ignored(self, service_id, fake_upstreams):
+        fake = fake_upstreams.asgi(load_scenario("openai-compatible/no-calls"), host="ctx3.fk.test")
+        assert self._read(fake, service_id, context_window_probe={"endpoint": "http://x/y"})[:2] == (None, None)

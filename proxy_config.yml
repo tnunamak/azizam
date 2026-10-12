@@ -46,6 +46,9 @@ backends:
     # The server reports its loaded model as a filesystem path, which is
     # compared with the path being activated (instead of an HTTP model id).
     loaded_model_identity: path
+    # When no model record declares a window, read it from the server itself.
+    context_window_probe:
+      endpoint: /v1/models
     # The vision projector file is not reported over HTTP; read it from the
     # server's command line (the process on this service's port).
     aux:

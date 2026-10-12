@@ -85,6 +85,13 @@ def seed_aux_probe(registry: dict) -> list[str]:
     return [f"{OWNER_LOCAL_SERVICE_ID}: config.aux = process-cmdline probe of llama-server --mmproj, grants image input"]
 
 
+def seed_context_window_probe(registry: dict) -> list[str]:
+    service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
+    if service is None or not _set_config(service, "context_window_probe", {"endpoint": "/v1/models"}):
+        return []
+    return [f"{OWNER_LOCAL_SERVICE_ID}: config.context_window_probe.endpoint = /v1/models"]
+
+
 def seed_activation_absolute_path(registry: dict) -> list[str]:
     service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
     if service is None or not _set_driver_config(service, "activation_requires_absolute_path", True):
@@ -111,6 +118,7 @@ STEPS: list[tuple[str, Callable[[dict], list[str]]]] = [
     ("activation-absolute-path", seed_activation_absolute_path),
     ("loaded-model-identity", seed_loaded_model_identity),
     ("aux-probe", seed_aux_probe),
+    ("context-window-probe", seed_context_window_probe),
 ]
 
 

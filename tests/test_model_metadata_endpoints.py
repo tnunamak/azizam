@@ -108,7 +108,7 @@ def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: boo
     ]
     if not real_loaded_state:
         patches.extend([
-            patch.object(proxy, "_kobold_context_window", _no_context_probe),
+            patch.object(proxy, "_probed_context_window", _no_context_probe),
             patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
         ])
     for patcher in patches:
@@ -344,6 +344,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             "kobold": {"base_url": "http://kobold.test", "health_endpoint": "/health",
                        "priority": 1, "state_type": "llama_cpp",
                        "loaded_model_identity": "path",
+                       "context_window_probe": {"endpoint": "/v1/models"},
                        "protocol": "openai-compatible",
                        "capabilities": ["chat", "openai"], "models": [
                            {"id": "private-public", "upstream_model": "loaded-kobold",
