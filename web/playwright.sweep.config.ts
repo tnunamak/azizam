@@ -1,6 +1,7 @@
 // Quality sweep: every route and state, 390/1440 px, light/dark, owner/member.
 // `npm run sweep` (household fixture), `npm run sweep:live` (live-data harness),
 // `npm run sweep:copy` (live-data harness on a copy of production data).
+import "./test-priority"; // first: nice 19 + idle I/O for the runner and everything it starts
 import { defineConfig } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";

@@ -11,7 +11,7 @@
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
 pytest = 8216
-vitest = 1631
+vitest = 1641  # +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
 node = 5
 
