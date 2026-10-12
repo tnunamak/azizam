@@ -22,7 +22,7 @@ export default function RootPage() {
         // Same copy as the shell's session failure on every other page.
         <ErrorState
           heading="Couldn’t load your account"
-          message="Check your connection and try again."
+          message="We couldn't tell why your account didn't load. Try again."
           onRetry={() => void viewer.refetch()}
           retrying={viewer.isFetching}
         />

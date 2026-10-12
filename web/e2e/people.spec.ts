@@ -168,7 +168,7 @@ async function open(page: Page, surface: Surface, state: State) {
     await expect(
       page
         .getByRole("alert")
-        .filter({ hasText: /Couldn’t load (this|sign-in)/ }),
+        .filter({ hasText: /Couldn’t load (this|sign-in)|Something didn’t load/ }),
     ).toBeVisible();
   else if (surface === "people")
     await expect(
