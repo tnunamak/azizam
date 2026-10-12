@@ -25,21 +25,30 @@ LOCK_WAIT_S = 2.0
 _SCOPE: ContextVar["_Scope | None"] = ContextVar("azizam_request_connections", default=None)
 
 
+class _Entry:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.conn: sqlite3.Connection | None = None
+
+
 class _Scope:
     def __init__(self) -> None:
         self.guard = threading.Lock()
-        self.entries: dict[tuple[str, str], tuple[sqlite3.Connection, threading.RLock]] = {}
+        self.entries: dict[tuple[str, str], _Entry] = {}
         self.closed = False
 
     def close(self) -> None:
         with self.guard:
             self.closed = True
             entries, self.entries = list(self.entries.values()), {}
-        for conn, _lock in entries:
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
+        for entry in entries:
+            with entry.lock:
+                conn, entry.conn = entry.conn, None
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error:
+                    pass
 
 
 @contextmanager
@@ -69,11 +78,8 @@ def scoped(kind: str, path: object, opener: Callable[[], sqlite3.Connection]) ->
         return
     key = (kind, str(path))
     with scope.guard:
-        entry = None if scope.closed else scope.entries.get(key)
-        if entry is None and not scope.closed:
-            entry = (opener(), threading.RLock())
-            scope.entries[key] = entry
-    if entry is None or not entry[1].acquire(timeout=LOCK_WAIT_S):
+        entry = None if scope.closed else scope.entries.setdefault(key, _Entry())
+    if entry is None or not entry.lock.acquire(timeout=LOCK_WAIT_S):
         conn = opener()
         try:
             yield conn
@@ -81,9 +87,18 @@ def scoped(kind: str, path: object, opener: Callable[[], sqlite3.Connection]) ->
             conn.close()
         return
     try:
-        yield entry[0]
+        if entry.conn is None:
+            entry.conn = opener()  # outside the scope guard, so different stores open in parallel
+            if scope.closed:  # the request ended while this thread was opening
+                conn, entry.conn = entry.conn, None
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+                return
+        yield entry.conn
     finally:
-        entry[1].release()
+        entry.lock.release()
 
 
 class RequestConnectionsMiddleware:
