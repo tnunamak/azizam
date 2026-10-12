@@ -204,24 +204,32 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        status_calls = 0
+        status_calls: list[str] = []
+        content_calls: list[str] = []
 
-        async def fake_status(_video_id, _auth_context):
-            nonlocal status_calls
-            status_calls += 1
-            if status_calls == 1:
-                return Response(
-                    content=json.dumps({"status": "running", "progress": 44}),
-                    status_code=200,
-                    media_type="application/json",
-                )
+        async def fake_status(video_id, _auth_context):
+            self.assertEqual(video_id, "video_prompt_123")
+            status_calls.append(video_id)
+            # The GET route speaks "in_progress"/"completed", never the
+            # internal "running"/"succeeded" vocabulary.
+            self.assertLessEqual(len(status_calls), 2, "completion was not recognized")
+            if len(status_calls) == 1:
+                payload = {"status": "in_progress", "progress": 44}
+            else:
+                running = media_jobs.get(job_id, audience="internal", path=self.db)
+                assert running is not None
+                self.assertEqual(running["status"], media_jobs.STATUS_RUNNING)
+                self.assertEqual(running["progress"], 44)
+                payload = {"status": "completed", "progress": 100}
             return Response(
-                content=json.dumps({"status": "succeeded", "progress": 100}),
+                content=json.dumps(payload),
                 status_code=200,
                 media_type="application/json",
             )
 
-        async def fake_content(_video_id, _auth_context, *, index_library=True, metadata_mode=None):
+        async def fake_content(video_id, _auth_context, *, index_library=True, metadata_mode=None):
+            self.assertEqual(video_id, "video_prompt_123")
+            content_calls.append(video_id)
             self.assertFalse(index_library)
             self.assertEqual(metadata_mode, proxy.provenance.METADATA_NONE)
             return Response(
@@ -272,12 +280,18 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored["assets"][0]["asset_id"], "vid_" + "c" * 64)
         self.assertEqual(stored["assets"][0]["filename"], "clip.mp4")
         self.assertIn("/v1/assets/vid_", stored["assets"][0]["content_url"])
+        self.assertEqual(status_calls, ["video_prompt_123"] * 2)
+        self.assertEqual(content_calls, ["video_prompt_123"])
         self.assertEqual(stored_assets[0]["content"], b"video bytes")
         self.assertEqual(stored_assets[0]["kind"], "vid")
         self.assertEqual(stored_assets[0]["suffix"], ".mp4")
         self.assertIsNone(proxy._load_video_media_job_payload(job_id))
         events = media_jobs.events(job_id, audience="internal", path=self.db)
         self.assertIn("completed", [event["event_type"] for event in events])
+        self.assertTrue(any(
+            event["event_type"] == "progress" and event["payload"].get("progress") == 44
+            for event in events
+        ))
 
     async def test_content_route_returns_signed_video_asset_payload(self) -> None:
         asset_id = "vid_" + "d" * 64

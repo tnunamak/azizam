@@ -44,19 +44,6 @@ def _png_from_pixels(
     return output.getvalue()
 
 
-def _solid_png(
-    color: tuple[int, int, int, int],
-    *,
-    size: tuple[int, int] = (4, 4),
-) -> bytes:
-    from PIL import Image
-
-    image = Image.new("RGBA", size, color)
-    output = io.BytesIO()
-    image.save(output, format="PNG")
-    return output.getvalue()
-
-
 def _pixels(content: bytes) -> list[tuple[int, int, int, int]]:
     from PIL import Image
 
@@ -297,7 +284,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
         body = {
             "model": "flux2-klein-4b-seamless-tile",
             "prompt": "painted underwater rock texture",
-            "size": "4x4",
+            "size": "65x67",
             "n": 1,
             "response_format": "b64_json",
             "extensions": {
@@ -316,8 +303,32 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
             proxy.NO_AUTH_CONTEXT,
         )
         run_calls: list[dict[str, Any]] = []
-        base_image = _solid_png((20, 40, 80, 255), size=(4, 4))
-        repaired_offset = proxy._offset_image_bytes(base_image)
+        # Odd dimensions with a distinct value in every pixel make both offset
+        # directions and both axes observable; expectations below are computed
+        # by independent index arithmetic, not by the production helper.
+        width, height = 65, 67
+        base_pixels = [
+            (x, y, (x + 3 * y) % 256, 255)
+            for y in range(height) for x in range(width)
+        ]
+        repaired_pixels = [
+            (128 + x, 128 + y, (2 * x + y) % 256, 255)
+            for y in range(height) for x in range(width)
+        ]
+        base_image = _png_from_pixels(base_pixels, size=(width, height))
+        repaired_offset = _png_from_pixels(repaired_pixels, size=(width, height))
+        expected_upload = [
+            base_pixels[((y - 34) % height) * width + ((x - 32) % width)]
+            for y in range(height) for x in range(width)
+        ]
+        expected_result = [
+            repaired_pixels[((y + 34) % height) * width + ((x + 32) % width)]
+            for y in range(height) for x in range(width)
+        ]
+        expected_mask = [
+            255 if x in (31, 32) or y in (32, 33) else 0
+            for y in range(height) for x in range(width)
+        ]
 
         async def fake_run_round(
             _client: Any,
@@ -385,23 +396,25 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run_calls[1]["workflow"]["19"]["inputs"]["left"], 6)
 
         self.assertEqual(_FakeAsyncClient.uploads, 2)
+        uploaded_image = _FakeAsyncClient.upload_files[0]["image"][1]
+        self.assertEqual(_pixels(uploaded_image), expected_upload)
         uploaded_mask = _FakeAsyncClient.upload_files[1]["image"][1]
         mask_values = [pixel[0] for pixel in _pixels(uploaded_mask)]
-        self.assertEqual(
-            mask_values,
-            [
-                0, 255, 255, 0,
-                255, 255, 255, 255,
-                255, 255, 255, 255,
-                0, 255, 255, 0,
-            ],
-        )
+        self.assertEqual(mask_values, expected_mask)
+        inpaint = run_calls[1]["workflow"]
+        self.assertEqual(inpaint["10"]["inputs"]["image"], "uploaded-1.png")
+        self.assertEqual(inpaint["12"]["inputs"]["image"], "uploaded-2.png")
+        for node_id in ("11", "14", "48"):
+            self.assertEqual(inpaint[node_id]["inputs"]["width"], width)
+            self.assertEqual(inpaint[node_id]["inputs"]["height"], height)
 
         payload = json.loads(response.body.decode("utf-8"))
         returned = payload["data"][0]
         self.assertIn("asset_id", returned)
         self.assertIn("asset_url", returned)
-        self.assertEqual(_pixels(base64_to_png(returned["b64_json"])), _pixels(base_image))
+        self.assertEqual(_pixels(base64_to_png(returned["b64_json"])), expected_result)
+        self.assertNotEqual(expected_result, base_pixels)
+        self.assertNotEqual(expected_result, repaired_pixels)
         self.assertEqual(receipt.manifest_id, self.manifest_id())
 
     def manifest_id(self) -> str:
