@@ -18,6 +18,7 @@ import sqlite3
 import time
 import calendar
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -297,8 +298,24 @@ def require_remote_allowed(
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
 
 
+def _backup_ledger_before_plan_migration(path: Path) -> None:
+    """Keep a copy of a ledger that still has ``profile_id`` before it is dropped."""
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path)) as source:
+        if "profile_id" not in {row[1] for row in source.execute("PRAGMA table_info(provider_spend)")}:
+            return
+        backup = path.with_name(f"{path.name}.bak.pre-access-plans")
+        if backup.exists():
+            return
+        with closing(sqlite3.connect(backup)) as target:
+            source.backup(target)
+        backup.chmod(0o600)
+
+
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _backup_ledger_before_plan_migration(path)
     with sqlite3.connect(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -321,14 +338,6 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
         if "profile_id" in columns:
-            backup = path.with_name(f"{path.name}.bak.pre-access-plans")
-            if not backup.exists():
-                target = sqlite3.connect(backup)
-                try:
-                    conn.backup(target)
-                finally:
-                    target.close()
-                backup.chmod(0o600)
             # Charges are no longer counted by plan: a plan change must never
             # reset a counter. Old rows stay in provider and gateway totals.
             conn.execute("DROP INDEX IF EXISTS idx_provider_spend_window")
