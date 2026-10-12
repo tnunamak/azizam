@@ -430,7 +430,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         )
         proxy._video_job_records[prompt_id] = {
             "resolved_model": "ltx-test",
-            "app_profile": auth_context.identity.profile.id,
+            "app_profile": "plan_test",
             "app_id": "app_video",
             "api_key_name": "Video app",
             "owner_key_hash": "sha256:video-owner",
@@ -483,7 +483,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         _FakeVideoAsyncClient.prompt_id = prompt_id
         proxy._video_job_records[prompt_id] = {
             "resolved_model": "ltx-test",
-            "app_profile": auth_context.identity.profile.id,
+            "app_profile": "plan_test",
             "app_id": "app_video",
             "api_key_name": "Video app",
             "owner_key_hash": "sha256:video-owner",
@@ -523,7 +523,6 @@ class SyncMediaRouteTests(unittest.TestCase):
                 request,  # type: ignore[arg-type]
                 access_context(),
                 intent=intent,
-                profile="owner-default",
             )
 
         request = JsonRequest()
