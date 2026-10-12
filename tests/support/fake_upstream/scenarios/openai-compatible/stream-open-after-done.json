@@ -1,0 +1,21 @@
+{
+  "protocol": "openai-compatible",
+  "name": "stream-open-after-done",
+  "description": "A complete streamed answer with usage and [DONE]; the upstream then keeps the connection open (the clock never releases it before the test says so).",
+  "provenance": {"source": "hand-written", "reference": "OpenAI streaming: the stream ends at data: [DONE]; keep-alive servers may hold the socket"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"stream": true}},
+      "response": {
+        "status": 200,
+        "body": [
+          {"event": {"id": "chatcmpl-fk-paid", "object": "chat.completion.chunk", "created": 1767225600, "model": "openai/gpt-4.1-mini", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "hi"}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-fk-paid", "object": "chat.completion.chunk", "created": 1767225600, "model": "openai/gpt-4.1-mini", "choices": [], "usage": {"cost": "0.000222", "prompt_tokens": 10, "completion_tokens": 4}}},
+          {"done": true},
+          {"wait": "forever"}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "protocol": "comfyui",
+  "name": "image-slow-completion",
+  "description": "Five history checks find the job still pending, the sixth finds it complete.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes /prompt, /history/{prompt_id}, /view, /queue, /api/jobs/{id}/cancel (tests/test_image_polling.py pre-migration handler)"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "image-job"
+        }
+      }
+    },
+    {
+      "id": "pending",
+      "match": {
+        "method": "GET",
+        "path": "/history/image-job"
+      },
+      "response": {
+        "json": {}
+      },
+      "times": 5
+    },
+    {
+      "id": "complete",
+      "match": {
+        "method": "GET",
+        "path": "/history/image-job"
+      },
+      "response": {
+        "json": {
+          "image-job": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "1": {
+                "images": [
+                  {
+                    "filename": "image.png"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "image.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "body": [
+          {
+            "text": "generated image"
+          }
+        ]
+      }
+    }
+  ]
+}

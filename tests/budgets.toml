@@ -7,6 +7,14 @@
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
 [ceilings]
-pytest = 8126
+pytest = 8208
 vitest = 1606
 playwright = 735
+
+# Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
+# new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
+# a migration lowers it in the same change. Counted with the AST scanner on
+# 0bff0431: 55 files (the earlier regex scan found 29 and missed
+# patch.object(proxy.httpx, "AsyncClient", ...) fakes).
+[ratchets]
+ad_hoc_upstream_fake_files = 50

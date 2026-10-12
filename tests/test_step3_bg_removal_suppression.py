@@ -13,12 +13,10 @@ suppression mechanism.  See docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md D-1.
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import patch
 
-import httpx
-
 import proxy
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 from gateway.transforms import (
     QWEN3_ENABLE_THINKING_KEY,
     QWEN3_NO_THINK_HINT,
@@ -40,19 +38,9 @@ class TestBackgroundRemovalSuppressionConstants:
 class TestBackgroundRemovalOutboundPayload:
     """Capture the request the production helper actually sends to the LLM."""
 
-    def test_outbound_payload_uses_kwarg_only_suppression(self) -> None:
+    def test_outbound_payload_uses_kwarg_only_suppression(self, fake_upstreams) -> None:
         prompt = "A professional logo for a tech startup"
-        sent: list[httpx.Request] = []
-
-        def respond(request: httpx.Request) -> httpx.Response:
-            sent.append(request)
-            decision = {"remove_background": True, "confidence": 0.9, "reason": "logo"}
-            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(decision)}}]})
-
-        real_client = httpx.AsyncClient
-
-        def client(*_args, **kwargs):
-            return real_client(transport=httpx.MockTransport(respond), timeout=kwargs.get("timeout"))
+        fake = fake_upstreams.asgi(load_scenario("openai-compatible/json-decision", model="bg-decider-model"), host="bg.fk.test")
 
         async def active_backend() -> str:
             return "tabby"
@@ -63,16 +51,14 @@ class TestBackgroundRemovalOutboundPayload:
         auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
-             patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": "http://127.0.0.1:9"}), \
-             patch.object(proxy, "effective_llm_model_for_host", model_for_host), \
-             patch.object(proxy.httpx, "AsyncClient", client):
+             patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": fake.base_url}), \
+             patch.object(proxy, "effective_llm_model_for_host", model_for_host):
             decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
 
         assert (decision.remove_background, decision.source) == (True, "llm")
-        assert len(sent) == 1
-        assert sent[0].method == "POST"
-        assert str(sent[0].url) == "http://127.0.0.1:9/v1/chat/completions"
-        payload = json.loads(sent[0].content)
+        [sent] = fake.calls("chat")
+        assert (sent.method, sent.path) == ("POST", "/v1/chat/completions")
+        payload = sent.json
         assert set(payload) == {
             "model", "messages", "temperature", "max_tokens", "response_format", "chat_template_kwargs",
         }

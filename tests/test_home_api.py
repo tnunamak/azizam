@@ -19,6 +19,8 @@ from gateway.request_source import current_gateway_ui
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.user_runtime import UserPortalError, create_user_app, get_user_receipt
 from pydantic import TypeAdapter
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
+from tests.support.gateway import register_litellm, use_admin_db
 
 
 @pytest.fixture
@@ -559,7 +561,7 @@ def test_capability_union_includes_available_new_app_default(home_case):
     assert data["new_app_aliases"] == [] and data["aliases"] == []
 
 
-def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypatch, tmp_path):
+def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
     import proxy
     from gateway.policy import DEFAULT_PROFILE
 
@@ -569,34 +571,15 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
     monkeypatch.setattr(receipt_store, "begin", lambda item, **kwargs: original_begin(item, path=receipt_db, **kwargs))
     monkeypatch.setattr(receipt_store, "finalize", lambda item, **kwargs: original_finalize(item, path=receipt_db, **kwargs))
 
-    class Client:
-        async def aclose(self):
-            pass
+    upstream = fake_upstreams.asgi(load_scenario("openai-compatible/spoofed-correlation", model="demo-chat"))
+    register_litellm(monkeypatch, use_admin_db(monkeypatch, tmp_path), upstream.base_url)
 
-    class Upstream:
-        status_code = 200
-        headers = {"content-type": "application/json", "x-azizam-request-id": "spoofed-upstream", "x-azizam-receipt-id": "spoofed-receipt", "request-id": "provider-opaque"}
-        async def aread(self):
-            return b'{"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}'
-        async def aclose(self):
-            pass
-
-    captured = []
-    async def send(request, **_kwargs):
-        captured.append(request)
-        return Client(), Upstream()
     async def prepare(_auth_context, **kwargs):
         return None, kwargs["body_json"]
 
     identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), profile=DEFAULT_PROFILE, app_id="header-app")
     monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lambda *_args, **_kwargs: identity)
-    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {
-        "litellm": {"id": "litellm", "kind": "llm-substrate", "enabled": True,
-                    "capabilities": ["llm.execution"], "config": {"base_url": "http://unit-test.invalid", "api_key_env": "HOME_HEADER_MASTER"}}
-    }})
-    monkeypatch.setenv("HOME_HEADER_MASTER", "unit-test-master")
-    monkeypatch.setattr(proxy, "send_llm_execution_request", send)
     monkeypatch.setattr(proxy, "_prepare_litellm_local_llm_request", prepare)
     monkeypatch.setitem(proxy.config, "model_aliases", {})
     client = TestClient(proxy.app)
@@ -612,7 +595,9 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
     assert response.headers["request-id"] == "provider-opaque"
     receipt = receipt_store.get(request_id, path=receipt_db)
     assert receipt["status"] == "succeeded" and receipt["app_id"] == "header-app"
-    assert len(captured) == 1
+    [forwarded] = upstream.calls("chat")
+    assert forwarded.json == {"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1}
+    assert forwarded.headers["x-azizam-request-id"] == request_id
 
 
 def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_case):
