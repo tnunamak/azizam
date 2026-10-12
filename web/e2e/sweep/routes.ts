@@ -321,7 +321,6 @@ export const ROUTES: SweepRoute[] = [
       { id: "claimed" },
     ],
   },
-  { appRoute: "/design", surface: "Design reference (dev)", path: "/design/", roles: owner, dev: true, states: [{ id: "default" }] },
   {
     appRoute: "(not-found)",
     surface: "Page not found",
@@ -329,6 +328,16 @@ export const ROUTES: SweepRoute[] = [
     roles: ["owner", "member"],
     states: [{ id: "default" }],
   },
+];
+
+/**
+ * Dev reference pages (route.dev === true) are not product surfaces and stay out of ROUTES:
+ * the design page shows permanent loading examples (aria-busy, skeletons) by design, which
+ * the sweep's settle contract would always report as never finished. They stay listed here so
+ * the every-app-route coverage check still sees them.
+ */
+export const DEV_REFERENCE_ROUTES: SweepRoute[] = [
+  { appRoute: "/design", surface: "Design reference (dev)", path: "/design/", roles: owner, dev: true, states: [{ id: "default" }] },
 ];
 
 /** App routes discovered from src/app: every directory holding a page.tsx. */
