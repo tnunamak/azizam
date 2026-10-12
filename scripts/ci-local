@@ -65,7 +65,7 @@ receipts=$receipts_root/$tree
 
 # A signoff attests that this invocation ran every required step on the exact
 # merge candidate (docs/design/TEST_STRATEGY.md 1.2). Each rule that does not
-# hold refuses with exit 3 and writes no signoff receipt.
+# hold refuses with exit 3, posts nothing and writes no signoff receipt.
 refuse() { echo "signoff refused: $*" >&2; exit 3; }
 remote_tip() { git ls-remote --exit-code origin "refs/heads/$target" | cut -f1; }
 check_nightly_red() {
@@ -75,6 +75,10 @@ check_nightly_red() {
   for number in $open; do
     [[ $number == "$closes_nightly_red" ]] ||
       refuse "open nightly-red issue #$number blocks signoff; pass --closes-nightly-red $number only if this change closes it"
+    # The same keywords GitHub uses to close an issue when the commit lands.
+    git log --format=%B "$target_tip..$sha" |
+      grep -qiE "\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #$number\b" ||
+      refuse "no commit in $target_tip..$sha says it closes nightly-red issue #$number (e.g. \"Fixes #$number\")"
   done
 }
 if ((signoff)); then
@@ -89,11 +93,13 @@ if ((signoff)); then
 fi
 
 # Two gates on one host would share 24 cores and the 18000-18998 ports.
+# Every job inherits the lock descriptor, so if ci-local itself is killed,
+# its surviving jobs keep the host locked until they end.
 lock=$HOME/.tmp/azizam-ci.lock
 mkdir -p "${lock%/*}"
 exec 9>>"$lock"
 if ! flock -n 9; then
-  echo "waiting for the host CI lock $lock (last recorded holder: $(cat "$lock"))"
+  echo "waiting for the host CI lock $lock (last recorded holder: $(cat "$lock"); current holders: fuser -v $lock)"
   flock 9
 fi
 printf 'pid %s sha %s since %s\n' "$$" "$sha" "$(date -u +%FT%TZ)" > "$lock"
@@ -107,11 +113,25 @@ echo "order seed: $seed (reproduce with --order-seed $seed)"
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
 receipts=$(cd "$receipts" && pwd)
-rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff.tsv"
+rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff-$sha.tsv"
 rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
 mkdir -p "$receipts/steps" "$receipts/raw"
+# A run directory holds worktrees and dependency copies (about 7 GB). Exit
+# removes it, except that the latest failed run's directory is kept for
+# debugging, named in $kept. With the lock held, no other run is live, so any
+# other marked directory was left by a killed run and is removed here.
+kept=$scratch/azizam-ci-local.kept
+remove_run_dir() { rm -rf -- "$1"; git -C "$repo" worktree prune; }
+for directory in "$scratch"/azizam-ci-local.*/; do
+  directory=${directory%/}
+  if [[ -f $directory/.ci-local-run && $directory != "$(cat "$kept" 2>/dev/null)" ]]; then
+    remove_run_dir "$directory"
+  fi
+done
 run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
 run=$(cd "$run" && pwd)
+: > "$run/.ci-local-run"
+keep_run=0
 work=$run/web-build
 worktrees=()
 pids=()
@@ -132,7 +152,14 @@ cleanup() {
   deadline=$((SECONDS + 10))
   while pgrep -f -- "$run/" >/dev/null 2>&1 && ((SECONDS < deadline)); do sleep .2; done
   pkill -KILL -f -- "$run/" 2>/dev/null || true
+  rm -f "$receipts/signoff-$sha.tsv.partial"
   cd "$repo"
+  if ((keep_run)); then
+    if [[ -f $kept && $(cat "$kept") != "$run" ]]; then remove_run_dir "$(cat "$kept")"; fi
+    echo "$run" > "$kept"
+    echo "kept the failed run's directory for debugging: $run"
+    return
+  fi
   for directory in "${worktrees[@]}"; do
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
   done
@@ -158,8 +185,7 @@ step() {
   echo "== $name"
   # Run in the background and wait: a trapped INT or TERM interrupts wait at
   # once, while a foreground child would make bash defer or drop the signal.
-  # 9>&-: no test process may keep the host lock after ci-local exits.
-  ( "$@" ) 9>&- > "$receipts/logs/$name.log" 2>&1 &
+  ( "$@" ) > "$receipts/logs/$name.log" 2>&1 &
   wait "$!" || rc=$?
   # One writer per file; aggregation happens only after every job is reaped.
   printf '%s\t%s\t%s\n' "$name" "$rc" "$((SECONDS - start))" > "$receipts/steps/$name.tsv"
@@ -170,7 +196,7 @@ export receipts work skip_compose py_workers run shards seed
 export -f step
 start_job() {
   local directory=$1; shift
-  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" 9>&- &
+  setsid bash -c 'cd "$1" || exit; shift; "$@"' _ "$directory" "$@" &
   last_pid=$!
   pids+=("$last_pid")
 }
@@ -328,6 +354,7 @@ fi
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 column -t "$receipts/steps.tsv"
 if ((failed)); then
+  keep_run=1
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1
 fi
@@ -336,11 +363,18 @@ echo "ci-local PASSED for $sha; receipts: $receipts"
 cd "$repo"
 ((signoff)) || exit 0
 
+# Recheck what can move during a run, post the status to the tested SHA by
+# name (not to whatever the checkout holds now), and only then finalize the
+# receipt: an interrupted or failed post leaves no signoff receipt.
 final_tip=$(remote_tip) || refuse "cannot reread refs/heads/$target from origin"
 [[ $final_tip == "$target_tip" ]] ||
   refuse "origin/$target moved from $target_tip to $final_tip during the run; rebuild the merge candidate"
+head_now=$(git rev-parse HEAD)
+[[ $head_now == "$sha" ]] || refuse "the checkout moved from $sha to $head_now during the run"
 check_nightly_red
+user=$(git config user.name) || refuse "git user.name is not set"
 chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chromium.executablePath())')
+receipt=$receipts/signoff-$sha.tsv
 {
   printf 'sha\t%s\ntree\t%s\ntarget\t%s\ntarget_tip\t%s\nseed\t%s\n' "$sha" "$tree" "$target" "$target_tip" "$seed"
   printf 'started\t%s\nfinished\t%s\n' "$started" "$(date -u +%FT%TZ)"
@@ -352,8 +386,12 @@ chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chr
   printf 'node\t%s\n' "$(node --version)"
   printf 'chromium\t%s\n' "$("$chromium" --version)"
   printf 'ffmpeg\t%s\n' "$(ffmpeg -version | head -n 1)"
-} > "$receipts/signoff.tsv.partial"
-mv "$receipts/signoff.tsv.partial" "$receipts/signoff.tsv"
-echo "signoff receipt: $receipts/signoff.tsv"
-gh signoff create
-echo "signoff posted for $sha"
+} > "$receipt.partial"
+# The same status `gh signoff create` posts, bound to $sha.
+status_url=$(gh api --method POST "repos/{owner}/{repo}/statuses/$sha" -f state=success \
+  -f context=signoff -f "description=$user signed off" --jq .url) ||
+  refuse "GitHub did not accept the signoff status for $sha"
+[[ $status_url == */statuses/"$sha" ]] || refuse "GitHub recorded the status at $status_url, not on $sha"
+printf 'posted\t%s\nstatus_url\t%s\n' "$(date -u +%FT%TZ)" "$status_url" >> "$receipt.partial"
+mv "$receipt.partial" "$receipt"
+echo "signoff posted for $sha; receipt: $receipt"
