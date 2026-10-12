@@ -68,7 +68,7 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
 """,
     "tests/test_ok.py": "def test_ok():\n    pass\n",
     "tests/suites.toml": "",
-    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\n",
+    "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\nnode = 10\n",
     "tests/requirements-hermetic.lock": "",
     "tests/compat/node/probe-gates.test.mjs": "",
     "web/package.json": "{}\n",
