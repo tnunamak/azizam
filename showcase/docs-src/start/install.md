@@ -68,9 +68,9 @@ If the Compose network conflicts with another network on your computer, set `AZI
 | Data | Where | Kept when you replace the container |
 | --- | --- | --- |
 | Accounts, apps, keys, settings and receipts | Named volume `gateway-data`, at `/app/data` | Yes |
-| Creations (pictures, audio, video) and the key that signs download links | `/app/cache` inside the gateway container | No |
+| Creations (pictures, audio, video) and the key that signs download links | Named volume `gateway-cache`, at `/app/cache` | Yes |
 
-Keep the `gateway-data` volume when you rebuild or replace containers. Creations are not in the volume, so replacing the gateway container deletes them. Download the creations you want to keep before you upgrade.
+Keep both volumes when you rebuild or replace containers. `docker compose up -d --build` keeps them. `docker compose down --volumes` deletes them, and so does `docker volume rm`. If you installed an earlier version that kept creations inside the container, download the creations you want to keep before your first upgrade. They are not in the new volume.
 
 Read [Upgrade and back up](../operate/upgrade-and-backup.md) before you replace an installation.
 

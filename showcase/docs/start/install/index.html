@@ -89,13 +89,13 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
 </tr>
 <tr>
 <td>Creations (pictures, audio, video) and the key that signs download links</td>
-<td><code>/app/cache</code> inside the gateway container</td>
-<td>No</td>
+<td>Named volume <code>gateway-cache</code>, at <code>/app/cache</code></td>
+<td>Yes</td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Keep the <code>gateway-data</code> volume when you rebuild or replace containers. Creations are not in the volume, so replacing the gateway container deletes them. Download the creations you want to keep before you upgrade.</p>
+<p>Keep both volumes when you rebuild or replace containers. <code>docker compose up -d --build</code> keeps them. <code>docker compose down --volumes</code> deletes them, and so does <code>docker volume rm</code>. If you installed an earlier version that kept creations inside the container, download the creations you want to keep before your first upgrade. They are not in the new volume.</p>
 <p>Read <a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a> before you replace an installation.</p>
 <h2 id="next-step">Next step <a class="anchor" href="#next-step" aria-label="Link to Next step">#</a></h2>
 <p><a href="/showcase/docs/start/first-run/">First run</a>: create the owner account, connect your engine and get a first reply.</p>

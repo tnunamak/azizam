@@ -26,7 +26,8 @@ Compose starts:
 - `litellm`, the managed LiteLLM sidecar for chat-shaped execution.
 
 Compose stores runtime state in the `gateway-data` Docker volume at
-`/app/data`. If you want host files instead of a named volume, follow the
+`/app/data`, and generated media and the download-link signing key in the
+`gateway-cache` volume at `/app/cache`. If you want host files instead of a named volume, follow the
 volume example in [First-run setup](../FIRST_RUN_SETUP.md).
 
 ## What lives where
@@ -185,7 +186,8 @@ Admin keys start with `oak_` and belong in admin and recovery paths; keep them o
 
 Back up the runtime state directory. In the default local layout, that is
 `data/` next to `proxy.py`. In Docker Compose, it is the `gateway-data` volume
-mounted at `/app/data`.
+mounted at `/app/data`. Also back up the `gateway-cache` volume at `/app/cache`
+(generated media and the download-link signing key).
 
 Make a consistent snapshot. Quiesce writes first, or use a SQLite backup method
 that includes committed data from the write-ahead log (WAL). Do not copy only a

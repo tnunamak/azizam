@@ -42,17 +42,25 @@
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#what-to-back-up">What to back up</a></li><li class="toc-l2"><a href="#before-you-upgrade">Before you upgrade</a></li><li class="toc-l2"><a href="#upgrade-a-docker-compose-installation">Upgrade a Docker Compose installation</a></li><li class="toc-l2"><a href="#check-the-result">Check the result</a></li><li class="toc-l2"><a href="#restart-a-gateway-that-runs-as-a-systemd-service">Restart a gateway that runs as a systemd service</a></li></ul></nav></details><h2 id="what-to-back-up">What to back up <a class="anchor" href="#what-to-back-up" aria-label="Link to What to back up">#</a></h2>
 <ul>
 <li><strong>The data volume.</strong> In Docker Compose, accounts, apps, keys, settings and receipts are in the <code>gateway-data</code> volume, mounted at <code>/app/data</code>. The gateway and the execution sidecar both use it.</li>
-<li><strong>Creations.</strong> Creations and the key that signs download links are in <code>/app/cache</code> inside the gateway container, not in the volume. Rebuilding the container deletes them. Download the creations you want to keep first.</li>
+<li><strong>The cache volume.</strong> Creations and the key that signs download links are in the <code>gateway-cache</code> volume, mounted at <code>/app/cache</code>. Rebuilding the container keeps them. If you lose the key, old download links stop working.</li>
 <li><strong>Your start-up settings.</strong> Keep your Compose changes, <code>first-run.yml</code> changes and your <code>.env</code> file, if you use one.</li>
 </ul>
 <p>Store backups privately. A container image is not a backup of its data.</p>
+<p>To copy both volumes while the containers are stopped, run these commands from the root of the repository. Compose adds the project name to volume names, so find the exact names with <code>docker volume ls</code>. This example assumes the project name <code>azizam</code>:</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="k">for</span><span class="w"> </span>volume<span class="w"> </span><span class="k">in</span><span class="w"> </span>gateway-data<span class="w"> </span>gateway-cache<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-v<span class="w"> </span>azizam_<span class="nv">$volume</span>:/volume:ro<span class="w"> </span>-v<span class="w"> </span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">"</span>:/backup<span class="w"> </span>alpine<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>tar<span class="w"> </span>czf<span class="w"> </span>/backup/<span class="nv">$volume</span>.tar.gz<span class="w"> </span>-C<span class="w"> </span>/volume<span class="w"> </span>.
+<span class="k">done</span>
+</code></pre></div>
+<p>The backup files hold your keys and creations. Keep them private.</p>
+<p>If you replace an installation that kept creations inside the container (an earlier version), download the creations you want to keep before the first upgrade. They are not in the new volume.</p>
 <h2 id="before-you-upgrade">Before you upgrade <a class="anchor" href="#before-you-upgrade" aria-label="Link to Before you upgrade">#</a></h2>
 <ol>
 <li>Write down the current version and your deployment settings.</li>
 <li>Choose a time when few people use the gateway.</li>
 <li>Let replies and media jobs that are running finish.</li>
 <li>Stop the containers, so nothing writes to the data while you copy it.</li>
-<li>Back up the data volume and your settings.</li>
+<li>Back up both volumes and your settings.</li>
 <li>Check that you can read the backup.</li>
 </ol>
 <h2 id="upgrade-a-docker-compose-installation">Upgrade a Docker Compose installation <a class="anchor" href="#upgrade-a-docker-compose-installation" aria-label="Link to Upgrade a Docker Compose installation">#</a></h2>

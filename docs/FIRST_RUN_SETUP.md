@@ -74,6 +74,8 @@ docker compose up -d
 
 Persistent state (SQLite databases, session keys) is stored in the
 `gateway-data` Docker volume, which maps to `/app/data` inside the container.
+Generated media and the download-link signing key are in the `gateway-cache`
+volume, which maps to `/app/cache`.
 Store paths can be overridden via env vars (`AZIZAM_ADMIN_DB`,
 `AZIZAM_RESPONSES_DB`, `AZIZAM_METRICS_DB`, `AZIZAM_RECEIPTS_DB`,
 `AZIZAM_MEDIA_JOBS_DB`) — see `.env.example` for the full list.

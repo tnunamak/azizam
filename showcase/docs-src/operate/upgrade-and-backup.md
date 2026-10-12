@@ -10,10 +10,23 @@ Treat an upgrade as maintenance. Make a backup first, and write down the version
 ## What to back up
 
 - **The data volume.** In Docker Compose, accounts, apps, keys, settings and receipts are in the `gateway-data` volume, mounted at `/app/data`. The gateway and the execution sidecar both use it.
-- **Creations.** Creations and the key that signs download links are in `/app/cache` inside the gateway container, not in the volume. Rebuilding the container deletes them. Download the creations you want to keep first.
+- **The cache volume.** Creations and the key that signs download links are in the `gateway-cache` volume, mounted at `/app/cache`. Rebuilding the container keeps them. If you lose the key, old download links stop working.
 - **Your start-up settings.** Keep your Compose changes, `first-run.yml` changes and your `.env` file, if you use one.
 
 Store backups privately. A container image is not a backup of its data.
+
+To copy both volumes while the containers are stopped, run these commands from the root of the repository. Compose adds the project name to volume names, so find the exact names with `docker volume ls`. This example assumes the project name `azizam`:
+
+```sh
+for volume in gateway-data gateway-cache; do
+  docker run --rm -v azizam_$volume:/volume:ro -v "$PWD":/backup alpine \
+    tar czf /backup/$volume.tar.gz -C /volume .
+done
+```
+
+The backup files hold your keys and creations. Keep them private.
+
+If you replace an installation that kept creations inside the container (an earlier version), download the creations you want to keep before the first upgrade. They are not in the new volume.
 
 ## Before you upgrade
 
@@ -21,7 +34,7 @@ Store backups privately. A container image is not a backup of its data.
 2. Choose a time when few people use the gateway.
 3. Let replies and media jobs that are running finish.
 4. Stop the containers, so nothing writes to the data while you copy it.
-5. Back up the data volume and your settings.
+5. Back up both volumes and your settings.
 6. Check that you can read the backup.
 
 ## Upgrade a Docker Compose installation
