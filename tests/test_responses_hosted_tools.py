@@ -8,8 +8,15 @@ import responses_translator as rt
 from test_responses_namespace_tools import CUSTOM, FUNCTION, buffered, namespace, streamed
 
 
-@pytest.mark.parametrize("kind", sorted(rt.HOSTED_TOOL_TYPES))
-def test_every_known_hosted_type_is_omitted_unless_forced(kind):
+@pytest.mark.parametrize("kind", [
+    "web_search", "web_search_preview",
+    "web_search_2025_06_24", "web_search_2025_08_25",
+    "file_search", "file_search_preview",
+    "code_interpreter", "code_interpreter_preview",
+    "computer_use", "computer_use_preview",
+    "image_generation", "mcp", "shell", "local_shell", "apply_patch",
+])
+def test_pinned_hosted_tool_contract_does_not_shrink_with_implementation(kind):
     req = {"input": "hi", "tools": [{"type": kind}]}
     mapping = rt.ToolMapping(req)
     assert mapping.omitted_tools == [kind]
