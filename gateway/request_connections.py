@@ -35,6 +35,7 @@ class _Scope:
     def __init__(self) -> None:
         self.guard = threading.Lock()
         self.entries: dict[tuple[str, str], _Entry] = {}
+        self.memos: dict[Any, Any] = {}
         self.closed = False
 
     def close(self) -> None:
@@ -60,6 +61,22 @@ def request_scope() -> Iterator[None]:
     finally:
         _SCOPE.reset(token)
         scope.close()
+
+
+def memo(key: Any, compute: Callable[[], Any]) -> Any:
+    """Compute ``compute()`` once per request for ``key``; outside a request, every time.
+
+    The value must be treated as read-only: every caller in the request shares it.
+    """
+    scope = _SCOPE.get()
+    if scope is None:
+        return compute()
+    with scope.guard:
+        if key in scope.memos:
+            return scope.memos[key]
+    value = compute()
+    with scope.guard:
+        return scope.memos.setdefault(key, value)
 
 
 def active() -> bool:

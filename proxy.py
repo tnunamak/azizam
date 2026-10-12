@@ -85,7 +85,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import loop_watchdog, video_extend
+from gateway import loop_watchdog, request_connections, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject
 from gateway import video_job_records, prompt_metadata_migration
@@ -13811,6 +13811,33 @@ def _capability_for_profile(
 
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
+    profile = _profile_for_auth_context(auth_context)
+    identity = getattr(auth_context, "identity", None)
+    # Everything before the per-identity policy view depends only on the plan
+    # and the identity's remote decision models, so one request builds it once
+    # per distinct identity.
+    live_registry, capabilities = request_connections.memo(
+        ("capability-catalog", profile.id, _profile_target_visibility(auth_context),
+         getattr(identity, "app_id", None), getattr(identity, "key_hash", None)),
+        lambda: _gateway_catalog_for_auth_context(auth_context),
+    )
+    admin_state: dict[str, Mapping[str, Any]] = {}
+
+    def provider_admin_state() -> Mapping[str, Any]:
+        if "value" not in admin_state:
+            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
+        return admin_state["value"]
+
+    return [
+        _capability_for_profile(
+            capability, auth_context,
+            registry=live_registry, provider_admin_state=provider_admin_state,
+        )
+        for capability in capabilities
+    ]
+
+
+def _gateway_catalog_for_auth_context(auth_context: AuthContext) -> tuple[Mapping[str, Any], list[Capability]]:
     try:
         live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
@@ -13874,20 +13901,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         )
     ]
 
-    admin_state: dict[str, Mapping[str, Any]] = {}
-
-    def provider_admin_state() -> Mapping[str, Any]:
-        if "value" not in admin_state:
-            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
-        return admin_state["value"]
-
-    return [
-        _capability_for_profile(
-            capability, auth_context,
-            registry=live_registry, provider_admin_state=provider_admin_state,
-        )
-        for capability in capabilities
-    ]
+    return live_registry, capabilities
 
 
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
