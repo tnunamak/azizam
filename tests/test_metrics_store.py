@@ -227,6 +227,22 @@ class TestMetricsStore(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_query_series_op_applies_without_a_tags_filter(self) -> None:
+        conn = metrics_store.open_writer(self.db)
+        try:
+            bucket = ((int(time.time()) - 300) // 60) * 60
+            for offset, value in ((10, 2.0), (20, 5.0), (30, 11.0)):
+                metrics_store.record_sample(conn, bucket + offset, "ops", value)
+            expected = {"avg": 6.0, "min": 2.0, "max": 11.0, "sum": 18.0, "count": 3.0}
+            for op, want in expected.items():
+                for tags_filter in (None, {}):
+                    series = metrics_store.query_series(
+                        "ops", since_s=600, points=10, tags_filter=tags_filter, op=op
+                    )
+                    self.assertEqual(series, [(bucket, want)], (op, tags_filter))
+        finally:
+            conn.close()
+
     def test_downsample_minute(self) -> None:
         conn = metrics_store.open_writer(self.db)
         try:

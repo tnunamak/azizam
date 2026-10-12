@@ -373,6 +373,11 @@ def query_aggregate(
         return _run(c)
 
 
+# op -> SQL aggregate for the unfiltered raw path; an unknown op falls back to AVG
+# exactly as the tag-filtered path does.
+_RAW_SQL_AGGREGATES = {"avg": "AVG", "min": "MIN", "max": "MAX", "sum": "SUM", "count": "COUNT"}
+
+
 def query_series(
     metric: str,
     *,
@@ -393,8 +398,9 @@ def query_series(
 
     if table == "samples":
         if tags_filter is None:
+            agg = _RAW_SQL_AGGREGATES.get(op, "AVG")
             sql = (
-                "SELECT (ts/?)*?, AVG(value) FROM samples "
+                f"SELECT (ts/?)*?, {agg}(value) FROM samples "
                 "WHERE metric = ? AND ts >= ? "
                 "GROUP BY ts/? ORDER BY 1"
             )
