@@ -117,7 +117,7 @@ for (const mode of ["light", "dark"] as const) {
         .getByRole("button", { name: "Images", exact: true });
       await images.click();
       await expect(images).toHaveAttribute("aria-pressed", "true");
-      expect(mediaRequests.at(-1)).toContain("kind=image");
+      await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("kind=image");
       // On a phone the search field opens from a button in the row (D1.5).
       if (width === 390)
         await page.getByRole("button", { name: "Search", exact: true }).click();

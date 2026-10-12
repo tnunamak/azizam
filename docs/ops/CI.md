@@ -144,18 +144,23 @@ interrupted run, lock waiting, and a killed controller.
   in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`),
   so the browser lanes start only after Compose finishes. The native
   fresh-instance journey runs beside the lanes; it needs no Docker network.
-- `--browser-workers N` (default `4`) sets the Playwright workers of the main
-  run. The main run is one `playwright test` invocation with two servers: the
-  parallel pool (project `chromium`, N workers) on port `BASE+10`, and the
-  `@global-state` project (`chromium-global-state`, 1 worker, 33 cases that
-  write owner-wide settings, services, profiles, categories or providers) on
-  `BASE+20`. The live-data (`BASE+30`) and household (`BASE+40`) runs start at
-  the same time. Each server is one gateway and one fake engine for all its
-  workers. Per-test data comes from the `isolated` fixture: a namespaced
+- `--browser-workers N` (default `9`) and `--browser-servers N` (default `3`)
+  size the main run. It is one `playwright test` invocation with up to four
+  servers: the parallel pool (project `chromium`, N workers spread over the
+  pool's servers by worker index) on ports `BASE+10`, `BASE+50`, `BASE+60`,
+  and the `@global-state` project (`chromium-global-state`, 1 worker, 33 cases
+  that write owner-wide settings, services, profiles, categories or providers)
+  on `BASE+20`. The live-data (`BASE+30`) and household (`BASE+40`) runs start at
+  the same time. One gateway is one Python process: with 6 or 10 workers on a
+  single gateway the run took 930-1000 s and failed on timeouts, so the pool
+  has three. Each server is one gateway and one fake engine for its workers.
+  Per-test data comes from the `isolated` fixture: a namespaced
   member, app, key and request log created through the admin API. Teardown
   fails a test that leaves queued or running jobs, open fake-engine requests,
   or a changed owner-wide setting it did not tag `@global-state`. The fixture
   snapshots seven owner-wide settings before each test and restores them after.
+  `scripts/ci/policy.py` fails a gated spec that takes `test` from `@playwright/test`
+  instead of `./fixtures/isolation`.
 - `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake
   engine +1 and strict-engine candidates +2 through +9. The entire allocation
   must fit within 18000–18998 or the command fails early. The fresh-instance
@@ -172,22 +177,21 @@ interrupted run, lock waiting, and a killed controller.
 
 ## Duration
 
-Measured on 2026-10-11 (24 cores; other agents kept the load average at
-10-30). Seconds per step; steps overlap, so the total is the wall clock.
+Browser tier on one host at the same priority (nice 19, idle I/O), measured on
+2026-10-12 with a transient systemd scope: wall seconds, CPU seconds from the
+scope's cgroup `cpu.stat`, 735 case rows, load average at start and end. The
+host was shared with other agents (load 13-40).
 
-| Step | Before (4 shards, serial Python) | After (10 lanes, 12 workers) |
-|---|---|---|
-| python-hermetic | 2032 | 262-368 |
-| e2e main lanes (slowest) | 523 | 279-307 |
-| e2e-household | 97 | 152-170 |
-| fresh-compose | 66 (after the lanes) | 48-145 (before the lanes) |
-| web-check | 50 | 66-71 |
-| **Total** | **2032 (33 min 52 s)** | **421-488** |
+| Layout | Wall | CPU | Cases / first-try failures | Gateway+engine pairs |
+|---|---|---|---|---|
+| before: 10 shard lanes + live-data + household, copies of `web/` | 342 s | 3,321 | 735 / 0 | 12 |
+| after: 1 pool server, 6 workers | 999 s | 3,736 | 735 / 4 | 3 |
+| after: 1 pool server, 10 workers | 931 s | 4,879 | 735 / 3 | 3 |
+| after: 3 pool servers, 9 workers (default) | 480 s | 3,033 | 735 / 0 | 5 |
 
-The Python suite alone takes 159 s with 20 workers and 216 s with 12. In
-the gate it finishes before the slowest browser lane, which ends the run, and
-all jobs share the CPU, so more workers would only add contention. The lanes
-start after Compose, whose time varies with Docker's build cache.
+The slowest part of the "after" run is the serial `@global-state` project
+(about 255 s of test time) plus the pool. The rest of the gate (Python tier)
+is unchanged.
 
 ## Priority
 

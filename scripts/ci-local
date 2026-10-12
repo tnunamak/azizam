@@ -8,7 +8,7 @@
 set -euo pipefail
 [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
-signoff=0 force=0 port=18640 browser_workers=4 browser_servers=2 py_workers=12 skip_compose=0
+signoff=0 force=0 port=18640 browser_workers=9 browser_servers=3 py_workers=12 skip_compose=0
 seed=$(((RANDOM * 32768 + RANDOM) % 1000000000)) target= closes_nightly_red=
 while (($#)); do
   case $1 in
