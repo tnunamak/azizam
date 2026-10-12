@@ -62,6 +62,14 @@ def _now_needs_a_key(old: str | None, new: str | None) -> bool:
     return old is not None and new is not None and old.replace("none: 404", "none: 401") == new
 
 
+def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
+    """Same as the API-client outcome, except a caller with no key now gets 401, not 404."""
+    old_any, new_any = _any_accept(old), _any_accept(new)
+    if old_any.get("none", "").startswith("404") and new_any.get("none", "").startswith("401"):
+        old_any["none"] = new_any["none"]
+    return old_any == new_any
+
+
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
@@ -147,7 +155,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
             continue
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
-        if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
+        if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
         if kind == "showcase" and key not in new:
             continue
