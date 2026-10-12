@@ -242,7 +242,9 @@ describe("shell health pill", () => {
       rows: [capability("image", "Images", "down")],
       health: () => json({ error: "unavailable" }, 503),
     });
-    // The pill reports a failed reachability check once retries are spent.
+    // The pill reports a failed reachability check once retries are spent. AppShell
+    // builds its one QueryClient at import (app-shell.tsx), so `clients` already holds
+    // it here; without this line the test finds no "Gateway unreachable" pill.
     clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
     const { popover } = await openPill("Gateway status: Gateway unreachable");
     expect(popover).toHaveTextContent("GatewayNot reachable");

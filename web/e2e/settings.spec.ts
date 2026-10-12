@@ -558,7 +558,7 @@ test("new visitors use the saved default theme and personal choices persist", as
 // phone (64 px), and its detail is one line everywhere. Long text never
 // overflows: the name wraps above 640 px; a truncated line carries its full
 // text in its title; Edit shows the full values.
-for (const width of [390]) {
+for (const width of [390, 1440]) {
   test(`long instance names and public URLs stay inside the page at ${width}px`, async ({
     page,
   }) => {

@@ -123,6 +123,29 @@ test("polished models: three aliases light 1440 fill the width and pass axe", as
   await verifyModelLayout(page, modelCards(page), 3);
 });
 
+test("polished model grouping keeps its width and passes axe after a search", async ({
+  page,
+}) => {
+  await prepare(page, 1440, "light");
+  const chatAliases = ["fast", "default", "balanced"].map((id) => ({
+    ...aliases[0],
+    id,
+    display_name: id[0].toUpperCase() + id.slice(1),
+    title: id[0].toUpperCase() + id.slice(1),
+    use_names: [id],
+    use: { model: id },
+  }));
+  await stubCatalog(page, chatAliases);
+  await page.goto("/models/");
+  await expect(
+    page.getByRole("heading", { name: "Fast", exact: true }),
+  ).toBeVisible();
+  await verifyModelLayout(page, modelCards(page), 1);
+  await page.getByRole("textbox", { name: "Search models" }).fill("fast");
+  await expect(page.getByText(/\d+ more/)).toHaveCount(0);
+  await verifyModelLayout(page, modelCards(page), 1);
+});
+
 test("polished models: two aliases dark 390 name the task, fill the width and pass axe", async ({
   page,
 }) => {
