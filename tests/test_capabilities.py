@@ -400,9 +400,9 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertTrue(viewed.available)
 
     def test_capability_with_policy_view_uses_profile_evaluator(self) -> None:
-        profile = plan_for("image-agent")
+        profile = access(plan_for("image-agent", caps=("image",)))
         permitted = Capability(intent="image.edit", backend="comfyui.local")
-        denied = Capability(intent="image.edit", backend="cloud.openai")
+        denied = Capability(intent="chat.completions", backend="llama.cpp")
 
         permitted_view = capability_with_policy_view(permitted, profile)
         denied_view = capability_with_policy_view(denied, profile)
@@ -410,10 +410,10 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertTrue(permitted_view.policy_available)
         self.assertFalse(denied_view.policy_available)
         self.assertFalse(denied_view.available)
-        self.assertIn("profile:image-agent", denied_view.policy_sources)
+        self.assertIn("access_plan:image-agent", denied_view.policy_sources)
 
     def test_capability_with_policy_view_passes_metadata_selectors(self) -> None:
-        profile = plan_for("family-chat")
+        profile = access(plan_for("family-chat", caps=("chat",)))
         permitted = Capability(
             intent="chat.completions",
             backend="llama.cpp",
@@ -436,7 +436,7 @@ class PolicyIntegrationTests(unittest.TestCase):
     def test_capability_with_policy_view_honors_explicit_request(self) -> None:
         # Caller wants to layer cloud-fallback policy on top of capability
         # identity. The profile permits the backend but blocks cloud fallback.
-        profile = plan_for("local-only")
+        profile = access(plan_for("local-only"))
         cap = Capability(intent="chat.generate", backend="cloud.openai")
         request = PolicyRequest(
             backend="cloud.openai", requires_cloud_fallback=True
@@ -444,7 +444,7 @@ class PolicyIntegrationTests(unittest.TestCase):
         view = capability_with_policy_view(cap, profile, request=request)
         self.assertFalse(view.policy_available)
         self.assertTrue(
-            any("cloud fallback" in r for r in view.policy_reasons),
+            any("when the engine is unavailable" in r for r in view.policy_reasons),
             view.policy_reasons,
         )
 
