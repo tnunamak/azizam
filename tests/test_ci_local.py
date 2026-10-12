@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/e2e/plan_shards.py")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/e2e/plan_shards.py")
 
 STUBS = {
     # Tools on PATH.
