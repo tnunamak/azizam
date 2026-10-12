@@ -28,5 +28,7 @@ export default defineConfig({
     retry: 0,
     clearMocks: true,
     restoreMocks: true,
+    // Undo every vi.stubGlobal before the next test, so a stub cannot outlive its test.
+    unstubGlobals: true,
   },
 });

@@ -128,17 +128,22 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
 
     async def test_prompt_write_does_not_block_event_loop(self):
         entered = threading.Event()
+        release = threading.Event()
         original = prompt_memory.put
         def slow_put(*args, **kwargs):
             entered.set()
-            time.sleep(0.15)
+            # Storage stays blocked until the test has seen the loop run.
+            assert release.wait(timeout=30), "the loop never ran while prompt storage waited"
             return original(*args, **kwargs)
         with patch.object(prompt_memory, "put", slow_put):
             task = asyncio.create_task(self._generate(None))
             while not entered.is_set() and not task.done():
                 await asyncio.sleep(0.001)
             self.assertTrue(entered.is_set())
-            await asyncio.sleep(0.01)
+            # The loop still runs these turns while the write is blocked.
+            for _ in range(3):
+                await asyncio.sleep(0)
             self.assertFalse(task.done(), "the loop must progress while prompt storage waits")
+            release.set()
             response = await task
         self.assertEqual(response.status_code, 200)

@@ -428,7 +428,8 @@ def test_dispatch_deadline_includes_lifecycle_health_timeout(monkeypatch):
     cfg = config()
     cfg["backends"]["small"]["lifecycle"] = {
         "driver": "systemd",
-        "driver_config": {"health_timeout_s": .2},
+        # Large next to the 40 ms start, so a stalled host cannot spend it.
+        "driver_config": {"health_timeout_s": 30},
     }
     started = []
 
@@ -472,8 +473,10 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     # fits the operator's explicit service timeout and lifecycle health budget.
     monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
     cfg = config()
-    cfg["backends"]["large"].update(timeout=.3, lifecycle={
-        "driver": "systemd", "driver_config": {"health_timeout_s": .2},
+    # The budgets are large next to the 60 ms start, so a stalled host cannot
+    # spend them; the start only has to outlast the 30 ms default.
+    cfg["backends"]["large"].update(timeout=60, lifecycle={
+        "driver": "systemd", "driver_config": {"health_timeout_s": 30},
     })
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy, "HEALTH_CHECK_TIMEOUT", .01)
@@ -495,7 +498,7 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "large-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
         result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 200
-    assert starts == [.2]
+    assert starts == [30]
 
 
 @pytest.mark.parametrize("timeout", [.03, None, "invalid", float("inf"), float("nan"), 0, -1])

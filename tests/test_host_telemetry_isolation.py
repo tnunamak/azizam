@@ -85,3 +85,13 @@ class HostTelemetryIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Runs after the class above in file order; captured when this file is imported.
+import status_endpoint as _status_endpoint  # noqa: E402
+
+_ENTRY_RUN = _status_endpoint._run
+
+
+def test_the_shared_module_keeps_its_entry_bindings_after_the_class() -> None:
+    assert _status_endpoint._run is _ENTRY_RUN
