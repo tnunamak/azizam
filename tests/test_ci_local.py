@@ -33,7 +33,11 @@ if [[ $1 == vitest ]]; then
   [[ ${FAKE_VITEST_STATUS:-passed} == passed ]]
 fi""",
     "uv": """if [[ $1 == venv ]]; then for arg; do dir=$arg; done; mkdir -p "$dir/bin"; ln -sf /usr/bin/python3 "$dir/bin/python"; fi""",
-    "node": """if [[ $1 == --version ]]; then echo v0-fake; else echo "$FAKE_BIN/chrome"; fi""",
+    "node": """if [[ $1 == --version ]]; then echo v0-fake
+elif [[ $1 == --test ]]; then
+  printf '{"framework":"node","config":"","project":"","id":"g","file":"%s","titles":["g"],"status":"passed","duration_ms":5}\\n' \\
+    "$PWD/${!#}" >> "$CASE_RECEIPTS_FILE"
+else echo "$FAKE_BIN/chrome"; fi""",
     "chrome": "echo Fake Chromium 1",
     "ffmpeg": "echo ffmpeg version fake",
     "gh": """
@@ -66,6 +70,7 @@ if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING
     "tests/suites.toml": "",
     "tests/budgets.toml": "[ceilings]\npytest = 10\nvitest = 10\nplaywright = 10\n",
     "tests/requirements-hermetic.lock": "",
+    "tests/compat/node/probe-gates.test.mjs": "",
     "web/package.json": "{}\n",
     "web/vitest.config.ts": "export default { test: { retry: 0 } };\n",
     "web/playwright.config.ts": "export default { retries: 0 };\n",
