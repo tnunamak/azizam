@@ -201,20 +201,5 @@ reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when t
 # The fix is on fix/fk-upstream-faults; the release that merges it removes these entries and the markers.
 [[xfail]]
 framework = "pytest"
-case = "tests/test_upstream_faults_comfyui.py::test_download_cut_by_the_upstream_skips_the_image_instead_of_failing_the_round"
-reason = "FK-B7: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_comfyui.py::test_history_check_dropped_by_the_upstream_is_polled_again"
-reason = "FK-B7: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_comfyui.py::test_submit_dropped_by_the_upstream_gives_a_502"
-reason = "FK-B7: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_upstream_faults_paid_stream.py::test_paid_stream_ends_and_settles_at_done_while_the_upstream_stays_open"
 reason = "FK-B8: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"

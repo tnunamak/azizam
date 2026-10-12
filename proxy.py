@@ -7447,6 +7447,13 @@ async def _comfy_run_round(
                 status_code=502,
                 media_type="application/json",
             ), []
+        except httpx.TransportError:
+            # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
+            return Response(
+                content=json.dumps({"error": {"message": f"ComfyUI connection dropped at {COMFY_HOST}", "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            ), []
 
         if resp.status_code != 200:
             return Response(
@@ -7485,7 +7492,7 @@ async def _comfy_run_round(
             )
             try:
                 history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
-            except (httpx.TimeoutException, httpx.ConnectError):
+            except httpx.TransportError:
                 continue
             if history_resp.status_code != 200:
                 continue
@@ -7528,7 +7535,7 @@ async def _comfy_run_round(
                     params["subfolder"] = subfolder
                 try:
                     img_resp = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-                except (httpx.TimeoutException, httpx.ConnectError):
+                except httpx.TransportError:
                     continue
                 if img_resp.status_code == 200 and img_resp.content:
                     images.append(img_resp.content)
