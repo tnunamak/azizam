@@ -72,7 +72,6 @@ class AdminRuntimeTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
@@ -98,7 +97,6 @@ class AdminRuntimeTests(unittest.TestCase):
                     signing_key=signing_key,
                     cookie=cookie,
                 ),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         session = session_from_claims(
@@ -130,7 +128,6 @@ class AdminRuntimeTests(unittest.TestCase):
                     signing_key=signing_key,
                     cookie=cookie,
                 ),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         session = session_from_claims(
@@ -901,7 +898,6 @@ class AdminOidcSettingsTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
@@ -1312,7 +1308,6 @@ class ServicePatchRoundTripTests(unittest.TestCase):
             create_admin_router(
                 self.store,
                 auth=AdminAuthenticator(self.store),
-                profile_resolver=self.store.profile_for_id,
             )
         )
         client = TestClient(app)
