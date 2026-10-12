@@ -479,9 +479,9 @@ def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {table}")
 
 
-# Paths whose directory and sidecar modes are already tightened. Every
-# connection used to repeat the mkdir/chmod/open syscalls on the event loop.
-# ``init_db`` always re-secures, so startup and recovery refresh the entry.
+# Paths ``_conn`` already secured. Every connection used to repeat the
+# mkdir/chmod/open syscalls, some on the event loop. Callers that must
+# re-tighten modes (startup, recovery) call ``secure_state_path`` directly.
 _SECURED_STATE_PATHS: set[Path] = set()
 
 
@@ -492,8 +492,6 @@ def secure_state_path(path: Path) -> None:
     database avoids a process-wide umask change in this multithreaded gateway.
     """
     check_quarantine_pending(path)
-    if path in _SECURED_STATE_PATHS:
-        return
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.parent.chmod(0o700)
     try:
@@ -516,7 +514,6 @@ def init_db(path: Path = DB_PATH) -> None:
     Idempotent: running it twice on the same file is a no-op.
     """
     with store_startup(path):
-        _SECURED_STATE_PATHS.discard(path)
         secure_state_path(path)
         conn = sqlite3.connect(str(path), timeout=5.0)
         try:
@@ -584,7 +581,8 @@ def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> N
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    secure_state_path(path)
+    if path not in _SECURED_STATE_PATHS:
+        secure_state_path(path)
     conn = connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:

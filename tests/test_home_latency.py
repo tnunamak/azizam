@@ -10,20 +10,23 @@ from gateway import admin_store, home_api
 from tests.test_home_api import home_case  # noqa: F401 - fixture
 
 
-def test_secure_state_path_touches_the_filesystem_once_per_path(tmp_path):
+def test_connections_secure_a_state_path_once(tmp_path):
     db = tmp_path / "state" / "admin.db"
-    admin_store.secure_state_path(db)
+    admin_store.init_db(db)
+    with admin_store._conn(db):
+        pass
     with patch("pathlib.Path.mkdir") as mkdir, patch("pathlib.Path.chmod") as chmod, patch("os.open") as os_open:
         for _ in range(5):
-            admin_store.secure_state_path(db)
+            with admin_store._conn(db):
+                pass
     assert (mkdir.call_count, chmod.call_count, os_open.call_count) == (0, 0, 0)
 
 
-def test_init_db_resecures_a_memoized_path(tmp_path):
+def test_secure_state_path_still_retightens_on_demand(tmp_path):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     db.chmod(0o666)
-    admin_store.init_db(db)
+    admin_store.secure_state_path(db)
     assert db.stat().st_mode & 0o777 == 0o600
 
 
