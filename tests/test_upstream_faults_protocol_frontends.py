@@ -220,7 +220,6 @@ def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, f
     expect_fixed("FK-B5", events[kept:], expected[kept:])
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B6: the frontends drop the upstream Retry-After header (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_upstreams, frontend, stream) -> None:

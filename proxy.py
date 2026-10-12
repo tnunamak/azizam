@@ -25333,6 +25333,12 @@ def _upstream_admission_response(upstream: httpx.Response, protocol: str) -> Res
                     media_type="application/json", headers=headers)
 
 
+def _upstream_retry_after(upstream: Any) -> dict[str, str]:
+    """Keep the upstream's Retry-After when a frontend re-shapes its error."""
+    value = getattr(upstream, "headers", {}).get("retry-after")
+    return {"Retry-After": value} if value else {}
+
+
 def _response_error_message(response: Any, fallback: str) -> str:
     payload = _response_json_payload(response)
     error = payload.get("error")
@@ -25411,6 +25417,7 @@ def _anthropic_error_response(
     *,
     status_code: int = 400,
     error_type: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> Response:
     """Anthropic-shaped error. The type follows the status unless given."""
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
@@ -25429,7 +25436,7 @@ def _anthropic_error_response(
             },
         },
         status_code=status_code,
-        headers={"request-id": f"req_{uuid.uuid4().hex}"},
+        headers={"request-id": f"req_{uuid.uuid4().hex}", **(headers or {})},
     )
 
 
@@ -25445,7 +25452,9 @@ def _ollama_model_not_found(model: str) -> str:
     return f'model "{model}" not found, try pulling it first'
 
 
-def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
+def _ollama_error_response(
+    message: str, *, status_code: int = 400, headers: Mapping[str, str] | None = None,
+) -> Response:
     match = _UNKNOWN_MODEL_ERROR_RE.search(message or "")
     if match and status_code in (400, 404):
         # Ollama answers an unknown model with 404 and this wording.
@@ -25453,7 +25462,7 @@ def _ollama_error_response(message: str, *, status_code: int = 400) -> Response:
         message = _ollama_model_not_found(
             match.group("model") or match.group("model2")
         )
-    return _json_error_response({"error": message}, status_code=status_code)
+    return _json_error_response({"error": message}, status_code=status_code, headers=headers)
 
 
 def _ollama_auth_error(response: Response) -> Response:
@@ -25608,6 +25617,7 @@ async def anthropic_messages(request: Request):
             return _anthropic_error_response(
                 message,
                 status_code=upstream.status_code,
+                headers=_upstream_retry_after(upstream),
             )
 
         translator = anthropic_protocol.MessagesStreamTranslator(
@@ -25658,6 +25668,7 @@ async def anthropic_messages(request: Request):
         return _anthropic_error_response(
             _response_error_message(upstream, "Upstream chat-completions error."),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
 
     try:
@@ -25756,6 +25767,7 @@ async def _ollama_forward_non_streaming(
         return _ollama_error_response(
             _response_error_message(upstream, "upstream chat-completions error"),
             status_code=int(getattr(upstream, "status_code", 502) or 502),
+            headers=_upstream_retry_after(upstream),
         )
     return _response_json_payload(upstream)
 
@@ -25804,6 +25816,7 @@ async def _ollama_forward_streaming(
         return _ollama_error_response(
             message,
             status_code=upstream.status_code,
+            headers=_upstream_retry_after(upstream),
         )
 
     def ndjson_line(payload: Mapping[str, Any]) -> str:
