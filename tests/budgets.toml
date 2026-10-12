@@ -27,4 +27,4 @@ node = 103
 # 0bff0431: 55 files (the earlier regex scan found 29 and missed
 # patch.object(proxy.httpx, "AsyncClient", ...) fakes).
 [ratchets]
-ad_hoc_upstream_fake_files = 50
+ad_hoc_upstream_fake_files = 47
