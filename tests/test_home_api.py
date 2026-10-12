@@ -427,10 +427,12 @@ def test_home_and_connection_use_the_apps_own_access_plan(home_case):
     no_chat = store_plan("no-chat", path=c.db, caps=())
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.revoke_credential(c.cred["id"], path=c.db)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db)
+    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db)
     c.give_app(c.client_app, no_chat)
     data = c.http.get("/me/api/home").json()
-    assert data["capabilities"] == [] and data["aliases"] == []
+    assert data["credential_aliases"][restricted["id"]] == []
+    # What a new App of this person could use is still listed.
+    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
     result = c.http.post("/me/api/connection-test", json={"api_key": "restricted-key"}, headers=c.headers).json()
     assert result["path"] == "/v1/models" and result["model"] is None
     assert [call[0] for call in c.calls] == ["/v1/models"]
@@ -452,8 +454,9 @@ def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
     assert data["has_access_plan"] is False
     assert data["capabilities"] == [] and data["aliases"] == [] and data["new_app_aliases"] == []
     assert c.http.get("/me/api/status").json()["capabilities"] == []
-    result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
-    assert result["path"] == "/v1/models" and result["model"] is None
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "/v1/models" and response.json()["model"] is None
 
 
 def test_setup_receipt_success_is_not_limited_to_last_five(home_case):
