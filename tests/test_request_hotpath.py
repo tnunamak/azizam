@@ -183,8 +183,9 @@ class RequestHotpathTests(unittest.TestCase):
         accounts.change_person(person, "test", path=self.db, plan_id=narrower["id"])
         after = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
         self.assertEqual(after.access.person_plan.id, narrower["id"])
+        # Disabling a person revokes the keys of the Apps they answer for.
         accounts.change_person(person, "test", path=self.db, disabled=True)
-        self.assertEqual(runtime_identity_for_app_credential_hash(key_hash, path=self.db).denial, "person_disabled")
+        self.assertIsNone(runtime_identity_for_app_credential_hash(key_hash, path=self.db))
 
     def test_touch_failure_rolls_back_and_later_store_writes_remain_visible(self) -> None:
         app, credential = self._credential()
