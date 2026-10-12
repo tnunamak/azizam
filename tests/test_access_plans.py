@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ def _document(**overrides):
         "direct_engine_access": {"engines": [], "operations": []},
         "paid_providers": [],
         "provider_fallback": False,
+        "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
         "can_load_models": True,
         "receipt_detail": "basic",
         "media_metadata": "none",
@@ -53,7 +55,7 @@ def test_document_round_trips():
 
 @pytest.mark.parametrize("field", [
     "name", "can_use", "direct_engine_access", "paid_providers", "provider_fallback",
-    "can_load_models", "receipt_detail", "media_metadata",
+    "caps", "can_load_models", "receipt_detail", "media_metadata",
 ])
 def test_every_field_is_required(field):
     doc = _document()
@@ -62,10 +64,33 @@ def test_every_field_is_required(field):
         plan_from_document(doc, plan_id="plan_1")
 
 
-@pytest.mark.parametrize("field", ["blocked", "must_match", "caps"])
+@pytest.mark.parametrize("field", ["blocked", "must_match"])
 def test_parts_not_built_yet_are_refused_not_ignored(field):
     with pytest.raises(PlanError, match="not available"):
         plan_from_document(_document(**{field: []}), plan_id="plan_1")
+
+
+def test_caps_are_dollar_amounts_per_period_and_round_trip():
+    parsed = plan_from_document(_document(caps={"usd_per_request": "0.50", "usd_per_day": 5, "usd_per_month": None}), plan_id="p")
+    assert (parsed.caps.usd_per_request, parsed.caps.usd_per_day, parsed.caps.usd_per_month) == (
+        Decimal("0.50"), Decimal("5"), None)
+    assert plan_to_document(parsed)["caps"] == {"usd_per_request": "0.50", "usd_per_day": "5", "usd_per_month": None}
+    assert plan_from_document(plan_to_document(parsed)) == parsed
+
+
+@pytest.mark.parametrize("caps", [
+    {"usd_per_request": None, "usd_per_day": None},
+    {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None, "usd_per_year": 1},
+    {"usd_per_request": 0, "usd_per_day": None, "usd_per_month": None},
+    {"usd_per_request": None, "usd_per_day": -1, "usd_per_month": None},
+    {"usd_per_request": None, "usd_per_day": None, "usd_per_month": "lots"},
+    {"usd_per_request": True, "usd_per_day": None, "usd_per_month": None},
+    {"usd_per_request": None, "usd_per_day": "NaN", "usd_per_month": None},
+    "5",
+])
+def test_bad_caps_are_refused(caps):
+    with pytest.raises(PlanError, match="caps"):
+        plan_from_document(_document(caps=caps), plan_id="p")
 
 
 def test_unknown_field_and_capability_are_refused():

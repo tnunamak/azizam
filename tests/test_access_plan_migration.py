@@ -302,7 +302,22 @@ def test_keys_of_one_app_on_different_plans_refuse(tmp_path):
 def test_unrepresentable_value_refuses_and_names_it(tmp_path):
     path = tmp_path / "admin.db"
     build_v6(path, extra_sql=(
-        "UPDATE profiles SET profile_json = json_set(profile_json, '$.remote.budget_usd_per_day', 5) "
+        "UPDATE profiles SET profile_json = json_set(profile_json, '$.allow.exposure', json('[\"experimental\"]')) "
         "WHERE id = 'prof_owner';"))
-    with pytest.raises(sqlite3.DatabaseError, match="Owner \\(local\\).*budget_usd_per_day"):
+    with pytest.raises(sqlite3.DatabaseError, match="Owner \\(local\\).*allow.exposure"):
         admin_store.init_db(path)
+
+
+def test_old_plan_caps_become_plan_caps(tmp_path):
+    path = tmp_path / "admin.db"
+    build_v6(path, extra_sql=(
+        "UPDATE profiles SET profile_json = json_set(profile_json, '$.remote.budget_usd_per_day', 5, "
+        "'$.remote.max_usd_per_request', 0.25) WHERE id = 'prof_owner';"))
+    admin_store.init_db(path)
+    with sqlite3.connect(path) as conn:
+        capped = [json.loads(row[0]) for row in conn.execute("SELECT plan_json FROM access_plans")]
+    with_caps = [doc for doc in capped if any(doc["caps"].values())]
+    assert [doc["caps"] for doc in with_caps] == [
+        {"usd_per_request": "0.25", "usd_per_day": "5", "usd_per_month": None}]
+    # A capped plan is its own plan, not folded into a same-named standard one.
+    assert with_caps[0]["name"] == "Owner (local)"
