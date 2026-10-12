@@ -145,6 +145,7 @@ def main() -> int:
     parser.add_argument("--e2e", action="store_true", help="also run affected Playwright specs")
     parser.add_argument("pytest_args", nargs="*")
     args = parser.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)  # keep our lines ahead of pytest's
 
     changed = changed_files(args.base)
     print(f"{len(changed)} changed file(s) since merge base with {args.base}")
