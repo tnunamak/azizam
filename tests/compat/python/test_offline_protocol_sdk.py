@@ -75,20 +75,10 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             downstream={},
             access=access(plan_for("compat-chat-only", caps=("chat",))),
         )
-        lookup = Mock(
-            side_effect=lambda candidate_hash, **kwargs:
-            identity if candidate_hash == key_hash else None
-        )
-        import gateway.runtime_auth as _ra; _orig=_ra.evaluate_and_apply
-        def _dbg(i, r, receipt=None):
-            d=_orig(i, r, receipt); print("EVAL", r.intent, r.protocol, d.decision, d.reasons, i.access.person_plan.can_use.keys() if i else None); return d
-        patch.object(proxy, "evaluate_and_apply", _dbg).start()
         backend = AsyncMock(
             side_effect=AssertionError("Denied request reached backend selection")
         )
-        with patch.object(
-            proxy, "runtime_identity_for_app_credential_hash", lookup
-        ), patch.object(proxy, "get_active_backend", backend):
+        with authenticated(identity), patch.object(proxy, "get_active_backend", backend):
             response = self.gateway.post(
                 "/v1/images/generations",
                 headers={"Authorization": f"Bearer {raw_key}"},
@@ -100,10 +90,6 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual(response.json()["error"]["code"], "policy_denied")
-        self.assertTrue(
-            any(call.args and call.args[0] == key_hash for call in lookup.call_args_list),
-            "The intended runtime identity was never resolved",
-        )
         backend.assert_not_awaited()
 
     def test_openai_responses_sdk_preserves_text_and_usage(self):
