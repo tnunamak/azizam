@@ -79,6 +79,10 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             side_effect=lambda candidate_hash, **kwargs:
             identity if candidate_hash == key_hash else None
         )
+        import gateway.runtime_auth as _ra; _orig=_ra.evaluate_and_apply
+        def _dbg(i, r, receipt=None):
+            d=_orig(i, r, receipt); print("EVAL", r.intent, r.protocol, d.decision, d.reasons, i.access.person_plan.can_use.keys() if i else None); return d
+        patch.object(proxy, "evaluate_and_apply", _dbg).start()
         backend = AsyncMock(
             side_effect=AssertionError("Denied request reached backend selection")
         )
