@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 from gateway import provider_execution, receipt_store
-from tests.support.access import plan_for  # noqa: E402
+from tests.support.access import identity as identity_of, plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig
 from gateway.providers import ProviderRef
 
@@ -85,7 +85,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
             api_key="sk-litellm",
             service_id="litellm",
         )
-        self.profile = plan_for("paid-app", paid=['openrouter'])
+        self.profile = plan_for("paid-app", paid=['openrouter'], usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00")
         self.receipts = []
         self.env_patch = patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-provider"})
         self.begin_patch = patch.object(receipt_store, "begin", lambda _receipt: None)
@@ -138,7 +138,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
                 request_path="/v1/chat/completions",
                 body=body,
                 provider=provider,
-                profile=self.profile,
+                identity=identity_of(self.profile, name="paid-app", app_id="app_test", accountable_person_id="usr_test"),
                 runtime=self.runtime,
                 ledger_path=self.ledger,
                 requested_model="openrouter/basic",
@@ -197,7 +197,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
                 request_path="/v1/chat/completions",
                 body=body,
                 provider=provider,
-                profile=self.profile,
+                identity=identity_of(self.profile, name="paid-app", app_id="app_test", accountable_person_id="usr_test"),
                 runtime=self.runtime,
                 ledger_path=self.ledger,
                 requested_model="openrouter/basic",

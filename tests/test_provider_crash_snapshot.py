@@ -13,7 +13,7 @@ from decimal import Decimal
 
 class CrashSnapshotExecutionTests(ReconciliationExecutionFixture):
     async def test_restored_mid_request_snapshot_cannot_admit_a_second_charge(self):
-        self.profile = plan_for('paid-app', paid=['openrouter'])
+        self.profile = plan_for('paid-app', paid=['openrouter'], usd_per_day='0.02')
         snapshot = self.ledger.with_name('mid_request.db')
         billed = []
         async def billed_before_settlement(execution, **kwargs):
