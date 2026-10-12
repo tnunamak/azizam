@@ -489,7 +489,21 @@ def test_category_gate_never_widens(case):
     )
 
 
+def _simple_service(stem):
+    return kernel.Service(f"{stem}@r1", (kernel.Subject(f"{stem}0@1", "release"),))
+
+
+_OPEN = kernel.Plan("open", (kernel.Grant(CAPABILITY, "flux@r1"),))
+_GOVERNED = type("Identity", (), {"person_id": "p0", "app_id": "a0"})()
+
+
 @given(enforcement_case())
+@example((  # Shrunk (nightly): an early check passes when one of three services is granted.
+    "active",
+    kernel.PolicyVersion("rules", _EXAMPLE_CATS, {"p0": (_OPEN,)}, {"a0": (_OPEN,)},
+                         {stem + "@r1": _simple_service(stem) for stem in ("flux", "sdxl", "tts")}),
+    _GOVERNED, PolicyRequest(intent=CAPABILITY), PolicyDecision(decision=ALLOWED),
+))
 def test_category_gate_follows_its_truth_table(case):
     state, version, identity, request, prior = case
     result, visible = _apply(*case)
@@ -502,6 +516,18 @@ def test_category_gate_follows_its_truth_table(case):
     # Discovery shows an entry exactly when an allowed request would stay allowed.
     allowed = replace(prior, decision=ALLOWED)
     assert visible == (expected_gate(state, version, identity, request, allowed) == ("unchanged",))
+
+
+@given(granted=st.sets(st.sampled_from(["flux", "sdxl", "tts"])),
+       ungranted=st.sets(st.sampled_from(["mix", "edit"])))
+def test_early_category_check_passes_when_any_service_is_granted(granted, ungranted):
+    """Before resolution the gate asks: is SOME service allowed for this capability?"""
+    plan = kernel.Plan("plan", tuple(kernel.Grant(CAPABILITY, f"{stem}@r1") for stem in sorted(granted)))
+    services = {f"{stem}@r1": _simple_service(stem) for stem in sorted(granted | ungranted)}
+    version = kernel.PolicyVersion("rules", _EXAMPLE_CATS, {"p0": (plan,)}, {"a0": (plan,)}, services)
+    prior = PolicyDecision(decision=ALLOWED, sources=("profile:x",))
+    result, _visible = _apply("active", version, _GOVERNED, PolicyRequest(intent=CAPABILITY), prior)
+    assert (result is prior) == bool(granted)
 
 
 # --------------------------------------------------------------------------
@@ -663,6 +689,8 @@ def _guard_of(decision: PolicyDecision) -> str:
 @given(profiles(), requests())
 @example(  # A family scope matches "openai.chat" but not "openaix".
     AppProfile(id="prop", protocols=frozenset({"openai"})), PolicyRequest(protocol="openaix"))
+@example(  # Shrunk (nightly): with workflow and model both refused, the workflow guard decides.
+    AppProfile(id="prop", workflows=frozenset(), models=frozenset()), PolicyRequest(workflow="w1", model="m1"))
 def test_profile_decision_is_the_first_failed_guard(profile, request):
     decision = profile_evaluate(profile, request)
     failed = first_failed_guard(profile, request)
@@ -735,6 +763,30 @@ def test_cloud_and_remote_guards_alone_follow_their_rules(cloud_allowed, provide
     assert (decision.decision == ALLOWED) == (failed is None)
     if failed is not None:
         assert _guard_of(decision) == failed
+
+
+# How to make each guard fail on its own: (profile settings, request fields).
+FAILING = {
+    **{name: ({name: frozenset()}, {field: (frozenset({"x"}) if kind == "any" else REQUEST_VALUES[field][0])})
+       for name, field, kind, _source, _prefix in GUARDS if field is not None},
+    "cloud": ({"fallback": FallbackPolicy(cloud_allowed=False)}, {"requires_cloud_fallback": True}),
+    "remote_providers": ({"remote": RemoteProviderPolicy(providers=frozenset())}, {"remote_provider": "openai"}),
+    "native_enabled": ({"native_passthrough": NativePassthroughPolicy(enabled=False)}, {"native_passthrough": True}),
+}
+
+
+@given(pair=st.lists(st.sampled_from(sorted(FAILING)), min_size=2, max_size=2, unique=True))
+def test_of_two_failing_guards_the_earlier_one_decides(pair):
+    profile_settings, selector, fields = {}, {}, {}
+    for name in pair:
+        settings_for, request_fields = FAILING[name]
+        for key, value in settings_for.items():
+            (selector if key in SELECTORS else profile_settings)[key] = value
+        fields.update(request_fields)
+    profile = AppProfile(id="prop", allow=CapabilitySelector(**selector), **profile_settings)
+    decision = profile_evaluate(profile, PolicyRequest(**fields))
+    assert decision.decision == DENIED
+    assert _guard_of(decision) == min(pair, key=GUARD_INDEX.get)
 
 
 def _tighten(draw, profile: AppProfile, names) -> AppProfile:
