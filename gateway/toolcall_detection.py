@@ -196,6 +196,7 @@ class ToolcallStreamDetector:
         self._backend_hint = backend_hint
         self._saw_tool_calls = False
         self._tail = ""
+        self._line_carry = b""
         self._detected_family: str | None = None
 
     async def wrap(self, upstream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -203,49 +204,60 @@ class ToolcallStreamDetector:
         async for chunk in upstream:
             self._process_chunk(chunk)
             yield chunk
+        # A final unterminated line is still a frame.
+        if self._line_carry:
+            rest, self._line_carry = self._line_carry, b""
+            self._process_line(rest)
 
     def _process_chunk(self, chunk: bytes) -> None:
         if not self._had_tools:
             return
         if self._detected_family and self._saw_tool_calls:
             return  # already decided
-        try:
-            text = chunk.decode("utf-8", errors="replace")
-        except Exception:
+        # A network read can end mid-line: only complete lines are parsed and
+        # the unfinished tail waits for the next read.
+        data = self._line_carry + chunk
+        cut = data.rfind(b"\n") + 1
+        self._line_carry = data[cut:]
+        for raw_line in data[:cut].splitlines():
+            self._process_line(raw_line)
+            if self._saw_tool_calls:
+                return
+
+    def _process_line(self, raw_line: bytes) -> None:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
             return
-        for line in text.splitlines():
-            line = line.strip()
-            if not line.startswith("data:"):
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            return
+        try:
+            payload = json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            return
+        if not isinstance(payload, dict):
+            return
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            return
+        for choice in choices:
+            if not isinstance(choice, dict):
                 continue
-            data = line[5:].strip()
-            if not data or data == "[DONE]":
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
                 continue
-            try:
-                payload = json.loads(data)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            choices = payload.get("choices")
-            if not isinstance(choices, list):
-                continue
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                delta = choice.get("delta")
-                if not isinstance(delta, dict):
-                    continue
-                if delta.get("tool_calls"):
-                    self._saw_tool_calls = True
-                    return
-                content_piece = delta.get("content")
-                if isinstance(content_piece, str) and content_piece:
-                    self._tail += content_piece
-                    # Keep tail bounded to max marker length.
-                    if len(self._tail) > _MAX_MARKER_LEN * 2:
-                        self._tail = self._tail[-(_MAX_MARKER_LEN * 2):]
-                    if self._detected_family is None:
-                        self._detected_family = _find_marker(self._tail)
+            if delta.get("tool_calls"):
+                self._saw_tool_calls = True
+                return
+            content_piece = delta.get("content")
+            if isinstance(content_piece, str) and content_piece:
+                # Search the whole new text plus the carried tail BEFORE trimming,
+                # so a marker at the start of a long delta is not cut away.
+                window = self._tail + content_piece
+                if self._detected_family is None:
+                    self._detected_family = _find_marker(window)
+                # Keep only enough tail for a marker split across deltas.
+                self._tail = window[-(_MAX_MARKER_LEN - 1):]
 
     def advisory(self) -> str | None:
         """Return advisory string if unlifted tool calls were detected, else None."""
