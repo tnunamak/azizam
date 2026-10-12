@@ -38,8 +38,8 @@
     <article class="prose">
       <p class="eyebrow">Build with the API</p>
       <h1 id="mcp-for-agents">MCP for agents</h1>
-<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#tools">Tools</a></li><li class="toc-l2"><a href="#claude-code">Claude Code</a></li><li class="toc-l2"><a href="#pi-with-pi-mcp-adapter">Pi with pi-mcp-adapter</a></li><li class="toc-l2"><a href="#test-with-curl">Test with curl</a></li><li class="toc-l2"><a href="#protocol-details">Protocol details</a></li></ul></nav></details><p>The gateway runs an MCP server at <code>/mcp</code>. Connect with Streamable HTTP, and send your app key in an <code>Authorization: Bearer</code> header.</p>
-<p>A request without a key gets HTTP 401 with a protected-resource metadata challenge. The gateway has no OAuth server, so use a client that can send the key as a header.</p>
+<p>The gateway runs an MCP server at <code>/mcp</code>. Connect with Streamable HTTP, and send your app key in an <code>Authorization: Bearer</code> header.</p>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#tools">Tools</a></li><li class="toc-l2"><a href="#claude-code">Claude Code</a></li><li class="toc-l2"><a href="#pi-with-pi-mcp-adapter">Pi with pi-mcp-adapter</a></li><li class="toc-l2"><a href="#test-with-curl">Test with curl</a></li><li class="toc-l2"><a href="#protocol-details">Protocol details</a></li></ul></nav></details><p>A request without a key gets HTTP 401 with a protected-resource metadata challenge. The gateway has no OAuth server, so use a client that can send the key as a header.</p>
 <h2 id="tools">Tools <a class="anchor" href="#tools" aria-label="Link to Tools">#</a></h2>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table">
 <table>

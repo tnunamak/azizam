@@ -328,7 +328,12 @@ def render_page(page: Page, sections: list[dict], prev: Page | None, nxt: Page |
             f'<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)">{toc}</nav></details>'
         )
     aside = f'<aside class="toc"><nav aria-label="On this page"><p class="toc-title">On this page</p>{toc}</nav></aside>' if toc else ""
-    body = page.html.replace("</h1>\n", "</h1>\n" + toc_block, 1) if toc_block else page.html
+    body = page.html
+    if toc_block:
+        # Place the phone "On this page" list after the opening paragraph.
+        at = body.find("</p>\n", body.find("</h1>"))
+        at = at + len("</p>\n") if at >= 0 else body.find("</h1>\n") + len("</h1>\n")
+        body = body[:at] + toc_block + body[at:]
     pager = []
     if prev:
         pager.append(

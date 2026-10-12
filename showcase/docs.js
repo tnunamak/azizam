@@ -78,7 +78,9 @@
         s += 5;
         if (!anchor) anchor = page.headings[h];
       }
-      if (re.test(page.lowText)) s += 1;
+      // More mentions rank higher, up to a cap, so one long page cannot win on volume.
+      const mentions = page.lowText.match(new RegExp(re.source, "giu"));
+      if (mentions) s += Math.min(mentions.length, 5);
       if (s === 0) return null; // every word must match somewhere
       total += s;
     }

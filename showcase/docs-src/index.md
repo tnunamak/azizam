@@ -9,9 +9,11 @@ Azizam is an AI gateway that you run on a computer you control. It puts the engi
 
 ## Choose where to start
 
-- **I want to run a gateway.** [Install Azizam](start/install.md), then follow [First run](start/first-run.md) to create the owner account, connect an engine and get a first reply.
-- **Someone invited me.** Read [Use a gateway](use/index.md). It covers Try, Library, Apps & keys and Usage.
-- **I want to connect an app or write code.** Start with the [API overview](api/index.md). It lists the base URL for each protocol and how to authenticate.
+<ul class="start-cards">
+<li><a href="start/install.md"><strong>Run a gateway</strong><span>Install Azizam, connect an engine and get a first reply.</span></a></li>
+<li><a href="use/index.md"><strong>Use a gateway</strong><span>Someone invited you. Use Try, Library, Apps &amp; keys and Usage.</span></a></li>
+<li><a href="api/index.md"><strong>Build with the API</strong><span>Connect an app, an SDK or an agent with your app key.</span></a></li>
+</ul>
 
 ## What Azizam does
 
