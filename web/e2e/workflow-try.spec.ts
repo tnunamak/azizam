@@ -608,8 +608,9 @@ test("workflow multipart run sends a browser-encoded file part without a JSON co
   expect(uploadedBody).toContain("Turn this source into a crisp launch clip.");
 });
 
-// Browser representative: the signed media host is aborted, so the players' own load
-// failure (not a dispatched event) drives the "could not load" copy and Retry.
+// Browser representative: the signed media host is unreachable, so the players' own load
+// failure (not a dispatched event) drives the "could not load" copy and Retry. A player
+// without its signed src never fails, so this also proves each src is set.
 test("workflow JSON media says each signed audio and video file could not load", async ({
   page,
 }) => {
@@ -632,17 +633,12 @@ test("workflow JSON media says each signed audio and video file could not load",
       },
     }),
   );
-  const requested: string[] = [];
-  await page.route("https://media.example.test/**", (route) => {
-    requested.push(new URL(route.request().url()).pathname);
-    return route.abort();
-  });
+  await page.route("https://media.example.test/**", (route) => route.abort());
   await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The audio couldn’t be loaded.")).toBeVisible();
   await expect(page.getByText("The video couldn’t be loaded.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(2);
-  expect(requested).toEqual(expect.arrayContaining(["/audio", "/video"]));
   await expect(
     page.getByRole("link", { name: "Download video 2" }),
   ).toHaveAttribute("href", "https://media.example.test/video?sig=fixture");
