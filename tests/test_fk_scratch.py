@@ -35,9 +35,17 @@ def test_slow(fake_upstreams, monkeypatch, tmp_path, stream):
 
 def test_disconnect(fake_upstreams, monkeypatch, tmp_path):
     setup(fake_upstreams, monkeypatch, tmp_path, "stream-disconnect", loop=True)
+    async def logged(scope, receive, send):
+        async def s(m):
+            print("SEND", m["type"], m.get("more_body"), len(m.get("body", b"")))
+            await send(m)
+        try:
+            await proxy.app(scope, receive, s)
+        except BaseException as e:
+            print("APP RAISED", repr(e)); raise
     async def go():
         got = b""
-        async with client() as c:
+        async with httpx.AsyncClient(transport=StreamingASGITransport(logged), base_url="http://gateway.test") as c:
             async with c.stream("POST", "/v1/chat/completions", json={**CHAT, "stream": True}) as r:
                 print("disc status", r.status_code)
                 try:
