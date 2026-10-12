@@ -45,8 +45,6 @@ def _write_config(state: Path, port: int, engine_port: int) -> Path:
 auth:
   enabled: true
   public_paths: [/health]
-  lan_bypass_enabled: true
-  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128"]
 backends:
   tabby: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   kobold: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
@@ -170,7 +168,7 @@ def seed(state: Path, port: int) -> dict[str, object]:
     plan = admin_store.create_access_plan({
         "name": "Live data plan", "can_use": {"chat": {"items": [{"model": "demo-chat"}]}},
         "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [],
-        "provider_fallback": False, "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none",
+        "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None}, "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none",
     }, path=admin_path)
     owner = admin_store.upsert_oidc_user("local", "owner-live-data", email=OWNER_EMAIL, display_name="Owner", path=admin_path)
     member = admin_store.upsert_oidc_user("local", "member-live-data", email=MEMBER_EMAIL, display_name="Member", path=admin_path)

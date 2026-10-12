@@ -69,7 +69,7 @@ def seed(base_url: str, upstream_port: int, models: list[tuple[str, str]]) -> st
         "name": "Probe plan",
         "can_use": {"chat": {"items": probe_items}, "embed": {"items": probe_items}},
         "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [],
-        "provider_fallback": False, "can_load_models": True, "receipt_detail": "full",
+        "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None}, "can_load_models": True, "receipt_detail": "full",
         "media_metadata": "none"})
     _, listing = api.call("GET", "/admin/api/users")
     owner_id = listing["users"][0]["id"]

@@ -100,8 +100,6 @@ def write_config(state: Path, port: int, engine_port: int) -> Path:
     config["auth"] = {
         "enabled": True,
         "public_paths": ["/health"],
-        "lan_bypass_enabled": True,
-        "lan_bypass_cidrs": ["127.0.0.0/8", "::1/128"],
     }
     admin = dict(config.get("admin") or {})
     admin["db_path"] = str(state / "admin.db")

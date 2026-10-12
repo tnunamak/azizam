@@ -374,6 +374,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             # Paid models need the plan to list the paid provider (design v4 §2.1).
             "paid_providers": ["household-remote"] if paid else [],
             "provider_fallback": False,
+            "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
             "can_load_models": True,
             "receipt_detail": "full",
             "media_metadata": "none",
@@ -819,7 +820,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         metrics_store.record_samples(conn, samples)
     with sqlite3.connect(paths["provider_spend"]) as conn:
         conn.executemany(
-            "INSERT INTO provider_spend(provider,profile_id,app_id,status,estimated_usd,actual_usd,cost_source,created_at,settled_at,request_id) VALUES(?,'',?,?,?,?,?,?,?,?)",
+            "INSERT INTO provider_spend(provider,app_id,status,estimated_usd,actual_usd,cost_source,created_at,settled_at,request_id) VALUES(?,?,?,?,?,?,?,?,?)",
             spend,
         )
     admin_store.put_operator_setting(

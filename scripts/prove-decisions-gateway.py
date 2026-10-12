@@ -74,8 +74,8 @@ def main():
 import proxy
 from gateway import accounts, admin_store, receipt_store
 db = proxy.ADMIN_STORE.path
-plan = admin_store.create_access_plan({"name": "Decisions proof", "can_use": {"decision": {"items": "all"}},
-    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False,
+plan = admin_store.create_access_plan({"name": "Decisions proof", "can_use": {"decide": {"items": "all"}},
+    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False, "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
     "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none"}, path=db)
 owner = admin_store.upsert_oidc_user("https://proof.invalid", "proof", display_name="Proof owner", path=db)
 accounts.change_person(owner["id"], "proof", path=db, plan_id=plan["id"])
