@@ -523,4 +523,42 @@ it("stops showing cached Ready after a failed health refresh and recovers", asyn
     view.unmount();
     client.clear();
   }
+
+it("shows an observed-up engine with a bad health tone as unavailable, never ready", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue({
+    schema_version: 1,
+    services: {
+      engine_chat: {
+        id: "engine_chat",
+        name: "Chat engine",
+        kind: "upstream",
+        source: "ui",
+        enabled: true,
+        editable: true,
+        capabilities: ["chat"],
+        role: "primary",
+        config: { protocol: "openai-compatible" },
+      },
+    },
+  });
+  vi.spyOn(api.services, "presets").mockResolvedValue({ presets: [] });
+  vi.spyOn(api, "status").mockResolvedValue({
+    current_health: {
+      observation_available: true,
+      services: [
+        {
+          service_id: "engine_chat",
+          name: "Chat engine",
+          enabled: true,
+          observation: "up",
+          tone: "bad",
+        },
+      ],
+    },
+    backends: [],
+  } as unknown as Awaited<ReturnType<typeof api.status>>);
+  mount();
+  const row = (await screen.findByText("Chat engine")).closest("tr")!;
+  expect(await within(row).findByText("Unavailable", { exact: true })).toBeVisible();
+  expect(within(row).queryByText("Ready", { exact: true })).toBeNull();
 });

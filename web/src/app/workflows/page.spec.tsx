@@ -154,6 +154,18 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  test("keeps the internal workflow ID behind Technical details and a copy action", async () => {
+    renderWorkflows(owner);
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
+    expect(within(card).queryByText("workflow.image.upscale", { exact: true })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("workflow.image.upscale", { exact: true })).not.toBeVisible();
+    fireEvent.click(sheet.getByText("Technical details", { exact: true }));
+    expect(sheet.getByText("workflow.image.upscale", { exact: true })).toBeVisible();
+    expect(sheet.getByRole("button", { name: "Copy workflow ID" })).toBeVisible();
+  });
+
   test("whole rows open details while the compact quiet Try action remains independent", async () => {
     renderWorkflows();
     const row = await screen.findByRole("listitem", { name: "Upscale image" });
