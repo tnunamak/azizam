@@ -51,11 +51,11 @@ def gateway(fake_upstreams, monkeypatch, tmp_path):
     return db, serve
 
 
-def _member(db):
+def _member(db, *, profile_id: str | None = None):
     user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=db)
     app = admin_store.create_app("Member access", kind="personal", owner_user_id=user["id"], path=db)
     session = AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
-    return session, mint_user_app_key(session, app["id"], path=db)
+    return session, mint_user_app_key(session, app["id"], default_profile_id=profile_id, path=db)
 
 
 def _post(path: str, body: dict, *, headers: list[tuple[str, str]], params: str = "") -> httpx.Response:
@@ -110,3 +110,19 @@ def test_revoked_member_key_gets_401_and_reaches_no_upstream(gateway, forwarder)
 
     assert response.status_code == 401, response.text
     assert litellm.requests == []
+
+
+def test_frontend_profile_without_openai_chat_still_reaches_chat_through_the_loopback(gateway):
+    """The frontend already applied the member's profile; the secret-bearing
+    loopback hop must not demand a second openai.chat permission."""
+    db, serve = gateway
+    admin_store.create_profile("Anthropic only", {"id": "anthropic-only", "protocols": ["anthropic"]}, path=db)
+    _session, credential = _member(db, profile_id="anthropic-only")
+    path, body, scenario = FRONTENDS["chat"]
+    litellm = serve(scenario, model=body["model"], key_prefix=hash_api_key(credential["api_key"])[:18])
+
+    response = _post(path, body, headers=[("authorization", f"Bearer {credential['api_key']}")])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] == [{"type": "text", "text": "hello member"}]
+    assert len(litellm.calls("chat")) == 1
