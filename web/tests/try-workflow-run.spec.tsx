@@ -338,7 +338,7 @@ async function openWorkflow(workflowId: string, viewer: Viewer = owner) {
       <TryPage />
     </ViewerContext.Provider>,
   );
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(/\S/));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(/^Loading models/));
 }
 
 const field = (role: "textbox" | "spinbutton" | "combobox", name: string, required = false) =>
