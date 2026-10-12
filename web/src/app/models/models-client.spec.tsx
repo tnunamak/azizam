@@ -1824,3 +1824,88 @@ it("keeps a secondary profile in All models when its server capability has no se
   fireEvent.click(await screen.findByRole("button", { name: "All models" }));
   expect(within(screen.getByRole("table", { name: "All models" })).getByRole("button", { name: "Copy model name future-model" })).toBeVisible();
 });
+
+describe("catalog loading, retry, in-flight status labels and role actions", () => {
+  function availability(overrides: Partial<CatalogRow["availability"]>): CatalogRow["availability"] {
+    return { ...row().availability, ...overrides };
+  }
+
+  it("announces loading while the catalog is pending and then shows the observed model", async () => {
+    let release!: (value: ModelsCatalog) => void;
+    vi.mocked(productApi.models).mockReturnValue(
+      new Promise<ModelsCatalog>((resolve) => { release = resolve; }),
+    );
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(screen.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByText("No models are available yet")).toBeNull();
+    await act(async () => release(catalog([row()])));
+    expect(await screen.findByRole("button", { name: "Copy model name chat" })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull();
+  });
+
+  it("retries a failed catalog load from the error state", async () => {
+    vi.mocked(productApi.models)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(catalog([row()]));
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(await screen.findByText("Models catalog could not be loaded. Try again.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /try again|retry/i }));
+    expect(await screen.findByRole("button", { name: "Copy model name chat" })).toBeVisible();
+    expect(screen.queryByText("Models catalog could not be loaded. Try again.")).toBeNull();
+  });
+
+  it.each([
+    ["starting", "Starting"],
+    ["busy", "Busy"],
+  ] as const)("labels a %s row in the summary", async (status, label) => {
+    renderModels(catalog([row({ availability: availability({ status, available: false, up: status === "busy" }) })]));
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    expect(screen.getByText(label)).toBeVisible();
+  });
+
+  it("opens the detail sheet when the row itself is clicked", async () => {
+    renderModels(catalog([row()]));
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(copy.closest("tr")!);
+    expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
+  it("gives a member a status action, not an engine action, for a catalog-only row", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "catalog-only",
+          display_name: "catalog-only",
+          name: "catalog-only",
+          availability: availability({
+            available: false,
+            status: "unavailable",
+            configured: false,
+            up: false,
+            reason: "The service is not configured.",
+          }),
+        }),
+      ]),
+      member,
+    );
+    const copy = await screen.findByRole("button", { name: "Copy model name catalog-only" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status/");
+    expect(dialog.queryByRole("link", { name: "Connect an engine" })).toBeNull();
+    expect(dialog.queryByRole("link", { name: "Connect a provider" })).toBeNull();
+  });
+});

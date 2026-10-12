@@ -676,6 +676,8 @@ test.each(["success", "succeeded", "ok"])("COPY-11 usage completion once (%s)", 
 });
 
 test.each([
+  ["rejected", "Rejected", "The gateway rejected this request."],
+  ["accepted", "Accepted", "The gateway accepted this request for processing."],
   ["in_progress", "In progress", "The request was still running when this receipt was recorded."],
   ["timed_out", "Timed out", "The request timed out before we recorded a result. Try again."],
   ["incomplete", "Outcome not recorded", "We couldn't tell where this stopped. Check for a newer receipt, then try again."],
@@ -687,6 +689,53 @@ test.each([
   const sheet = within(screen.getByRole("dialog"));
   expect(sheet.getAllByText(label)).toHaveLength(1);
   expect(sheet.getByText(summary)).toBeVisible();
+});
+
+test("a rejected receipt gives the recorded 403 reason in plain words", async () => {
+  renderUsage({
+    receipts: [{ request_id: "refused", capability: "chat", status: "rejected", metadata: { status_code: 403 } }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  await user.click(screen.getByRole("button", { name: "Receipt details for Chat request" }));
+  expect(within(screen.getByRole("dialog")).getByText(
+    "Your account does not have permission for this action. Ask the gateway owner to check your access.",
+  )).toBeVisible();
+});
+
+test("the receipt coverage note says when the view holds only the most recent receipts", async () => {
+  renderUsage({ retention_days: 30, truncated: true });
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Receipt coverage"));
+  expect(screen.getByText("Receipts are kept for 30 days.")).toBeVisible();
+  expect(screen.getByText("This view is limited to the most recent stored receipts.")).toBeVisible();
+});
+
+test("a summary without retention_days never claims receipts are kept until deleted", async () => {
+  renderUsage({ coverage_start: "2026-10-01T00:00:00Z" });
+  const user = userEvent.setup();
+  await user.click(await screen.findByText("Receipt coverage"));
+  expect(screen.getByText(/Coverage starts/)).toBeVisible();
+  expect(screen.queryByText(/Receipts are kept/)).toBeNull();
+});
+
+test("an empty period names the retention window in the receipts hint", async () => {
+  renderUsage({ requests: 0, media_count: 0, retention_days: 90 });
+  expect(await screen.findByText("No requests in this period")).toBeVisible();
+  expect(screen.getByText(/90-day receipts appear here/)).toBeVisible();
+});
+
+test("choosing a source sends it as the source filter of the usage summary", async () => {
+  renderUsage({ sources: [{ id: "app-a", label: "Open WebUI" }] });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      new URL(String(url), "https://azizam.test").searchParams.get("source") === "app-a")).toBe(true),
+  );
 });
 
 test.each([undefined, "provider", "opaque_stage"])("COPY-08 usage failure uncertainty (%s)", async (stage) => {
