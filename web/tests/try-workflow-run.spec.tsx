@@ -411,7 +411,7 @@ describe("guided JSON fields", () => {
     await user.click(runButton());
     expect(await screen.findByText("Workflow result")).toBeVisible();
     expect(screen.getByAltText("Generated result")).toBeVisible();
-    expect(screen.getByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage/?receipt=receipt_json_workflow");
+    expect(screen.getByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage?receipt=receipt_json_workflow");
     // The raw answer stays folded under Technical details.
     expect(screen.getByText("Technical details").closest("details")).not.toHaveAttribute("open");
 
@@ -687,7 +687,7 @@ describe("the receipt link", () => {
     setValue(field("textbox", "prompt", true), "A teal fish.");
 
     await user.click(runButton());
-    expect(await screen.findByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage/?receipt=receipt_from_asset");
+    expect(await screen.findByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage?receipt=receipt_from_asset");
 
     // A receipt the gateway answers 404 for makes no link.
     reply = () => json({ data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] }, 200, { "x-azizam-receipt-id": "receipt denied/value" });
@@ -698,7 +698,7 @@ describe("the receipt link", () => {
     // A verified receipt links to Usage with its id encoded.
     reply = () => json({ data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] }, 200, { "x-azizam-receipt-id": "receipt verified/value" });
     await user.click(runButton());
-    expect(await screen.findByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage/?receipt=receipt%20verified%2Fvalue");
+    expect(await screen.findByRole("link", { name: "View receipt" })).toHaveAttribute("href", "/usage?receipt=receipt%20verified%2Fvalue");
   });
 });
 

@@ -7,7 +7,11 @@ import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
 import * as session from "@/components/shell/session";
 import { ApiError } from "@/lib/api";
 
-vi.mock("./status-client", () => ({ StatusClient: () => <p>Owner status</p> }));
+const ownerModule = vi.hoisted(() => ({ loads: 0 }));
+vi.mock("./status-client", () => {
+  ownerModule.loads += 1;
+  return { StatusClient: () => <p>Owner status</p> };
+});
 // Capability states come from the shared model, which reads the Home snapshot.
 const home = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 vi.mock("@/app/_home/home-api", () => ({
@@ -304,6 +308,15 @@ it.each([null, "unknown", "unexpected"])("labels an unrecorded receipt outcome: 
   expect(await screen.findByText("Outcome not recorded")).toBeVisible();
 });
 
+// Runs first: later cases render the owner view, which loads the module on purpose.
+it("does not load the owner status module for a member", async () => {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: false } as ReturnType<typeof session.useViewer>);
+  serve(snapshot);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
+  await screen.findByRole("heading", { name: "Your latest requests" }).catch(() => undefined);
+  expect(ownerModule.loads).toBe(0);
+});
+
 it("offers Retry for a successful response without status", async () => {
   vi.spyOn(productApi, "status").mockResolvedValue(null as unknown as Snapshot);
   mount();
@@ -316,7 +329,7 @@ it("keeps the owner's own requests alongside the household status", async () => 
   vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
   serve(snapshot);
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
-  expect(screen.getByText("Owner status")).toBeVisible();
+  expect(await screen.findByText("Owner status")).toBeVisible();
   expect(await screen.findByRole("heading", { name: "Your latest requests" })).toBeVisible();
   expect(screen.getByRole("link", { name: /Failed/ })).toHaveAttribute("href", snapshot.receipts[0].href);
   expect(screen.queryByRole("heading", { name: "What you can use" })).toBeNull();

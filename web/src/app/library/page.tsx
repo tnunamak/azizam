@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
@@ -948,7 +949,8 @@ function Preview({
     refetch: refetchPoster,
   } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
-    enabled: asset.kind === "video" && !!asset.poster_asset_id,
+    // Off-screen tiles wait: one poster link per video would flood a large Library.
+    enabled: asset.kind === "video" && !!asset.poster_asset_id && visible,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
         `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
@@ -2707,7 +2709,7 @@ export default function LibraryPage() {
                 </Button>
               ) : (
                 <Button asChild>
-                  <a href="/try/?capability=image">Make an image</a>
+                  <Link href="/try/?capability=image">Make an image</Link>
                 </Button>
               )
             }
