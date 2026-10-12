@@ -218,3 +218,25 @@ def test_direct_create_rejects_non_string_prompt_before_provider(video_state, mo
     assert json.loads(result.body)["error"]["type"] == "invalid_request_error"
     assert proxy._video_job_records == {}
     transport.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_endpoint", ["queue", "history"])
+@pytest.mark.parametrize("shape", [[], None, "text"])
+def test_wrong_shape_provider_json_is_unavailable(video_state, monkeypatch, bad_endpoint, shape):
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, body):
+            self.body = body
+        def json(self):
+            return self.body
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def get(self, url, **kwargs):
+            endpoint = "queue" if url.endswith("/queue") else "history"
+            good = {"queue_running": [], "queue_pending": []} if endpoint == "queue" else {}
+            return FakeResponse(shape if endpoint == bad_endpoint else good)
+    monkeypatch.setattr(proxy.httpx, "AsyncClient", lambda **kw: Client())
+    assert asyncio.run(proxy._fetch_comfy_state()) == (None, None)
