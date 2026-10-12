@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Mutation testing of the core modules (docs/design/TEST_STRATEGY.md 4.5).
+#
+# Usage: scripts/mutate <module>... | all  [--workers N] [--ids FILE] [--no-wide]
+#        [--tests PATH...] [--min-limit S] [--max-limit S] [--out DIR]
+#
+# Scores the committed HEAD (the hermetic runner archives it; uncommitted
+# edits are ignored).  Modules and scopes: tests/mutation/modules.toml.
+# Survivor classifications: tests/mutation/survivors.toml.  Writes
+# report.json and report.md to DIR (default ~/.tmp/azizam-mutation/<time>-<sha>).
+# Exit 0: scored; 3: refused (baseline not green); 4: a kill did not reproduce.
+# Heavy: run it through the host's heavy-run limiter, never inside the gate.
+set -euo pipefail
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+sha=$(git -C "$repo" rev-parse HEAD)
+out=
+args=()
+while (($#)); do
+  case $1 in
+    --out) out=$2; shift 2 ;;
+    --ids) args+=(--ids "$(realpath -- "$2")"); shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+out=${out:-$HOME/.tmp/azizam-mutation/$(date -u +%Y%m%dT%H%M%SZ)-${sha:0:8}}
+mkdir -p -- "$out"
+if [[ -n $(git -C "$repo" status --porcelain --untracked-files=no -- gateway tests scripts) ]]; then
+  echo "mutate: warning: uncommitted changes are ignored; scoring HEAD $sha" >&2
+fi
+# The sandbox cannot read host files outside the checkout, so --ids is copied in.
+ids_index=-1
+for i in "${!args[@]}"; do [[ ${args[i]} == --ids ]] && ids_index=$((i + 1)); done
+if ((ids_index >= 0)); then
+  ids_file=${args[ids_index]}
+  args[ids_index]=/dev/stdin
+  exec 0<"$ids_file"
+fi
+rc=0
+"$repo/scripts/run-hermetic-pytest.sh" --python-script scripts/mutation/driver.py "${args[@]}" --sha "$sha" >"$out/report.json" || rc=$?
+python3 -I "$repo/scripts/mutation/render.py" "$out/report.json" >"$out/report.md" || true
+echo "mutate: exit $rc; report: $out/report.md" >&2
+exit "$rc"
