@@ -18,9 +18,9 @@ Keep your favorite frontend. Point Open WebUI, a coding agent, or your own app a
 
 Available capabilities depend on your engines and access plan. A registered route does not establish full vendor compatibility. Start with [the docs index](docs/README.md) for the guide that matches your task.
 
-## Five-minute quickstart
+## Quickstart
 
-Allow about five minutes for owner setup after the containers are ready. The first image build and model downloads can take longer. You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose includes the gateway and its LiteLLM execution sidecar; it does not download an inference model.
+The first image build and any model downloads take the longest. You need Docker with Compose, this repository, and a reachable OpenAI-compatible chat engine. Compose includes the gateway and its LiteLLM execution sidecar; it does not download an inference model.
 
 1. Download or clone this repository. Open a terminal in its root. Use the tested recipe from [First-Run Setup](docs/FIRST_RUN_SETUP.md#docker-compose-quick-start) exactly:
 
