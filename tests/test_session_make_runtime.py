@@ -162,6 +162,27 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertNotIn("private make prompt", raised.exception.public_message)
         self.assertEqual(raised.exception.http_status, 500)
 
+    def test_a_policy_denial_stops_the_worker_before_any_image_route_runs(self) -> None:
+        # The image routes check policy again, so the worker's own refusal is
+        # only visible as "the delegate never starts". Kills M-INV-make-worker-ignores-denial.
+        denial = proxy.PolicyDecision(decision="denied", sources=("app_profile",),
+                                      reasons=("images are off for this app",))
+        for intent, delegate in (("image.generate", "proxy_comfy_request"),
+                                 ("image.edit", "proxy_comfy_edit_request")):
+            started = []
+
+            async def spy(request, auth_context, receipt=None, _started=started):
+                _started.append(receipt)
+                return self._ok()
+
+            with self.subTest(intent=intent), \
+                    patch.object(proxy, "_apply_image_route_policy", return_value=denial), \
+                    patch.object(proxy, delegate, spy):
+                with self.assertRaises(me_make.MakeBackendError) as raised:
+                    asyncio.run(self.runtime.execute(self._payload(intent)))
+                self.assertEqual(raised.exception.http_status, 403)
+                self.assertEqual(started, [], "a denied job must not start the image route")
+
     def _admission(self, **cfg) -> None:
         patcher = patch.object(proxy, "_effective_media_job_admission_cfg", return_value=cfg)
         patcher.start()
