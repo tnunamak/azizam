@@ -93,7 +93,7 @@ lock=$HOME/.tmp/azizam-ci.lock
 mkdir -p "${lock%/*}"
 exec 9>>"$lock"
 if ! flock -n 9; then
-  echo "waiting for the host CI lock $lock, held by: $(cat "$lock")"
+  echo "waiting for the host CI lock $lock (last recorded holder: $(cat "$lock"))"
   flock 9
 fi
 printf 'pid %s sha %s since %s\n' "$$" "$sha" "$(date -u +%FT%TZ)" > "$lock"

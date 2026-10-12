@@ -26,7 +26,9 @@ were still stored.
   reruns it).
 - Only one `ci-local` runs at a time on the host: it holds
   `flock ~/.tmp/azizam-ci.lock` for the whole run, and a second run waits
-  (the lock file names the holder).
+  (the lock file names the last `ci-local` that held it). Do not wrap it in
+  `flock` on the same file: the inner lock would wait for the outer one
+  forever.
 - The hosted workflow runs only when started by hand
   (`gh workflow run CI --ref <branch>`). It uploads diagnostics only when a
   job fails, keeps them 1 day, and cancels an older run on the same ref.
