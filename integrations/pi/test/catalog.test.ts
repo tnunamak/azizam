@@ -115,3 +115,21 @@ test("malformed entries are skipped, not fatal; duplicates collapse", () => {
 test("non-list bodies throw a clear error", () => {
 	for (const body of [null, [], "x", {}, { data: "no" }]) assert.throws(() => parseModelList(body), /no `data` array/);
 });
+
+test("cache-write pricing is mapped and an explicit zero price wins over aliases", () => {
+	const model = parseModelList({
+		data: [{
+			id: "priced",
+			type: "language",
+			pricing: {
+				input: 0,
+				prompt: "0.000003",
+				output: 0,
+				completion: "0.000004",
+				input_cache_read: "0.000001",
+				input_cache_write: "0.000002",
+			},
+		}],
+	}).models[0];
+	assert.deepEqual(model.cost, { input: 0, output: 0, cacheRead: 1, cacheWrite: 2 });
+});

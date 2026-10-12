@@ -79,3 +79,53 @@ test("registerProviderScoped restores the runtime's refresh and swallows only th
 	assert.equal((runtime as any).refresh, own, "refresh must be restored after registration");
 	assert.deepEqual(seen, [], "the unscoped refresh must not reach Pi during registration");
 });
+
+test("scoped registration forwards scoped refreshes and restores every descriptor on throw", async () => {
+	const { registerProviderScoped } = await import("../src/provider.ts");
+	const provider = {} as Parameters<typeof registerProviderScoped>[1];
+
+	for (const own of [false, true]) {
+		for (const throws of [false, true]) {
+			const calls: { receiver: unknown; options: unknown }[] = [];
+			const result = { aborted: false, errors: new Map() };
+			const scopedOptions = { providers: ["azizam"], allowNetwork: false };
+			const failure = new Error("registration failed");
+			const refresh = async function (this: unknown, options?: unknown) {
+				calls.push({ receiver: this, options });
+				return result;
+			};
+			const runtime = Object.create({ refresh });
+			if (own) {
+				Object.defineProperty(runtime, "refresh", { value: refresh, configurable: true, enumerable: false, writable: true });
+			}
+			const before = Object.getOwnPropertyDescriptor(runtime, "refresh");
+			let unscoped: Promise<any> | undefined;
+			let scoped: Promise<any> | undefined;
+			runtime.registerNativeProvider = (received: unknown) => {
+				assert.equal(received, provider);
+				unscoped = runtime.refresh();
+				scoped = runtime.refresh(scopedOptions);
+				if (throws) throw failure;
+			};
+
+			if (throws) {
+				assert.throws(() => registerProviderScoped(runtime, provider), (error: unknown) => error === failure);
+			} else {
+				registerProviderScoped(runtime, provider);
+			}
+
+			assert.deepEqual(Object.getOwnPropertyDescriptor(runtime, "refresh"), before, "restore the original own descriptor or remove the temporary own property");
+			assert.equal(runtime.refresh, refresh);
+			assert.ok(unscoped);
+			assert.ok(scoped);
+			assert.deepEqual(await unscoped, { aborted: false, errors: new Map() });
+			assert.equal(await scoped, result);
+			assert.equal(calls.length, 1);
+			assert.equal(calls[0].receiver, runtime);
+			assert.equal(calls[0].options, scopedOptions);
+
+			await runtime.refresh({ providers: ["after-registration"] });
+			assert.equal(calls.length, 2, "normal refresh must still work afterwards");
+		}
+	}
+});

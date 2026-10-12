@@ -30,7 +30,7 @@ async function setup(
 		modify: async (_id: string, fn: any) => fn({ type: "api_key", key: KEY }),
 		delete: async () => {},
 	};
-	const provider = azizamProvider({ env: { AZIZAM_BASE_URL: "http://gw.test/v1", ...env }, fetch: fetchImpl, prefetchTimeoutMs: extra.prefetchTimeoutMs, configuredBaseUrl: extra.configuredBaseUrl });
+	const provider = azizamProvider({ env: { AZIZAM_BASE_URL: "http://gw.test/v1", ...env }, fetch: fetchImpl, prefetchTimeoutMs: extra.prefetchTimeoutMs, configuredBaseUrl: extra.configuredBaseUrl, modelsStore: store });
 	const models = piAi.createModels({ credentials, modelsStore: store });
 	models.setProvider(provider);
 	return { models, store, calls, provider };
@@ -207,11 +207,27 @@ test("prefetch serves fetched models when the stored catalog cannot be read", { 
 	assert.deepEqual(ids(provider.getAllModels!()), ["chat-small", "coder"]);
 });
 
-test("prefetch serves fetched models when the catalog cannot be persisted", { skip }, async () => {
-	const store = await piAiStore({ write: denied });
-	const { models, provider } = await setup(() => json(CONTRACT_LIST), {}, { store });
+test("prefetch attempts persistence and retains fetched models when that write fails", { skip }, async (t) => {
+	const errors: string[] = [];
+	t.mock.method(console, "error", (...args: unknown[]) => { errors.push(args.map(String).join(" ")); });
+	const writes: { providerId: string; entry: any; signal?: AbortSignal }[] = [];
+	const store = await piAiStore({
+		write: async (providerId: string, entry: any, options?: { signal?: AbortSignal }) => {
+			writes.push({ providerId, entry, signal: options?.signal });
+			throw new Error("synthetic write denied");
+		},
+	});
+	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), {}, { store });
 	await provider.prefetch(models);
+	assert.equal(calls.length, 1);
+	assert.equal(writes.length, 1, "the prefetch persistence branch must execute");
+	assert.equal(writes[0].providerId, "azizam");
+	assert.deepEqual(ids(writes[0].entry.models), ["chat-small", "coder"]);
+	assert.ok(Number.isFinite(writes[0].entry.checkedAt));
+	assert.ok(writes[0].signal instanceof AbortSignal);
 	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+	assert.deepEqual(ids(provider.getAllModels!()), ["chat-small", "coder"]);
+	assert.ok(errors.every((message) => !message.includes(KEY)));
 	// Pi's own later refresh cannot publish either; the models stay available from the fetch.
 	await models.refresh();
 	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
@@ -315,14 +331,86 @@ test("a failed first discovery reports an error without echoing untrusted except
 	assert.ok(!errors[0].includes(KEY));
 });
 
-test("the budget is shared: slow restore plus a fetch cannot exceed it", { skip }, async () => {
-	const store = await piAiStore({ read: async () => { await new Promise((r) => setTimeout(r, 200)); return undefined; } });
-	const { models, provider } = await setup(
-		(_url, init) => new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal!.reason))),
-		{},
-		{ store, prefetchTimeoutMs: 400 },
-	);
-	await within(700, provider.prefetch(models));
+test("restore, lookup and fetch share one controlled startup deadline", { skip, timeout: 10000 }, async (t) => {
+	const { azizamProvider } = await import("../src/provider.ts");
+	const deferred = () => {
+		let resolve!: () => void;
+		const promise = new Promise<void>((done) => { resolve = done; });
+		return { promise, resolve };
+	};
+	const restoreEntered = deferred();
+	const lookupEntered = deferred();
+	const fetchEntered = deferred();
+	const deadlines: { ms: number; controller: AbortController }[] = [];
+	let restoreSignal: AbortSignal | undefined;
+	let lookupSignal: AbortSignal | undefined;
+	let fetchSignal: AbortSignal | undefined;
+	const fetchCalls: { url: string; authorization: string | null }[] = [];
+
+	const fetcher: typeof fetch = async (url, init) => {
+		fetchSignal = init?.signal ?? undefined;
+		fetchCalls.push({ url: String(url), authorization: new Headers(init?.headers).get("authorization") });
+		fetchEntered.resolve();
+		return new Promise<Response>((_resolve, reject) => {
+			const signal = fetchSignal!;
+			const abort = () => reject(signal.reason);
+			if (signal.aborted) abort();
+			else signal.addEventListener("abort", abort, { once: true });
+		});
+	};
+	const provider = azizamProvider({
+		env: { AZIZAM_BASE_URL: "http://gw.test/v1", AZIZAM_API_KEY: "budget-env-key" },
+		prefetchTimeoutMs: 400,
+		fetch: fetcher,
+	});
+	const runtime = {
+		refresh: async (options: any) => {
+			assert.equal(options.allowNetwork, false);
+			assert.deepEqual(options.providers, ["azizam"]);
+			restoreSignal = options.signal;
+			restoreEntered.resolve();
+			return new Promise<never>(() => {});
+		},
+		getAuth: async (providerId: string, options: any) => {
+			assert.equal(providerId, "azizam");
+			lookupSignal = options.signal;
+			lookupEntered.resolve();
+			return new Promise<never>(() => {});
+		},
+	} as unknown as Parameters<typeof provider.prefetch>[0];
+
+	t.mock.method(AbortSignal, "timeout", (ms: number) => {
+		const controller = new AbortController();
+		deadlines.push({ ms, controller });
+		return controller.signal;
+	});
+	t.mock.method(console, "error", () => {});
+	const pending = provider.prefetch(runtime);
+	try {
+		await restoreEntered.promise;
+		assert.deepEqual(deadlines.map((item) => item.ms), [400, 100]);
+		deadlines[1].controller.abort(new DOMException("restore slice", "TimeoutError"));
+
+		await lookupEntered.promise;
+		assert.equal(restoreSignal?.aborted, true);
+		assert.deepEqual(deadlines.map((item) => item.ms), [400, 100, 100]);
+		deadlines[2].controller.abort(new DOMException("lookup slice", "TimeoutError"));
+
+		await fetchEntered.promise;
+		assert.equal(lookupSignal?.aborted, true);
+		assert.deepEqual(fetchCalls, [{ url: "http://gw.test/v1/models", authorization: "Bearer budget-env-key" }]);
+		assert.equal(fetchSignal?.aborted, false);
+		deadlines[0].controller.abort(new DOMException("overall budget", "TimeoutError"));
+
+		assert.equal(fetchSignal?.aborted, true, "the original overall deadline must abort the in-flight fetch immediately");
+		await pending;
+		assert.deepEqual(provider.getModels(), []);
+	} finally {
+		for (const { controller } of deadlines) {
+			if (!controller.signal.aborted) controller.abort(new DOMException("test cleanup", "AbortError"));
+		}
+		await pending;
+	}
 });
 
 test("prefetch falls back to AZIZAM_API_KEY when Pi's credential store cannot be read", { skip }, async () => {

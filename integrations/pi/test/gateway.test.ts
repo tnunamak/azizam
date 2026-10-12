@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AzizamError, DEFAULT_BASE_URL, fetchCatalog, normalizeBaseUrl } from "../src/gateway.ts";
-import { CONTRACT_LIST, startMockGateway } from "./mock-gateway.ts";
+import { startMockGateway } from "./mock-gateway.ts";
 
 const SECRET = "sk-super-secret-key-123";
 
@@ -97,17 +97,6 @@ test("fetch rejects same-origin redirects without requesting the target", async 
 	}
 });
 
-test("body-read caller abort is propagated untouched", async () => {
-	const bodyResponse = (json: () => Promise<unknown>) => ({ ok: true, status: 200, json }) as Response;
-	const ctrl = new AbortController();
-	const callerAbort = fetchCatalog({ baseUrl: "http://gateway/v1", signal: ctrl.signal, fetch: async () => bodyResponse(() => new Promise((_r, reject) => {
-		if (ctrl.signal.aborted) reject(new Error("body aborted"));
-		else ctrl.signal.addEventListener("abort", () => reject(new Error("body aborted")), { once: true });
-	})) });
-	ctrl.abort();
-	await assert.rejects(callerAbort, (error: Error) => error.name === "AbortError");
-});
-
 test("partial response body timeout is reported as timeout", async () => {
 	const gw = await startMockGateway();
 	try {
@@ -119,17 +108,33 @@ test("partial response body timeout is reported as timeout", async () => {
 	}
 });
 
-test("caller abort is propagated untouched", async () => {
-	const ctrl = new AbortController();
-	const hang: typeof fetch = (_url, init) =>
-		new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
-	const pending = fetchCatalog({ baseUrl: "http://x/v1", fetch: hang, signal: ctrl.signal });
-	ctrl.abort();
-	await assert.rejects(pending, (error: Error) => error.name === "AbortError");
-});
+test("caller abort reason is preserved by identity during fetch and body consumption", async () => {
+	for (const phase of ["fetch", "body"] as const) {
+		const controller = new AbortController();
+		const reason = { requestedBy: "caller", phase };
+		let entered!: () => void;
+		const reached = new Promise<void>((resolve) => { entered = resolve; });
+		const blocked = (signal: AbortSignal) => new Promise<never>((_resolve, reject) => {
+			const abort = () => reject(new Error("synthetic adapter abort"));
+			if (signal.aborted) abort();
+			else signal.addEventListener("abort", abort, { once: true });
+			entered();
+		});
+		const fetcher: typeof fetch = async (_url, init) => {
+			assert.ok(init?.signal);
+			const signal = init.signal;
+			if (phase === "fetch") return blocked(signal);
+			return { ok: true, status: 200, json: () => blocked(signal) } as unknown as Response;
+		};
 
-test("fixture is well-formed contract data", () => {
-	assert.equal(CONTRACT_LIST.data.length, 5);
+		const pending = fetchCatalog({ baseUrl: "http://gateway.test/v1", signal: controller.signal, fetch: fetcher });
+		await reached;
+		controller.abort(reason);
+		await assert.rejects(pending, (error: unknown) => {
+			assert.equal(error, reason);
+			return true;
+		});
+	}
 });
 
 test("normalizeBaseUrl never echoes secrets and rejects userinfo, query and fragment", () => {
