@@ -30,17 +30,34 @@ were still stored.
 
 ## Parallel local layout
 
-- Python hermetic tests and the native/Compose fresh-instance job start
-  alongside web installation/check/build/unit tests. Each job has a separate
-  clean detached worktree, so helper scripts cannot race on Python environments,
-  generated files or the web build.
-- After web preparation finishes, `--shards N` (default `4`) starts all main
-  Playwright shards with `--shard i/N`, plus live-data and household in parallel.
-  Workers remain `1` within each fixture; no test filters or assertions change.
-- `--port BASE` defaults to `18640`. Main shard `i` uses `BASE + 10*i`
+- At start, three jobs run side by side, each in its own clean detached
+  worktree: the Python hermetic suite; the fresh-instance venv and Compose
+  journey; and web install, then unit tests beside check/build, then the
+  browser venv, Chromium and the lane plan.
+- The Python suite runs under pytest-xdist: `--py-workers N` (default `12`)
+  workers with `--dist worksteal`. Each worker keeps its gateway stores in a
+  private subdirectory of the run's state directory. The serial and parallel
+  runs pass the same tests (7884 passed, 6 skipped, 1 xfailed, 2803 subtests
+  on 2026-10-11).
+- The Compose journey creates and removes a Docker network. Chromium aborts
+  in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`),
+  so the browser lanes start only after Compose finishes. The native
+  fresh-instance journey runs beside the lanes; it needs no Docker network.
+- `--shards N` (default `10`) main Playwright lanes run in parallel with the
+  live-data and household lanes. `scripts/e2e/plan_shards.py` assigns whole
+  spec files to lanes by the measured times in `web/e2e/shard-weights.tsv`
+  (longest first, to the least-loaded lane) and fails unless every listed
+  file is in exactly one lane. Each lane runs its list with `--test-list`.
+  `--shard i/N` splits by test count: with 12 lanes one lane ran 414 s and
+  another 18 s. Workers remain `1` within each fixture and each file keeps its
+  test order. Regenerate the weights after large spec changes with
+  `scripts/e2e/plan_shards.py weights <receipts>/logs/e2e-shard-*.log`; stale
+  weights change balance only, never coverage.
+- `--port BASE` defaults to `18640`. Main lane `i` uses `BASE + 10*i`
   (i starts at 1); live-data and household use the next two lanes. Each lane
   reserves gateway +0, fake engine +1 and strict-engine candidates +2 through +9.
   The entire allocation must fit within 18000–18998 or the command fails early.
+  The fresh-instance journeys take the first free ports from 18000 upward.
 - Each browser lane has its own port-named worktree, state root, results,
   screenshots and auth files. It receives an isolated copy of the completed web
   directory (copy-on-write on supporting filesystems), and shares only the
@@ -52,12 +69,25 @@ were still stored.
   failing-run browser evidence by port. Interrupts terminate job process groups
   before worktrees are removed. `setsid` and GNU-compatible `cp --reflink` are
   required. Extra worktrees and copied dependencies need additional disk space.
-- Expected duration is the maximum of Python, fresh-instance, and web preparation
-  plus the slowest browser lane, including copying and contention overhead.
-  There is no measured speedup yet. Validate a fresh commit with the same Python
-  counts and 680 + 4 + 15 browser cases before trusting a new time comparison.
-  File-level sharding preserves each file's ordering; unseen cross-file state
-  dependencies must be checked by that full run.
+
+## Duration
+
+Measured on 2026-10-11 (24 cores; other agents kept the load average at
+10-30). Seconds per step; steps overlap, so the total is the wall clock.
+
+| Step | Before (4 shards, serial Python) | After (10 lanes, 12 workers) |
+|---|---|---|
+| python-hermetic | 2032 | 262-368 |
+| e2e main lanes (slowest) | 523 | 279-307 |
+| e2e-household | 97 | 152-170 |
+| fresh-compose | 66 (after the lanes) | 48-145 (before the lanes) |
+| web-check | 50 | 66-71 |
+| **Total** | **2032 (33 min 52 s)** | **421-488** |
+
+The Python suite alone takes 159 s with 20 workers and 216 s with 12. In
+the gate it finishes before the slowest browser lane, which ends the run, and
+all jobs share the CPU, so more workers would only add contention. The lanes
+start after Compose, whose time varies with Docker's build cache.
 
 ## Limits
 
@@ -68,5 +98,3 @@ were still stored.
   allocate one ("Pool overlaps with other one on this address space"), the
   run fails. `--skip-compose` records the step as skipped, and the run then
   cannot pass.
-
-The fresh-instance Compose journey runs only after every browser lane has finished. It creates and removes a Docker network, and Chromium aborts in-flight requests on any host network change (`net::ERR_NETWORK_CHANGED`); overlapping it with the browser lanes made unrelated journeys fail. It still finishes before the Python suite, so it adds no wall time.
