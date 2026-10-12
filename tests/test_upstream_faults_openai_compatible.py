@@ -36,12 +36,14 @@ def _serve(fakes: FakeUpstreams, monkeypatch, tmp_path, name: str, *, wire: bool
 
 def _events(raw: bytes) -> list[Any]:
     """Parse an SSE body into data payloads; ``[DONE]`` stays a string."""
+    text = raw.decode("utf-8")
+    assert text.endswith("\n\n"), f"stream does not end on an event boundary: {text[-80:]!r}"
     out: list[Any] = []
-    for block in raw.decode("utf-8").split("\n\n"):
-        data = [line[len("data: "):] for line in block.split("\n") if line.startswith("data: ")]
-        if data:
-            payload = "\n".join(data)
-            out.append(payload if payload == "[DONE]" else json.loads(payload))
+    for block in text[:-2].split("\n\n"):
+        lines = block.split("\n")
+        assert all(line.startswith("data: ") for line in lines), f"not an SSE data event: {block!r}"
+        payload = "\n".join(line[len("data: "):] for line in lines)
+        out.append(payload if payload == "[DONE]" else json.loads(payload))
     return out
 
 
