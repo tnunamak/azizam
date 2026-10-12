@@ -13811,15 +13811,25 @@ def _capability_for_profile(
 
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
-    profile = _profile_for_auth_context(auth_context)
-    identity = getattr(auth_context, "identity", None)
-    # Everything before the per-identity policy view depends only on the plan
-    # and the identity's remote decision models, so one request builds it once
-    # per distinct identity.
-    live_registry, capabilities = request_connections.memo(
-        ("capability-catalog", profile.id, _profile_target_visibility(auth_context),
-         getattr(identity, "app_id", None), getattr(identity, "key_hash", None)),
-        lambda: _gateway_catalog_for_auth_context(auth_context),
+    """Every capability, with this identity's policy view.
+
+    The catalog before the policy view depends on the plan's target visibility
+    and the identity's remote decision models, not on the identity itself. One
+    request therefore builds each distinct catalog once, however many keys and
+    plans Home evaluates.
+    """
+    visibility = _profile_target_visibility(auth_context)
+    live_registry, base = request_connections.memo(
+        ("capability-catalog-base", visibility), lambda: _gateway_catalog_base(visibility))
+    remote = [
+        decision_provider_execution.capability_for(provider, model.id)
+        for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context), live_registry)
+        for provider in [decision_provider_execution.systemone_provider_for_model(live_registry, model.id)]
+        if provider
+    ]
+    capabilities = request_connections.memo(
+        ("capability-catalog", visibility, tuple((c.backend, c.model) for c in remote)),
+        lambda: _gateway_catalog_finish(live_registry, base, remote),
     )
     admin_state: dict[str, Mapping[str, Any]] = {}
 
@@ -13837,7 +13847,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ]
 
 
-def _gateway_catalog_for_auth_context(auth_context: AuthContext) -> tuple[Mapping[str, Any], list[Capability]]:
+def _gateway_catalog_base(visibility: str) -> tuple[Mapping[str, Any], list[Capability]]:
     try:
         live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
@@ -13863,14 +13873,16 @@ def _gateway_catalog_for_auth_context(auth_context: AuthContext) -> tuple[Mappin
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
     decision_capabilities = DECISION_RUNTIME.capabilities()
-    if _profile_target_visibility(auth_context) == "available":
+    if visibility == "available":
         decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
     capabilities.extend(decision_capabilities)
+    return live_registry, capabilities
 
-    for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
-        provider = decision_provider_execution.systemone_provider_for_model(live_registry, model.id)
-        if provider:
-            capabilities.append(decision_provider_execution.capability_for(provider, model.id))
+
+def _gateway_catalog_finish(
+    live_registry: Mapping[str, Any], base: list[Capability], remote: list[Capability],
+) -> list[Capability]:
+    capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13901,7 +13913,7 @@ def _gateway_catalog_for_auth_context(auth_context: AuthContext) -> tuple[Mappin
         )
     ]
 
-    return live_registry, capabilities
+    return capabilities
 
 
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
@@ -14732,10 +14744,13 @@ async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -
     return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
 
 
-def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+def _remote_decision_models(
+    auth: AuthContext, profile: Any, registry: Mapping[str, Any] | None = None,
+) -> list[decisions_api.DecisionModel]:
     if not auth.identity or not auth.identity.app_id:
         return []
-    registry = ADMIN_STORE.get_service_registry()
+    if registry is None:
+        registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
     for provider in decision_provider_execution.systemone_providers(registry):
         try:
