@@ -691,6 +691,9 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   ]) {
     expect(visible, jargon).not.toContain(jargon);
   }
+  // Optional inputs wait under More options, after what the workflow needs.
+  await expect(page.getByRole("textbox", { name: /Avoid/ })).toBeHidden();
+  await page.locator("summary").filter({ hasText: "More options" }).click();
   expect(await page.getByRole("textbox", { name: /Avoid/ }).inputValue()).toBe("");
 
   await page.screenshot({ path: "test-results/screens/try-workflow-media-top-390.png" });

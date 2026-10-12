@@ -376,11 +376,20 @@ async function openCopyAs(page: Page) {
   await expect(page.locator("pre").filter({ hasText: "curl" })).toBeVisible();
 }
 
+// Optional inputs wait under "More options"; open it once.
+async function openMoreOptions(page: Page) {
+  const more = page.locator("summary").filter({ hasText: "More options" });
+  if (!(await more.evaluate((el) => (el.parentElement as HTMLDetailsElement).open))) {
+    await more.click();
+  }
+}
+
 async function fillGuidedImageInputs(page: Page) {
   await textbox(page, "prompt", true).fill("A red poster.");
   await combobox(page, "style", true).click();
   await page.getByRole("option", { name: "flatlay" }).click();
   await spinbutton(page, "steps", true).fill("11");
+  await openMoreOptions(page);
   await spinbutton(page, "strength").fill("0.8");
   await spinbutton(page, "width", true).fill("768");
   await spinbutton(page, "height", true).fill("512");
@@ -411,6 +420,7 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
   await expect(textbox(page, "prompt", true)).toHaveValue("");
   await expect(combobox(page, "style", true)).toContainText("studio");
   await expect(spinbutton(page, "steps", true)).toHaveValue("8");
+  await openMoreOptions(page);
   await expect(spinbutton(page, "strength")).toHaveValue("0.35");
   await expect(spinbutton(page, "width", true)).toHaveValue("1024");
   await expect(spinbutton(page, "height", true)).toHaveValue("1024");

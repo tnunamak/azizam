@@ -237,3 +237,12 @@ describe("media references", () => {
     );
   });
 });
+
+describe("seed help", () => {
+  it("does not promise identical results", () => {
+    const seed: WorkflowInput = { name: "seed", type: "integer" };
+    expect(inputHint(seed, "video")).toBe(
+      "Reuse this number to help repeat a result with the same model and settings.",
+    );
+  });
+});
