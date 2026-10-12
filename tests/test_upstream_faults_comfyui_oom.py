@@ -64,3 +64,36 @@ def test_an_out_of_memory_round_on_a_busy_engine_unloads_nothing_and_reports_the
     assert "CUDA out of memory" in json.loads(response.body)["error"]["message"]
     assert "X-ComfyUI-Models-Freed" not in response.headers
     assert _order(fake) == ["prompt-oom", "queue"]
+
+
+def test_a_refused_background_removal_round_is_retried_without_it_and_the_upstream_text_is_reported(fake_upstreams, monkeypatch) -> None:
+    """The fallback's reason is the ComfyUI error text the failed round carried (the batcher's RMBG fallback)."""
+    events: list[dict] = []
+    monkeypatch.setattr(proxy.firehose_metrics, "record_event", lambda kind, message, **fields: events.append({"kind": kind, **fields}))
+    fake = fake_upstreams.asgi(load_scenario("comfyui/image-rmbg-fails-then-completes"))
+    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)
+    monkeypatch.setattr(proxy, "comfy_free_vram_bytes", AsyncMock(return_value=10**12))
+    monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
+        json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
+    fallback = {"2": {"class_type": "FkFallbackNode", "inputs": {"text": "a red fox"}}}
+
+    async def call():
+        async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
+            return await proxy._generate_images_with_adaptive_batching(
+                request=SimpleNamespace(), client=client, base_workflow=json.loads(json.dumps(WORKFLOW)),
+                meta={}, seed_node=None, seed_field="seed", workflow_name="fk+rmbg", width=512, height=512,
+                n_requested=1, response_format="b64_json", headers={},
+                background_removal_decision=proxy.ImageBackgroundRemovalDecision(True, 1.0, "transparent asked"),
+                fallback_workflow=fallback, fallback_workflow_name="fk",
+            )
+
+    with patch.object(proxy.asyncio, "sleep", AsyncMock()):
+        response = asyncio.run(call())
+
+    assert response.status_code == 200, response.body
+    assert [request.exchange for request in fake.requests] == ["prompt-failed", "prompt", "history", "view"]
+    assert fake.calls("prompt-failed")[0].json["prompt"] == WORKFLOW
+    assert fake.calls("prompt")[0].json["prompt"] == fallback
+    [event] = [event for event in events if event["kind"] == "image_background_removal_fallback"]
+    assert event["reason"] == "ComfyUI error: RMBG node exploded"

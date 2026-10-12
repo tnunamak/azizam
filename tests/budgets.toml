@@ -10,7 +10,7 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8448  # +44: FK-NEXT (the four held azgap files on FK: 33; speech and OOM protocol faults: 8; FK self-tests: 2; video workflow upload-failure: 1). Prior note: +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
+pytest = 8450  # +46: FK-NEXT (the four held azgap files on FK: 33; speech and OOM/RMBG wire faults: 9; FK self-tests: 2; video workflow upload-failure and OOM: 2). Prior note: +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
 vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
 

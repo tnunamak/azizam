@@ -91,5 +91,22 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([request.exchange for request in fake.requests], ["upload"])
 
 
+    async def test_an_out_of_memory_submit_on_an_idle_engine_frees_models_and_submits_again(self) -> None:
+        fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-oom-then-complete"))
+        self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+        self.monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
+        with patch.object(proxy.asyncio, "sleep", return_value=None):
+            response = await proxy._execute_video_manifest_workflow(
+                _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertEqual(response.body, b"rendered-video")
+        self.assertEqual(
+            [request.exchange for request in fake.requests],
+            ["upload", "prompt-oom", "queue", "free", "prompt", "history", "view"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
