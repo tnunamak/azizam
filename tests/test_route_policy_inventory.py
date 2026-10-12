@@ -39,7 +39,12 @@ INVALID_BODY = {400, 422}
 REQUEST_TIMEOUT = 3  # websocket handshakes: an accepted idle socket must not hang the suite
 HTTP_REQUEST_TIMEOUT = 60  # HTTP: generous, so host load never turns a slow answer into a 500
 
+# A row passes only with one of these outcomes. Refusals prove a decision;
+# non-executable contracts are route-specific answers that run nothing.
 REFUSALS = {"denied", "refused", "closed", "refused (wrapped)", "refused (queued)"}
+NON_EXECUTABLE = {"scoped-empty", "metadata (contract)", "unsupported (contract)"}
+PROVED = REFUSALS | NON_EXECUTABLE
+OUT_OF_FIXTURE = "not run (out of fixture)"
 
 
 class _BoundedApp:
@@ -532,6 +537,8 @@ def _category_reasons(gateway, value, row, source):
 def _category_oracle(gateway, row):
     if not gateway.category_mode or row["outcome"] == "VIOLATION":
         return
+    if row["outcome"] in NON_EXECUTABLE:
+        return  # Runs nothing, so no category refusal is expected.
     if row.get("category evidence") and row["outcome"] in REFUSALS:
         row["rule"] = "category-rules refusal with no backend call"
         return
@@ -704,6 +711,42 @@ def _metadata_contract(method, template, response, row):
     row["detail"] = ""
 
 
+# API families the gateway does not implement: every method answers before
+# any model or policy with the named code. Route-specific, never a status wildcard.
+_UNSUPPORTED_CONTRACT = {
+    **{f"{prefix}/v1/{family}{{rest:path}}": (400, "unsupported_operation")
+       for prefix in ("", "/openai")
+       for family in ("assistants", "files", "batches", "fine_tuning", "realtime")},
+    **{f"{prefix}/v1/responses/{operation}": (400, "unsupported_operation")
+       for prefix in ("", "/openai") for operation in ("input_tokens", "{response_id}/cancel")},
+    **{f"{prefix}/api/{operation}": (501, "unsupported operation")
+       for prefix in ("", "/ollama")
+       for operation in ("create", "copy", "pull", "push", "blobs/{digest}", "delete")},
+    **{f"/sdapi/v1/{operation}": (501, "not supported by this adapter")
+       for operation in ("img2img", "extra-single-image", "extra-batch-images", "interrogate", "png-info")},
+}
+
+
+def _unsupported_contract(method, template, response, row):
+    expected = _UNSUPPORTED_CONTRACT.get(template)
+    if expected is None or response.status_code != expected[0]:
+        return
+    if method == "HEAD":
+        body = {"detail": expected[1]}  # HEAD carries no body; the status is the whole answer.
+    else:
+        try:
+            body = response.json()
+        except ValueError:
+            return
+    error = body.get("error") if isinstance(body, dict) else None
+    texts = [error.get("code") if isinstance(error, dict) else error,
+             body.get("detail") if isinstance(body, dict) else None]
+    if any(isinstance(text, str) and expected[1] in text for text in texts):
+        row["outcome"] = "unsupported (contract)"
+        row["rule"] = f"unimplemented API answers {expected[0]} {expected[1]}; nothing runs"
+        row["detail"] = ""
+
+
 def _queued_job_contract(method, template, response, row, gateway):
     """Home's make queue answers 202 before policy; only the worker's refusal proves it."""
     if (method, template) != ("POST", "/me/api/make/jobs") or response.status_code != 202:
@@ -773,8 +816,9 @@ def _decoy_oracle(method, template, row, gateway, response):
             and set(gateway.calls) <= {"health", "model-state", "HTTP backend", "network connection"}):
         row["outcome"], row["rule"] = "metadata (contract)", "running-model status probe"
         row["detail"] = ""
-    elif method == "GET" and status == 200 and not gateway.calls:
-        row["outcome"], row["rule"] = "metadata (contract)", "discovery for a member who holds grants"
+    elif method == "GET" and status == 200 and not gateway.calls and row["outcome"] not in PROVED:
+        # A blanket GET rule is no route contract, so the row stays unproved.
+        row["outcome"], row["rule"] = "metadata (no contract)", "discovery for a member who holds grants"
         row["detail"] = ""
 
 
@@ -909,15 +953,83 @@ def test_connection_test_request_uses_owned_fixture_credential(gateway):
     assert kwargs["json"] is not gateway.connection_test_body
 
 
-def _report(rows, title):
-    gaps = [row for row in rows if row["outcome"] == "coverage gap"]
-    not_exercised = [row for row in rows if row["outcome"] == "not exercised"]
-    classified = [row for row in rows if row["outcome"] not in {"coverage gap", "not exercised"}]
-    print(f"\n{title} (passes and violations)\n{_table(classified)}")
-    print(f"\n{title}: coverage gaps (not policy proof)\n{_table(gaps)}")
-    print(f"\n{title}: not exercised (not category proof)\n{_table(not_exercised)}")
+def _load_known_gaps(path=Path(__file__).parent / "fixtures" / "route_policy_known_gaps.txt"):
+    """Parse "[pass title]" sections of "METHOD template  # note" lines."""
+    gaps, title = {}, None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            title = line[1:-1]
+            gaps[title] = set()
+        elif line:
+            method, template = line.split()
+            gaps[title].add(f"{method} {template}")
+    return {title: frozenset(keys) for title, keys in gaps.items()}
+
+
+# Rows that prove no policy decision yet, per pass. They stay visible and can
+# only shrink: _report fails on an unproved row that is not listed, and on a
+# listed row that now proves policy. See the file's header.
+KNOWN_GAPS = _load_known_gaps()
+
+
+def _report(rows, title, known_gaps=None):
+    out_of_fixture = [row for row in rows if row["outcome"] == OUT_OF_FIXTURE]
+    unproved = [row for row in rows if row["outcome"] not in PROVED | {OUT_OF_FIXTURE}]
+    proved = [row for row in rows if row["outcome"] in PROVED]
+    print(f"\n{title} (passes)\n{_table(proved)}")
+    print(f"\n{title}: unproved (no policy proof)\n{_table(unproved)}")
+    if out_of_fixture:
+        print(f"\n{title}: out of this fixture\n{_table(out_of_fixture)}")
     violations = [row for row in rows if row["outcome"] == "VIOLATION"]
     assert not violations, f"{title}: {len(violations)} violation(s)\n{_table(violations)}"
+    known = KNOWN_GAPS.get(title, frozenset()) if known_gaps is None else known_gaps
+    new = [row for row in unproved if f"{row['method']} {row['path']}" not in known]
+    assert not new, (
+        f"{title}: {len(new)} row(s) prove no policy decision (status, validation or missing "
+        f"category proof); make the request reach policy or add a route contract\n{_table(new)}"
+    )
+    fixed = known - {f"{row['method']} {row['path']}" for row in unproved}
+    assert not fixed, f"{title}: listed gap(s) now prove policy; remove them from KNOWN_GAPS: {sorted(fixed)}"
+
+
+def _row(outcome, method="POST", path="/v1/x", **extra):
+    return {"method": method, "path": path, "status": 403, "outcome": outcome, "rule": "", "detail": "", **extra}
+
+
+@pytest.mark.parametrize("outcome", [
+    "coverage gap", "not exercised", "ERROR", "", "an outcome nobody defined",
+])
+def test_report_fails_on_every_unproved_outcome(outcome):
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("denied", path="/v1/ok"), _row(outcome)], "unit", known_gaps=frozenset())
+
+
+@pytest.mark.parametrize("outcome", sorted(PROVED))
+def test_report_accepts_each_proved_outcome(outcome):
+    _report([_row(outcome), _row(OUT_OF_FIXTURE, method="NOT RUN", path="paid")], "unit", known_gaps=frozenset())
+
+
+def test_report_fails_violations_first_with_their_evidence():
+    row = _row("VIOLATION", **{"backend called": "yes", "detail": "backend calls=['HTTP backend']"})
+    with pytest.raises(AssertionError, match=r"1 violation\(s\)[\s\S]*HTTP backend"):
+        _report([row], "unit", known_gaps=frozenset({"POST /v1/x"}))
+
+
+def test_report_tolerates_only_listed_gaps_and_only_while_they_remain():
+    _report([_row("coverage gap")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+    with pytest.raises(AssertionError, match="now prove policy"):
+        _report([_row("denied")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("coverage gap", path="/v1/new")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+
+
+def test_known_gap_file_names_every_inventory_pass_once():
+    assert set(KNOWN_GAPS) == {
+        "Ordinary access plan: model-facing HTTP route inventory",
+        "Category enforcement: model-facing HTTP route inventory",
+        "Category resolved-service check: model-facing HTTP route inventory",
+    }
 
 
 def _http_inventory(gateway, title=None, report=True):
@@ -979,6 +1091,7 @@ def _http_inventory(gateway, title=None, report=True):
                         _category_reasons(gateway, response.json(), row, "error")
                     except ValueError:
                         pass
+                _unsupported_contract(method, template, response, row)
                 _record_receipts(gateway, before, row)
                 _connection_test_contract(method, template, response, row, gateway)
                 _queued_job_contract(method, template, response, row, gateway)
@@ -1004,7 +1117,7 @@ def _http_inventory(gateway, title=None, report=True):
         for target in ("paid chat models", "paid decision paths"):
             rows.append({
                 "method": "NOT RUN", "path": target, "status": "not requested",
-                "backend called": "no", "outcome": "not exercised",
+                "backend called": "no", "outcome": OUT_OF_FIXTURE,
                 "rule": "covered by owner unit tests",
                 "detail": "Owner-reported coverage in 10a24fc1; outside this base and fixture.",
             })
