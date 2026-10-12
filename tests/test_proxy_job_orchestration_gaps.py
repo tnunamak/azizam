@@ -161,6 +161,7 @@ def test_receipt_maintenance_retries_after_failure_then_stops(monkeypatch, tmp_p
             awaitable.close()
             assert timeout == 3600
             waits += 1
+            assert waits <= 3, "the loop ran past its stop event"
             if waits <= 2:
                 raise asyncio.TimeoutError
             stop.set()
@@ -185,8 +186,13 @@ def test_receipt_maintenance_does_not_swallow_task_cancellation(monkeypatch, tmp
     monkeypatch.setattr(proxy.receipt_store, "maintain", maintain)
     monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(path=tmp_path / "admin.db"))
 
+    waits = 0
+
     async def due_wait(awaitable, timeout):
+        nonlocal waits
         awaitable.close()
+        waits += 1
+        assert waits == 1, "the loop kept running after cancellation"
         raise asyncio.TimeoutError
 
     async def cancelled_thread(fn, *args, **kwargs):
