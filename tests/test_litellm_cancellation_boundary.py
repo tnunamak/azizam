@@ -674,14 +674,32 @@ class RealSocketCancellationTests(unittest.TestCase):
         self._run(run())
 
     def test_nonstream_completion_releases_cancellation_registry_entry(self) -> None:
+        import gateway.backends.cancellation as cancellation_module
+        from gateway.backends.cancellation import CancellationRegistry
+
         async def run():
-            await self.http.post(
-                f"{self.gateway_url}/v1/chat/completions",
-                json={"model": "delegated-model", "messages": [{"role": "user", "content": "hi"}]},
-            )
-            forwarded_id = self.litellm_hop.forwarded_request_ids[-1]
-            self.assertTrue(forwarded_id)
-            self.assertFalse(cancellation_registry().is_cancelled(forwarded_id))
+            registry = CancellationRegistry(ttl_seconds=3600, max_entries=1)
+            with patch.object(cancellation_module, "_REGISTRY", registry), patch.object(
+                registry, "register", wraps=registry.register
+            ) as register:
+                response = await self.http.post(
+                    f"{self.gateway_url}/v1/chat/completions",
+                    json={"model": "delegated-model",
+                          "messages": [{"role": "user", "content": "hi"}]},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                request_id = response.headers["x-azizam-request-id"]
+                self.assertEqual(self.litellm_hop.forwarded_request_ids[-1], request_id)
+                self.assertIn(request_id, [call.args[0] for call in register.call_args_list])
+                self.assertFalse(registry.is_cancelled(request_id))
+
+                # This raises CancellationRegistryFull if the successful request
+                # leaked its unsignalled entry. No TTL expiry or sleep can mask it.
+                probe = registry.register("different-post-completion-request")
+                try:
+                    self.assertFalse(probe.token.cancelled)
+                finally:
+                    probe.release()
 
         self._run(run())
 
