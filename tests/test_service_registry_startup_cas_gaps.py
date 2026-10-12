@@ -70,11 +70,12 @@ def test_startup_conflicts_stop_after_three_fresh_attempts(monkeypatch, tmp_path
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     _write_winner(path)
-    before = admin_store.get_service_registry_with_generation(path=path)
+    real_get = admin_store.get_service_registry_with_generation
+    before = real_get(path=path)
     reads = _stale_first_reads(monkeypatch, 99)
 
     with pytest.raises(RuntimeError, match="bounded startup retry"):
         sr.ensure_service_registry({"backends": {}}, path=path, actor="test-boot")
 
     assert len(reads) == 3
-    assert admin_store.get_service_registry_with_generation(path=path) == before
+    assert real_get(path=path) == before
