@@ -13077,11 +13077,16 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             name, _ = _resolve_audio_workflow(target)
             if name:
                 workflow = f"audio.generate.{name}"
+    protocol = str(entry.get("azizam_protocol") or _protocol_for_intent(intent))
     # Plans grant the name a client asks for, the same name the request route
-    # evaluates; the resolved target only decides the workflow.
-    return discovery_allows(auth_context.identity, make_policy_request(
-        protocol=str(entry.get("azizam_protocol") or _protocol_for_intent(intent)),
-        intent=intent, model=model, workflow=workflow,
+    # evaluates; owner category rules are keyed on the resolved target.
+    if not evaluate(
+        _access_for_auth_context(auth_context),
+        make_policy_request(protocol=protocol, intent=intent, model=model, workflow=workflow),
+    ).allowed:
+        return False
+    return category_enforcement.visible(auth_context.identity, make_policy_request(
+        protocol=protocol, intent=intent, model=target, workflow=workflow,
     ))
 
 
