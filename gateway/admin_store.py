@@ -479,6 +479,12 @@ def _drop_identity_profile_grants(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {table}")
 
 
+# Paths ``_conn`` already secured. Every connection used to repeat the
+# mkdir/chmod/open syscalls, some on the event loop. Callers that must
+# re-tighten modes (startup, recovery) call ``secure_state_path`` directly.
+_SECURED_STATE_PATHS: set[Path] = set()
+
+
 def secure_state_path(path: Path) -> None:
     """Create private SQLite state and tighten existing database sidecars.
 
@@ -499,6 +505,7 @@ def secure_state_path(path: Path) -> None:
             state_file.chmod(0o600)
         except FileNotFoundError:
             pass
+    _SECURED_STATE_PATHS.add(path)
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -574,7 +581,8 @@ def _move_oidc_client_secret_to_store(conn: sqlite3.Connection, path: Path) -> N
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    secure_state_path(path)
+    if path not in _SECURED_STATE_PATHS:
+        secure_state_path(path)
     conn = connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
