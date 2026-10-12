@@ -77,6 +77,8 @@ export interface EngineSignal {
   /** The gateway's judgement: ok | warn | bad | neutral. */
   tone?: string | null;
   inUse?: boolean | null;
+  /** The record says it starts when needed; not running is its normal state. */
+  startsOnDemand?: boolean;
   lastError?: string | null;
   isProvider?: boolean;
   /** When the gateway's background check last recorded this engine. */
@@ -243,6 +245,14 @@ function engineFailing(engine: EngineSignal): boolean {
   if (!engine.enabled) return false;
   // A stopped standby engine nobody uses is not failing: the gateway says neutral.
   if (engine.tone === "neutral" && engine.inUse === false) return false;
+  // An on-demand engine that refuses connections is idle ("starts when needed"),
+  // not failing. A timeout or an error answer still counts as a fault.
+  if (
+    engine.startsOnDemand &&
+    engine.observation === "down" &&
+    !/timeout|timed out|http\s*5\d\d|\b5\d\d\b/i.test(engine.lastError ?? "")
+  )
+    return false;
   if (engine.tone === "bad") return true;
   // "unavailable" with a neutral judgement means the gateway could not
   // check it: that is Unknown, not Down.

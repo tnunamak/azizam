@@ -36,6 +36,13 @@ def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
     return urljoin(f"{base_url}/", endpoint)
 
 
+def starts_on_demand(service: Mapping[str, Any]) -> bool:
+    """True when the service record declares ``residency: on_demand``."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    return str(connection.get("residency") or "").strip().lower() == "on_demand"
+
+
 def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
     """Match a declared JSON path with a value other than null or false."""
     config = service.get("config")
