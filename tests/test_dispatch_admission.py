@@ -1,6 +1,7 @@
 """Dispatch admission and exact default-response differential against 803f8350.
 
-Only backend transports are fake. Public routes, protocol translations, routing,
+Only backend transports are fake: FK scenarios dispatch-admission-engine and
+dispatch-admission-speech, plus executor spies for image and decisions. Public routes, protocol translations, routing,
 receipts and streaming serialization run in process. The baseline JSON is captured
 by this same test on the pre-gate tree (see its source_commit field).
 """
@@ -22,7 +23,8 @@ from starlette.responses import Response
 import proxy
 from gateway import media_jobs, receipt_store, receipts, media_ingestion
 from gateway.policy import AppProfile
-from test_anthropic_schema_conformance import chat_completion, chunk, sse
+
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 CASES = [
     ('chat', '/v1/chat/completions', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}]}),
@@ -41,8 +43,22 @@ CASES = [
 ]
 
 
+class _DispatchCalls(list):
+    """Executor spy entries plus every request the fake engines received."""
+
+    def __init__(self, *fakes):
+        super().__init__()
+        self._fakes = fakes
+
+    def __bool__(self):
+        return bool(len(self)) or any(fake.requests for fake in self._fakes)
+
+    def __repr__(self):
+        return repr([*self, *(f'{r.method} {r.path}' for fake in self._fakes for r in fake.requests)])
+
+
 @pytest.fixture
-def dispatch_env(monkeypatch, tmp_path):
+def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, 'AUTH_ENABLED', False)
     monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {})
     monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})
@@ -67,34 +83,18 @@ def dispatch_env(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: None)
     monkeypatch.setattr(proxy, '_prepare_litellm_local_llm_request', AsyncMock(side_effect=lambda *a, **kw: (None, kw['body_json'])))
     monkeypatch.setattr(proxy, '_activate_prepared_litellm_local_target', AsyncMock(return_value=None))
-    monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=True, base_url='http://engine.test', api_key='test', service_id='test-service'))
+    engine = fake_upstreams.asgi(load_scenario('openai-compatible/dispatch-admission-engine'), host='engine.test')
+    speech = fake_upstreams.asgi(load_scenario('openai-compatible/dispatch-admission-speech'), host='speech.test')
+    fake_upstreams.router.add('127.0.0.1:19999', proxy.app)
+    monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=True, base_url=engine.base_url, api_key='test', service_id='test-service'))
     monkeypatch.setattr(proxy, '_profile_for_auth_context', lambda _: AppProfile(id='test'))
     monkeypatch.setattr(proxy, '_azizam_policy_decision', lambda *a, **kw: None)
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: {'services': {}})
     monkeypatch.setattr(proxy, '_ensure_speech_service_ready', AsyncMock(return_value=None))
-    monkeypatch.setattr(proxy, 'host_for_capability', lambda _: 'http://speech.test')
+    monkeypatch.setattr(proxy, 'host_for_capability', lambda _: speech.base_url)
     monkeypatch.setattr(proxy, 'resolve_model_for_operation', lambda op, model: proxy.ModelResolution(model, model, op))
     monkeypatch.setattr(proxy, 'configured_downstream_headers', lambda *a, **kw: {})
-    calls = []
-
-    async def backend(request):
-        calls.append(str(request.url))
-        if request.url.path.endswith('/audio/speech'):
-            return httpx.Response(200, content=__import__('test_sync_media_routes')._wav_bytes(), headers={'content-type': 'audio/wav'})
-        body = json.loads(request.content)
-        if request.url.path.endswith('/embeddings'):
-            return httpx.Response(200, json={'object': 'list', 'model': 'test', 'data': [{'object': 'embedding', 'index': 0, 'embedding': [0.1, 0.2]}], 'usage': {'prompt_tokens': 1, 'total_tokens': 1}})
-        if body.get('stream'):
-            return httpx.Response(200, content=sse([chunk({'role': 'assistant', 'content': 'Hello'}), chunk({}, 'stop')]), headers={'content-type': 'text/event-stream', 'x-backend-test': 'yes'})
-        return httpx.Response(200, json=chat_completion({'role': 'assistant', 'content': 'Hello'}), headers={'x-backend-test': 'yes'})
-
-    real_client = httpx.AsyncClient
-    class RoutingTransport(httpx.AsyncBaseTransport):
-        async def handle_async_request(self, request):
-            if request.url.port == 19999:
-                return await httpx.ASGITransport(app=proxy.app).handle_async_request(request)
-            return await backend(request)
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda *a, **kw: real_client(*a, **{**kw, 'transport': RoutingTransport()}))
+    calls = _DispatchCalls(engine, speech)
 
     async def image(**kw):
         calls.append('image-executor')
