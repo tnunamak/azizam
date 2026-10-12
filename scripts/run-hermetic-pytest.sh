@@ -60,6 +60,7 @@ declare -a bwrap_args=(
   --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
   --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
   --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
+  --setenv HYPOTHESIS_PROFILE "${HYPOTHESIS_PROFILE:-gate}"
   --setenv HERMETIC_TEST_NAMESPACE 1 --setenv HERMETIC_STATE_DIR "$state_dir"
   --setenv HERMETIC_FORBIDDEN_PRODUCTION_PATH "$forbidden_production_path"
   --setenv HERMETIC_HOST_RUNNER_PID "$host_runner_pid"

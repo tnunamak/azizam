@@ -92,3 +92,21 @@ def test_owned_tcp_listener():
         yield listener
     finally:
         listener.close()
+
+
+# Hypothesis profiles (docs/design/TEST_STRATEGY.md 4.3). The hermetic runner
+# forwards HYPOTHESIS_PROFILE into the sandbox; the gate uses "gate". Both
+# profiles derandomize, so a run at one commit always tries the same examples
+# (a property failure is never a flake), and keep no example database:
+# shrunk counterexamples live in the test file as explicit @example cases.
+os.environ.setdefault("HYPOTHESIS_STORAGE_DIRECTORY", str(_STATE_DIR / "hypothesis"))
+from hypothesis import HealthCheck, settings as _hypothesis_settings  # noqa: E402
+
+_HYPOTHESIS_COMMON = dict(derandomize=True, database=None, deadline=None,
+                          suppress_health_check=(HealthCheck.too_slow,))
+_hypothesis_settings.register_profile("gate", max_examples=100, **_HYPOTHESIS_COMMON)
+_hypothesis_settings.register_profile("nightly", max_examples=2000, **_HYPOTHESIS_COMMON)
+_HYPOTHESIS_PROFILE = os.environ.get("HYPOTHESIS_PROFILE", "gate")
+if _HYPOTHESIS_PROFILE not in {"gate", "nightly"}:
+    pytest.exit(f"unknown HYPOTHESIS_PROFILE {_HYPOTHESIS_PROFILE!r}; use gate or nightly", returncode=2)
+_hypothesis_settings.load_profile(_HYPOTHESIS_PROFILE)
