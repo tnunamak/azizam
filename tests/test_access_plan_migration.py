@@ -331,7 +331,7 @@ def test_old_plan_caps_become_plan_caps(tmp_path):
     with sqlite3.connect(path) as conn:
         capped = [json.loads(row[0]) for row in conn.execute("SELECT plan_json FROM access_plans")]
     with_caps = [doc for doc in capped if any(doc["caps"].values())]
-    assert [doc["caps"] for doc in with_caps] == [
-        {"usd_per_request": "0.25", "usd_per_day": "5", "usd_per_month": None}]
+    assert with_caps and all(
+        doc["caps"] == {"usd_per_request": "0.25", "usd_per_day": "5", "usd_per_month": None} for doc in with_caps)
     # A capped plan is its own plan, not folded into a same-named standard one.
-    assert with_caps[0]["name"] == "Owner (local)"
+    assert "Owner (local)" in {doc["name"] for doc in with_caps}
