@@ -201,6 +201,11 @@ reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when t
 # The fix is on fix/fk-upstream-faults; the release that merges it removes these entries and the markers.
 [[xfail]]
 framework = "pytest"
+case = "tests/test_upstream_faults_openai_compatible.py::test_read_budget_wiring_on_the_real_clock_gives_a_504_error_envelope"
+reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
+
+[[xfail]]
+framework = "pytest"
 case = "tests/test_upstream_faults_openai_compatible.py::test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event"
 reason = "FK-B1: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
 
