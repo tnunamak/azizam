@@ -13,6 +13,9 @@ baseline's paths and its own. Only these differences are allowed:
 * GET and HEAD /showcase/ serve the static product page, and GET and HEAD
   /showcase answer 308 to it (r18: GET /showcase served the page, GET
   /showcase/ redirected to it, HEAD was 405). Other methods keep their answers;
+* /showcase/docs and /showcase/docs/{path} are new: GET and HEAD serve the
+  static product docs; every other method falls to the catch-all and answers
+  exactly as it does for an unknown /showcase/ path;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -41,6 +44,7 @@ DELETED_PATHS = {
 }
 NEW_PATHS = {"/setup/console"}
 SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
+DOCS_ROUTES = {"/showcase/docs": "/showcase/docs docs_root", "/showcase/docs/sample/x": "/showcase/docs/{path:path} docs_page"}
 
 
 def _flat(routing: dict) -> dict:
@@ -58,9 +62,15 @@ def _deliberate(key: str) -> str | None:
         return "new"
     if path in SHOWCASE_PAGES and _method in {"GET", "HEAD"}:
         return "showcase"
+    if path in DOCS_ROUTES:
+        return "docs"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
+
+
+def _method_of(key: str) -> str:
+    return key.split(" ", 1)[0]
 
 
 def _any_accept(cells: str | None) -> dict:
@@ -101,6 +111,10 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue
         if kind == "showcase" and outcome == SHOWCASE_PAGES[key.split(" ", 1)[1]]:
             continue
+        if kind == "docs" and key not in old:
+            route = DOCS_ROUTES[key.split(" ", 1)[1]]
+            if outcome == route if _method_of(key) in {"GET", "HEAD"} else route_matrix.is_catch_all(outcome):
+                continue
         unexpected[key] = (old.get(key), outcome)
     assert unexpected == {}
 
@@ -117,6 +131,9 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
         if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
             continue
         if kind == "showcase" and key not in new:
+            continue
+        unknown = f"{_method_of(key)} /showcase/{route_matrix.UNKNOWN}"
+        if kind == "docs" and key not in old and new.get(key) == new.get(unknown) is not None:
             continue
         unexpected[key] = (old.get(key), new.get(key))
     assert unexpected == {}
