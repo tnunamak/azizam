@@ -297,6 +297,7 @@ class ImageRouteCancellationGapTests(IsolatedAsyncioTestCase):
         cases = [
             (proxy.images_generations, "proxy_comfy_request", "image.generate"),
             (proxy.images_edits, "proxy_comfy_edit_request", "image.edit"),
+            (proxy.images_variations, "proxy_comfy_variations_request", "image.variations"),
         ]
         for route, worker_name, intent in cases:
             with self.subTest(intent=intent):
