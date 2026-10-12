@@ -715,10 +715,10 @@ class TestSpendReservations(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, status, estimated_usd, cost_source, created_at)
+                VALUES (?, 'reserved', ?, ?, ?)
                 """,
-                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+                ("OpenRouter", "0.006", "price-table", 1000),
             )
 
         with self.assertRaises(BudgetExceeded):
@@ -747,10 +747,10 @@ class TestSpendReservations(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, status, estimated_usd, cost_source, created_at)
+                VALUES (?, 'reserved', ?, ?, ?)
                 """,
-                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+                ("OpenRouter", "0.006", "price-table", 1000),
             )
 
         with self.assertRaises(BudgetExceeded):
@@ -1363,7 +1363,7 @@ class TestTypeSafeHttpHook(unittest.TestCase):
                         client=client,
                         paid_fallback=True,
                     )
-                self.assertIn("paid fallback disabled", str(cm.exception))
+                self.assertIn("when the engine is unavailable isn't in your access plan", str(cm.exception))
 
         asyncio.run(run())
         self.assertFalse(called)
