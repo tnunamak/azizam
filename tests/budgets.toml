@@ -2,10 +2,11 @@
 # Units: pytest collected items (each parameter set counts; subtests do not);
 # vitest test cases; Playwright test x project over the gate configs
 # (playwright.config.ts, .live-data, .household). Retries never count.
-# Set at the counts measured on 2026-10-12. Only a slice that must add cases
+# Set at the counts measured on 2026-10-12 at origin/main 1054f3f7 (release
+# 21) with this slice merged. Only a slice that must add cases
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
 [ceilings]
-pytest = 7971
-vitest = 1549
-playwright = 726
+pytest = 8014
+vitest = 1596
+playwright = 735
