@@ -60,7 +60,7 @@ def test_new_app_credential_for_suspended_owner_cannot_authenticate(db):
     admin_store.create_credential_hash(subject_kind='app', subject_id=app['id'], app_id=app['id'], hash='fixture-key-hash', prefix='fixture', path=store.path)
     assert runtime_identity_for_app_credential_hash('fixture-key-hash', path=store.path) is not None
     with admin_store._conn(store.path) as conn:
-        conn.execute('INSERT INTO account_access(user_id,disabled_at) VALUES (?,?)', (user['id'], 123))
+        conn.execute('UPDATE account_access SET disabled_at = ? WHERE user_id = ?', (123, user['id']))
         conn.commit()
     assert runtime_identity_for_app_credential_hash('fixture-key-hash', path=store.path) is None
     assert admin_store.get_app(app['id'], path=store.path)['disabled_at'] is None

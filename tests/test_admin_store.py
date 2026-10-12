@@ -280,7 +280,7 @@ class TestPersonalApp(AdminStoreTestBase):
 
     def test_personal_app_requires_owner(self) -> None:
         with self.assertRaises(ValueError):
-            admin_store.create_app("orphan", kind="personal", access_plan="person", path=self.db)
+            admin_store.create_app("orphan", kind="personal", owner_user_id="", access_plan="person", path=self.db)
 
     def test_list_apps_returns_all_apps(self) -> None:
         user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)

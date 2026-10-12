@@ -1,5 +1,4 @@
 """Exercise connection reuse through the real HTTP chat route and middleware."""
-from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -11,7 +10,7 @@ from gateway.runtime_auth import hash_api_key
 from tests.support.access import service_app
 
 
-def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path, monkeypatch):
+def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immediate(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     app = service_app("chat-test-app", path=db)
@@ -41,24 +40,18 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
     body = {"model": "current", "messages": [{"role": "user", "content": "ping"}]}
     headers = {"authorization": f"Bearer {key}"}
 
-    @contextmanager
-    def separate_connections(path):
-        # The original resolver opened a separate connection in each helper.
-        yield None
-
-    with patch.object(admin_store, "runtime_auth_connection", separate_connections), patch.object(
-        admin_store, "_conn", wraps=admin_store._conn,
-    ) as connections:
-        before = client.post("/v1/chat/completions", json=body, headers=headers)
-        before_count = connections.call_count
     with patch.object(admin_store, "_conn", wraps=admin_store._conn) as connections:
-        after = client.post("/v1/chat/completions", json=body, headers=headers)
-        after_count = connections.call_count
+        first = client.post("/v1/chat/completions", json=body, headers=headers)
+        first_count = connections.call_count
+    with patch.object(admin_store, "_conn", wraps=admin_store._conn) as connections:
+        second = client.post("/v1/chat/completions", json=body, headers=headers)
+        second_count = connections.call_count
 
-    assert before.status_code == after.status_code == 200
-    assert before.json()["choices"] == after.json()["choices"]
-    # Both the handler and firehose resolve this four-lookup identity: 8 -> 2.
-    assert before_count - after_count == 6
+    assert first.status_code == second.status_code == 200
+    assert first.json()["choices"] == second.json()["choices"]
+    # The identity (credential, App, accountable person and both plans) is one
+    # SELECT on one connection; the handler and the firehose each resolve it.
+    assert first_count == second_count == 2, (first_count, second_count)
     assert len(forwarded) == 2
     admin_store.revoke_credential(credential["id"], path=db)
     denied = client.post("/v1/chat/completions", json=body, headers=headers)
