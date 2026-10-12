@@ -89,6 +89,10 @@ if ((signoff)); then
   parent=$(git rev-parse -q --verify 'HEAD^1') || parent=none
   [[ $parent == "$target_tip" ]] ||
     refuse "HEAD^1 is $parent, not the origin/$target tip $target_tip; run on the merge candidate (the $target tip with the change merged)"
+  # The status is posted to the SHA by name, and GitHub rejects a commit it has
+  # not received: push the candidate to a branch first, not after a 10-minute run.
+  gh api "repos/{owner}/{repo}/commits/$sha" --silent 2>/dev/null ||
+    refuse "GitHub has no commit $sha; push the merge candidate to a branch (not $target) first"
   check_nightly_red
 fi
 

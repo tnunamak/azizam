@@ -39,6 +39,7 @@ fi""",
     "gh": """
 echo "$*" >> "$FAKE_GH_LOG"
 if [[ "$1 $2" == "issue list" ]]; then echo "${FAKE_NIGHTLY_RED:-}"; fi
+if [[ $1 == api && -n ${FAKE_GH_NO_COMMIT:-} && $2 == repos/*/commits/* ]]; then exit 1; fi
 if [[ $1 == api ]]; then for arg; do [[ $arg == repos/* ]] && echo "https://api.github.test/${arg/\\{owner\\}\\/\\{repo\\}/o/r}"; done; fi
 exit 0""",
     # Copied into web/node_modules/.bin by the npm stub.
@@ -161,7 +162,7 @@ class World:
             subprocess.run(["fuser", "-s", "-k", "-KILL", str(lock)], capture_output=True)
 
     def posts(self) -> list[str]:
-        return [line for line in self.gh_log.read_text().splitlines() if line.startswith("api")] \
+        return [line for line in self.gh_log.read_text().splitlines() if line.startswith("api --method POST")] \
             if self.gh_log.exists() else []
 
 
@@ -189,6 +190,14 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
         "fresh-venv", "policy", "python-hermetic", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
+
+
+def test_signoff_refuses_a_candidate_github_has_not_received_before_running(world: World) -> None:
+    result = world.run("--signoff", "--target", "main", FAKE_GH_NO_COMMIT="1")
+    assert result.returncode == 3
+    assert "GitHub has no commit" in result.stderr and "push the merge candidate" in result.stderr
+    assert world.run_dirs() == []  # refused before any work
+    assert world.posts() == [] and not list(world.receipts.glob("signoff-*"))
 
 
 @pytest.mark.parametrize(("during_run", "message"), [

@@ -98,7 +98,8 @@ only by the attempt index in the receipts.
 runs on the merge candidate (the target tip with the change merged) and posts
 the `signoff` commit status that `gh signoff create` posts, but to the tested
 SHA by name (`gh api .../statuses/<sha>`), so GitHub must already have that
-commit. It refuses with exit 3, posts nothing and writes no signoff receipt,
+commit: push the candidate to a branch other than the target before the run
+(the run refuses before any step if GitHub does not have the SHA). It refuses with exit 3, posts nothing and writes no signoff receipt,
 unless all of these hold (TEST_STRATEGY.md 1.2):
 
 1. `--force`: every required step runs fresh in this invocation, never from
