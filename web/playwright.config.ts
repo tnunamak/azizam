@@ -24,15 +24,15 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   outputDir: `./test-results/artifacts-${port}`,
   workers: 1,
-  // No retries: a first failure stays a failure (TEST_STRATEGY.md 3.1).
+  // A first failure stays a failure (TEST_STRATEGY.md 3.1).
   retries: 0,
   timeout: 60_000,
   expect: { timeout: 10_000 },
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: `test-results/report-${port}` }],
-    // Case receipts: scripts/ci-local merges this into cases.jsonl.
-    ["json", { outputFile: `test-results/cases-${port}.json` }],
+    // Case receipts for scripts/ci-local; writes only when CASE_RECEIPTS_FILE is set.
+    ["./e2e/case-receipts.ts"],
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,

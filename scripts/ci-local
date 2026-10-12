@@ -222,7 +222,7 @@ start_job "$work" bash -c '
   # Unit tests run beside the build, not beside the browser lanes: there, CPU
   # contention pushed tests past the 5 s vitest limit. They finish before the
   # lanes copy this tree.
-  ( step web-unit bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=json --outputFile.json=\"\$2\"" _ "$seed" "$receipts/raw/vitest.json"; exit "$failed" ) &
+  ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
   step web-check bash -c "cd web && npm run check"
   wait "$unit_pid" || failed=1
@@ -284,7 +284,7 @@ for ((i=1; i<=lanes; i++)); do
     name=$1; shift
     step "$name" "$@"
     exit "$failed"
-  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
+  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" CASE_RECEIPTS_FILE="$receipts/raw/$name.cases.jsonl" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
   lane_pids+=("$last_pid")
 done
 start_job "$run/fresh" bash -c '
@@ -296,14 +296,15 @@ for pid in "${pids[@]}"; do wait_job "$pid"; done
 
 # Case receipts: one cases.jsonl from every framework's report, then the
 # test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
-merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --vitest "$receipts/raw/vitest.json" "$work")
+merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
 for ((i=1; i<=lanes; i++)); do
   lane_port=$((port + 10 * i))
-  for report in "$run/browser-$lane_port"/web/test-results/*cases-"$lane_port".json; do
-    [[ -f $report ]] || continue
-    cp "$report" "$receipts/raw/"
-    merge_args+=(--playwright "$receipts/raw/${report##*/}" "$run/browser-$lane_port")
-  done
+  name=e2e-shard-$i-of-$shards
+  if ((i == shards + 1)); then name=e2e-live-data; elif ((i == shards + 2)); then name=e2e-household; fi
+  # A lane that wrote no receipts leaves its files unrun, which policy reports.
+  if [[ -f $receipts/raw/$name.cases.jsonl ]]; then
+    merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$run/browser-$lane_port")
+  fi
 done
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
 step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl"

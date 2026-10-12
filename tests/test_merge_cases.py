@@ -44,33 +44,35 @@ def test_pytest_cases_get_node_ids_and_worst_outcome(tmp_path: Path) -> None:
     assert (teardown["seed"], teardown["sha"]) == (7, "abc")
 
 
-def test_playwright_retries_become_attempts(tmp_path: Path) -> None:
+def _receipt(root: Path, test_id: str, titles: list[str], status: str, framework: str = "playwright") -> str:
+    config, project = ("playwright.config.ts", "chromium") if framework == "playwright" else ("vitest.config.ts", "")
+    return json.dumps({"framework": framework, "config": config, "project": project, "id": test_id,
+                       "file": str(root / "web" / "e2e" / "home.spec.ts"), "titles": titles,
+                       "status": status, "duration_ms": 500}) + "\n"
+
+
+def test_each_repeated_test_id_is_a_later_attempt(tmp_path: Path) -> None:
     root = tmp_path / "lane"
-    report = {
-        "config": {"configFile": str(root / "web" / "playwright.config.ts"), "rootDir": str(root / "web" / "e2e")},
-        "suites": [{"title": "home.spec.ts", "file": "home.spec.ts", "specs": [], "suites": [{
-            "title": "Home", "file": "home.spec.ts", "suites": [], "specs": [{
-                "title": "loads", "file": "home.spec.ts", "tests": [{
-                    "projectName": "chromium",
-                    "results": [{"retry": 0, "status": "failed", "duration": 1500},
-                                {"retry": 1, "status": "passed", "duration": 500}]}]}]}]}],
-    }
-    (tmp_path / "pw.json").write_text(json.dumps(report))
-    rows = _merge(tmp_path, "--playwright", str(tmp_path / "pw.json"), str(root))
+    first_run = _receipt(root, "a", ["Home", "loads"], "failed") + _receipt(root, "a", ["Home", "loads"], "passed")
+    first_run += _receipt(root, "b", ["Home", "same title"], "passed") + _receipt(root, "c", ["Home", "same title"], "timedOut")
+    second_run = _receipt(root, "c", ["Home", "same title"], "passed")  # a shell rerun into the same file
+    (tmp_path / "cases.jsonl").write_text(first_run + second_run)
+    rows = _merge(tmp_path, "--receipts", str(tmp_path / "cases.jsonl"), str(root))
     assert [(row["config"], row["project"], row["case"], row["outcome"], row["attempt"]) for row in rows] == [
         ("playwright.config.ts", "chromium", "web/e2e/home.spec.ts > Home > loads", "failed", 0),
         ("playwright.config.ts", "chromium", "web/e2e/home.spec.ts > Home > loads", "passed", 1),
+        ("playwright.config.ts", "chromium", "web/e2e/home.spec.ts > Home > same title", "passed", 0),
+        ("playwright.config.ts", "chromium", "web/e2e/home.spec.ts > Home > same title", "failed", 0),
+        ("playwright.config.ts", "chromium", "web/e2e/home.spec.ts > Home > same title", "passed", 1),
     ]
+    assert {row["file"] for row in rows} == {"web/e2e/home.spec.ts"}
 
 
-def test_vitest_cases_use_the_title_path(tmp_path: Path) -> None:
+def test_vitest_states_map_to_outcomes(tmp_path: Path) -> None:
     root = tmp_path / "work"
-    report = {"testResults": [{"name": str(root / "web" / "tests" / "a.spec.ts"), "assertionResults": [
-        {"ancestorTitles": ["group"], "title": "works", "status": "passed", "duration": 12},
-        {"ancestorTitles": [], "title": "later", "status": "todo", "duration": None}]}]}
-    (tmp_path / "vitest.json").write_text(json.dumps(report))
-    rows = _merge(tmp_path, "--vitest", str(tmp_path / "vitest.json"), str(root))
-    assert [(row["case"], row["file"], row["outcome"]) for row in rows] == [
-        ("web/tests/a.spec.ts > group > works", "web/tests/a.spec.ts", "passed"),
-        ("web/tests/a.spec.ts > later", "web/tests/a.spec.ts", "skipped"),
-    ]
+    lines = "".join(_receipt(root, str(index), ["t"], status, "vitest")
+                    for index, status in enumerate(["passed", "failed", "skipped", "pending"]))
+    (tmp_path / "cases.jsonl").write_text(lines)
+    rows = _merge(tmp_path, "--receipts", str(tmp_path / "cases.jsonl"), str(root))
+    assert [(row["framework"], row["outcome"], row["attempt"]) for row in rows] == [
+        ("vitest", "passed", 0), ("vitest", "failed", 0), ("vitest", "skipped", 0), ("vitest", "skipped", 0)]

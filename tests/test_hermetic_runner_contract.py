@@ -147,3 +147,13 @@ def test_runner_rejects_invalid_source_before_state_or_provisioning(tmp_path: Pa
     assert expected_message in result.stderr
     assert not list((home / ".tmp").glob("azizam-pytest.*"))
     assert not provision_marker.exists()
+
+
+def test_runner_refuses_to_replace_an_existing_junit_report(tmp_path: Path) -> None:
+    # A second run into the same report would replace the first run's failures.
+    report = tmp_path / "pytest.xml"
+    report.write_text("<testsuites/>")
+    result = _runner("--junit-xml-out", str(report), "-q")
+    assert result.returncode == 2
+    assert f"--junit-xml-out {report} already exists" in result.stderr
+    assert report.read_text() == "<testsuites/>"
