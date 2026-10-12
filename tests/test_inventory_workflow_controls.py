@@ -207,11 +207,49 @@ class TestInventoryWorkflow(unittest.TestCase):
             )
 
     def test_inventory_is_pure_no_disk_access(self) -> None:
-        # Calling twice produces stable output (same ordering and content).
-        again = inventory_workflow(FIXTURE_WORKFLOW)
+        import builtins
+        import copy
+        import io
+        import os
+        import socket
+        import subprocess
+        from contextlib import ExitStack
+        from unittest.mock import patch
+
+        workflow = copy.deepcopy(FIXTURE_WORKFLOW)
+        before = copy.deepcopy(workflow)
+        boundaries = (
+            (builtins, "open"),
+            (io, "open"),
+            (os, "open"),
+            (os, "stat"),
+            (os, "listdir"),
+            (os, "scandir"),
+            (socket, "socket"),
+            (subprocess, "Popen"),
+        )
+        with ExitStack() as stack:
+            guards = [
+                stack.enter_context(patch.object(
+                    module, name,
+                    side_effect=AssertionError(
+                        f"inventory must not call {module.__name__}.{name}"
+                    ),
+                ))
+                for module, name in boundaries
+            ]
+            first = inventory_workflow(workflow)
+            second = inventory_workflow(workflow)
+        for guard in guards:
+            guard.assert_not_called()
+        self.assertEqual(workflow, before)
         self.assertEqual(
-            [e.to_dict() for e in self.entries],
-            [e.to_dict() for e in again],
+            [entry.to_dict() for entry in first],
+            [entry.to_dict() for entry in second],
+        )
+        self.assertEqual(
+            [entry.to_dict() for entry in first],
+            [entry.to_dict() for entry in self.entries],
         )
 
 
@@ -261,9 +299,14 @@ class TestInputValidation(unittest.TestCase):
             candidate_logical_name=None,
             notes=("hi",),
         )
-        # Round-trips through json without exception.
-        json.dumps(entry.to_dict())
-
+        self.assertEqual(json.loads(json.dumps(entry.to_dict())), {
+            "node_id": "1",
+            "class_type": "X",
+            "input_name": "y",
+            "value": {"type": "integer"},
+            "candidate_logical_name": None,
+            "notes": ["hi"],
+        })
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
