@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement, Profiler } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import HomePage from "@/app/_home/home-page";
 import { homeApi } from "@/app/_home/home-api";
 import { accountApi } from "@/lib/account-api";
@@ -67,11 +67,20 @@ it("resets a failed Home image on the first source-change commit", async () => {
   );
   fireEvent.error(screen.getByRole("img", { name: "Reset Home image" }));
   expect(screen.queryByRole("img", { name: "Reset Home image" })).toBeNull();
-  act(() => {
-    client.setQueryData(["library", "home-recent-creations"], {
-      assets: [{ ...creation, download_url: "/home-new.png" }],
+  // Deliver the cache change to Home's query observer inside this act(). With
+  // the default setTimeout(0) delivery, a commit caused by anything else can
+  // land after the cache holds the new source but before Home receives it,
+  // and the Profiler records that stale render as the first commit.
+  notifyManager.setScheduler((callback) => callback());
+  try {
+    act(() => {
+      client.setQueryData(["library", "home-recent-creations"], {
+        assets: [{ ...creation, download_url: "/home-new.png" }],
+      });
     });
-  });
+  } finally {
+    notifyManager.setScheduler((callback) => setTimeout(callback, 0));
+  }
   await waitFor(() => expect(commits.length).toBeGreaterThan(0));
   expect(commits[0]).toBe("/home-new.png");
 });

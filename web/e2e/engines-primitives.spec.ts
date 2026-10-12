@@ -11,23 +11,12 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Add engine", exact: true })
       .first();
     await expect(trigger).toBeVisible();
-    const phase = process.env.BATCH5_SCREENSHOT_PHASE ?? "after";
-    await page.screenshot({
-      path: `test-results/screens/batch5-${phase}-engines-${width}.png`,
-      animations: "disabled",
-      fullPage: true,
-    });
     await trigger.click();
     const dialog = page.getByRole("dialog", {
       name: "Add engine",
       exact: true,
     });
     await expect(dialog.getByLabel(/^Name/)).toBeVisible();
-    await page.screenshot({
-      path: `test-results/screens/batch5-${phase}-add-${width}.png`,
-      animations: "disabled",
-      fullPage: true,
-    });
     await page.keyboard.press("Escape");
     await expect(dialog).not.toBeVisible();
     await expect(trigger).toBeFocused();

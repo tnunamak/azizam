@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # Run every CI job on an exact commit and retain per-step receipts.
-# Usage: scripts/ci-local [--signoff] [--force] [--port N] [--shards N] [--py-workers N] [--skip-compose]
+# Usage: scripts/ci-local [--force] [--order-seed N] [--port N] [--shards N] [--py-workers N] [--skip-compose]
+#        scripts/ci-local --force --signoff --target BRANCH [--closes-nightly-red N] [...]
 # Independent jobs and browser fixtures run in isolated detached worktrees.
+# Test order follows a seed, random unless given and always printed.
 # A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
 [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
 signoff=0 force=0 port=18640 shards=10 py_workers=12 skip_compose=0
+seed=$(((RANDOM * 32768 + RANDOM) % 1000000000)) target= closes_nightly_red=
 while (($#)); do
   case $1 in
     --signoff) signoff=1 ;;
     --force) force=1 ;;
-    --port|--shards|--py-workers)
-      (($# >= 2)) || { echo "$1 requires a number" >&2; exit 2; }
-      case $1 in --port) port=$2 ;; --shards) shards=$2 ;; *) py_workers=$2 ;; esac
+    --port|--shards|--py-workers|--order-seed|--target|--closes-nightly-red)
+      (($# >= 2)) || { echo "$1 requires a value" >&2; exit 2; }
+      case $1 in
+        --port) port=$2 ;; --shards) shards=$2 ;; --py-workers) py_workers=$2 ;;
+        --order-seed) seed=$2 ;; --target) target=$2 ;; *) closes_nightly_red=$2 ;;
+      esac
       shift ;;
     --skip-compose) skip_compose=1 ;;
-    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -31,7 +37,20 @@ if ((port + 10 * (shards + 2) + 9 > 18998)); then
   echo "shards, live-data and household lanes must fit within 18000-18998" >&2
   exit 2
 fi
+if [[ ! $seed =~ ^[0-9]{1,9}$ ]]; then
+  echo "--order-seed must be an integer from 0 to 999999999" >&2
+  exit 2
+fi
+if [[ -n $closes_nightly_red && ! $closes_nightly_red =~ ^[1-9][0-9]*$ ]]; then
+  echo "--closes-nightly-red must be an issue number" >&2
+  exit 2
+fi
+if ((!signoff)) && [[ -n $target || -n $closes_nightly_red ]]; then
+  echo "--target and --closes-nightly-red apply only with --signoff" >&2
+  exit 2
+fi
 command -v setsid >/dev/null || { echo "ci-local requires setsid" >&2; exit 2; }
+command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
@@ -43,25 +62,80 @@ sha=$(git rev-parse HEAD)
 tree=$(git rev-parse 'HEAD^{tree}')
 receipts_root=${AZIZAM_CI_RECEIPTS:-$HOME/.tmp/azizam-ci-receipts}
 receipts=$receipts_root/$tree
-sign() {
-  ((signoff)) || return 0
-  gh signoff create
-  echo "signoff posted for $sha"
+
+# A signoff attests that this invocation ran every required step on the exact
+# merge candidate (docs/design/TEST_STRATEGY.md 1.2). Each rule that does not
+# hold refuses with exit 3, posts nothing and writes no signoff receipt.
+refuse() { echo "signoff refused: $*" >&2; exit 3; }
+remote_tip() { git ls-remote --exit-code origin "refs/heads/$target" | cut -f1; }
+check_nightly_red() {
+  local open number
+  open=$(gh issue list --label nightly-red --state open --json number --jq '.[].number') ||
+    refuse "cannot list open nightly-red issues"
+  for number in $open; do
+    [[ $number == "$closes_nightly_red" ]] ||
+      refuse "open nightly-red issue #$number blocks signoff; pass --closes-nightly-red $number only if this change closes it"
+    # The same keywords GitHub uses to close an issue when the commit lands.
+    git log --format=%B "$target_tip..$sha" |
+      grep -qiE "\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #$number\b" ||
+      refuse "no commit in $target_tip..$sha says it closes nightly-red issue #$number (e.g. \"Fixes #$number\")"
+  done
 }
+if ((signoff)); then
+  ((force)) || refuse "--signoff needs --force: a signoff never comes from the tree cache"
+  [[ -n $target ]] || refuse "--signoff needs --target BRANCH"
+  ((!skip_compose)) || refuse "--skip-compose skips a required step"
+  target_tip=$(remote_tip) || refuse "cannot read refs/heads/$target from origin"
+  parent=$(git rev-parse -q --verify 'HEAD^1') || parent=none
+  [[ $parent == "$target_tip" ]] ||
+    refuse "HEAD^1 is $parent, not the origin/$target tip $target_tip; run on the merge candidate (the $target tip with the change merged)"
+  # The status is posted to the SHA by name, and GitHub rejects a commit it has
+  # not received: push the candidate to a branch first, not after a 10-minute run.
+  gh api "repos/{owner}/{repo}/commits/$sha" --silent 2>/dev/null ||
+    refuse "GitHub has no commit $sha; push the merge candidate to a branch (not $target) first"
+  check_nightly_red
+fi
+
+# Two gates on one host would share 24 cores and the 18000-18998 ports.
+# Every job inherits the lock descriptor, so if ci-local itself is killed,
+# its surviving jobs keep the host locked until they end.
+lock=$HOME/.tmp/azizam-ci.lock
+mkdir -p "${lock%/*}"
+exec 9>>"$lock"
+if ! flock -n 9; then
+  echo "waiting for the host CI lock $lock (last recorded holder: $(cat "$lock"); current holders: fuser -v $lock)"
+  flock 9
+fi
+printf 'pid %s sha %s since %s\n' "$$" "$sha" "$(date -u +%FT%TZ)" > "$lock"
+
 if [[ -f $receipts/PASS && $force == 0 ]]; then
   echo "tree $tree already passed (receipts: $receipts)"
-  sign
   exit 0
 fi
+echo "order seed: $seed (reproduce with --order-seed $seed)"
 
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
 receipts=$(cd "$receipts" && pwd)
-rm -f "$receipts/PASS" "$receipts/steps.tsv"
-rm -rf "$receipts/steps" "$receipts/test-results"
-mkdir -p "$receipts/steps"
+rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff-$sha.tsv"
+rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
+mkdir -p "$receipts/steps" "$receipts/raw"
+# A run directory holds worktrees and dependency copies (about 7 GB). Exit
+# removes it, except that the latest failed run's directory is kept for
+# debugging, named in $kept. With the lock held, no other run is live, so any
+# other marked directory was left by a killed run and is removed here.
+kept=$scratch/azizam-ci-local.kept
+remove_run_dir() { rm -rf -- "$1"; git -C "$repo" worktree prune; }
+for directory in "$scratch"/azizam-ci-local.*/; do
+  directory=${directory%/}
+  if [[ -f $directory/.ci-local-run && $directory != "$(cat "$kept" 2>/dev/null)" ]]; then
+    remove_run_dir "$directory"
+  fi
+done
 run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
 run=$(cd "$run" && pwd)
+: > "$run/.ci-local-run"
+keep_run=0
 work=$run/web-build
 worktrees=()
 pids=()
@@ -82,7 +156,14 @@ cleanup() {
   deadline=$((SECONDS + 10))
   while pgrep -f -- "$run/" >/dev/null 2>&1 && ((SECONDS < deadline)); do sleep .2; done
   pkill -KILL -f -- "$run/" 2>/dev/null || true
+  rm -f "$receipts/signoff-$sha.tsv.partial"
   cd "$repo"
+  if ((keep_run)); then
+    if [[ -f $kept && $(cat "$kept") != "$run" ]]; then remove_run_dir "$(cat "$kept")"; fi
+    echo "$run" > "$kept"
+    echo "kept the failed run's directory for debugging: $run"
+    return
+  fi
   for directory in "${worktrees[@]}"; do
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
   done
@@ -98,7 +179,8 @@ add_worktree() {
 add_worktree "$work"
 add_worktree "$run/python"
 add_worktree "$run/fresh"
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\nshards\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$(date -u +%FT%TZ)" "$shards" "$py_workers" "$port" > "$receipts/run.tsv"
+started=$(date -u +%FT%TZ)
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nshards\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$shards" "$py_workers" "$port" > "$receipts/run.tsv"
 
 failed=0
 step() {
@@ -114,7 +196,7 @@ step() {
   if ((rc)); then failed=1; echo "   FAILED (exit $rc): $receipts/logs/$name.log"; fi
   return 0
 }
-export receipts work skip_compose py_workers run shards
+export receipts work skip_compose py_workers run shards seed
 export -f step
 start_job() {
   local directory=$1; shift
@@ -142,7 +224,7 @@ wait_job() {
 # These jobs never share their venv, generated files or node_modules.
 start_job "$run/python" bash -c '
   failed=0
-  step python-hermetic scripts/run-hermetic-pytest.sh -q -rsx -n "$py_workers" --dist worksteal
+  step python-hermetic scripts/run-hermetic-pytest.sh --junit-xml-out "$receipts/raw/pytest.xml" -q -rsx -n "$py_workers" --dist worksteal --order-seed "$seed"
   exit "$failed"
 '
 # The Compose journey creates and removes a Docker bridge network. Chromium
@@ -170,7 +252,7 @@ start_job "$work" bash -c '
   # Unit tests run beside the build, not beside the browser lanes: there, CPU
   # contention pushed tests past the 5 s vitest limit. They finish before the
   # lanes copy this tree.
-  ( step web-unit bash -c "cd web && npx vitest run"; exit "$failed" ) &
+  ( step web-unit env CASE_RECEIPTS_FILE="$receipts/raw/vitest.cases.jsonl" bash -c "cd web && npx vitest run --sequence.shuffle --sequence.seed \"\$1\" --reporter=default --reporter=./tests/case-receipts.ts" _ "$seed"; exit "$failed" ) &
   unit_pid=$!
   step web-check bash -c "cd web && npm run check"
   wait "$unit_pid" || failed=1
@@ -232,7 +314,7 @@ for ((i=1; i<=lanes; i++)); do
     name=$1; shift
     step "$name" "$@"
     exit "$failed"
-  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
+  ' _ "$name" env UI_E2E_PORT="$lane_port" UI_E2E_STATE_ROOT="$lane/.ui-e2e-state" UI_E2E_PYTHON="$work/venv/bin/python" CASE_RECEIPTS_FILE="$receipts/raw/$name.cases.jsonl" ./node_modules/.bin/playwright test --config "$config" "${args[@]}"
   lane_pids+=("$last_pid")
 done
 start_job "$run/fresh" bash -c '
@@ -242,9 +324,24 @@ start_job "$run/fresh" bash -c '
 '
 for pid in "${pids[@]}"; do wait_job "$pid"; done
 
+# Case receipts: one cases.jsonl from every framework's report, then the
+# test policy over it and the clean tree (docs/design/TEST_STRATEGY.md 3, 6).
+merge_args=(--pytest "$receipts/raw/pytest.xml" "$run/python" --receipts "$receipts/raw/vitest.cases.jsonl" "$work")
+for ((i=1; i<=lanes; i++)); do
+  lane_port=$((port + 10 * i))
+  name=e2e-shard-$i-of-$shards
+  if ((i == shards + 1)); then name=e2e-live-data; elif ((i == shards + 2)); then name=e2e-household; fi
+  # A lane that wrote no receipts leaves its files unrun, which policy reports.
+  if [[ -f $receipts/raw/$name.cases.jsonl ]]; then
+    merge_args+=(--receipts "$receipts/raw/$name.cases.jsonl" "$run/browser-$lane_port")
+  fi
+done
+step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
+step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl"
+
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.
-if ! awk -F '\t' -v expected="$((2 * lanes + 10))" '
+if ! awk -F '\t' -v expected="$((2 * lanes + 12))" '
   NF != 3 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
@@ -261,10 +358,44 @@ fi
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 column -t "$receipts/steps.tsv"
 if ((failed)); then
+  keep_run=1
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1
 fi
 echo "$sha" > "$receipts/PASS"
 echo "ci-local PASSED for $sha; receipts: $receipts"
 cd "$repo"
-sign
+((signoff)) || exit 0
+
+# Recheck what can move during a run, post the status to the tested SHA by
+# name (not to whatever the checkout holds now), and only then finalize the
+# receipt: an interrupted or failed post leaves no signoff receipt.
+final_tip=$(remote_tip) || refuse "cannot reread refs/heads/$target from origin"
+[[ $final_tip == "$target_tip" ]] ||
+  refuse "origin/$target moved from $target_tip to $final_tip during the run; rebuild the merge candidate"
+head_now=$(git rev-parse HEAD)
+[[ $head_now == "$sha" ]] || refuse "the checkout moved from $sha to $head_now during the run"
+check_nightly_red
+user=$(git config user.name) || refuse "git user.name is not set"
+chromium=$(cd "$work/web" && node -e 'console.log(require("playwright-core").chromium.executablePath())')
+receipt=$receipts/signoff-$sha.tsv
+{
+  printf 'sha\t%s\ntree\t%s\ntarget\t%s\ntarget_tip\t%s\nseed\t%s\n' "$sha" "$tree" "$target" "$target_tip" "$seed"
+  printf 'started\t%s\nfinished\t%s\n' "$started" "$(date -u +%FT%TZ)"
+  printf 'steps\t%s\n' "$(cut -f1 "$receipts/steps.tsv" | sort | paste -sd, -)"
+  printf 'policy\t%s\n' "$(tail -n 1 "$receipts/logs/policy.log")"
+  printf 'nightly_red_closed\t%s\n' "${closes_nightly_red:-none}"
+  printf 'python_fresh\t%s\n' "$("$run/fresh/.ci-fresh-venv/bin/python" --version)"
+  printf 'python_e2e\t%s\n' "$("$work/venv/bin/python" --version)"
+  printf 'node\t%s\n' "$(node --version)"
+  printf 'chromium\t%s\n' "$("$chromium" --version)"
+  printf 'ffmpeg\t%s\n' "$(ffmpeg -version | head -n 1)"
+} > "$receipt.partial"
+# The same status `gh signoff create` posts, bound to $sha.
+status_url=$(gh api --method POST "repos/{owner}/{repo}/statuses/$sha" -f state=success \
+  -f context=signoff -f "description=$user signed off" --jq .url) ||
+  refuse "GitHub did not accept the signoff status for $sha"
+[[ $status_url == */statuses/"$sha" ]] || refuse "GitHub recorded the status at $status_url, not on $sha"
+printf 'posted\t%s\nstatus_url\t%s\n' "$(date -u +%FT%TZ)" "$status_url" >> "$receipt.partial"
+mv "$receipt.partial" "$receipt"
+echo "signoff posted for $sha; receipt: $receipt"

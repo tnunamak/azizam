@@ -24,6 +24,8 @@ export default defineConfig({
       "src/**/*.spec.tsx",
     ],
     exclude: ["tests/playwright/**", "src/**/*.e2e.*", "src/**/*.playwright.*", "node_modules/**"],
+    // A first failure stays a failure (TEST_STRATEGY.md 3.1).
+    retry: 0,
     clearMocks: true,
     restoreMocks: true,
   },

@@ -19,14 +19,111 @@ were still stored.
   (web check, Python tests, fresh instance, production UI journey) on HEAD,
   in a clean detached worktree with `npm ci` and fresh Python environments
   from `tests/requirements-hermetic.lock`.
-- It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `steps.tsv`
-  (step, exit code, seconds), `logs/`, and browser evidence only when a run
-  fails. A tree that already passed is not run again (`--force` reruns it).
-- `scripts/ci-local --signoff` posts a `signoff` commit status with
-  `gh signoff` when every job passes. The branch must be pushed first.
+- It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
+  (SHA, seed, layout), `steps.tsv` (step, exit code, seconds), `logs/`,
+  `raw/` (each framework's report), `cases.jsonl`, and browser evidence only
+  when a run fails. A tree that already passed is not run again (`--force`
+  reruns it).
+- Its worktrees and dependency copies live in `~/.tmp/azizam-ci-local.*`
+  (about 7 GB). Exit removes that directory, except after a failed run:
+  ci-local then keeps it, prints its path and records it in
+  `~/.tmp/azizam-ci-local.kept`; the next failed run deletes it. A run
+  directory left by a killed `ci-local` is deleted by the next run.
+- Only one `ci-local` runs at a time on the host: it holds
+  `flock ~/.tmp/azizam-ci.lock` for the whole run, and a second run waits
+  (the lock file names the last `ci-local` that held it). Every job inherits
+  the lock, so if `ci-local` itself is killed, the host stays locked until
+  its surviving jobs end; `fuser -v ~/.tmp/azizam-ci.lock` lists them. Do
+  not wrap `ci-local` in `flock` on the same file: the inner lock would wait
+  for the outer one forever.
 - The hosted workflow runs only when started by hand
   (`gh workflow run CI --ref <branch>`). It uploads diagnostics only when a
   job fails, keeps them 1 day, and cancels an older run on the same ref.
+
+## Order seed
+
+Every run shuffles test order from a seed: `--order-seed N`, or a random
+seed that the run prints and records in `run.tsv`. The same seed gives the
+same order, so `scripts/ci-local --force --order-seed N` reproduces a failure.
+
+- pytest: `--order-seed N` (a `tests/conftest.py` hook) shuffles modules,
+  the classes in each module and the tests in each class. The order depends
+  only on the seed and the node IDs, so every xdist worker collects the same
+  list (xdist aborts the run when two workers' ordered lists differ).
+- vitest: `--sequence.shuffle --sequence.seed N`.
+- Playwright: the lane plan stays the legacy grouping (`plan_shards.py` without
+  a seed), so no stateful spec meets new neighbors before it is isolated
+  (TEST_STRATEGY.md 7, T0 item 1). `plan_shards.py plan` accepts a seed for the
+  last BI2 batch to turn on: it then places each spec file on a seeded choice
+  among the lanes within half the file's estimate of the least-loaded lane.
+
+## Case receipts and policy
+
+The `cases` step merges the reports into `cases.jsonl`, one line per
+attempt: framework, config, project, case ID, file, outcome, attempt index,
+duration, seed and SHA (`scripts/ci/merge_cases.py`). pytest writes JUnit
+XML (`run-hermetic-pytest.sh --junit-xml-out`, which refuses an existing
+file). vitest and Playwright use the repository's own reporters,
+`web/tests/case-receipts.ts` and `web/e2e/case-receipts.ts`, which append a
+line per attempt to `$CASE_RECEIPTS_FILE`: a framework retry, or a second
+run into the same file, repeats a test ID, and every repeat is an attempt
+above 0. Without `CASE_RECEIPTS_FILE` they write nothing.
+
+The `policy` step (`scripts/ci/policy.py`) fails the run when:
+
+- a retry exists: a rerun plugin in the hermetic lock, a flaky or rerun
+  marker in Python test code (`conftest.py` and `tests/**` included), a
+  `--retries`/`--retry`/`--reruns` flag in the gate scripts, any `retry`,
+  `retries` or `repeats` value in web test code or a test config that is not
+  the literal `0` (a computed value fails), a Playwright config the run used
+  without `retries: 0`, the vitest config without `retry: 0`, or an attempt
+  index above 0;
+- a test file ran in no gate step and is not an `[[orphan]]` in
+  `tests/suites.toml` with an unexpired `expires_on`;
+- a case skipped (or xfailed) without a `[[skip]]` (`[[xfail]]`) entry for
+  its framework, config, project and case ID in `tests/suites.toml`;
+- a quarantine manifest or marker exists (TEST_STRATEGY.md 3.2);
+- a framework's first-attempt case count exceeds `tests/budgets.toml`.
+
+An entry that no longer matches the run (the orphan now runs, the case no
+longer skips) also fails, so the lists only shrink. `tests/test_test_policy.py`
+injects each violation into a copy of the tree and checks that the policy
+fails, and that the clean copy passes. The policy reads source text, not the
+resolved configuration: a retry set somewhere it does not scan is caught
+only by the attempt index in the receipts.
+
+## Signoff
+
+`scripts/ci-local --force --signoff --target main [--closes-nightly-red N]`
+runs on the merge candidate (the target tip with the change merged) and posts
+the `signoff` commit status that `gh signoff create` posts, but to the tested
+SHA by name (`gh api .../statuses/<sha>`), so GitHub must already have that
+commit: push the candidate to a branch other than the target before the run
+(the run refuses before any step if GitHub does not have the SHA). It refuses with exit 3, posts nothing and writes no signoff receipt,
+unless all of these hold (TEST_STRATEGY.md 1.2):
+
+1. `--force`: every required step runs fresh in this invocation, never from
+   the tree cache; `--skip-compose` is refused.
+2. `HEAD^1` is the tip of `origin/<target>` (`git ls-remote`), checked before
+   the run and again, unchanged, before posting; the checkout's `HEAD` is
+   still the tested SHA.
+3. No open GitHub issue labelled `nightly-red`, except the one number given
+   with `--closes-nightly-red`, and only when a commit in
+   `<target tip>..<sha>` closes it in GitHub's words (`Fixes #N`,
+   `Closes #N`, `Resolves #N`).
+4. Every expected step, `policy` included, passed.
+
+After GitHub accepts the status, ci-local writes `signoff-<sha>.tsv` in the
+run's receipt directory: SHA, tree, target, target tip, seed, start and
+finish, the step set, the policy summary, the closed `nightly-red` issue,
+the toolchain (both Python environments, Node, Chromium, ffmpeg), and the
+post time and status URL. A refused, interrupted or failed run writes none.
+
+`tests/test_ci_local.py` runs the real `ci-local` in a throwaway repository
+with stub runners and a local bare origin, and checks the receipt, each
+refusal that can only happen after the tests pass (target or checkout moved),
+the `nightly-red` closing commit, the kept failed-run directory, an
+interrupted run, lock waiting, and a killed controller.
 
 ## Parallel local layout
 
@@ -115,6 +212,9 @@ while working, not a gate: `scripts/ci-local` still runs everything.
 - A signoff is the owner's attestation that the local run passed. GitHub does
   not verify it, and it cannot be a required check while the repository has
   no branch protection.
+- The policy finds test files by name (`test_*.py`, `*_test.py`,
+  `*.spec|test|e2e.*`, `*.household.ts`). A test file with another name is
+  invisible to the discovery check.
 - The fresh-instance Compose journey needs Docker networks. If Docker cannot
   allocate one ("Pool overlaps with other one on this address space"), the
   run fails. `--skip-compose` records the step as skipped, and the run then

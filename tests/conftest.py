@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import socket
 from pathlib import Path
 
@@ -54,6 +55,44 @@ for _name, _filename in _STORE_PATHS.items():
     os.environ[_name] = str(_STATE_DIR / _filename)
 
 _GUARD = HermeticGuard()
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--order-seed", type=int, default=None,
+                     help="shuffle test order from this seed (scripts/ci-local passes one on every run)")
+
+
+def pytest_report_header(config: pytest.Config) -> str | None:
+    seed = config.getoption("order_seed")
+    return None if seed is None else f"order seed: {seed}"
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Shuffle modules, classes in each module and tests in each class from
+    --order-seed.
+
+    pytest-xdist aborts unless every worker collects the same ordered list, so
+    the order depends only on the seed and the node IDs, never on collection
+    order or the worker.  Modules and classes stay contiguous so their scoped
+    fixtures (and setUpClass) are not set up again for every interleaved test.
+    """
+    seed = config.getoption("order_seed")
+    if seed is None:
+        return
+    rng = random.Random(seed)
+    modules: dict[str, dict[str, list[pytest.Item]]] = {}
+    for item in sorted(items, key=lambda item: item.nodeid):
+        module = item.nodeid.split("::", 1)[0]
+        modules.setdefault(module, {}).setdefault(item.parent.nodeid, []).append(item)
+
+    def shuffled(values):
+        values = list(values)
+        rng.shuffle(values)
+        return values
+
+    items[:] = [item for parents in shuffled(modules.values())
+                for tests in shuffled(parents.values())
+                for item in shuffled(tests)]
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:

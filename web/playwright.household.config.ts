@@ -27,11 +27,15 @@ export default defineConfig({
   testMatch: "*.household.ts",
   outputDir: `./test-results/household-artifacts-${port}`,
   workers: 1,
+  // A first failure stays a failure (TEST_STRATEGY.md 3.1).
+  retries: 0,
   timeout: 90_000,
   expect: { timeout: 15_000 },
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: `test-results/household-report-${port}` }],
+    // Case receipts for scripts/ci-local; writes only when CASE_RECEIPTS_FILE is set.
+    ["./e2e/case-receipts.ts"],
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
