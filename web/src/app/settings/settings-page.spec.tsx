@@ -226,10 +226,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function mount({ retry = false }: { retry?: boolean } = {}) {
+function mount({ keepClientRetry = false }: { keepClientRetry?: boolean } = {}) {
   const client = createQueryClient();
   // The production client retries 5xx with a real back-off; a spec cannot wait for it.
-  if (!retry)
+  if (!keepClientRetry)
     client.setDefaultOptions({
       queries: { ...client.getDefaultOptions().queries, retry: false },
     });
@@ -454,7 +454,7 @@ describe("settings roles", () => {
     seed("seeded");
     routes.set("/admin/api/settings/instance", () => ownerRequired);
     routes.set("/admin/api/operator/sign-in", () => ownerRequired);
-    mount({ retry: true });
+    mount({ keepClientRetry: true });
     const instance = await screen.findByRole("region", { name: "Instance" });
     await waitFor(() =>
       expect(instance).toHaveTextContent("Only the owner can change this."),
