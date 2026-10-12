@@ -1,298 +1,212 @@
-"""Tests for the operator LiteLLM virtual-key endpoints.
+"""Operator LiteLLM virtual-key endpoints over the real sidecar client.
 
-Covers /admin/api/operator/litellm/keys (list, create) and
-/keys/delete: admin guard, the injected-client contract, input validation,
-secret-leak defenses, and the unavailable-substrate path. The sidecar client is
-faked, so no LiteLLM process is required.
+/admin/api/operator/litellm/keys (list, create) and /keys/delete run through
+the real admin router and the real LiteLLMKeyAdminClient. The sidecar's
+``/key/*`` API is an FK fake (protocol ``litellm-admin``), so each case also
+proves the wire contract: master key in X-Litellm-Key, field names, query.
 """
 
 from __future__ import annotations
 
-import sys
-import unittest
-from pathlib import Path
-
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+from gateway.admin_api import create_admin_router
+from gateway.backends.litellm_admin import LiteLLMKeyAdminClient
+from gateway.backends.llm_execution import LiteLlmRuntimeConfig
+from tests.support.fake_upstream import FakeUpstream, fake_upstreams, load_scenario  # noqa: F401 - fixture
+from tests.test_admin_api import FakeAdminStore, _admin_auth
 
-from gateway.admin_api import create_admin_router  # noqa: E402
-from gateway.backends.litellm_admin import LiteLLMAdminError  # noqa: E402
-from tests.test_admin_api import FakeAdminStore, _admin_auth  # noqa: E402
-
-
-class _FakeKeyClient:
-    """In-memory stand-in for the LiteLLM sidecar key client."""
-
-    def __init__(self, *, enabled: bool = True):
-        self.enabled = enabled
-        self.keys: list[dict] = []
-        self.generated: list[dict] = []
-        self.deleted: list[dict] = []
-        self.next_error: LiteLLMAdminError | None = None
-
-    async def list_keys(self, **kwargs):
-        if self.next_error:
-            raise self.next_error
-        return list(self.keys)
-
-    async def generate_key(self, spec):
-        if self.next_error:
-            raise self.next_error
-        self.generated.append(dict(spec))
-        return {"key": "sk-minted-secret", **dict(spec)}
-
-    async def delete_keys(self, *, keys=None, key_aliases=None):
-        if self.next_error:
-            raise self.next_error
-        self.deleted.append({"keys": keys, "key_aliases": key_aliases})
-        return {"deleted": True}
+MASTER_KEY = "fk-litellm-master-key"
+KEYS = "/admin/api/operator/litellm/keys"
+ADMIN = {"Authorization": "Bearer admin-token"}
+CATALOG = frozenset({"gpt-4o", "claude-3-opus"})
 
 
-def _make(
-    client: _FakeKeyClient | None,
-    *,
-    known_models: frozenset[str] | None = None,
-) -> TestClient:
-    app = FastAPI()
-    getter = (lambda: known_models) if known_models is not None else None
-    app.include_router(
-        create_admin_router(
+class Sidecar:
+    """Serves one litellm-admin scenario and builds the gateway around it."""
+
+    def __init__(self, fakes) -> None:
+        self._fakes = fakes
+        self.fake: FakeUpstream | None = None
+
+    def serve(self, name: str, **values) -> FakeUpstream:
+        self.fake = self._fakes.asgi(load_scenario(f"litellm-admin/{name}", master_key=MASTER_KEY, **values), host="litellm.fk.test")
+        return self.fake
+
+    def gateway(self, *, known_models: frozenset[str] | None = None, enabled: bool = True, api_key: str = MASTER_KEY, configured: bool = True) -> TestClient:
+        client = None
+        if configured:
+            base_url = self.fake.base_url if self.fake else "http://unused.fk.test"
+            client = LiteLLMKeyAdminClient(LiteLlmRuntimeConfig(enabled=enabled, base_url=base_url, api_key=api_key, service_id="litellm"))
+        app = FastAPI()
+        app.include_router(create_admin_router(
             FakeAdminStore(),
             auth=_admin_auth,
             litellm_key_client=client,
-            known_model_names_getter=getter,
-        )
+            known_model_names_getter=(lambda: known_models) if known_models is not None else None,
+        ))
+        return TestClient(app)
+
+
+@pytest.fixture
+def sidecar(fake_upstreams) -> Sidecar:
+    return Sidecar(fake_upstreams)
+
+
+def test_list_requires_admin(sidecar) -> None:
+    sidecar.serve("key-list", status=200, body={"keys": []})
+    gateway = sidecar.gateway()
+    assert gateway.get(KEYS).status_code == 401
+    assert gateway.get(KEYS, headers={"Authorization": "Bearer viewer-token"}).status_code == 403
+    assert sidecar.fake.requests == []
+    # The scenario's one list call is required; spend it as the admin.
+    assert gateway.get(KEYS, headers=ADMIN).status_code == 200
+
+
+def test_list_returns_redacted_keys_from_the_sidecar(sidecar) -> None:
+    sidecar.serve("key-list", status=200, body={"keys": [
+        {"key_alias": "batch", "key_name": "sk-...abcd", "spend": 2.0},
+        {"key_alias": "leak", "token": "sk-supersecretvalue1234", "api_key": "sk-raw", "key": "sk-raw2"},
+    ]})
+
+    response = sidecar.gateway().get(KEYS, headers=ADMIN)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"keys": [
+        {"key_alias": "batch", "key_name": "sk-...abcd", "spend": 2.0},
+        {"key_alias": "leak", "token": "sk-su…1234"},
+    ]}
+    for secret in ("sk-supersecretvalue1234", "sk-raw", MASTER_KEY):
+        assert secret not in response.text
+
+
+def test_list_accepts_the_string_only_key_shape(sidecar) -> None:
+    sidecar.serve("key-list", status=200, body={"keys": ["sk-...wxyz"]})
+
+    response = sidecar.gateway().get(KEYS, headers=ADMIN)
+
+    assert response.json() == {"keys": [{"token": "sk-...wxyz", "key_name": "sk-...wxyz"}]}
+
+
+def test_create_mints_key_and_returns_secret_once(sidecar) -> None:
+    sidecar.serve("key-generate", spec={"key_alias": "batch", "max_budget": 10.0, "models": ["gpt-x"]})
+
+    response = sidecar.gateway().post(KEYS, headers=ADMIN, json={"key_alias": "batch", "max_budget": "10", "models": ["gpt-x", " "]})
+
+    assert response.status_code == 201, response.text
+    assert response.json() == {"key": {"key": "sk-minted-secret", "key_name": "sk-...cret", "expires": None}}
+    [forwarded] = sidecar.fake.calls("generate")
+    assert forwarded.json == {"key_alias": "batch", "max_budget": 10.0, "models": ["gpt-x"]}
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [({"key": "sk-attacker-chosen"}, "invalid_key"), ({"max_budget": "lots"}, "invalid_key")],
+    ids=["supplied-secret", "non-numeric-budget"],
+)
+def test_create_rejects_invalid_input_before_the_sidecar(sidecar, body, code) -> None:
+    response = sidecar.gateway().post(KEYS, headers=ADMIN, json=body)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize(
+    ("body", "target"),
+    [({"keys": ["sk-1"]}, {"keys": ["sk-1"]}), ({"key_aliases": ["batch"]}, {"key_aliases": ["batch"]}), ({"key_alias": "batch", "key": "sk-2"}, {"keys": ["sk-2"], "key_aliases": ["batch"]})],
+    ids=["keys", "aliases", "singular-fields"],
+)
+def test_delete_forwards_keys_and_aliases(sidecar, body, target) -> None:
+    sidecar.serve("key-delete", target=target, deleted=target.get("keys", []))
+
+    response = sidecar.gateway().post(f"{KEYS}/delete", headers=ADMIN, json=body)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"deleted": {"deleted_keys": target.get("keys", [])}}
+    assert sidecar.fake.calls("delete")[0].json == target
+
+
+def test_delete_requires_a_target(sidecar) -> None:
+    response = sidecar.gateway().post(f"{KEYS}/delete", headers=ADMIN, json={})
+
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.parametrize(
+    ("setup", "code"),
+    [
+        ({"configured": False}, "litellm_unconfigured"),
+        ({"enabled": False}, "litellm_unconfigured"),
+        ({"api_key": ""}, "litellm_unconfigured"),
+    ],
+    ids=["no-client", "disabled", "no-master-key"],
+)
+def test_unconfigured_substrate_returns_503(sidecar, setup, code) -> None:
+    response = sidecar.gateway(**setup).get(KEYS, headers=ADMIN)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == code
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(400, "litellm_key_api_error"), (401, "litellm_admin_auth_failed"), (403, "litellm_admin_auth_failed")],
+)
+def test_sidecar_rejection_maps_to_502(sidecar, status, code) -> None:
+    sidecar.serve("key-list", status=status, body={"error": {"message": "LiteLLM: boom"}})
+
+    response = sidecar.gateway().get(KEYS, headers=ADMIN)
+
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == code
+    assert MASTER_KEY not in response.text
+
+
+def test_sidecar_drop_maps_to_503_unreachable(sidecar) -> None:
+    sidecar.serve("key-list-dropped")
+
+    response = sidecar.gateway().get(KEYS, headers=ADMIN)
+
+    assert response.status_code == 503, response.text
+    assert response.json()["error"]["code"] == "litellm_unreachable"
+
+
+@pytest.mark.parametrize("models", [["gpt-4o"], ["gpt-4o", "claude-3-opus"]], ids=["one", "two"])
+def test_known_models_pass_catalog_validation(sidecar, models) -> None:
+    sidecar.serve("key-generate", spec={"models": models})
+
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"models": models})
+
+    assert response.status_code == 201, response.text
+    assert sidecar.fake.calls("generate")[0].json == {"models": models}
+
+
+def test_unknown_models_are_all_reported_and_never_reach_the_sidecar(sidecar) -> None:
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"models": ["gpt-x", "llama-99", "gpt-4o"]})
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "unknown_model"
+    assert error["message"] == (
+        "model(s) not in gateway catalog: ['gpt-x', 'llama-99']; known models: ['claude-3-opus', 'gpt-4o']"
     )
-    return TestClient(app)
 
 
-def _auth() -> dict[str, str]:
-    return {"Authorization": "Bearer admin-token"}
+@pytest.mark.parametrize("known_models", [None, frozenset()], ids=["no-catalog", "empty-catalog"])
+def test_missing_catalog_skips_validation(sidecar, known_models) -> None:
+    sidecar.serve("key-generate", spec={"models": ["totally-made-up-model"]})
+
+    response = sidecar.gateway(known_models=known_models).post(KEYS, headers=ADMIN, json={"models": ["totally-made-up-model"]})
+
+    assert response.status_code == 201, response.text
 
 
-class LiteLLMKeyEndpointTests(unittest.TestCase):
-    def test_list_requires_admin(self) -> None:
-        client = _make(_FakeKeyClient())
-        resp = client.get("/admin/api/operator/litellm/keys")
-        self.assertEqual(resp.status_code, 401, resp.text)
+def test_no_models_field_creates_an_unrestricted_key(sidecar) -> None:
+    sidecar.serve("key-generate", spec={"key_alias": "unrestricted"})
 
-    def test_non_admin_forbidden(self) -> None:
-        client = _make(_FakeKeyClient())
-        resp = client.get(
-            "/admin/api/operator/litellm/keys",
-            headers={"Authorization": "Bearer viewer-token"},
-        )
-        self.assertEqual(resp.status_code, 403, resp.text)
+    response = sidecar.gateway(known_models=CATALOG).post(KEYS, headers=ADMIN, json={"key_alias": "unrestricted"})
 
-    def test_list_returns_keys(self) -> None:
-        fake = _FakeKeyClient()
-        fake.keys = [{"key_alias": "batch", "key_name": "sk-...abcd", "spend": 2.0}]
-        client = _make(fake)
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        self.assertEqual(resp.status_code, 200, resp.text)
-        keys = resp.json()["keys"]
-        self.assertEqual(keys[0]["key_alias"], "batch")
-
-    def test_list_redacts_raw_secret_in_token_field(self) -> None:
-        fake = _FakeKeyClient()
-        # A defensive case: a raw sk- secret leaked into the list payload.
-        fake.keys = [{"token": "sk-supersecretvalue1234", "key_alias": "leak"}]
-        client = _make(fake)
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        token = resp.json()["keys"][0]["token"]
-        self.assertNotEqual(token, "sk-supersecretvalue1234")
-        self.assertIn("…", token)
-
-    def test_list_drops_api_key_field(self) -> None:
-        fake = _FakeKeyClient()
-        fake.keys = [{"key_alias": "x", "api_key": "sk-raw", "key": "sk-raw2"}]
-        client = _make(fake)
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        row = resp.json()["keys"][0]
-        self.assertNotIn("api_key", row)
-        self.assertNotIn("key", row)
-
-    def test_create_mints_key_and_returns_secret_once(self) -> None:
-        fake = _FakeKeyClient()
-        client = _make(fake)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"key_alias": "batch", "max_budget": 10, "models": ["gpt-x"]},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertEqual(resp.json()["key"]["key"], "sk-minted-secret")
-        # The forwarded spec was sanitized to the documented fields.
-        spec = fake.generated[0]
-        self.assertEqual(spec["key_alias"], "batch")
-        self.assertEqual(spec["max_budget"], 10.0)
-        self.assertEqual(spec["models"], ["gpt-x"])
-
-    def test_create_rejects_supplied_secret(self) -> None:
-        client = _make(_FakeKeyClient())
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"key": "sk-attacker-chosen"},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "invalid_key")
-
-    def test_create_rejects_non_numeric_budget(self) -> None:
-        client = _make(_FakeKeyClient())
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"max_budget": "lots"},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-
-    def test_delete_by_key(self) -> None:
-        fake = _FakeKeyClient()
-        client = _make(fake)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys/delete",
-            headers=_auth(),
-            json={"keys": ["sk-1"]},
-        )
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(fake.deleted[0]["keys"], ["sk-1"])
-
-    def test_delete_by_alias(self) -> None:
-        fake = _FakeKeyClient()
-        client = _make(fake)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys/delete",
-            headers=_auth(),
-            json={"key_aliases": ["batch"]},
-        )
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(fake.deleted[0]["key_aliases"], ["batch"])
-
-    def test_delete_requires_a_target(self) -> None:
-        client = _make(_FakeKeyClient())
-        resp = client.post(
-            "/admin/api/operator/litellm/keys/delete",
-            headers=_auth(),
-            json={},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-
-    def test_unconfigured_substrate_returns_503(self) -> None:
-        # No client injected -> capability unavailable, not a 500.
-        client = _make(None)
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        self.assertEqual(resp.status_code, 503, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "litellm_unconfigured")
-
-    def test_disabled_client_returns_503(self) -> None:
-        client = _make(_FakeKeyClient(enabled=False))
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        self.assertEqual(resp.status_code, 503, resp.text)
-
-    def test_upstream_error_is_mapped(self) -> None:
-        fake = _FakeKeyClient()
-        fake.next_error = LiteLLMAdminError(
-            502, "litellm_key_api_error", "LiteLLM: boom", upstream_status=400
-        )
-        client = _make(fake)
-        resp = client.get("/admin/api/operator/litellm/keys", headers=_auth())
-        self.assertEqual(resp.status_code, 502, resp.text)
-        self.assertEqual(resp.json()["error"]["code"], "litellm_key_api_error")
-
-
-class LiteLLMKeyModelValidationTests(unittest.TestCase):
-    """Model allowlist validation against the gateway catalog."""
-
-    _CATALOG = frozenset({"gpt-4o", "claude-3-opus"})
-
-    def test_known_model_passes(self) -> None:
-        fake = _FakeKeyClient()
-        client = _make(fake, known_models=self._CATALOG)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"key_alias": "ok", "models": ["gpt-4o"]},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertEqual(fake.generated[0]["models"], ["gpt-4o"])
-
-    def test_unknown_model_rejected(self) -> None:
-        client = _make(_FakeKeyClient(), known_models=self._CATALOG)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"models": ["gpt-x"]},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        body = resp.json()
-        self.assertEqual(body["error"]["code"], "unknown_model")
-        self.assertIn("gpt-x", body["error"]["message"])
-
-    def test_multiple_unknown_models_all_reported(self) -> None:
-        client = _make(_FakeKeyClient(), known_models=self._CATALOG)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"models": ["gpt-x", "llama-99", "gpt-4o"]},
-        )
-        self.assertEqual(resp.status_code, 400, resp.text)
-        msg = resp.json()["error"]["message"]
-        self.assertIn("gpt-x", msg)
-        self.assertIn("llama-99", msg)
-        # The unknown-list portion comes before the "known models:" label.
-        unknown_section = msg.split("known models:")[0]
-        self.assertNotIn("gpt-4o", unknown_section)
-
-    def test_no_catalog_skips_validation(self) -> None:
-        # known_model_names_getter=None → no catalog → any model name accepted.
-        fake = _FakeKeyClient()
-        client = _make(fake)  # no known_models
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"models": ["totally-made-up-model"]},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertEqual(fake.generated[0]["models"], ["totally-made-up-model"])
-
-    def test_empty_catalog_skips_validation(self) -> None:
-        # Empty frozenset → catalog not yet populated → skip validation.
-        fake = _FakeKeyClient()
-        client = _make(fake, known_models=frozenset())
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"models": ["unknown-model"]},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-
-    def test_multiple_known_models_all_pass(self) -> None:
-        fake = _FakeKeyClient()
-        client = _make(fake, known_models=self._CATALOG)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"models": ["gpt-4o", "claude-3-opus"]},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertEqual(sorted(fake.generated[0]["models"]), ["claude-3-opus", "gpt-4o"])
-
-    def test_no_models_field_skips_validation(self) -> None:
-        # No ``models`` key at all → unrestricted key, no validation needed.
-        fake = _FakeKeyClient()
-        client = _make(fake, known_models=self._CATALOG)
-        resp = client.post(
-            "/admin/api/operator/litellm/keys",
-            headers=_auth(),
-            json={"key_alias": "unrestricted"},
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertNotIn("models", fake.generated[0])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert response.status_code == 201, response.text
+    assert sidecar.fake.calls("generate")[0].json == {"key_alias": "unrestricted"}
