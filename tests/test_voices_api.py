@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
@@ -281,9 +282,21 @@ class PromptVoiceTests(ApiCase):
         self.assertEqual(self.designs[0][1], hint.strip())
 
     def test_seed_is_random_when_absent_and_reproducible_when_given(self) -> None:
-        self.create()
-        self.create(seed=5)
-        self.assertNotEqual(self.designs[0][2], 5)
+        # Replace only this module's RNG lookup, not process-wide os.urandom
+        # (which may also supply storage IDs or temporary-file randomness).
+        random_bytes = Mock(return_value=(17).to_bytes(3, "big"))
+        with patch.object(api, "os", SimpleNamespace(urandom=random_bytes)):
+            generated = self.create()
+            self.assertEqual(generated.status_code, 200, generated.text)
+            self.assertEqual(self.designs[0][2], 17)
+            self.assertEqual(generated.json()["seed"], 17)
+            random_bytes.assert_called_once_with(3)
+
+            random_bytes.reset_mock()
+            explicit = self.create(seed=5)
+            self.assertEqual(explicit.status_code, 200, explicit.text)
+            self.assertEqual(explicit.json()["seed"], 5)
+            random_bytes.assert_not_called()
         self.assertEqual(self.designs[1][2], 5)
 
     def test_validation(self) -> None:
