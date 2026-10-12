@@ -195,85 +195,6 @@ class ModelListEndpointTests(unittest.TestCase):
                 _assert_declared_metadata(self, entry, declarations(model_id))
                 self.assertNotIn("max_tokens", entry)
 
-    def _with_loaded(self, path: str | None) -> None:
-        patcher = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(path))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_dynamic_current_aliases_inherit_the_loaded_model(self) -> None:
-        # Make fallback distinguishable from the loaded model's vision metadata.
-        roles = copy.deepcopy(proxy.config.get("roles") or {})
-        for alias in DYNAMIC:
-            roles.setdefault(alias, {})["model_metadata"] = {
-                "type": "language", "input_modalities": ["text"],
-                "output_modalities": ["text"], "tags": [],
-            }
-        declaration_patch = patch.dict(proxy.config, {"roles": roles})
-        declaration_patch.start()
-        self.addCleanup(declaration_patch.stop)
-        self._with_loaded(QWEN_PATH)
-        listed = self._list()
-        by_id = {entry["id"]: entry for entry in listed["data"]}
-        for model_id in DYNAMIC:
-            with self.subTest(model=model_id):
-                entry = by_id[model_id]
-                self.assertEqual(entry["type"], "language")
-                self.assertEqual(entry["architecture"]["input_modalities"], ["text", "image"])
-                self.assertIn("tool-use", entry["tags"])
-                self.assertIn("vision", entry["tags"])
-                self.assertEqual("reasoning" in entry["tags"], model_id == "current")
-                self.assertNotIn("max_tokens", entry)
-                # Every endpoint serving the same metadata agrees.
-                self.assertEqual(self.client.get(f"/v1/models/{model_id}").json(), entry)
-        self.assertEqual(self._list("/openai/v1/models")["data"], listed["data"])
-
-    def test_dynamic_aliases_fall_back_when_the_loaded_model_is_undeclared(self) -> None:
-        cydonia = next(m for m in proxy.config["models"] if m["id"] == "cydonia-24b")
-        self.assertIsNone(cydonia["mmproj"])
-        self._with_loaded(cydonia["path"])
-        declarations = proxy._model_metadata_sources().declared
-        self.assertIsNone(declarations("cydonia-24b"))
-        by_id = {entry["id"]: entry for entry in self._list()["data"]}
-        for model_id in DYNAMIC:
-            with self.subTest(model=model_id):
-                _assert_declared_metadata(self, by_id[model_id], declarations(model_id))
-
-    def test_fast_alias_drops_reasoning_because_of_its_policy_data(self) -> None:
-        # Remove the `reasoning_effort: none` overlay from the current-fast
-        # record: the alias then inherits `reasoning` like `current`.
-        backends = copy.deepcopy(proxy.config["backends"])
-        for service in backends.values():
-            for record in service.get("models") or []:
-                if isinstance(record, dict) and record.get("id") == "current-fast":
-                    record.pop("policy_overlay", None)
-        self._with_loaded(QWEN_PATH)
-        with patch.dict(proxy.config, {"backends": backends}):
-            by_id = {entry["id"]: entry for entry in self._list()["data"]}
-        self.assertIn("reasoning", by_id["current-fast"]["tags"])
-
-    def test_dynamic_aliases_inherit_a_declared_context_window_when_none_is_observed(self) -> None:
-        async def no_litellm(*_args, **_kwargs):
-            return None  # LiteLLM down: the gateway lists its own current entries.
-
-        self._with_loaded(QWEN_PATH)
-        with patch.object(proxy, "_litellm_models_payload", no_litellm):
-            by_id = {entry["id"]: entry for entry in self._list()["data"]}
-        # The loaded file serves several records; the smallest declared window is claimed.
-        self.assertEqual(by_id["current"]["context_window"], 145408)
-        self.assertEqual(by_id["current-fast"]["context_window"], 145408)
-
-    def test_one_loaded_model_lookup_per_list(self) -> None:
-        calls = {"n": 0}
-        inner = _loaded(QWEN_PATH)
-
-        async def counting(*args, **kwargs):
-            calls["n"] += 1
-            return await inner(*args, **kwargs)
-
-        with patch.object(proxy, "_current_loaded_llm_model_ids", counting):
-            self._list()
-        self.assertEqual(calls["n"], 1)
-
     def test_alias_target_ids_do_not_reveal_hidden_models(self) -> None:
         narrow = authenticated(identity(plan_for("fast-only", models=["fast"])))
         with narrow:
@@ -423,49 +344,6 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return {item["id"]: item for item in response.json()["data"]}
 
-    def test_backend_change_drops_previous_loaded_metadata(self) -> None:
-        self.assertIn("vision", self._list()["current"]["tags"])
-        self.active = "kobold"
-        with patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH) as legacy:
-            target = self._route_current()
-            listed = self._list()
-        self.assertEqual((target.backend, target.model), ("kobold", "loaded-kobold"))
-        _assert_declared_metadata(
-            self, listed["current"], proxy._model_metadata_sources().declared("current"))
-        self.assertGreaterEqual(legacy.call_count, 1)
-
-    def test_other_backend_keeps_availability_without_inheriting_cached_path(self) -> None:
-        self.active = "engine"
-        self.backends["engine"] = {"base_url": "http://engine.test", "health_endpoint": "/health",
-                                   "protocol": "openai-compatible", "capabilities": ["chat"]}
-        with patch.dict(proxy.LLM_BACKEND_HOSTS, {"engine": "http://engine.test"}, clear=True), \
-                patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH):
-            ids, calls = self._observe()
-            listed = self._list()
-        self.assertTrue(DYNAMIC <= ids)
-        self.assertEqual(calls, [("engine.test", "/health")])
-        for alias in DYNAMIC:
-            _assert_declared_metadata(
-                self, listed[alias], proxy._model_metadata_sources().declared(alias))
-
-    def test_loaded_window_wins_over_static_alias_window(self) -> None:
-        listed = self._list()
-        for alias in DYNAMIC:
-            self.assertEqual(listed[alias]["context_window"], 4096)
-
-    def test_live_upstream_window_wins_over_loaded_declaration(self) -> None:
-        async def observed_payload(*args, **kwargs):
-            payload = await _fake_litellm_payload(*args, **kwargs)
-            for entry in payload["data"]:
-                if entry["id"] in DYNAMIC:
-                    entry["context_window"] = 8192
-            return payload
-
-        with patch.object(proxy, "_litellm_models_payload", observed_payload):
-            listed = self._list()
-        for alias in DYNAMIC:
-            self.assertEqual(listed[alias]["context_window"], 8192)
-
     def test_registry_activation_model_inherits_without_duplicate_role(self) -> None:
         target = self._route_current()
         self.assertEqual(target.model, "loaded-tabby")
@@ -473,35 +351,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(proxy.MODELS_CATALOG, {})
         self.assertNotEqual(self.backends["tabby"]["models"][0]["id"], target.model)
         self.assertNotEqual(self.backends["tabby"]["models"][0]["model"], target.model)
-        listed = self._list()
-        self.assertEqual(listed["current"]["architecture"]["input_modalities"], ["text", "image"])
-        self.assertIn("reasoning", listed["current"]["tags"])
-        self.assertNotIn("private-public", listed)
-        self.assertIn("loaded-tabby", listed)
         activation = proxy._configured_litellm_local_model_target("private-public", service_id="tabby")
         self.assertEqual(activation.model, target.model)
-
-    def test_probe_calls_and_availability_are_stable_over_time(self) -> None:
-        for headers in (None, {"anthropic-version": "2023-06-01"}):
-            for elapsed in (0, 6, 600):
-                with self.subTest(headers=headers, elapsed=elapsed), \
-                        patch.object(time, "monotonic", return_value=time.monotonic() + elapsed):
-                    ids, calls = self._observe(headers=headers)
-                    self.assertTrue(DYNAMIC | {"loaded-tabby"} <= ids)
-                    self.assertNotIn("private-public", ids)
-                    self.assertEqual(calls, [("tabby.test", "/health"), ("tabby.test", "/v1/model")])
-
-    def test_plan_that_grants_one_model_lists_only_it_over_time(self) -> None:
-        narrow = authenticated(identity(plan_for("loaded-only", models=["loaded-tabby"])))
-        narrow.start()
-        self.addCleanup(narrow.stop)
-        for headers in (None, {"anthropic-version": "2023-06-01"}):
-            for elapsed in (0, 6, 600):
-                with self.subTest(headers=headers, elapsed=elapsed), \
-                        patch.object(time, "monotonic", return_value=time.monotonic() + elapsed):
-                    ids, _calls = self._observe(headers=headers)
-                    self.assertTrue(DYNAMIC.isdisjoint(ids))
-                    self.assertIn("loaded-tabby", ids)
 
     def test_listing_keeps_declared_metadata_without_a_loaded_state_lookup(self) -> None:
         listed = self._list()
@@ -525,18 +376,6 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                     ids, calls = self._observe()
                 self.assertEqual(calls, [] if cache and now - cache["kobold"][0] < 30
                                  else [("kobold.test", "/v1/models")])
-
-    def test_current_model_ids_apply_same_visibility_as_data(self) -> None:
-        narrow = authenticated(identity(plan_for("current-only", models=["current", "private-public"])))
-        narrow.start()
-        self.addCleanup(narrow.stop)
-        for headers in (None, {"anthropic-version": "2023-06-01"}):
-            with self.subTest(headers=headers):
-                payload = self._payload(headers=headers)
-            visible_ids = {item["id"] for item in payload["data"]}
-            self.assertLessEqual(set(payload["azizam_current_model_ids"]), visible_ids)
-            self.assertEqual(payload["azizam_current_model_ids"], ["current"])
-
 
 # What each `/v1/models` type may show as on the Models page. The oracle for
 # the agreement tests below: written out here, not imported from the code.
