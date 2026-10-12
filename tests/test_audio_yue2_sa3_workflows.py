@@ -121,7 +121,7 @@ class AudioGenerateGraphTests(unittest.IsolatedAsyncioTestCase):
             proxy, "_service_availability_response", return_value=None
         ), patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy.proxy_audio_generate(
-                _JsonRequest(body), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
         return response, (submitted[0] if submitted else None)
 

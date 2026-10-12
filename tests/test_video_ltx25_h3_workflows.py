@@ -119,7 +119,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
             proxy, "_service_availability_response", return_value=None
         ):
             response = await proxy.proxy_comfy_video_create(
-                _JsonRequest(body), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
         payload = json.loads(response.body)
         return response.status_code, payload, (submitted[0] if submitted else None)

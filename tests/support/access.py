@@ -199,3 +199,14 @@ def service_app(name: str, *, path: Any, owner_user_id: str | None = None,
             accounts.change_person(owner_user_id, "test", path=path, plan_id=plan_id)
     return admin_store.create_app(name, kind="service", owner_user_id=owner_user_id,
                                   access_plan=plan_id, path=path)
+
+
+def access_context(plan_or_access: AccessPlan | EffectiveAccess | None = None, **identity_kwargs: Any):
+    """An authenticated request context for tests that call a dispatcher directly.
+
+    It holds the plans of a real App key (everything, by default), so the call
+    passes the same checks a request with a key would.
+    """
+    import proxy
+
+    return proxy.AuthContext(identity=identity(plan_or_access, **identity_kwargs))

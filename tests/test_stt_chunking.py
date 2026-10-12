@@ -22,6 +22,7 @@ import httpx
 from starlette.requests import Request
 
 import proxy
+from tests.support.access import access_context
 from gateway import stt_chunking
 from gateway import service_registry
 from gateway.backends.cancellation import CancellationRegistry
@@ -564,8 +565,8 @@ class RequestWorkspaceIsolationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.receipt_store, "finalize", return_value=True),
             ):
                 responses = await asyncio.gather(
-                    proxy.proxy_stt_request(request_for(b"request-A-private-audio"), proxy.NO_AUTH_CONTEXT),
-                    proxy.proxy_stt_request(request_for(b"request-B-private-audio"), proxy.NO_AUTH_CONTEXT),
+                    proxy.proxy_stt_request(request_for(b"request-A-private-audio"), access_context()),
+                    proxy.proxy_stt_request(request_for(b"request-B-private-audio"), access_context()),
                 )
 
             self.assertEqual([response.status_code for response in responses], [200, 200])
@@ -865,7 +866,7 @@ class OutputAndCleanupBoundTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.receipt_store, "begin", side_effect=begun.append),
                 patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
             ):
-                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+                response = await proxy.proxy_stt_request(request, access_context())
 
             self.assertEqual(response.status_code, 503)
             self.assertEqual(json.loads(response.body)["error"]["code"], "stt_cancellation_capacity")
@@ -897,7 +898,7 @@ class OutputAndCleanupBoundTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.receipt_store, "begin"),
                 patch.object(proxy.receipt_store, "finalize", return_value=True),
             ):
-                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+                response = await proxy.proxy_stt_request(request, access_context())
 
             self.assertEqual(response.status_code, 413)
             self.assertEqual(list(config.spool_dir.iterdir()), [])
@@ -976,7 +977,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.receipt_store, "begin"),
                 patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
             ):
-                task = asyncio.create_task(proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT))
+                task = asyncio.create_task(proxy.proxy_stt_request(request, access_context()))
                 await asyncio.sleep(0)
                 disconnect.set()
                 response = await asyncio.wait_for(task, 1)
@@ -1015,7 +1016,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(proxy.receipt_store, "begin", side_effect=began.append),
                 patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
             ):
-                task = asyncio.create_task(proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT))
+                task = asyncio.create_task(proxy.proxy_stt_request(request, access_context()))
                 await asyncio.wait_for(_BlockingSttClient.entered.wait(), 1)
                 disconnect.set()
                 response = await asyncio.wait_for(task, 1)
@@ -1115,7 +1116,7 @@ class DisconnectPropagationTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(proxy.receipt_store, "begin"),
                     patch.object(proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True),
                 ):
-                    task = asyncio.create_task(proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT))
+                    task = asyncio.create_task(proxy.proxy_stt_request(request, access_context()))
                     await asyncio.wait_for(entered.wait(), 1)
                     disconnect.set()
                     response = await asyncio.wait_for(task, 1)
@@ -1175,7 +1176,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(proxy.receipt_store, "begin"),
                     patch.object(proxy.receipt_store, "finalize", return_value=True),
                 ):
-                    response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+                    response = await proxy.proxy_stt_request(request, access_context())
 
                 self.assertEqual(response.status_code, 203)
                 self.assertEqual(response.body, b'{"text":"direct","segments":[]}')
@@ -1229,7 +1230,7 @@ class PassthroughContractTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(proxy.receipt_store, "begin"),
                     patch.object(proxy.receipt_store, "finalize", return_value=True),
                 ):
-                    response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+                    response = await proxy.proxy_stt_request(request, access_context())
 
                 self.assertEqual(response.status_code, status)
                 self.assertEqual(response.body, decoded)
@@ -1339,7 +1340,7 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
             )
             headers = proxy.prepare_downstream_headers(
                 {"authorization": "Bearer caller-key"},
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 snapshot.service_id,
                 "/v1/audio/transcriptions",
                 backend_config=snapshot.backend_config,
@@ -1350,7 +1351,7 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
     def test_selected_backend_policy_and_receipt_never_use_the_legacy_stt_literal(self) -> None:
         receipt = proxy._stt_receipt(
             request=type("Request", (), {"url": type("Url", (), {"path": "/v1/audio/transcriptions"})()})(),
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             operation="transcriptions",
             service_id="stt-selected",
         )
@@ -1360,13 +1361,13 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
             denied = False
 
         with patch.object(proxy, "evaluate_and_apply", side_effect=lambda _identity, policy, applied: seen.append((policy.backend, applied.backend)) or Decision()):
-            proxy._apply_selected_stt_policy(receipt, proxy.NO_AUTH_CONTEXT, operation="transcriptions")
+            proxy._apply_selected_stt_policy(receipt, access_context(), operation="transcriptions")
         self.assertEqual(seen, [("stt-selected", "stt-selected")])
 
     def test_receipt_shape_omits_hostile_upload_data(self) -> None:
         receipt = proxy._stt_receipt(
             request=type("Request", (), {"url": type("Url", (), {"path": "/v1/audio/transcriptions"})()})(),
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             operation="transcriptions",
             service_id="stt-selected",
         )
@@ -1434,7 +1435,7 @@ class AdmissionEvidenceRouteTests(unittest.IsolatedAsyncioTestCase):
                   patch.object(proxy.receipt_store, "finalize") as finalize,
                   patch.object(stt_chunking.GLOBAL_STT_RESOURCE_GATE, "acquire",
                                side_effect=stt_chunking.SttResourceLimitExceeded("private quantities 20 10", decision=decision))):
-                response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT,
+                response = await proxy.proxy_stt_request(request, access_context(),
                                                         execution_snapshot=_config(Path(temp)), route_receipt=receipt)
         self.assertEqual(response.status_code, 413)
         error = json.loads(response.body)["error"]

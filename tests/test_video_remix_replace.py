@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402, access_context
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
@@ -202,7 +202,7 @@ class EditRouteTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.comfy.uploads[0][:2], ("source.webm", b"url-clip"))
         fetch.assert_awaited_once()
-        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", proxy.NO_AUTH_CONTEXT))
+        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", access_context()))
         self.assertEqual(fetch.call_args.kwargs["request"].headers["host"], "testserver")
 
 
