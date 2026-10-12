@@ -134,7 +134,7 @@ test("design errors identify their layer, action and demonstration status", asyn
   await expect(retry).toBeEnabled();
 
   await page.getByRole("tab", { name: "Error", exact: true }).click();
-  const tab = page.getByRole("tabpanel");
+  const tab = page.getByRole("tabpanel", { name: "Error", exact: true });
   await expect(
     tab.getByRole("heading", { name: "Error demonstration", exact: true }),
   ).toBeVisible();

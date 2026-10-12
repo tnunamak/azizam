@@ -396,7 +396,7 @@ describe("WP-20 shell recovery", () => {
     expect(screen.queryByRole("menuitem", { name: "API reference" })).toBeNull();
   });
 
-  it("shows apps loading, failure, retry and empty states in Go to", async () => {
+  it("shows apps loading, failure and retry in Go to, then hides an empty group", async () => {
     clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
     const originalFetch = fetch;
     let commandRequest = false;
@@ -423,8 +423,8 @@ describe("WP-20 shell recovery", () => {
     expect(await screen.findByText(/Apps couldn't be loaded/)).toBeVisible();
     retry = true;
     await user.click(screen.getByText(/Apps couldn't be loaded/).querySelector("button")!);
-    expect(await screen.findByText("No apps match.")).toBeVisible();
-    expect(screen.queryByText("No matches. Try a page or app name.")).toBeNull();
+    expect(await screen.findByText("No matches. Try a page or app name.")).toBeVisible();
+    expect(screen.queryByText(/Apps couldn't be loaded/)).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Go to" }));
     expect(await screen.findByRole("combobox")).toHaveValue("");

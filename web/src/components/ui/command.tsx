@@ -381,7 +381,7 @@ export function CommandPalette({
             onValueChange={setSearch}
           />
           <CommandList>
-            <CommandEmpty>No pages or actions match.</CommandEmpty>
+            <CommandEmpty>No matches. Try a page or app name.</CommandEmpty>
             <CommandGroup heading="Pages">
               {destinations
                 .filter(
@@ -534,6 +534,8 @@ function RemoteCommandGroup({
   retry: () => void;
   children: React.ReactNode;
 }) {
+  // Like cmdk's own groups, a loaded group with no matches is hidden.
+  if (!pending && !failed && count === 0) return null;
   return (
     <CommandGroup heading={heading} forceMount>
       {pending ? (
@@ -543,8 +545,6 @@ function RemoteCommandGroup({
           {`${heading} couldn't be loaded.`}{" "}
           <Button type="button" variant="outline" size="sm" onClick={retry}>Try again.</Button>
         </div>
-      ) : count === 0 ? (
-        <p role="status" className="px-2 py-3 text-sm">No {heading.toLowerCase()} match.</p>
       ) : children}
     </CommandGroup>
   );

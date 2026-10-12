@@ -348,7 +348,9 @@ test("Gallery retry recovers from a failed recorded-example request", async ({
   );
   await page.goto("/ui/showcase/");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Recorded examples" }),
+  ).toContainText(
     "Recorded examples could not be loaded from the gateway. Try again.",
   );
   await expect(page.getByText(/Check your connection/)).toHaveCount(0);
