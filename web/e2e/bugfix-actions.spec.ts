@@ -62,45 +62,6 @@ test("remove an app through Apps & keys and invalidate its key", async ({
   ).toBe(401);
 });
 
-test("Showcase handles real structured request shapes in the browser", async ({
-  page,
-}) => {
-  const exceptions: string[] = [];
-  page.on("pageerror", (error) => exceptions.push(error.message));
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({
-      json: {
-        data: [
-          {
-            id: "structured",
-            base: "/showcase/examples/structured/",
-            card: "chat",
-            title: "Recorded structured request",
-            inputs: [
-              {
-                value: {
-                  model: "fast",
-                  max_tokens: 32,
-                  messages: [{ role: "user", content: "Hello" }],
-                },
-              },
-            ],
-            outputs: [{ kind: "text", text: "Recorded answer" }],
-          },
-        ],
-      },
-    }),
-  );
-  await page.goto("/showcase/");
-  await expect(
-    page.getByText("Recorded answer", { exact: true }),
-  ).toBeVisible();
-  await page.getByText("Recorded input", { exact: true }).click();
-  await expect(page.locator("details pre")).toContainText('"model": "fast"');
-  await expect(page.locator("details pre")).toContainText('"messages": [');
-  expect(exceptions).toEqual([]);
-});
-
 test("audio capability never selects an image-only workflow", async ({
   page,
 }) => {

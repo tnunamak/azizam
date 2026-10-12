@@ -10,6 +10,9 @@ baseline's paths and its own. Only these differences are allowed:
   dashboard and its aliases, /firehose, /r/{id}, old login/logout aliases)
   now fall to the unchanged catch-all, or to the 405 of a route that remains;
 * GET /setup/console is the server setup console's new path;
+* GET and HEAD /showcase/ serve the static product page, and GET and HEAD
+  /showcase answer 308 to it (r18: GET /showcase served the page, GET
+  /showcase/ redirected to it, HEAD was 405). Other methods keep their answers;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -37,6 +40,7 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
 
 
 def _flat(routing: dict) -> dict:
@@ -52,6 +56,8 @@ def _deliberate(key: str) -> str | None:
         return "deleted"
     if path in NEW_PATHS:
         return "new"
+    if path in SHOWCASE_PAGES and _method in {"GET", "HEAD"}:
+        return "showcase"
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
@@ -93,6 +99,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
+        if kind == "showcase" and outcome == SHOWCASE_PAGES[key.split(" ", 1)[1]]:
+            continue
         unexpected[key] = (old.get(key), outcome)
     assert unexpected == {}
 
@@ -107,6 +115,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
         if kind in {"ui", "deleted", "new"}:
             continue
         if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
+            continue
+        if kind == "showcase" and key not in new:
             continue
         unexpected[key] = (old.get(key), new.get(key))
     assert unexpected == {}

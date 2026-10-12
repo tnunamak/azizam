@@ -164,6 +164,9 @@ main { padding-block: 40px 16px; }
 .io { min-width: 0; margin-bottom: 8px; }
 .io:last-child { margin-bottom: 0; }
 .io-label { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+.io-none { margin: 0; font-size: 14px; color: var(--muted); }
+.load-failed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px; background: var(--panel2); border-radius: 6px; }
+.load-failed p { margin: 0; font-size: 14px; color: var(--muted); }
 .io img, .io video { width: 100%; max-height: 26rem; object-fit: contain; border-radius: 6px; background: var(--stage); display: block; }
 .io audio, .done audio { display: block; width: 100%; min-width: 0; }
 pre.in-text, pre.out-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; padding: 12px; max-height: 20rem; overflow: auto; font: 14px/1.5 var(--sans); }

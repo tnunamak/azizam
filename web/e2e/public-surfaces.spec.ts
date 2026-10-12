@@ -1,23 +1,10 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-const sections = {
-  sections: [
-    { id: "chat", title: "Chat and vision", source: "aliases:chat" },
-    { id: "speech", title: "Speech", source: "aliases:speech" },
-    {
-      id: "images",
-      title: "Image generation",
-      match: { intent: "image.generate" },
-    },
-    { id: "more", title: "More workflows", fallback: true },
-  ],
-};
-
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {
-      for (const surface of ["setup", "sign-in", "showcase"] as const) {
+      for (const surface of ["setup", "sign-in"] as const) {
         test(`${surface}: ${state}, ${theme}, ${width}px`, async ({ page }) => {
           await page.setViewportSize({
             width,
@@ -58,37 +45,6 @@ for (const theme of ["light", "dark"] as const) {
                         instance_name: "Browser test gateway",
                         owner_name: "Gateway owner",
                       },
-              }),
-            );
-          } else {
-            await page.route("**/showcase/static/sections.json", (route) =>
-              route.fulfill({ json: sections }),
-            );
-            await page.route("**/showcase/examples/index.json", (route) =>
-              route.fulfill({
-                status: state === "error" ? 503 : 200,
-                contentType: "application/json",
-                body: JSON.stringify({
-                  data:
-                    state === "empty"
-                      ? []
-                      : [
-                          {
-                            id: "chat-recorded",
-                            card: "chat",
-                            title: "A recorded answer",
-                            model: "local-chat",
-                            seconds: 1.2,
-                            inputs: [{ value: "Why is the sky blue?" }],
-                            outputs: [
-                              {
-                                kind: "text",
-                                text: "Air scatters blue light.",
-                              },
-                            ],
-                          },
-                        ],
-                }),
               }),
             );
           }
@@ -136,26 +92,6 @@ for (const theme of ["light", "dark"] as const) {
             }
             await expect(
               page.getByText("Recovery and advanced setup", { exact: true }),
-            ).toHaveCount(0);
-          } else if (state === "empty") {
-            await expect(
-              page.getByText(/No recorded examples yet/),
-            ).toBeVisible();
-            await expect(
-              page.getByRole("heading", { name: "Speech", exact: true }),
-            ).toHaveCount(0);
-          } else {
-            await expect(
-              page.getByText("Air scatters blue light."),
-            ).toBeVisible();
-            await expect(
-              page.getByRole("heading", { name: "Speech", exact: true }),
-            ).toHaveCount(0);
-            await expect(
-              page.getByRole("heading", {
-                name: "Image generation",
-                exact: true,
-              }),
             ).toHaveCount(0);
           }
           expect(
@@ -333,203 +269,5 @@ for (const theme of ["light", "dark"] as const) {
         ["serious", "critical"].includes(v.impact ?? ""),
       ),
     ).toEqual([]);
-  });
-}
-
-test("Gallery retry recovers from a failed recorded-example request", async ({
-  page,
-}) => {
-  let unavailable = true;
-  await page.route("**/showcase/static/sections.json", (route) =>
-    route.fulfill({ json: sections }),
-  );
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({ status: unavailable ? 503 : 200, json: { data: [] } }),
-  );
-  await page.goto("/showcase/");
-  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
-  await expect(
-    page.getByRole("alert").filter({ hasText: "Recorded examples" }),
-  ).toContainText(
-    "Recorded examples could not be loaded from the gateway. Try again.",
-  );
-  await expect(page.getByText(/Check your connection/)).toHaveCount(0);
-  unavailable = false;
-  await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByText(/No recorded examples yet/)).toBeVisible();
-});
-
-test("Gallery shows its empty state when examples have no matching section", async ({
-  page,
-}) => {
-  await page.route("**/showcase/static/sections.json", (route) =>
-    route.fulfill({ json: { sections: [sections.sections[1]] } }),
-  );
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({
-      json: {
-        data: [
-          {
-            id: "unmatched",
-            card: "chat",
-            outputs: [{ kind: "text", text: "Saved answer" }],
-          },
-          { id: "empty", card: "tts", outputs: [] },
-        ],
-      },
-    }),
-  );
-  await page.goto("/ui/showcase/");
-  await expect(page.getByText("No recorded examples yet")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { level: 2, name: "Speech" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "Recorded example", exact: true }),
-  ).toHaveCount(0);
-});
-
-test("Gallery keeps invalid recordings visible and omits empty input disclosures", async ({
-  page,
-}) => {
-  let repaired = false;
-  await page.route("**/showcase/static/sections.json", (route) =>
-    route.fulfill({ json: sections }),
-  );
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({
-      json: {
-        data: [
-          {
-            id: "invalid",
-            card: "chat",
-            title: "Unavailable recording",
-            inputs: [{ value: null }, { value: "   " }],
-            outputs: repaired
-              ? [{ kind: "text", text: "Recovered recording" }]
-              : [
-                  null,
-                  { kind: "image", file: "../private.png" },
-                  { kind: "text", text: " " },
-                ],
-          },
-          {
-            id: "recorded",
-            card: "chat",
-            title: "Recorded values",
-            inputs: [{ value: 0 }, { value: false }],
-            outputs: [{ kind: "text", text: "Saved answer" }],
-          },
-        ],
-      },
-    }),
-  );
-  await page.goto("/ui/showcase/");
-  await expect(page.getByText("This recording could not be loaded.")).toHaveCount(3);
-  await expect(page.getByText("Input was not recorded.")).toHaveCount(1);
-  await expect(
-    page.locator("summary", { hasText: "Recorded input" }),
-  ).toHaveCount(1);
-  await page.locator("summary", { hasText: "Recorded input" }).click();
-  await expect(page.locator("details pre")).toHaveText(["0", "false"]);
-  await expect(
-    page.locator('img[src^="/showcase/examples/"]'),
-  ).toHaveCount(0);
-  await expect(page.getByText(/private.png/)).toHaveCount(0);
-  repaired = true;
-  await page
-    .getByRole("button", { name: "Try again", exact: true })
-    .first()
-    .click();
-  await expect(page.getByText("Recovered recording")).toBeVisible();
-  await expect(page.getByText("This recording could not be loaded.")).toHaveCount(0);
-});
-
-test("Gallery retries an image that failed to load", async ({ page }) => {
-  let unavailable = true;
-  let attempts = 0;
-  await page.route("**/showcase/static/sections.json", (route) =>
-    route.fulfill({ json: sections }),
-  );
-  await page.route("**/showcase/examples/index.json", (route) =>
-    route.fulfill({
-      json: {
-        data: [
-          {
-            id: "image-recorded",
-            card: "image.generate.example",
-            outputs: [
-              { kind: "image", file: "output.png", label: "Recorded picture" },
-            ],
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/showcase/examples/image-recorded/output.png", (route) => {
-    attempts++;
-    return unavailable
-      ? route.fulfill({ status: 503, body: "" })
-      : route.fulfill({
-          contentType: "image/png",
-          body: Buffer.from(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=",
-            "base64",
-          ),
-        });
-  });
-  await page.goto("/ui/showcase/");
-  await expect(page.getByText("This recording could not be loaded.")).toBeVisible();
-  unavailable = false;
-  await page.getByRole("button", { name: "Try again", exact: true }).click();
-  const picture = page.getByRole("img", { name: "Recorded picture" });
-  await expect(picture).toBeVisible();
-  await expect
-    .poll(() => picture.evaluate((image: HTMLImageElement) => image.naturalWidth))
-    .toBe(1);
-  expect(attempts).toBeGreaterThanOrEqual(2);
-  await expect(page.getByText("This recording could not be loaded.")).toHaveCount(0);
-});
-
-for (const kind of ["audio", "video"] as const) {
-  test(`Gallery can retry repeated ${kind} playback errors`, async ({ page }) => {
-    await page.route("**/showcase/static/sections.json", (route) =>
-      route.fulfill({ json: sections }),
-    );
-    await page.route("**/showcase/examples/index.json", (route) =>
-      route.fulfill({
-        json: {
-          data: [
-            {
-              id: "media-recorded",
-              card: "tts",
-              outputs: [{ kind, file: "output.media", label: "Recorded media" }],
-            },
-          ],
-        },
-      }),
-    );
-    // Leave playback pending so this test can exercise native error events
-    // without depending on the browser's installed media codecs.
-    await page.route(
-      "**/showcase/examples/media-recorded/output.media",
-      async () => {
-        // The error event below deliberately interrupts this pending recording.
-      },
-    );
-    await page.goto("/ui/showcase/", { waitUntil: "domcontentloaded" });
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const media = page.locator(kind);
-      await expect(media).toBeVisible();
-      await media.dispatchEvent("error");
-      await expect(
-        page.getByText("This recording could not be loaded."),
-      ).toBeVisible();
-      await page.getByRole("button", { name: "Try again", exact: true }).click();
-      await expect(media).toBeVisible();
-      await expect(
-        page.getByText("This recording could not be loaded."),
-      ).toHaveCount(0);
-    }
   });
 }

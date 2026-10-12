@@ -61,6 +61,25 @@ class ShowcaseRouteTests(unittest.TestCase):
         self.assertIn("text/css", c.get("/showcase/static/showcase.css").headers["content-type"])
         self.assertEqual(c.get("/showcase/static/sections.json").status_code, 200)
 
+    def test_page_at_slash_path(self) -> None:
+        c = _app(self.examples)
+        page = c.get("/showcase/")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers["content-type"], "text/html; charset=utf-8")
+        self.assertEqual(page.headers["cache-control"], "no-cache")
+        self.assertIn("frame-ancestors 'none'", page.headers["content-security-policy"])
+        self.assertIn("<title>", page.text)
+        head = c.head("/showcase/")
+        self.assertEqual((head.status_code, head.content), (200, b""))
+        for method in ("GET", "HEAD"):
+            moved = c.request(method, "/showcase?a=1&b=2", follow_redirects=False)
+            self.assertEqual((moved.status_code, moved.headers["location"]), (308, "/showcase/?a=1&b=2"))
+
+    def test_page_missing_is_404(self) -> None:
+        app = FastAPI()
+        app.include_router(showcase.build_showcase_router(static_dir=self.examples, examples_dir=self.examples))
+        self.assertEqual(TestClient(app).get("/showcase/").status_code, 404)
+
     def test_static_rejects_unknown_and_traversal(self) -> None:
         c = _app(self.examples)
         self.assertEqual(c.get("/showcase/static/nope.js").status_code, 404)
@@ -103,7 +122,7 @@ class ShowcaseRouteTests(unittest.TestCase):
 
     def test_public_path_rules(self) -> None:
         pub = showcase.is_public_showcase_path
-        for p in ("/showcase", "/showcase/static/app.js", "/showcase/examples/index.json", "/showcase/examples/a/b.png"):
+        for p in ("/showcase", "/showcase/", "/showcase/static/app.js", "/showcase/examples/index.json", "/showcase/examples/a/b.png"):
             self.assertTrue(pub(p), p)
         for p in ("/showcase/api/status", "/showcaseX", "/v1/models", "/gateway/v1/workflows"):
             self.assertFalse(pub(p), p)
@@ -115,15 +134,17 @@ class ShowcaseGatewayWiringTests(unittest.TestCase):
         self.assertTrue(proxy.is_public_path("/showcase"))
         self.assertTrue(proxy.is_public_path("/showcase/static/app.js"))
         self.assertFalse(proxy.is_public_path("/showcase/api/status"))
-        # The page is the web app's /showcase/; the data routes stay here.
-        from unittest.mock import patch
-        from ui_fixtures import write_export
+        # The gateway serves the static page itself; the web app has no showcase page.
         client = TestClient(proxy.app)
-        with tempfile.TemporaryDirectory() as tmp, patch.object(
-                proxy.WEB_UI_ROUTE, "directory", write_export(Path(tmp))):
-            response = client.get("/showcase?x=1", follow_redirects=False)
+        response = client.get("/showcase?x=1", follow_redirects=False)
         self.assertEqual(response.status_code, 308)
         self.assertEqual(response.headers["location"], "/showcase/?x=1")
+        page = client.get("/showcase/")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.headers["cache-control"], "no-cache")
+        self.assertEqual(page.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(page.headers["content-security-policy"], showcase.SHOWCASE_CSP)
+        self.assertEqual(client.post("/showcase/").status_code, 404)
         self.assertEqual(client.get("/showcase/examples/index.json").status_code, 200)
 
 

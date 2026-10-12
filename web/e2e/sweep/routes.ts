@@ -320,7 +320,6 @@ export const ROUTES: SweepRoute[] = [
     ],
   },
   { appRoute: "/design", surface: "Design reference (dev)", path: "/design/", roles: owner, dev: true, states: [{ id: "default" }] },
-  { appRoute: "/showcase", surface: "Design reference (dev)", path: "/showcase/", roles: owner, dev: true, states: [{ id: "default" }] },
   {
     appRoute: "(not-found)",
     surface: "Page not found",

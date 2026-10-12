@@ -616,7 +616,7 @@ test("new visitors use the saved default theme and personal choices persist", as
       },
     }),
   );
-  await page.goto(`${baseURL}/showcase/`);
+  await page.goto(`${baseURL}/sign-in/`);
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);

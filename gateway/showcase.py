@@ -1,4 +1,4 @@
-"""``/showcase``: a static, discovery-driven demo page served by the gateway.
+"""``/showcase/``: the public product page, a static page served by the gateway.
 
 The page (``showcase/`` in the repo) is plain HTML, CSS and JavaScript with no
 build step and no CDN. It builds its cards at load time from the gateway's own
@@ -10,7 +10,8 @@ git). Each example is one directory holding ``example.json`` and its media.
 
 Access rules:
 
-* The static page, its assets and the example files are public. They hold no
+* The page (``GET``/``HEAD /showcase/``; ``/showcase`` answers 308 to it), its
+  assets and the example files are public. They hold no
   secrets and no private data; the example script uses only benign prompts.
 * ``GET /showcase/api/status`` goes through the normal gateway authentication,
   like every other data route, because it reports backend state.
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 SHOWCASE_PREFIX = "/showcase"
 _PUBLIC_API_PREFIX = f"{SHOWCASE_PREFIX}/api/"
@@ -116,6 +117,19 @@ def build_showcase_router(
     """Build the router. ``authenticate`` follows ``proxy.authenticate_request``:
     it returns a ``Response`` on failure and anything else on success."""
     router = APIRouter()
+
+    # Same cache rule as the web app's pages: revalidate on every load.
+    @router.api_route(SHOWCASE_PREFIX + "/", methods=["GET", "HEAD"], include_in_schema=False)
+    async def showcase_page() -> Response:
+        path = static_dir / "index.html"
+        if not path.is_file():
+            return JSONResponse({"error": {"code": "showcase_missing"}}, status_code=404)
+        return _file_response(path, cache="no-cache")
+
+    @router.api_route(SHOWCASE_PREFIX, methods=["GET", "HEAD"], include_in_schema=False)
+    async def showcase_page_slashless(request: Request) -> Response:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"{SHOWCASE_PREFIX}/{query}", status_code=308)
 
     @router.get(SHOWCASE_PREFIX + "/static/{name}", include_in_schema=False)
     async def showcase_static(name: str) -> Response:

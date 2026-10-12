@@ -316,3 +316,17 @@ test("Try it Escape returns focus to the opener without intercepting other keys"
   events.keydown({ key: "Escape", preventDefault() {}, stopPropagation() {} });
   assert.equal(focused, "summary");
 });
+
+test("recordedParts keeps recorded inputs and marks outputs it cannot show", () => {
+  assert.deepEqual(C.recordedParts(null), { inputs: [], outputs: [null] });
+  assert.deepEqual(C.recordedParts({ inputs: null, outputs: [] }), { inputs: [], outputs: [null] });
+  const text = { kind: "text", text: "hi" };
+  const image = { kind: "image", file: "a.png" };
+  const json = { kind: "json", value: { a: 1 } };
+  const parts = C.recordedParts({
+    inputs: [null, { value: null }, { value: "  " }, { value: 0 }, { value: false }, { kind: "image", file: "../x.png" }, { kind: "image", file: "in.png" }],
+    outputs: [null, { kind: "text", text: "  " }, { kind: "image" }, { kind: "image", file: "../private.png" }, { kind: "json", value: null }, text, image, json],
+  });
+  assert.deepEqual(parts.inputs, [{ value: 0 }, { value: false }, { kind: "image", file: "in.png" }]);
+  assert.deepEqual(parts.outputs, [null, null, null, null, null, text, image, json]);
+});

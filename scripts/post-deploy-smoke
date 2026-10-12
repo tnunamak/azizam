@@ -43,6 +43,9 @@ if [ -z "$chunk" ]; then check "static chunk" "no /_next/static/ asset found in 
   [ "$ok" = ok ] && { printf '%s\n' "$hdr" | grep -qi '^cache-control:.*immutable' || ok="not immutable ($chunk)"; }
   check "static chunk immutable" "$ok"
 fi
+# The public product page is the gateway's static showcase/, not a web app page.
+out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/showcase/")
+check "product page /showcase/" "$(case "$out" in *'<title>Azizam: your own AI gateway</title>'*$'\n'"200 text/html"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
 out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/v1/models")
 check "models without key" "$(case "$out" in *$'\n'"401 application/json"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "$BASE/v1/models"); check "HEAD models" "$([ "$code" = 405 ] && echo ok || echo "HTTP $code")"

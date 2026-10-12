@@ -1815,10 +1815,11 @@ curl -s "$AZIZAM_BASE_URL/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o
 each stable alias as a capability tagged `alias`, `resolves_to:<target>` and
 `engine:<id>`.
 
-## Showcase page: `/showcase`
+## Product page: `/showcase/`
 
-`GET /showcase` serves a static demo page (source in `showcase/`, no build step,
-no CDN). It builds one card per capability at load time from
+`GET /showcase/` serves the public product page (source in `showcase/`, no build
+step, no CDN, not part of the web app). `/showcase` answers 308 to it. Pages are
+`no-cache`. It builds one card per capability at load time from
 `/gateway/v1/workflows`, `/gateway/v1/capabilities`, `/gateway/v1/aliases`,
 `/v1/voices` and `/openapi.json`, so a new workflow manifest appears without a
 code change. Section order and matching rules are data in
@@ -1828,7 +1829,7 @@ Each card shows a recorded example (input, output, wall time, alias and what it
 resolves to), a Try it form built from the OpenAPI input schema, and copy-paste
 curl, Python and JavaScript. The Try it panels call the gateway from the browser
 on the same origin, so LAN bypass works; an optional API key is kept only in
-`localStorage`. The top strip shows engine status, the ComfyUI queue and whether
+page memory and is cleared on reload. The top strip shows engine status, the ComfyUI queue and whether
 the LLM is generating (`GET /showcase/api/status`, normal auth).
 
 The page, its assets and the example files are public. Examples live in
@@ -2072,7 +2073,7 @@ the RIFE node also declares `3` and `4` as supported values.
 - `/health` is the recommended unauthenticated liveness endpoint. Public
   discovery/static surfaces also include `/.well-known/azizam`,
   `/.well-known/skills`, `/llms.txt`, `/docs`, `/openapi.json`, and the public
-  `/showcase` page/assets/examples. See [PUBLIC_EXPOSURE.md](ops/PUBLIC_EXPOSURE.md)
+  `/showcase/` page, assets and examples. See [PUBLIC_EXPOSURE.md](ops/PUBLIC_EXPOSURE.md)
   for the inventory; use `/health` for Docker/systemd health checks.
 - Dashboard Apps, Profiles, and keys live in `admin.db` and apply live through
   the admin store.

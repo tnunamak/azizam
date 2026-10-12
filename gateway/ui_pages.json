@@ -17,6 +17,5 @@
   "settings": "admin",
   "invite": "public",
   "setup": "public",
-  "showcase": "public",
   "sign-in": "public"
 }}

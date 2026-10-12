@@ -463,6 +463,25 @@
     return out;
   }
 
+  const RECORDED_FILE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
+
+  /** The parts of a recorded example the page can show. Inputs keep only
+   * recorded values (0 and false count). Each output that cannot be shown (null,
+   * blank text, a missing or unsafe file name) becomes null, so the page can say
+   * so in its place; an example with no outputs gets one null. */
+  function recordedParts(ex) {
+    const list = (v) => (Array.isArray(v) ? v : []);
+    const isObj = (x) => Boolean(x) && typeof x === "object";
+    const filled = (v) => !isBlank(typeof v === "string" ? v.trim() : v);
+    const fileOk = (p) => typeof p.file === "string" && RECORDED_FILE.test(p.file);
+    const inputOk = (i) => isObj(i) && (i.file !== undefined ? fileOk(i) : filled(i.value));
+    const outputOk = (o) => isObj(o) && (o.kind === "text" || o.kind === "json"
+      ? filled(typeof o.text === "string" ? o.text : o.value ?? o.text)
+      : fileOk(o));
+    const outputs = list(ex && ex.outputs).map((o) => (outputOk(o) ? o : null));
+    return { inputs: list(ex && ex.inputs).filter(inputOk), outputs: outputs.length ? outputs : [null] };
+  }
+
   /** True only when `target` resolves to the same origin as `base`. Anything
    * unparseable or opaque (data:, javascript:, about:) counts as cross-origin.
    * app.js uses this so the page-memory API key never leaves the gateway origin. */
@@ -498,6 +517,6 @@
     createAnnouncer, tabIndexForKey,
     EXT_KEY, isSameOrigin, shortId, classifyWorkflow, resolveRef, formFields, planWorkflow, fillPath,
     curlFor, pythonFor, jsFor, buildSections, capabilityIndex, aliasesByWorkflow,
-    statusSummary, examplesByCard, PROTOCOLS, isBlank,
+    statusSummary, examplesByCard, recordedParts, PROTOCOLS, isBlank,
   };
 });

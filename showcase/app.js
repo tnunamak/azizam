@@ -718,18 +718,37 @@
 
   // ------------------------------------------------------------------ examples
 
+  const LOAD_FAILED = "This recording could not be loaded.";
+
+  function loadFailed(retry) {
+    return h("div", { class: "load-failed" }, h("p", { text: LOAD_FAILED }),
+      retry ? h("button", { class: "mini", type: "button", text: "Try again", onclick: retry }) : null);
+  }
+
+  /** A recorded file that says so when it fails to load, with Retry. */
+  function recordedMedia(kind, src, opts) {
+    const box = h("div", { class: "recorded-media" }, mediaEl(kind, src, opts));
+    const media = box.querySelector("img, audio, video");
+    if (media) media.addEventListener("error", () => {
+      box.replaceChildren(loadFailed(() => {
+        const fresh = recordedMedia(kind, src, opts);
+        box.replaceWith(fresh);
+        (fresh.querySelector("a, audio, video") || fresh).focus();
+      }));
+    }, { once: true });
+    return box;
+  }
+
   function inputBlock(i, ex) {
-    const label = h("div", { class: "io-label", text: i.label || i.name || i.kind });
-    if (i.kind === "text") return h("div", { class: "io" }, label, h("pre", { class: "in-text", text: i.value }));
-    if (i.kind === "json") return h("div", { class: "io" }, label, h("pre", { class: "in-text", text: typeof i.value === "string" ? i.value : JSON.stringify(i.value, null, 2) }));
-    if (i.file) return h("div", { class: "io" }, label, mediaEl(i.kind, ex.base + i.file, { alt: i.label }));
-    return h("div", { class: "io" }, label, h("pre", { class: "in-text", text: String(i.value ?? "") }));
+    const label = h("div", { class: "io-label", text: i.label || i.name || i.kind || "Request" });
+    if (i.file) return h("div", { class: "io" }, label, recordedMedia(i.kind, ex.base + i.file, { alt: i.label }));
+    return h("div", { class: "io" }, label, h("pre", { class: "in-text", text: typeof i.value === "object" ? JSON.stringify(i.value, null, 2) : String(i.value) }));
   }
 
   function outputBlock(o, ex) {
     const label = o.label ? h("div", { class: "io-label", text: o.label }) : null;
     if (o.kind === "text" || o.kind === "json") return h("div", { class: "io" }, label, h("pre", { class: "out-text", text: typeof o.text === "string" ? o.text : JSON.stringify(o.value ?? o.text, null, 2) }));
-    return h("div", { class: "io" }, label, mediaEl(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
+    return h("div", { class: "io" }, label, recordedMedia(o.kind, ex.base + o.file, { loop: o.kind === "video" && ex.loop }));
   }
 
   function recordedDay(iso) {
@@ -744,14 +763,17 @@
     if (ex.seconds != null) meta.push(h("span", { class: "chip time", title: "Wall time of this request through the gateway, when it was recorded", text: "Ran in " + (ex.seconds < 90 ? ex.seconds.toFixed(1) + " s" : Math.round(ex.seconds) + " s") }));
     if (ex.model) meta.push(h("span", { class: "chip model", text: ex.model + (ex.resolves_to && ex.resolves_to !== ex.model ? " -> " + ex.resolves_to : "") }));
     for (const c of ex.chips || []) meta.push(h("span", { class: "chip", text: c }));
-    const load = form && form._load && (ex.inputs || []).some((i) => i.name)
+    const parts = C.recordedParts(ex);
+    const load = form && form._load && parts.inputs.some((i) => i.name)
       ? h("button", { class: "mini", type: "button", text: "Load into Try it", onclick: () => { const panel = form.closest("details"); panel._returnFocus = load; panel.open = true; form._load(ex); focusPanel(panel); } })
       : null;
     return h("div", { class: "example" },
       h("div", { class: "io-row" },
-        h("div", { class: "io-col in" }, h("div", { class: "col-head", text: "Input" }), (ex.inputs || []).map((i) => inputBlock(i, ex))),
+        h("div", { class: "io-col in" }, h("div", { class: "col-head", text: "Input" }),
+          parts.inputs.length ? parts.inputs.map((i) => inputBlock(i, ex)) : h("p", { class: "io-none", text: "Input was not recorded." })),
         h("div", { class: "io-arrow", "aria-hidden": "true", text: "\u2192" }),
-        h("div", { class: "io-col out" }, h("div", { class: "col-head", text: "Output" }), (ex.outputs || []).map((o) => outputBlock(o, ex)))),
+        h("div", { class: "io-col out" }, h("div", { class: "col-head", text: "Output" }),
+          parts.outputs.map((o) => (o ? outputBlock(o, ex) : loadFailed(loadAll))))),
       ex.title ? h("div", { class: "ex-title", text: ex.title }) : null,
       h("div", { class: "ex-meta" }, meta, load));
   }
@@ -927,7 +949,9 @@
     const [workflows, openapi, capabilities, aliases, sectionsDoc, ex, voices] = await Promise.all([
       get("/gateway/v1/workflows"), get("/openapi.json"), get("/gateway/v1/capabilities"), get("/gateway/v1/aliases"),
       fetch("/showcase/static/sections.json").then((r) => r.json()),
-      fetch("/showcase/examples/index.json").then((r) => r.json()).catch(() => ({ data: [] })),
+      fetch("/showcase/examples/index.json")
+        .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .catch((e) => ({ data: [], __error: e })),
       get("/v1/voices"),
     ]);
     if (version !== loadVersion) return;
@@ -952,6 +976,7 @@
       else if (!state.sections.some((section) => section.cards.length)) discoveryNotice("No live capabilities were returned by this gateway.", "Retry discovery", loadAll);
       else banner.hidden = true;
     }
+    if (ex.__error) discoveryNotice("Recorded examples could not be loaded from the gateway.", "Try again", loadAll);
     } catch (error) {
       if (version === loadVersion) discoveryNotice("Could not load live capabilities. " + error.message, "Retry discovery", loadAll);
     } finally {
