@@ -6,7 +6,7 @@
   "exchanges": [
     {
       "id": "chat",
-      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}", "stream": {"$absent": true}}},
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}"}},
       "response": {
         "status": 200,
         "json": {

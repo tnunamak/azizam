@@ -49,7 +49,7 @@ class VirtualClock:
             due = [w for w in self._waiters if w.deadline <= self._now]
             self._waiters = [w for w in self._waiters if w.deadline > self._now]
         for waiter in due:
-            waiter.loop.call_soon_threadsafe(_resolve, waiter.future, None)
+            _call_soon(waiter.loop, _resolve, waiter.future, None)
 
     async def sleep(self, seconds: float) -> None:
         """Block until the test advances the clock by ``seconds`` (inf: never)."""
@@ -65,7 +65,7 @@ class VirtualClock:
             self._waiters.append(waiter)
             listeners, self._blocked_listeners = self._blocked_listeners, []
         for listener_loop, listener in listeners:
-            listener_loop.call_soon_threadsafe(_resolve, listener, None)
+            _call_soon(listener_loop, _resolve, listener, None)
         try:
             await future
         finally:
@@ -91,9 +91,18 @@ class VirtualClock:
             waiters, self._waiters = self._waiters, []
             listeners, self._blocked_listeners = self._blocked_listeners, []
         for waiter in waiters:
-            waiter.loop.call_soon_threadsafe(_fail, waiter.future, ClockClosed())
+            _call_soon(waiter.loop, _fail, waiter.future, ClockClosed())
         for listener_loop, listener in listeners:
-            listener_loop.call_soon_threadsafe(_fail, listener, ClockClosed())
+            _call_soon(listener_loop, _fail, listener, ClockClosed())
+
+
+def _call_soon(loop: asyncio.AbstractEventLoop, callback, *args) -> None:
+    # A test that already finished closed its loop; nothing waits there any more.
+    try:
+        loop.call_soon_threadsafe(callback, *args)
+    except RuntimeError:
+        if not loop.is_closed():
+            raise
 
 
 def _resolve(future: asyncio.Future, value: object) -> None:

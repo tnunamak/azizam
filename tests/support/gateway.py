@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -51,3 +52,33 @@ def gateway_client(*, client: tuple[str, int] = ("127.0.0.1", 40000)) -> httpx.A
         transport=StreamingASGITransport(proxy.app, client=client),
         base_url="http://gateway.test",
     )
+
+
+class ResponseTap:
+    """Wrap an ASGI app and let a test wait on the response bytes it has sent.
+
+    Protocol frontends reach the chat route over the gateway's own loopback
+    hop. Tapping that hop lets a test release the next upstream chunk only
+    after the hop has relayed the previous one, whatever the frontend emits.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+        self.sent = bytearray()
+        self._changed: asyncio.Event | None = None
+
+    async def __call__(self, scope, receive, send) -> None:
+        async def tapped(message) -> None:
+            if message["type"] == "http.response.body" and message.get("body"):
+                self.sent += message["body"]
+                if self._changed is not None:
+                    self._changed.set()
+            await send(message)
+
+        await self.app(scope, receive, tapped)
+
+    async def until_sent(self, marker: bytes, count: int) -> None:
+        """Return once ``marker`` occurs ``count`` times in the bytes sent so far."""
+        while self.sent.count(marker) < count:
+            self._changed = asyncio.Event()
+            await self._changed.wait()
