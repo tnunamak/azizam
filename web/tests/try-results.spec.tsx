@@ -139,7 +139,7 @@ describe("PF-008 and PF-010 the receipt", () => {
           : undefined;
     await run();
     const link = await screen.findByRole("link", { name: "View receipt" });
-    expect(link).toHaveAttribute("href", "/r/req-123456789");
+    expect(link).toHaveAttribute("href", "/usage/?receipt=req-123456789");
     expect(screen.queryByText(/req-1234/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy receipt ID" })).toBeNull();
   });

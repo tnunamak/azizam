@@ -393,7 +393,7 @@ describe("Try keys stay in page memory", () => {
 
   async function runPage(container: HTMLElement) {
     const page = within(container);
-    await waitFor(() => expect(page.getByRole("combobox")).toHaveTextContent("Chat model"));
+    await waitFor(() => expect(page.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
     await userEvent.setup().click(page.getByRole("button", { name: "Run" }));
     await page.findByText("Fixture reply");
     await waitFor(() => expect(page.getByRole("button", { name: "Run" })).toBeEnabled());
@@ -485,7 +485,7 @@ describe("Try keys stay in page memory", () => {
     let finish!: (value: ReturnType<typeof credential>) => void;
     account.tryKey.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const view = render(<TryPage />);
-    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
     await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(account.tryKey).toHaveBeenCalledTimes(1));
     account.viewer = { ...account.viewer, authenticated: false };
