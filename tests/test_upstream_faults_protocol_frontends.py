@@ -199,7 +199,6 @@ def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, 
     expect_fixed("FK-B4", events, expected)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B5: after an upstream drop the frontends end with a successful stop (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_upstream_drop_mid_stream_ends_with_a_protocol_error(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway

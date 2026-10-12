@@ -25196,6 +25196,19 @@ async def _drain_streaming_upstream_error(
     return text[:1000] or fallback
 
 
+class UpstreamStreamError(Exception):
+    """The chat stream carried an in-band error event after its headers."""
+
+
+def _raise_on_stream_error_event(event: Mapping[str, Any]) -> None:
+    """An ``{"error": ...}`` event ends the stream as a failure, not a finish."""
+    error = event.get("error")
+    if isinstance(error, Mapping):
+        raise UpstreamStreamError(str(error.get("message") or "Upstream chat stream failed."))
+    if isinstance(error, str) and error:
+        raise UpstreamStreamError(error)
+
+
 async def _iter_openai_sse_json(upstream: httpx.Response):
     """Yield decoded JSON payloads from OpenAI-style ``data:`` SSE lines."""
     buffer = b""
@@ -25225,6 +25238,7 @@ async def _iter_openai_sse_json(upstream: httpx.Response):
             if parsed is StopAsyncIteration:
                 return
             if parsed is not None:
+                _raise_on_stream_error_event(parsed)
                 yield parsed
 
     if buffer.strip():

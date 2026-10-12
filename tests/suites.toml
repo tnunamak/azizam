@@ -211,16 +211,6 @@ reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-sco
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_upstream_drop_mid_stream_ends_with_a_protocol_error[anthropic]"
-reason = "FK-B5: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_upstream_drop_mid_stream_ends_with_a_protocol_error[ollama]"
-reason = "FK-B5: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_upstream_faults_protocol_frontends.py::test_rate_limit_keeps_status_retry_after_and_message[anthropic-text]"
 reason = "FK-B6: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
 
