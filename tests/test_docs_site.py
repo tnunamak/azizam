@@ -201,7 +201,8 @@ class ProductPageLinkTests(unittest.TestCase):
         hrefs = set(re.findall(r'href="([^"]+)"', html))
         self.assertIn("/showcase/docs/", hrefs)
         self.assertIn("/showcase/docs/start/install/", hrefs)
-        self.assertFalse([h for h in hrefs if "github.com" in h and "/docs/" in h], hrefs)
+        self.assertNotIn("github.com", html.lower())
+        self.assertFalse([h for h in hrefs if "github" in h], hrefs)
 
 
 if __name__ == "__main__":
