@@ -664,7 +664,7 @@ class ProviderAdminApiTests(unittest.TestCase):
                 "error": "ledger_missing",
             },
         )
-        self.assertIn({"id": "builders", "record_id": "builders", "name": "Builders"}, body["available_plans"])
+        self.assertNotIn("available_plans", body)
         self.assertNotIn("sk-live-secret", response.text)
         self.assertNotIn("TABBY_API_KEY", response.text)
 
@@ -728,7 +728,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         ledger_db = Path(tmpdir.name) / "provider_spend.db"
-        profile = plan_for("builders", paid=sorted({"openrouter"}))
+        profile = identity_of(plan_for("builders", paid=sorted({"openrouter"})))
         provider = ProviderRef(
             id="openrouter",
             base_url="https://openrouter.test",
