@@ -60,5 +60,13 @@
       "/v1/systemone"
     ],
     "framing": "none"
+  },
+  "http-load-unload": {
+    "paths": [
+      "/v1/model",
+      "/v1/model/load",
+      "/v1/model/unload"
+    ],
+    "framing": "none"
   }
 }

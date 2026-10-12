@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import proxy
 from gateway import admin_store, media_jobs, media_metadata, receipt_store, prompt_memory
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 
 def _wav() -> bytes:
@@ -27,7 +28,7 @@ def _wav() -> bytes:
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is required")
 @pytest.mark.parametrize("policy", ["request_forget", "server_disabled", "remember"])
-def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_path, policy):
+def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_path, policy, fake_upstreams, monkeypatch):
     sentinel = f"speech-private-{policy}-e97d"
     data_dir = tmp_path / "data"
     cache_dir = tmp_path / "cache"
@@ -49,18 +50,10 @@ def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_
         )
     upstream = media_metadata.embed_media_tags(_wav(), ".wav", {"comment": sentinel})
 
-    class FakeClient:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def post(self, _url, **_kwargs):
-            return proxy.httpx.Response(200, content=upstream, headers={"content-type": "audio/wav"})
+    speech = fake_upstreams.asgi(load_scenario("openai-compatible/speech-buffered", wav_hex=upstream.hex()))
+    monkeypatch.setattr(proxy, "host_for_capability", lambda _: speech.base_url)
+    # One engine id ("tts") serves every model: the privacy contract does not depend on the tier.
+    monkeypatch.setattr(proxy, "resolve_model_for_operation", lambda op, model: proxy.ModelResolution(model, model, op))
 
     body = {"model": "tts-1", "voice": "alloy", "input": sentinel, "response_format": "wav"}
     if policy == "request_forget":
@@ -73,11 +66,12 @@ def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_
          patch.object(proxy, "_enforce_runtime_route_policy", return_value=None), \
          patch.object(proxy, "_service_availability_response", return_value=None), \
          patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)), \
-         patch.object(proxy, "authenticate_request", return_value=auth), \
-         patch.object(proxy.httpx, "AsyncClient", FakeClient):
+         patch.object(proxy, "authenticate_request", return_value=auth):
         response = TestClient(proxy.app).post("/v1/audio/speech", json=body)
 
     assert response.status_code == 200, response.text
+    [forwarded] = speech.calls("speech")
+    assert forwarded.json["input"] == sentinel
     assert sentinel not in json.dumps(media_metadata.read_media_tags(response.content, ".wav"))
     if policy == "remember":
         rows = prompt_memory.get_person_prompts(person["id"], path=jobs_db)

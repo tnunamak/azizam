@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 from typing import Iterator
 
+import httpx
 import pytest
 
 from .app import FakeUpstream
@@ -20,6 +21,7 @@ class FakeUpstreams:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.clock = VirtualClock()
         self._monkeypatch = monkeypatch
+        self._real_client = httpx.AsyncClient
         self._router: HostRouter | None = None
         self._fakes: list[FakeUpstream] = []
         self._servers: list[LoopbackServer] = []
@@ -48,6 +50,37 @@ class FakeUpstreams:
         fake.name = f"{scenario.name}@{server.base_url}"
         self._fakes.append(fake)
         return fake
+
+    def track_clients(self, module) -> list[httpx.AsyncClient]:
+        """Make ``module.httpx.AsyncClient`` build real clients that note their own closing.
+
+        This is not an upstream double: the client keeps its real transport (so
+        a fake served by this fixture answers it, with the caller's real
+        timeouts). Use it to assert resource ownership, ``closed`` on each
+        client the code under test created, in creation order. A later call starts a
+        new list.
+        """
+        real = self._real_client
+        created: list[httpx.AsyncClient] = []
+
+        class TrackedClient(real):  # type: ignore[valid-type, misc]
+            closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+                await super().aclose()
+
+            async def __aexit__(self, *exc_info) -> None:
+                self.closed = True
+                await super().__aexit__(*exc_info)
+
+        def build(*args, **kwargs) -> httpx.AsyncClient:
+            client = TrackedClient(*args, **kwargs)
+            created.append(client)
+            return client
+
+        self._monkeypatch.setattr(module.httpx, "AsyncClient", build)
+        return created
 
     def problems(self) -> list[str]:
         return [problem for fake in self._fakes for problem in fake.problems()]

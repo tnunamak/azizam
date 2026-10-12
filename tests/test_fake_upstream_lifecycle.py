@@ -240,3 +240,55 @@ def test_a_cancelled_listener_is_removed_from_the_clock() -> None:
         return len(clock._blocked_listeners)
 
     assert asyncio.run(scenario()) == 0
+
+
+def test_a_client_that_closes_a_held_stream_is_recorded_and_one_that_reads_it_whole_is_not(monkeypatch) -> None:
+    fakes = FakeUpstreams(monkeypatch)
+    held = fakes.asgi(load_scenario("openai-compatible/speech-stream-held"))
+    whole = fakes.asgi(load_scenario("openai-compatible/speech-split-sample"))
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient() as client:
+            response = await client.send(client.build_request("POST", f"{held.base_url}/v1/audio/speech"), stream=True)
+            assert await anext(response.aiter_raw()) == bytes.fromhex("0100")
+            assert held.client_closed == []
+            await response.aclose()
+            assert held.client_closed == ["speech"]
+            call = asyncio.create_task(client.post(f"{whole.base_url}/v1/audio/speech"))
+            await fakes.clock.until_waiting()
+            fakes.clock.advance(1)
+            assert (await call).content == bytes.fromhex("01000200")
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        fakes.close()
+    assert whole.client_closed == []
+    assert fakes.problems() == []
+
+
+def test_track_clients_notes_closing_without_replacing_the_transport(monkeypatch) -> None:
+    import types
+
+    fakes = FakeUpstreams(monkeypatch)
+    fake = fakes.asgi(load_scenario("openai-compatible/speech-split-sample"))
+    module = types.SimpleNamespace(httpx=httpx)
+    first = fakes.track_clients(module)
+
+    async def scenario() -> None:
+        opened = httpx.AsyncClient()  # tracked: built through the patched name
+        async with httpx.AsyncClient() as scoped:
+            call = asyncio.create_task(scoped.post(f"{fake.base_url}/v1/audio/speech"))
+            await fakes.clock.until_waiting()
+            fakes.clock.advance(1)
+            assert (await call).status_code == 200  # the real client reached the fake
+        await opened.aclose()
+
+    try:
+        asyncio.run(scenario())
+        assert [client.closed for client in first] == [True, True]
+        assert fakes.track_clients(module) == []  # a later call starts a new list
+    finally:
+        monkeypatch.undo()
+        fakes.close()
+    assert fakes.problems() == []

@@ -1,0 +1,26 @@
+{
+  "protocol": "comfyui",
+  "name": "upload-text-reply",
+  "description": "The image upload is answered once with a status and a plain-text body.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image (multipart, answers {name, subfolder, type}), POST /prompt, GET /history/{prompt_id}, POST /api/jobs/{id}/cancel (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "upload",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "status": "{{status}}",
+        "body": [
+          {
+            "text": "{{text}}"
+          }
+        ]
+      }
+    }
+  ]
+}

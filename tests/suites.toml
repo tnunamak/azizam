@@ -66,6 +66,12 @@ framework = "pytest"
 case = "tests/test_comfy_workflow_metadata_catalog.py::test_workflow_derives_a_complete_ui_graph[workflows/audio/tangoflux.json]"
 reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when the gap closes"
 
+# FK-NEXT lane: FK-B9 found by the speech protocol faults; the fix is on fix/fk-error-envelope.
+[[xfail]]
+framework = "pytest"
+case = "tests/test_upstream_faults_speech.py::test_a_rate_limited_engine_status_and_retry_after_reach_the_caller"
+reason = "FK-B9: fix on fix/fk-error-envelope; strict xfail with a KnownBug-scoped oracle"
+
 # FK lane: known gateway bugs, each pinned by a strict xfail whose KnownBug oracle covers only that bug.
 # The fix is on fix/fk-upstream-faults; the release that merges it removes these entries and the markers.
 [[xfail]]

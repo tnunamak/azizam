@@ -1,0 +1,31 @@
+{
+  "protocol": "openai-compatible",
+  "name": "speech-disconnect-mid-stream",
+  "description": "The engine drops the connection after the first audio chunk.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/speech with chunked raw PCM (response_format=pcm) as served by speech engines; the gateway reads it in gateway/speech_stream.py via proxy._stream_tts_upstream"
+  },
+  "exchanges": [
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "headers": {
+          "content-type": "audio/pcm"
+        },
+        "body": [
+          {
+            "hex": "0100"
+          },
+          {
+            "disconnect": true
+          }
+        ]
+      }
+    }
+  ]
+}

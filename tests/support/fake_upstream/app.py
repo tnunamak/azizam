@@ -56,6 +56,8 @@ class FakeUpstream:
     base_url: str = ""
     requests: list[RecordedRequest] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
+    # Exchange ids whose client closed the connection before the response ended.
+    client_closed: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -155,7 +157,11 @@ class FakeUpstream:
         watcher = asyncio.create_task(watch())
         try:
             await self._respond(exchange.response, send, disconnected)
-        except (ClockClosed, _ClientGone):
+        except _ClientGone:
+            with self._lock:
+                self.client_closed.append(exchange.id)
+            return
+        except ClockClosed:
             return
         finally:
             watcher.cancel()
