@@ -25490,6 +25490,10 @@ async def ollama_ps(request: Request):
     )
     if policy_error is not None:
         return policy_error
+    access = _access_for_auth_context(auth_context)
+    if not all("chat" in plan.can_use for plan in (access.person_plan, access.app_plan)):
+        # Nothing here could be listed, so the engine is not asked what runs.
+        return _json_error_response(ollama_protocol.ps_response_from_model_summaries([]), status_code=200)
     return _json_error_response(
         ollama_protocol.ps_response_from_model_summaries(
             await _ollama_loaded_model_summaries(auth_context)

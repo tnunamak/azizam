@@ -665,6 +665,8 @@ _METADATA_CONTRACT = {
     ("GET", "/gateway/v1/extensions"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases/resolve"): _DISCOVERY,
+    ("GET", "/api/version"): "a constant: the Ollama API version the adapter speaks",
+    ("GET", "/ollama/api/version"): "a constant: the Ollama API version the adapter speaks",
     ("GET", "/sdapi/v1/options"): _A1111_METADATA,
     ("GET", "/sdapi/v1/sd-models"): _A1111_METADATA,
     ("GET", "/sdapi/v1/samplers"): _A1111_METADATA,
