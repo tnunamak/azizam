@@ -1937,6 +1937,12 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
+        # The App answers to the gateway owner (a person) and follows their plan.
+        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="o@example.com", path=self.db)
+        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=self.db)
+        accounts.initialize(self.db)
+        accounts.change_person(owner["id"], "test", path=self.db,
+                               plan_id=store_plan("Everything", path=self.db)["id"])
         admin_key, _, _ = create_admin_service_account_key(
             "real-owner",
             path=self.db,
@@ -1980,9 +1986,10 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer", created.text)
             self.assertIn("setup-copy-btn", created.text)
 
-            apps = admin_store.list_apps(path=self.db)
+            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "service"]
             self.assertEqual(len(apps), 1)
-            self.assertEqual(apps[0]["kind"], "service")
+            self.assertEqual(apps[0]["owner_user_id"], owner["id"])
+            self.assertEqual(apps[0]["access_plan"], "person")
             credentials = [
                 credential
                 for credential in admin_store.list_credentials(path=self.db)
@@ -2056,12 +2063,29 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # The persisted verifier is never the plaintext password.
         self.assertNotIn("correct-horse-battery", str(verifier))
 
+        # A fresh gateway has no built-in default, so the first owner holds one
+        # ordinary starting plan and their personal App follows it.
+        plan_id = admin_store.person_plan_id(users[0]["id"], path=self.db)
+        self.assertIsNotNone(plan_id)
+        self.assertEqual([p["id"] for p in admin_store.list_access_plans(path=self.db)], [plan_id])
+        self.assertEqual(admin_store.get_access_plan(plan_id, path=self.db)["name"], "Local only")
+        [personal] = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+        self.assertEqual(personal["access_plan"], "person")
+
         # The freshly-created owner is signed in with an owner session.
         self.assertEqual(self.client.get("/admin/api/session").status_code, 200)
         try:
             self.client.cookies.clear()
         except Exception:
             pass
+
+    def test_second_person_on_a_fresh_gateway_gets_no_plan(self) -> None:
+        self.client.post("/setup/local-owner", data={
+            "email": "owner@example.com", "password": "correct-horse-battery",
+            "password_confirm": "correct-horse-battery"}, follow_redirects=False)
+        member = admin_store.upsert_oidc_user("https://idp.example", "member", email="m@example.com", path=self.db)
+        self.assertIsNone(admin_store.seed_first_owner_plan(member["id"], path=self.db))
+        self.assertIsNone(admin_store.person_plan_id(member["id"], path=self.db))
 
     def test_setup_local_owner_accepts_plain_username_without_at_sign(self) -> None:
         # A self-hoster shouldn't have to invent an email for a break-glass

@@ -1273,6 +1273,46 @@ def person_plan_id(user_id: str, *, path: Path = DB_PATH) -> str | None:
     return row[0] if row else None
 
 
+STARTER_PLAN_NAME = "Local only"
+
+
+def seed_first_owner_plan(user_id: str, *, path: Path = DB_PATH) -> str | None:
+    """Give the first owner of a fresh instance one working plan.
+
+    Without it the owner would be refused on their own gateway until they had
+    built a plan (there is no built-in default; design §2.8). The plan allows
+    every local model and workflow, no paid providers, no direct engine
+    access. It is an ordinary plan the owner can edit or delete; it is not a
+    fallback for anyone else. Does nothing if any plan exists or the person
+    already holds one. Returns the new plan id.
+    """
+    from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, plan_to_document
+
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM access_plans LIMIT 1").fetchone() is not None:
+            conn.rollback()
+            return None
+        _insert_account_access(conn, user_id)
+        if conn.execute("SELECT plan_id FROM account_access WHERE user_id = ?", (user_id,)).fetchone()[0] is not None:
+            conn.rollback()
+            return None
+        plan_id = _gen_id("plan")
+        document = plan_to_document(AccessPlan(
+            id=plan_id, name=STARTER_PLAN_NAME,
+            can_use={capability: CapabilityGrant(all_items=True) for capability in CAPABILITIES},
+            can_load_models=True,
+        ))
+        ts = _now()
+        conn.execute(
+            "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (plan_id, STARTER_PLAN_NAME, json.dumps(document, ensure_ascii=False, sort_keys=True), ts, ts),
+        )
+        conn.execute("UPDATE account_access SET plan_id = ? WHERE user_id = ?", (plan_id, user_id))
+        conn.commit()
+    return plan_id
+
+
 INVITE_ACCESS_PLAN_SETTING_KEY = "invite_access_plan"
 
 

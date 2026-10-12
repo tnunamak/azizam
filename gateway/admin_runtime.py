@@ -335,7 +335,9 @@ class AdminSQLiteStore:
         if not owner_user_id:
             owner_user_id = admin_store.instance_owner_id(path=self.path) or ""
         if not owner_user_id:
-            raise ValueError("an app needs an accountable person: owner_user_id")
+            raise ValueError(
+                "an app needs a person who answers for it: pass owner_user_id, or create the owner account first"
+            )
         if admin_store.get_user(owner_user_id, path=self.path) is None:
             raise ValueError(f"user {owner_user_id!r} not found")
         access_plan = str(data.get("access_plan") or "").strip()

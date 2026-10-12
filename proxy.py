@@ -16224,6 +16224,9 @@ async def setup_create_local_owner(request: Request):
     )
     if user is None:
         return RedirectResponse("/setup/", status_code=303)
+    # A fresh gateway has no built-in default plan, so the first owner gets one
+    # ordinary starting plan; without it they would be refused on their own gateway.
+    admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
     # Parity with OIDC login: give the new owner a personal App up front so the
     # portal can hand them a working key without a separate "create App" step.
     _ensure_personal_app_for_owner(user, role="owner")
@@ -16407,7 +16410,7 @@ async def setup_create_first_app(request: Request):
             )
         else:
             app_record = ADMIN_STORE.create_app(
-                data={"name": app_name, "kind": "service"},
+                data={"name": app_name, "kind": "service", "access_plan": "person"},
                 actor=actor,
             )
             credential = ADMIN_STORE.create_credential(
@@ -16540,6 +16543,7 @@ async def admin_oidc_callback(request: Request):
                 granted_by="oidc-bootstrap",
                 path=ADMIN_STORE.path,
             )
+            admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
         claim_role = admin_role_from_oidc_claims(claims, config=cfg)
         effective_grants = admin_store.reconcile_oidc_admin_roles(
             str(user["id"]), {claim_role} if claim_role in {"owner", "admin"} else set(),
