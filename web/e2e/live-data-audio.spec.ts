@@ -23,8 +23,32 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   tampered.searchParams.set("md", "full");
   expect((await page.request.get(tampered.toString())).status()).toBe(403);
 
+  // Choosing a kind refreshes the list. A refresh signs every URL again, and a
+  // tile whose URL changed is replaced, which ends a playing track. Answer
+  // that refresh late with new URLs, so the test meets the replacement on
+  // every run and must wait for it.
+  await page.route("**/me/api/media?*kind=audio*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const asset of body.assets) asset.download_url += "&refresh=1";
+    await route.fulfill({ response, json: body });
+  });
+  const firstList = page.waitForResponse((candidate) =>
+    candidate.url().includes("/me/api/media?limit=40&scope=everyone"),
+  );
   await page.goto("/library/");
+  await (await firstList).finished();
+  const refreshed = page.waitForResponse((candidate) =>
+    candidate.url().includes("kind=audio"),
+  );
   await page.getByRole("button", { name: "Audio", exact: true }).click();
+  await (await refreshed).finished();
+  // The grid is busy while the old tiles stand in for the refresh.
+  await expect(page.locator("[aria-busy]:has(article)")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
   const audio = page.locator("article audio").first();
   await expect(audio).toBeAttached();
   await expect(audio).toHaveAttribute("preload", "none");
