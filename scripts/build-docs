@@ -131,7 +131,10 @@ def _highlight(code: str, lang: str, _attrs: str) -> str:
         lexer = get_lexer_by_name(lang)
     except ClassNotFound:
         raise BuildError(f"unknown code language '{lang}'") from None
-    return pygments_highlight(code, lexer, _FORMATTER)
+    # Quotes need no escaping in element text, and Pygments releases differ on
+    # whether they escape them; normalise so --check is stable across versions.
+    out = pygments_highlight(code, lexer, _FORMATTER)
+    return out.replace("&quot;", '"').replace("&#39;", "'").replace("&#x27;", "'")
 
 
 def make_renderer() -> MarkdownIt:
