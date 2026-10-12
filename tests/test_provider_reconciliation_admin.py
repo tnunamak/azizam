@@ -162,6 +162,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
                         "settled_at": 1_700_000_010,
                         "request_id": "req_123",
                         "generation_id": "gen_456",
+                        "app_name": None,
                     }
                 ]
             },
