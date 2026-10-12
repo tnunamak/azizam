@@ -4,6 +4,7 @@
 # Independent jobs and browser fixtures run in isolated detached worktrees.
 # A passed tree is not rerun unless --force is given. See docs/ops/CI.md.
 set -euo pipefail
+[[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
 signoff=0 force=0 port=18640 shards=10 py_workers=12 skip_compose=0
 while (($#)); do

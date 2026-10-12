@@ -28,6 +28,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+if not os.environ.get("AZIZAM_PRIORITY_SET"):  # nice 19 + idle I/O, see scripts/low-priority
+    _lp = Path(__file__).resolve().parent / "low-priority"
+    os.execv(_lp, [str(_lp), sys.executable, __file__, *sys.argv[1:]])
+
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {".git", "node_modules", "venv", ".venv", "web", "data", "cache", "__pycache__"}
 # Any change here can alter every test's outcome.

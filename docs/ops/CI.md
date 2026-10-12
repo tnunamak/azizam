@@ -89,6 +89,10 @@ the gate it finishes before the slowest browser lane, which ends the run, and
 all jobs share the CPU, so more workers would only add contention. The lanes
 start after Compose, whose time varies with Docker's build cache.
 
+## Priority
+
+`scripts/ci-local`, `scripts/run-hermetic-pytest.sh`, `scripts/test-affected` and the `web/` `test:components` and `test:e2e` scripts re-run themselves at `nice -n 19` and idle I/O class (`scripts/low-priority`), so test load does not slow the live gateway on the same machine. Set `AZIZAM_TEST_PRIORITY=normal` to skip this on a quiet machine.
+
 ## Affected tests for lanes
 
 `scripts/test-affected [--base REF] [--list] [--e2e]` runs only the tests that

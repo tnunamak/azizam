@@ -3,6 +3,7 @@
 # Run pytest from an exact Git tree with no operator filesystem, environment,
 # network, processes, IPC, terminal, or service manager access.
 set -euo pipefail
+[[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 state_root="$HOME/.tmp"

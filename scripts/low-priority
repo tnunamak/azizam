@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Run a command at nice 19 and idle I/O class so test load cannot starve the
+# live gateway on this machine. Children inherit both, so call it once at the
+# top of an entry point:  [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec scripts/low-priority "$0" "$@"
+# AZIZAM_TEST_PRIORITY=normal skips the change (quiet machine).
+# AZIZAM_PRIORITY_DRYRUN=1 prints "nice=N ionice=CLASS" for the final priority
+# instead of running the command.
+set -euo pipefail
+export AZIZAM_PRIORITY_SET=1
+(($#)) || { echo "usage: low-priority COMMAND [ARG...]" >&2; exit 2; }
+prefix=()
+if [[ ${AZIZAM_TEST_PRIORITY:-low} != normal ]]; then
+  prefix=(nice -n 19)
+  command -v ionice >/dev/null && prefix+=(ionice -c3)
+fi
+if [[ ${AZIZAM_PRIORITY_DRYRUN:-} == 1 ]]; then
+  set -- sh -c 'echo "nice=$(nice) ionice=$(ionice -p $$ 2>/dev/null)"'
+fi
+exec "${prefix[@]}" "$@"
