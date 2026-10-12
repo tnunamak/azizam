@@ -854,7 +854,7 @@ class WebBuildTests(unittest.TestCase):
             self.assertFalse(world.running)
             self.assertEqual(len(self.staged(tmp)), 1)
 
-    def test_unconfirmed_public_or_drain_check_retains_previous_export(self):
+    def test_unconfirmed_check_keeps_new_process_and_previous_export(self):
         for failure in ("public", "get", "clear"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 web = self.make_web(tmp)
@@ -874,7 +874,10 @@ class WebBuildTests(unittest.TestCase):
                 world.http = fail_verification
                 self.assertEqual(world.invoke("--quiet-seconds", "0", "--public-timeout", "1", web_dir=web),
                                  sr.EXIT_UNCONFIRMED)
-                self.assertFalse(world.running)
+                # Left running: the new process serves the new export.
+                self.assertTrue(world.running)
+                self.assertEqual([cmd[2] for cmd in world.commands], ["stop", "start"])
+                self.assertEqual((web / "out" / "index.html").read_text(), "new page")
                 [holder] = self.staged(tmp)
                 self.assertEqual((Path(tmp) / holder / "out" / "index.html").read_text(), "<html></html>\n")
                 self.assertIn("Recovery:", world.text)
