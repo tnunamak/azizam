@@ -12,6 +12,7 @@ import { ViewerContext } from "@/components/shell/session";
 import {
   JobNotice,
   JobNotices,
+  JobResult,
   jobPollInterval,
   type LongJob,
 } from "./job-notices";
@@ -33,7 +34,7 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-function mount(id = "alice") {
+function mount(id = "alice", detail = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
@@ -51,6 +52,7 @@ function mount(id = "alice") {
         }}
       >
         <JobNotices />
+        {detail ? <JobResult jobId={job.job_id} /> : null}
       </ViewerContext.Provider>
     </QueryClientProvider>,
   );
@@ -288,4 +290,76 @@ test.each([true, false])("opening a Library creation acknowledges it before or a
   second.unmount();
   mount("bob");
   expect(await screen.findByText("Video is ready")).toBeVisible();
+});
+
+test("job result keeps one polite atomic status through state, error and unchanged updates", async () => {
+  let current: LongJob = { ...job, status: "queued" };
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ job: current })));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  clients.push(client);
+  render(<QueryClientProvider client={client}><JobResult jobId={job.job_id} /></QueryClientProvider>);
+  const status = screen.getByRole("status");
+  expect(status).toHaveAttribute("aria-live", "polite");
+  expect(status).toHaveAttribute("aria-atomic", "true");
+  await waitFor(() => expect(status).toHaveTextContent("Video is waiting"));
+  for (const state of ["running", "canceled", "failed", "succeeded"]) {
+    current = { ...job, status: state, error: state === "failed" ? "Provider unavailable" : undefined };
+    await act(() => client.refetchQueries({ queryKey: ["person-job"] }));
+    await waitFor(() => expect(screen.getByRole("status")).toBe(status));
+    await waitFor(() => expect(status).toHaveTextContent(state === "running" ? "is being made" : state === "failed" ? "Provider unavailable" : state === "succeeded" ? "is ready" : "canceled"));
+  }
+  const changes: MutationRecord[] = [];
+  const observer = new MutationObserver((records) => changes.push(...records));
+  observer.observe(status, { childList: true, characterData: true, subtree: true });
+  await act(() => client.refetchQueries({ queryKey: ["person-job"] }));
+  expect(changes).toHaveLength(0);
+  observer.disconnect();
+  expect(status.querySelector("a, button")).toBeNull();
+});
+
+test("a mounted job result owns its completion announcement instead of the shell", async () => {
+  let current = job;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    Response.json(url.includes("/jobs/") ? { job: current } : { jobs: [current] })));
+  const { client } = mount("alice", true);
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Video is being made"));
+  current = { ...job, status: "succeeded", assets: [{ id: "finished" }] };
+  await act(() => client.refetchQueries());
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Video is ready"));
+  expect(screen.getByRole("region", { name: "Job updates" })).toBeEmptyDOMElement();
+});
+
+test("dismissing a focused notice moves focus to the next notice then the persistent region", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ jobs: [
+    { ...job, created_at: Date.now() / 1000, status: "failed" },
+    { ...job, job_id: "j2", created_at: Date.now() / 1000, status: "failed" },
+  ] })));
+  mount();
+  const buttons = await screen.findAllByRole("button", { name: "Dismiss video update" });
+  buttons[0].focus();
+  fireEvent.click(buttons[0]);
+  expect(screen.getByRole("link", { name: "See details" })).toHaveFocus();
+  const last = screen.getByRole("button", { name: "Dismiss video update" });
+  last.focus();
+  fireEvent.click(last);
+  expect(screen.getByRole("region", { name: "Job updates" })).toHaveFocus();
+});
+
+test("job fetch retry stays outside the same polite status", async () => {
+  let failed = true;
+  vi.stubGlobal("fetch", vi.fn(async () => failed
+    ? new Response("unavailable", { status: 503 })
+    : Response.json({ job })));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  clients.push(client);
+  render(<QueryClientProvider client={client}><JobResult jobId={job.job_id} /></QueryClientProvider>);
+  const status = screen.getByRole("status");
+  await waitFor(() => expect(status).toHaveTextContent("Couldn’t load this job."));
+  const retry = screen.getByRole("button", { name: "Try again" });
+  expect(retry).toHaveClass("min-h-11", "min-w-11");
+  expect(status).not.toContainElement(retry);
+  failed = false;
+  fireEvent.click(retry);
+  await waitFor(() => expect(status).toHaveTextContent("Video is being made"));
+  expect(screen.getByRole("status")).toBe(status);
 });

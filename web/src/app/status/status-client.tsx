@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, MoreHorizontal, RefreshCcw, Server } from "lucide-react";
@@ -797,7 +797,7 @@ function ProblemCard({
 }: {
   problem: Problem;
   primary: boolean;
-  onDiskHelp: () => void;
+  onDiskHelp: (opener: HTMLButtonElement) => void;
 }) {
   return (
     <Callout
@@ -832,7 +832,8 @@ function ProblemCard({
               <Button
                 size={primary ? "md" : "sm"}
                 variant="outline"
-                onClick={onDiskHelp}
+                className="min-h-11 min-w-11"
+                onClick={(event) => onDiskHelp(event.currentTarget)}
               >
                 Check disk
               </Button>
@@ -878,7 +879,7 @@ function EngineRow({
         <EngineSheet engine={engine} open={open} onOpenChange={setOpen}>
           <button
             type="button"
-            className="block max-w-full min-w-0 truncate text-left text-meta font-medium hover:underline max-sm:min-h-11"
+            className="block max-w-full min-w-0 truncate text-left text-meta font-medium hover:underline max-sm:min-h-11 max-sm:min-w-11"
             title={engine.name}
           >
             {engine.shortName}
@@ -950,7 +951,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
       >
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
-            <button type="button" className="block min-h-11 truncate text-left text-meta font-medium hover:underline" aria-label={`${provider.name} details`}>
+            <button type="button" className="block min-h-11 min-w-11 truncate text-left text-meta font-medium hover:underline" aria-label={`${provider.name} details`}>
               {provider.name}
             </button>
           </SheetTrigger>
@@ -1038,6 +1039,16 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const diskHelpOpener = useRef<HTMLButtonElement | null>(null);
+  const layersSection = useRef<HTMLElement | null>(null);
+  const showAllButton = useRef<HTMLButtonElement | null>(null);
+  const trackShowAllButton = useCallback((node: HTMLButtonElement | null) => {
+    // Only move focus when the removed control actually held it.
+    if (!node && showAllButton.current === document.activeElement) {
+      layersSection.current?.focus();
+    }
+    showAllButton.current = node;
+  }, []);
   const {
     data: statusData,
     error: statusError,
@@ -1451,7 +1462,7 @@ export function StatusClient() {
         <button
           type="button"
           onClick={providers.refetch}
-          className="text-link font-medium underline underline-offset-4"
+          className="text-link inline-flex min-h-11 min-w-11 items-center font-medium underline underline-offset-4"
         >
           Retry providers
         </button>
@@ -1548,7 +1559,10 @@ export function StatusClient() {
                       key={problem.key}
                       problem={problem}
                       primary={index === 0}
-                      onDiskHelp={() => setDiskHelpOpen(true)}
+                      onDiskHelp={(opener) => {
+                        diskHelpOpener.current = opener;
+                        setDiskHelpOpen(true);
+                      }}
                     />
                   ))}
                 </div>
@@ -1641,7 +1655,11 @@ export function StatusClient() {
                 </section>
               ) : null}
 
-              <section aria-labelledby="layers-heading">
+              <section
+                ref={layersSection}
+                tabIndex={-1}
+                aria-labelledby="layers-heading"
+              >
                 <SectionHeading
                   id="layers-heading"
                   title="Engines and providers"
@@ -1729,6 +1747,7 @@ export function StatusClient() {
                 ) : (
                   <>
                     <button
+                      ref={trackShowAllButton}
                       type="button"
                       onClick={() => setShowAll(true)}
                       className="bg-card hover:border-input rounded-panel flex min-h-8 max-sm:min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-meta"
@@ -1763,6 +1782,13 @@ export function StatusClient() {
           <SheetContent
             side="right"
             className="w-full overflow-y-auto sm:max-w-lg"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (diskHelpOpen) return;
+              const opener = diskHelpOpener.current;
+              if (opener?.isConnected && !opener.disabled) opener.focus();
+              else layersSection.current?.focus();
+            }}
           >
             <SheetHeader>
               <SheetTitle>Check disk</SheetTitle>

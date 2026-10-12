@@ -1,6 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
@@ -132,6 +139,10 @@ function AppsContents() {
   const requestedApp = searchParams.get("app");
   const createFromCommand = searchParams.get("action") === "create-key";
   const commandConsumed = useRef(false);
+  const focusedRequest = useRef<string | null>(null);
+  const dialogReturnFocus = useRef<HTMLElement | null>(null);
+  const dialogReturnApp = useRef<string | null>(null);
+  const newAppButton = useRef<HTMLButtonElement>(null);
   const queryClient = useQueryClient();
   const {
     data: accountData,
@@ -177,6 +188,7 @@ function AppsContents() {
       !commandConsumed.current
     ) {
       commandConsumed.current = true;
+      dialogReturnFocus.current = newAppButton.current;
       setCreating(true);
     }
   }, [createFromCommand, accountData?.authenticated]);
@@ -199,9 +211,51 @@ function AppsContents() {
   }
 
   useEffect(() => {
-    if (!requestedApp || !accountData) return;
-    document.getElementById(`app-${requestedApp}`)?.focus();
-  }, [requestedApp, accountData]);
+    if (!requestedApp) {
+      focusedRequest.current = null;
+      return;
+    }
+    if (
+      !accountData || creating || action || reveal ||
+      dialogReturnFocus.current || focusedRequest.current === requestedApp
+    ) return;
+    const target = document.getElementById(`app-${requestedApp}`);
+    if (target) {
+      focusedRequest.current = requestedApp;
+      target.focus();
+    }
+  }, [requestedApp, accountData, creating, action, reveal]);
+
+  function rememberAppFocus(appId: string, opener?: HTMLElement) {
+    dialogReturnFocus.current =
+      opener ?? document.getElementById(`app-actions-${appId}`);
+    dialogReturnApp.current = appId;
+  }
+
+  function restoreDialogFocus(event: Event) {
+    event.preventDefault();
+    // A create/rotate dialog may be handing focus to the key reveal.
+    if (
+      creating || action || reveal ||
+      (!dialogReturnFocus.current && !dialogReturnApp.current)
+    ) return;
+    const requestedTarget =
+      requestedApp && focusedRequest.current !== requestedApp
+        ? document.getElementById(`app-${requestedApp}`)
+        : null;
+    const appTarget = dialogReturnApp.current
+      ? document.getElementById(`app-actions-${dialogReturnApp.current}`)
+      : null;
+    const target = [
+      requestedTarget, dialogReturnFocus.current, appTarget, newAppButton.current,
+    ].find((element) =>
+      element?.isConnected && !element.matches(":disabled, [aria-disabled=true]"),
+    );
+    dialogReturnFocus.current = null;
+    dialogReturnApp.current = null;
+    if (target === requestedTarget) focusedRequest.current = requestedApp;
+    target?.focus();
+  }
 
   function resetDraft() {
     setName("");
@@ -211,7 +265,9 @@ function AppsContents() {
     setError(null);
   }
 
-  function startNewApp() {
+  function startNewApp(event: MouseEvent<HTMLButtonElement>) {
+    dialogReturnFocus.current = event.currentTarget;
+    dialogReturnApp.current = null;
     resetDraft();
     setCreating(true);
   }
@@ -314,6 +370,8 @@ function AppsContents() {
         toast.success("App keys revoked");
       } else {
         await accountApi.deleteApp(action.app.id);
+        dialogReturnFocus.current = newAppButton.current;
+        dialogReturnApp.current = null;
         toast.success("App removed");
       }
       setAction(null);
@@ -407,6 +465,7 @@ function AppsContents() {
     setError(null);
     try {
       const key = await accountApi.mintKey(app.id, appName);
+      rememberAppFocus(app.id);
       setSaved(false);
       setReveal({
         secret: key.api_key,
@@ -456,7 +515,7 @@ function AppsContents() {
         title="Apps & keys"
         subtitle="Apps that use your gateway"
         primaryAction={
-          <Button onClick={startNewApp} disabled={!accountData?.authenticated}>
+          <Button ref={newAppButton} onClick={startNewApp} disabled={!accountData?.authenticated}>
             <Plus aria-hidden="true" />
             New app
           </Button>
@@ -598,7 +657,8 @@ function AppsContents() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => {
+                        onClick={(event) => {
+                          rememberAppFocus(app.id, event.currentTarget);
                           resetDraft();
                           setCreatedApp(app);
                           setName(app.name);
@@ -611,7 +671,8 @@ function AppsContents() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => {
+                        onClick={(event) => {
+                          rememberAppFocus(app.id, event.currentTarget);
                           setAction({ kind: "rotate", app });
                           setError(null);
                         }}
@@ -624,6 +685,7 @@ function AppsContents() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          id={`app-actions-${app.id}`}
                           aria-label={`Actions for ${appName}`}
                         >
                           <MoreHorizontal />
@@ -648,6 +710,7 @@ function AppsContents() {
                             !app.credentials.length || !app.can_mint_keys
                           }
                           onSelect={() => {
+                            rememberAppFocus(app.id);
                             setAction({ kind: "rotate", app });
                             setError(null);
                           }}
@@ -657,6 +720,7 @@ function AppsContents() {
                         <DropdownMenuItem
                           disabled={!app.credentials.length}
                           onSelect={() => {
+                            rememberAppFocus(app.id);
                             setAction({ kind: "revoke", app });
                             setError(null);
                           }}
@@ -667,6 +731,7 @@ function AppsContents() {
                           variant="destructive"
                           disabled={busy}
                           onSelect={() => {
+                            rememberAppFocus(app.id);
                             setAction({ kind: "remove", app });
                             setError(null);
                           }}
@@ -688,7 +753,10 @@ function AppsContents() {
           if (!open && !busy) closeCreate();
         }}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogContent
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+          onCloseAutoFocus={restoreDialogFocus}
+        >
           <DialogHeader>
             <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
             <DialogDescription>
@@ -764,7 +832,7 @@ function AppsContents() {
           if (!open && !busy) setAction(null);
         }}
       >
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>
               {action?.kind === "remove"
@@ -815,6 +883,7 @@ function AppsContents() {
       <Dialog open={reveal !== null} onOpenChange={() => {}}>
         <DialogContent
           showCloseButton={false}
+          onCloseAutoFocus={restoreDialogFocus}
           className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}

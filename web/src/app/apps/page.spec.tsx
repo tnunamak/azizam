@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,8 +17,10 @@ import {
   type AccountSnapshot,
 } from "@/lib/account-api";
 
+const navigation = vi.hoisted(() => ({ search: "" }));
+
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 vi.mock("@/lib/account-api", () => ({
   accountApi: {
@@ -46,6 +49,7 @@ const snapshot: AccountSnapshot = {
 };
 
 beforeEach(() => {
+  navigation.search = "";
   vi.mocked(accountApi.session).mockReset().mockResolvedValue(snapshot);
   vi.mocked(accountApi.discovery).mockResolvedValue({ recipes: {} });
   vi.mocked(accountApi.createApp).mockReset().mockResolvedValue(app);
@@ -67,6 +71,7 @@ function renderApps() {
       <AppsPage />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 const mintedKey: MintedCredential = {
@@ -563,4 +568,90 @@ it("keeps only the still-active old key ids when a later revoke fails, and clear
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(localStorage.getItem(unfinishedKey)).toBeNull();
+});
+
+it("handles each app deep link once without stealing focus on refresh", async () => {
+  navigation.search = `app=${app.id}`;
+  const phone = { ...app, id: "phone", name: "Phone" };
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [app, phone],
+  });
+  const client = renderApps();
+  await screen.findByRole("heading", { name: app.name });
+  await waitFor(() =>
+    expect(document.getElementById(`app-${app.id}`)).toHaveFocus(),
+  );
+  const newApp = screen.getByRole("button", { name: "New app" });
+  newApp.focus();
+  act(() => {
+    client.setQueryData(["account", "session"], {
+      ...snapshot,
+      apps: [{ ...app, name: "Updated laptop" }, phone],
+    });
+  });
+  await screen.findByRole("heading", { name: "Updated laptop" });
+  expect(newApp).toHaveFocus();
+  navigation.search = "app=phone";
+  act(() => {
+    client.setQueryData(["account", "session"], {
+      ...snapshot,
+      apps: [{ ...app, name: "Updated again" }, phone],
+    });
+  });
+  await waitFor(() =>
+    expect(document.getElementById("app-phone")).toHaveFocus(),
+  );
+});
+
+it("keeps focus inside a modal during refresh and returns it on cancel", async () => {
+  navigation.search = `app=${app.id}`;
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [app] });
+  const client = renderApps();
+  await screen.findByRole("heading", { name: app.name });
+  const opener = screen.getByRole("button", { name: "New app" });
+  opener.focus();
+  fireEvent.click(opener);
+  const input = screen.getByRole("textbox", { name: "App name" });
+  input.focus();
+  act(() => {
+    client.setQueryData(["account", "session"], {
+      ...snapshot,
+      apps: [{ ...app, name: "Updated laptop" }],
+    });
+  });
+  await screen.findByRole("heading", { name: "Updated laptop", hidden: true });
+  expect(input).toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(opener).toHaveFocus());
+});
+
+it("hands focus to the key reveal and returns to app actions if its opener disappears", async () => {
+  navigation.search = `app=${app.id}`;
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [app] });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  renderApps();
+  await screen.findByRole("heading", { name: app.name });
+  const opener = screen.getByRole("button", { name: "Create key" });
+  opener.focus();
+  fireEvent.click(opener);
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [mintedKey] }],
+  });
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Create key" }),
+  );
+  await screen.findByRole("heading", { name: "Connect My laptop" });
+  await waitFor(() =>
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    ),
+  );
+  const saved = screen.getByRole("button", { name: /saved/i });
+  saved.focus();
+  fireEvent.click(saved);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Actions for My laptop" })).toHaveFocus(),
+  );
 });

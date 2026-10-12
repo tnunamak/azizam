@@ -18,6 +18,11 @@ export type LongJob = {
   assets: { asset_id?: string; id?: string }[];
 };
 
+// A mounted result owns announcements for its job; the shell handles the rest.
+const activeResults = new Map<string, number>();
+const resultKey = (personId: string | undefined | null, jobId: string) =>
+  JSON.stringify([personId, jobId]);
+
 export const terminalJob = (job: LongJob) =>
   ["succeeded", "failed", "canceled"].includes(job.status);
 
@@ -86,6 +91,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
   const since = useRef<number | null>(null);
   const unchanged = useRef(0);
   const failures = useRef(0);
+  const noticesRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<LongJob[]>([]);
   const storageKey = `azizam:job-notices:v1:${personId}`;
   const dismissed = useRef(new Set<string>());
@@ -123,6 +129,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
         (previous !== undefined ||
           job.created_at >= startedAt ||
           job.updated_at >= startedAt) &&
+        !activeResults.has(resultKey(personId, job.job_id)) &&
         !dismissed.current.has(job.job_id) &&
         !job.assets.some((asset) => opened.current.has(asset.asset_id || asset.id || ""))
       ) {
@@ -182,7 +189,14 @@ function PersonJobNotices({ personId }: { personId: string }) {
         failures.current,
       ),
   });
-  function dismiss(id: string) {
+  function dismiss(id: string, restoreFocus = false) {
+    const region = noticesRef.current;
+    const sections = region ? Array.from(region.children) : [];
+    const index = sections.findIndex((section) => section.getAttribute("data-job-id") === id);
+    if (restoreFocus && index >= 0 && sections[index].contains(document.activeElement)) {
+      const successor = sections[index + 1] ?? sections[index - 1];
+      (successor?.querySelector<HTMLElement>("a, button") ?? region)?.focus();
+    }
     dismissed.current.add(id);
     setNotices((current) => current.filter((job) => job.job_id !== id));
     try {
@@ -196,6 +210,8 @@ function PersonJobNotices({ personId }: { personId: string }) {
   }
   return (
     <div
+      ref={noticesRef}
+      tabIndex={-1}
       role="region"
       aria-live="polite"
       aria-relevant="additions"
@@ -205,7 +221,7 @@ function PersonJobNotices({ personId }: { personId: string }) {
         <JobNotice
           key={job.job_id}
           job={job}
-          onDismiss={() => dismiss(job.job_id)}
+          onDismiss={(restoreFocus) => dismiss(job.job_id, restoreFocus)}
         />
       ))}
     </div>
@@ -217,13 +233,14 @@ export function JobNotice({
   onDismiss,
 }: {
   job: LongJob;
-  onDismiss: () => void;
+  onDismiss: (restoreFocus?: boolean) => void;
 }) {
   const done = job.status === "succeeded";
   const Icon = done ? Check : CircleAlert;
   return (
     <section
       className="border-border bg-card rounded-panel mb-3 flex flex-wrap items-center gap-3 border p-3"
+      data-job-id={job.job_id}
       aria-label={`${jobLabel(job)} ${done ? "ready" : "failed"}`}
     >
       <Icon
@@ -238,7 +255,7 @@ export function JobNotice({
       <Link
         className="text-link inline-flex min-h-11 items-center rounded-md px-3 underline underline-offset-4"
         href={jobLink(job)}
-        onClick={onDismiss}
+        onClick={() => onDismiss()}
       >
         {done ? "Open result" : "See details"}
       </Link>
@@ -246,7 +263,7 @@ export function JobNotice({
         type="button"
         className="hover:bg-muted inline-flex min-h-11 min-w-11 items-center justify-center rounded-md"
         aria-label={`Dismiss ${jobLabel(job).toLowerCase()} update`}
-        onClick={onDismiss}
+        onClick={() => onDismiss(true)}
       >
         <X aria-hidden="true" className="size-5" />
       </button>
@@ -256,6 +273,15 @@ export function JobNotice({
 
 export function JobResult({ jobId }: { jobId: string }) {
   const viewer = useViewer();
+  useEffect(() => {
+    const key = resultKey(viewer.id, jobId);
+    activeResults.set(key, (activeResults.get(key) ?? 0) + 1);
+    return () => {
+      const count = (activeResults.get(key) ?? 1) - 1;
+      if (count) activeResults.set(key, count);
+      else activeResults.delete(key);
+    };
+  }, [viewer.id, jobId]);
   const { data, isError, refetch } = useQuery({
     queryKey: ["person-job", viewer.id, jobId],
     queryFn: ({ signal }) =>
@@ -267,55 +293,59 @@ export function JobResult({ jobId }: { jobId: string }) {
     refetchInterval: (query) =>
       query.state.data && !terminalJob(query.state.data.job) ? 30_000 : false,
   });
-  if (isError)
-    return (
-      <p role="status">
-        Couldn’t load this job.{" "}
+  const job = data?.job;
+  const heading = job
+    ? `${jobLabel(job)} ${job.cancel_requested
+        ? "cancel requested"
+        : ({
+            succeeded: "is ready",
+            failed: "couldn’t finish",
+            canceled: "canceled",
+            queued: "is waiting",
+            running: "is being made",
+          } as Record<string, string>)[job.status] ?? job.status}`
+    : "";
+  const status = isError
+    ? "Couldn’t load this job."
+    : job
+      ? [heading, job.error].filter(Boolean).join(". ")
+      : "Checking your job…";
+  return (
+    <>
+      <p role="status" aria-live="polite" aria-atomic="true" className={job && !isError ? "sr-only" : undefined}>
+        {status}
+      </p>
+      {isError ? (
         <button
-          className="text-link min-h-11 px-3 underline"
+          className="text-link min-h-11 min-w-11 px-3 underline"
           onClick={() => void refetch()}
         >
           Try again
         </button>
-      </p>
-    );
-  if (!data) return <p role="status">Checking your job…</p>;
-  const job = data.job;
-  return (
-    <section
-      className="border-border mb-6 border-b pb-4"
-      aria-label="Job result"
-    >
-      <h2 className="text-lg font-semibold">
-        {jobLabel(job)}{" "}
-        {job.cancel_requested
-          ? "cancel requested"
-          : (
-              {
-                succeeded: "is ready",
-                failed: "couldn’t finish",
-                canceled: "canceled",
-                queued: "is waiting",
-                running: "is being made",
-              } as Record<string, string>
-            )[job.status]}
-      </h2>
-      {job.error ? <p>{job.error}</p> : null}
-      {job.status === "succeeded" && jobAssetId(job) ? (
-        <Link
-          className="text-link inline-flex min-h-11 items-center underline"
-          href={jobLink(job)}
+      ) : job ? (
+        <section
+          className="border-border mb-6 border-b pb-4"
+          aria-label="Job result"
         >
-          Open result
-        </Link>
-      ) : (
-        <Link
-          className="text-link inline-flex min-h-11 items-center underline"
-          href="/try/"
-        >
-          Back to Try
-        </Link>
-      )}
-    </section>
+          <h2 className="text-lg font-semibold">{heading}</h2>
+          {job.error ? <p>{job.error}</p> : null}
+          {job.status === "succeeded" && jobAssetId(job) ? (
+            <Link
+              className="text-link inline-flex min-h-11 min-w-11 items-center underline"
+              href={jobLink(job)}
+            >
+              Open result
+            </Link>
+          ) : (
+            <Link
+              className="text-link inline-flex min-h-11 min-w-11 items-center underline"
+              href="/try/"
+            >
+              Back to Try
+            </Link>
+          )}
+        </section>
+      ) : null}
+    </>
   );
 }

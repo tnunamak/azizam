@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -398,7 +398,7 @@ function PersonFilter({
       </Select>
       {/* Only people without a recorded name need their account ID to be told apart. */}
       {unnamed.length > 0 && <details className="text-meta">
-        <summary className="cursor-pointer">Person details</summary>
+        <summary className="min-h-11 min-w-11 cursor-pointer content-center">Person details</summary>
         <dl className="mt-2 space-y-2">
           {unnamed.map((person) => <div key={person.id}><dt>{person.label}</dt><dd className="break-all">{person.id}</dd></div>)}
         </dl>
@@ -464,7 +464,7 @@ function CoverageNote({ summary }: { summary: UsageSummary }) {
   if (!facts.length) return null;
   return (
     <details className="text-muted-foreground text-meta">
-      <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
+      <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11 max-sm:min-w-11">
         Receipt coverage
       </summary>
       <ul className="mt-1 list-inside list-disc">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
@@ -520,7 +520,7 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
         )}
         {days.length > 0 && (
             <details className="mt-4 min-w-0 overflow-x-auto">
-              <summary className="flex min-h-8 w-fit cursor-pointer items-center text-meta max-sm:min-h-11">View daily totals</summary>
+              <summary className="flex min-h-8 w-fit cursor-pointer items-center text-meta max-sm:min-h-11 max-sm:min-w-11">View daily totals</summary>
               <table className="mt-2 w-full text-meta whitespace-nowrap [&_td]:px-2 [&_td]:py-1 [&_td]:text-right [&_td]:tabular-nums [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-medium [&_thead_th]:text-muted-foreground [&_thead_th:not(:first-child)]:text-right">
                 <caption className="sr-only">Requests by day and {memberTerms.task}</caption>
                 <thead>
@@ -599,6 +599,7 @@ function ModelTable({
   showAll: boolean;
   onToggle: () => void;
 }) {
+  const modelsId = useId();
   const sortedRows = [...rows].sort((a, b) =>
     (b.requests ?? -1) - (a.requests ?? -1) || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
   );
@@ -612,7 +613,7 @@ function ModelTable({
       <CardContent>
         {rows.length ? (
           <div className="space-y-4">
-            <Table dense aria-label="Models">
+            <Table id={modelsId} dense aria-label="Models">
               <TableHeader>
                 <TableRow>
                   <TableHead scope="col">
@@ -657,7 +658,7 @@ function ModelTable({
               </TableBody>
             </Table>
             {rows.length > 5 ? (
-              <Button variant="ghost" onClick={onToggle}>
+              <Button variant="ghost" className="min-h-11 min-w-11" aria-expanded={showAll} aria-controls={modelsId} onClick={onToggle}>
                 {showAll ? "Show top 5" : `View all ${rows.length} models`}
               </Button>
             ) : null}
