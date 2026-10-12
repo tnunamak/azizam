@@ -23,14 +23,13 @@ long-jobs.spec.ts	72.0
 member-status.spec.ts	43.2
 models-polish2.spec.ts	10.9
 models.spec.ts	35.2
-no-host-paths.spec.ts	9.8
 owner-alert.spec.ts	7.6
 people.spec.ts	178.8
 phone-overflow.spec.ts	71.6
 phone-targets.spec.ts	24.6
 polish-tour.spec.ts	198.2
 providers.spec.ts	39.9
-public-surfaces.spec.ts	88.4
+public-surfaces.spec.ts	15.2
 receipt-retention.spec.ts	24.4
 settings.spec.ts	122.1
 shared-copy-contracts.spec.ts	56.0

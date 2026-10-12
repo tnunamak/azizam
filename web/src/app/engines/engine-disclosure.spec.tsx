@@ -523,6 +523,7 @@ it("stops showing cached Ready after a failed health refresh and recovers", asyn
     view.unmount();
     client.clear();
   }
+});
 
 it("shows an observed-up engine with a bad health tone as unavailable, never ready", async () => {
   vi.spyOn(api.services, "registry").mockResolvedValue({
