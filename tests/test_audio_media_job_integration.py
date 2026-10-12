@@ -265,6 +265,8 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("completed", [event["event_type"] for event in events])
 
     async def test_content_route_returns_signed_audio_asset_payload(self) -> None:
+        from urllib.parse import parse_qs, urlsplit
+
         asset_id = "aud_" + "b" * 64
         job = media_jobs.MediaJob(
             intent="music.generate",
@@ -280,19 +282,60 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             metadata={"mode": "async_audio_generation"},
         )
         media_jobs.create(job, path=self.db)
-
-        response = await proxy.gateway_media_job_content(
-            job.job_id,
-            _StubJsonRequest({}),  # type: ignore[arg-type]
+        request = _StubJsonRequest(
+            {},
+            headers={
+                "host": "internal.test",
+                "x-forwarded-proto": "https",
+                "x-forwarded-host": "audio.example.test",
+            },
         )
 
+        with (
+            patch.object(proxy.time, "time", return_value=1700000000),
+            patch.object(proxy, "IMAGE_SIGNED_URL_TTL", 60),
+            patch.object(
+                proxy, "_sign_asset_token", return_value="fake-signature"
+            ) as sign,
+        ):
+            response = await proxy.gateway_media_job_content(
+                job.job_id, request
+            )
+
         self.assertEqual(response.status_code, 200)
-        payload = json.loads(response.body.decode("utf-8"))
+        payload = json.loads(response.body)
         self.assertEqual(payload["object"], "audio.generation")
         self.assertEqual(payload["job_id"], job.job_id)
-        self.assertEqual(payload["data"][0]["asset_id"], asset_id)
-        self.assertEqual(payload["data"][0]["media_type"], "audio/mpeg")
-        self.assertIn(f"/v1/assets/{asset_id}/content", payload["data"][0]["url"])
+        self.assertEqual(len(payload["data"]), 1)
+        item = payload["data"][0]
+        expected_url = (
+            f"https://audio.example.test/v1/assets/{asset_id}/content"
+            "?expires=1700000060&md=none&sig=fake-signature"
+        )
+        self.assertEqual(
+            item,
+            {
+                "asset_id": asset_id,
+                "media_type": "audio/mpeg",
+                "size_bytes": 11,
+                "index": 0,
+                "url": expected_url,
+                "asset_url": expected_url,
+                "content_url": expected_url,
+            },
+        )
+        sign.assert_called_once_with(asset_id, 1700000060, "none")
+        parsed = urlsplit(item["url"])
+        self.assertEqual((parsed.scheme, parsed.netloc),
+                         ("https", "audio.example.test"))
+        self.assertEqual(
+            parse_qs(parsed.query),
+            {
+                "expires": ["1700000060"],
+                "md": ["none"],
+                "sig": ["fake-signature"],
+            },
+        )
 
     def test_resume_pending_audio_jobs_reschedules_jobs_with_payloads(self) -> None:
         body = {"model": "tangoflux", "prompt": "private prompt"}
@@ -340,6 +383,82 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             stored["error"],
             "Audio media job payload missing after proxy restart",
         )
+
+
+    def test_restart_never_replays_started_cancelled_or_disabled_audio_jobs(self) -> None:
+        cases = (
+            (
+                "running",
+                media_jobs.STATUS_RUNNING,
+                {},
+                True,
+                "The gateway restarted before completion could be confirmed; this job was not run again",
+            ),
+            (
+                "cancelled",
+                media_jobs.STATUS_RUNNING,
+                {"cancel_requested_at": 123},
+                True,
+                "The gateway restarted before cancellation could be confirmed",
+            ),
+            (
+                "recovery_disabled",
+                media_jobs.STATUS_QUEUED,
+                {},
+                False,
+                "The gateway restarted with job recovery turned off",
+            ),
+        )
+        for name, status, extra_metadata, resume_enabled, error in cases:
+            with self.subTest(case=name):
+                body = {"model": "tangoflux", "prompt": "private recovery fixture"}
+                job = media_jobs.MediaJob(
+                    intent="audio.generate",
+                    request_id="audio_restart_" + name,
+                    status=status,
+                    metadata={
+                        "mode": "async_audio_generation",
+                        **extra_metadata,
+                    },
+                )
+                media_jobs.create(job, path=self.db)
+                proxy._persist_audio_media_job_payload(
+                    job.job_id,
+                    body=body,
+                    request=_StubJsonRequest(body),
+                    auth_context=proxy.NO_AUTH_CONTEXT,
+                )
+                self.assertIsNotNone(
+                    proxy._load_audio_media_job_payload(job.job_id)
+                )
+
+                with (
+                    patch.object(proxy, "COMFY_ENABLED", True),
+                    patch.object(
+                        proxy, "IMAGE_MEDIA_JOB_RESUME_ON_START", resume_enabled
+                    ),
+                    patch.object(
+                        proxy, "_schedule_audio_media_job", return_value=True
+                    ) as schedule,
+                ):
+                    self.assertEqual(proxy._resume_pending_audio_media_jobs(), 0)
+
+                schedule.assert_not_called()
+                stored = media_jobs.get(
+                    job.job_id, audience="internal", path=self.db
+                )
+                self.assertIsNotNone(stored)
+                self.assertEqual(stored["status"], media_jobs.STATUS_FAILED)
+                self.assertEqual(stored["error"], error)
+                self.assertIsNone(
+                    proxy._load_audio_media_job_payload(job.job_id)
+                )
+                events = media_jobs.events(
+                    job.job_id, audience="internal", path=self.db
+                )
+                self.assertEqual(
+                    sum(event["event_type"] == "failed" for event in events), 1
+                )
 
 
 if __name__ == "__main__":

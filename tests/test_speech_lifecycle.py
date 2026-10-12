@@ -94,6 +94,52 @@ class NativeSttLifecycleTests(SttCase):
                 await response.body_iterator.aclose()
         asyncio.run(scenario())
 
+    def test_first_native_event_arrives_before_the_producer_can_finish(self):
+        async def scenario():
+            release_tail = asyncio.Event()
+            first = b'data: {"type":"transcript.text.delta","delta":"first"}\n\n'
+            last = b'data: {"type":"transcript.text.done","text":"first"}\n\n'
+
+            class GatedStream(ControlledStream):
+                async def __aiter__(self):
+                    yield first
+                    await release_tail.wait()
+                    yield last
+
+            stream = GatedStream([])
+            response = None
+            try:
+                response = await asyncio.wait_for(
+                    self.open_response(stream), timeout=5
+                )
+                self.assertEqual(
+                    await asyncio.wait_for(
+                        anext(response.body_iterator), timeout=5
+                    ),
+                    first,
+                )
+                self.assertFalse(release_tail.is_set())
+                self.assertFalse(stream.closed)
+                proxy.receipt_store.finalize.assert_not_called()
+
+                release_tail.set()
+
+                async def drain():
+                    return b"".join(
+                        [part async for part in response.body_iterator]
+                    )
+
+                self.assertEqual(
+                    await asyncio.wait_for(drain(), timeout=5), last
+                )
+                self.assert_terminal(stream, "succeeded")
+            finally:
+                release_tail.set()
+                if response is not None:
+                    await response.body_iterator.aclose()
+
+        asyncio.run(scenario())
+
     def test_body_transport_failure_has_one_failed_receipt(self):
         async def fail():
             raise httpx.ReadError("private upstream detail")

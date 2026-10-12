@@ -490,6 +490,85 @@ class SttMidFileFallbackTests(SttCase):
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertIn("parakeet-gpu->parakeet (connection_lost@chunk2)", receipts[-1].fallback_reasons)
 
+    def test_mid_file_fallback_replays_the_exact_original_file_and_fields(self) -> None:
+        from email import policy as email_policy
+        from email.parser import BytesParser
+
+        self.cfg["model_aliases"]["transcriptions"]["engines"][
+            "parakeet-gpu"
+        ].pop("upload_format", None)
+
+        original = _wav_bytes(16000, 1, 1.5)
+
+        def drop(request):
+            raise httpx.ReadError("connection reset by peer", request=request)
+
+        seen = self._gpu_dies_on_second_chunk(drop)
+        response = self._post(
+            [
+                ("model", "whisper-1"),
+                ("language", "en"),
+                ("prompt", "preserve this exact prompt"),
+                ("temperature", "0"),
+                ("response_format", "json"),
+            ],
+            audio=original,
+            file_first=True,
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"text": "cpu whole file"})
+        self.assertEqual([request.url.port for request in seen], [8017, 8017, 5092])
+        self.assertEqual(
+            response.headers["x-azizam-fallback"],
+            "parakeet-gpu->parakeet (connection_lost@chunk2)",
+        )
+
+        def parts(request):
+            message = BytesParser(policy=email_policy.default).parsebytes(
+                b"MIME-Version: 1.0\r\nContent-Type: "
+                + request.headers["content-type"].encode("ascii")
+                + b"\r\n\r\n"
+                + request.content
+            )
+            self.assertTrue(message.is_multipart())
+            return [
+                (
+                    part.get_param("name", header="content-disposition"),
+                    part.get_filename(),
+                    part.get_payload(decode=True),
+                )
+                for part in message.iter_parts()
+            ]
+
+        primary_files = [
+            [body for name, filename, body in parts(request) if name == "file"]
+            for request in seen[:2]
+        ]
+        self.assertEqual(primary_files, [[b"RIFFchunk"], [b"RIFFchunk"]])
+
+        replay = parts(seen[2])
+        replayed_files = [
+            (filename, body) for name, filename, body in replay if name == "file"
+        ]
+        self.assertEqual(replayed_files, [("a.wav", original)])
+        replayed_fields = [
+            (name, body.decode("utf-8"))
+            for name, filename, body in replay
+            if filename is None
+        ]
+        self.assertCountEqual(
+            replayed_fields,
+            [
+                ("model", "parakeet-tdt-0.6b-v3"),
+                ("language", "en"),
+                ("prompt", "preserve this exact prompt"),
+                ("temperature", "0"),
+                ("response_format", "json"),
+            ],
+        )
+        self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
+
     def test_an_out_of_memory_answer_on_a_later_chunk_falls_back_and_names_the_chunk(self) -> None:
         seen = self._gpu_dies_on_second_chunk(
             lambda r: httpx.Response(500, json={"error": {"message": "Failed to allocate Parakeet TDT encoder graph tensors"}})
