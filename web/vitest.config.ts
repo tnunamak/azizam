@@ -1,3 +1,4 @@
+import "./test-priority"; // first: nice 19 + idle I/O for the runner and everything it starts
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";

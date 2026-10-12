@@ -1,0 +1,22 @@
+{
+  "protocol": "openai-compatible",
+  "name": "member-chat",
+  "description": "The LLM substrate answers one chat attributed to the member key whose hash prefix the gateway reports.",
+  "provenance": {"source": "hand-written", "reference": "proxy._litellm_gateway_metadata (x-azizam-key-prefix) and the OpenAI chat object"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "headers": {"x-azizam-key-prefix": "{{key_prefix}}"}, "json": {"model": "{{model}}"}},
+      "response": {
+        "json": {
+          "id": "chatcmpl-fk-member",
+          "object": "chat.completion",
+          "created": 1767225600,
+          "model": "{{model}}",
+          "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello member"}, "finish_reason": "stop"}],
+          "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+        }
+      }
+    }
+  ]
+}

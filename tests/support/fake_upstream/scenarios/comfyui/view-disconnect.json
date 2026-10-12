@@ -1,0 +1,84 @@
+{
+  "protocol": "comfyui",
+  "name": "view-disconnect",
+  "description": "The image download drops the connection after the first bytes.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes /prompt, /history/{prompt_id}, /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt",
+        "json": {
+          "prompt": {
+            "1": {
+              "class_type": "FkNode",
+              "inputs": {
+                "text": "{{text}}"
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "json": {
+          "prompt_id": "fk-job"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/fk-job"
+      },
+      "response": {
+        "json": {
+          "fk-job": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "1": {
+                "images": [
+                  {
+                    "filename": "café.png",
+                    "subfolder": "",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "café.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "body": [
+          {
+            "hex": "89504e47"
+          },
+          {
+            "disconnect": true
+          }
+        ]
+      }
+    }
+  ]
+}

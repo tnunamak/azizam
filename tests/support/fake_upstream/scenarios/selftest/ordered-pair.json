@@ -1,0 +1,12 @@
+{
+  "protocol": "openai-compatible",
+  "name": "ordered-pair",
+  "description": "Self-test: a models probe that may repeat, then two ordered calls, the second optional.",
+  "provenance": {"source": "hand-written", "reference": "tests/test_fake_upstream.py"},
+  "exchanges": [
+    {"id": "models", "repeat": true, "match": {"method": "GET", "path": "/v1/models"}, "response": {"json": {"object": "list", "data": []}}},
+    {"id": "first", "match": {"method": "POST", "path": "/v1/embeddings", "json": {"input": "a"}}, "response": {"json": {"n": 1}}},
+    {"id": "second", "required": false, "times": 2, "match": {"method": "POST", "path": "/v1/embeddings", "json": {"input": "b"}}, "response": {"json": {"n": 2}}},
+    {"id": "last", "match": {"method": "POST", "path": "/v1/embeddings", "json": {"input": "c"}}, "response": {"status": 201, "headers": {"x-fk": "1"}, "json": {"n": 3}}}
+  ]
+}

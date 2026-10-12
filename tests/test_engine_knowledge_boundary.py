@@ -9,7 +9,8 @@ engine CLI flag literals).
 
 HOW THIS TEST WORKS
 -------------------
-The engine checks scan proxy.py and all gateway Python modules. This is a
+The engine checks scan proxy.py, all gateway Python modules and the fake
+upstream package under tests/support/fake_upstream/. This is a
 syntactic tripwire, not proof that all backend policy is operator-owned data.
 
 A retirement check also scans proxy.py and every Python file under gateway/
@@ -57,9 +58,20 @@ _TRANSFORMS = _REPO_ROOT / "gateway" / "transforms.py"
 # LOCAL_SWAP_BACKENDS frozen set now lives there (proxy aliases it).
 _QUARANTINE = _REPO_ROOT / "gateway" / "engine_quarantine.py"
 
+_FAKE_UPSTREAM = _REPO_ROOT / "tests" / "support" / "fake_upstream"
+
+
 def _core_files() -> list[Path]:
-    """Discover new gateway modules too; no module has a blanket exemption."""
-    return [_PROXY, *sorted((_REPO_ROOT / "gateway").rglob("*.py"))]
+    """Discover new gateway modules too; no module has a blanket exemption.
+
+    The fake upstream package is scanned like core code: fakes model wire
+    protocols, never named engines (docs/design/TEST_STRATEGY.md 4.6).
+    """
+    return [
+        _PROXY,
+        *sorted((_REPO_ROOT / "gateway").rglob("*.py")),
+        *sorted(_FAKE_UPSTREAM.rglob("*.py")),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +662,19 @@ class TestEngineKnowledgeBoundary:
             "Guard failed to catch a synthetic new engine branch "
             '(`if backend == "vllm":`) — the boundary check is broken!'
         )
+
+    def test_guard_scans_the_fake_upstream_package(self) -> None:
+        """A fake upstream that branches on an engine name fails like core code."""
+        scanned = {path.relative_to(_REPO_ROOT).as_posix() for path in _core_files()}
+        fake_modules = {
+            path.relative_to(_REPO_ROOT).as_posix() for path in _FAKE_UPSTREAM.rglob("*.py")
+        }
+        assert "tests/support/fake_upstream/app.py" in fake_modules
+        assert fake_modules <= scanned
+        violations = _check_engine_named_branches(
+            _source_lines=[("tests/support/fake_upstream/app.py", ['if upstream.engine == "ollama": pass'])]
+        )
+        assert [v.split(": ", 1)[0] for v in violations] == ["tests/support/fake_upstream/app.py:1"]
 
     def test_multiline_and_expression_engine_branches_are_caught(self) -> None:
         sources = [("gateway/new_adapter.py", [
