@@ -10,7 +10,6 @@ import proxy
 @pytest.fixture
 def public_client(monkeypatch):
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
-    monkeypatch.setattr(proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False)
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
     client = TestClient(proxy.app, base_url="https://gateway.example", client=("203.0.113.25", 41000))
     try:

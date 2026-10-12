@@ -256,7 +256,6 @@ def test_registered_namespaces_never_answer_html_outside_the_allowlist(segment, 
     # Bound side effects: an unauthenticated remote caller, so no handler
     # below reaches a backend.
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
-    monkeypatch.setattr(proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False)
     monkeypatch.setattr(proxy, "_setup_page_response", _fake_setup_page)
     client = TestClient(proxy.app, base_url="https://gateway.example", client=("203.0.113.25", 41000))
     paths = {f"/{segment}", f"/{segment}/zz-unknown-probe", _known_path(segment)} - {None}
