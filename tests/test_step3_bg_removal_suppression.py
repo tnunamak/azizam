@@ -12,8 +12,13 @@ suppression mechanism.  See docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md D-1.
 
 from __future__ import annotations
 
-import pytest
+import asyncio
+import json
+from unittest.mock import patch
 
+import httpx
+
+import proxy
 from gateway.transforms import (
     QWEN3_ENABLE_THINKING_KEY,
     QWEN3_NO_THINK_HINT,
@@ -32,71 +37,51 @@ class TestBackgroundRemovalSuppressionConstants:
         assert QWEN3_ENABLE_THINKING_KEY == "enable_thinking"
 
 
-class TestBackgroundRemovalPayloadShape:
-    """Verify the payload the bg-removal helper builds uses kwarg-only suppression."""
+class TestBackgroundRemovalOutboundPayload:
+    """Capture the request the production helper actually sends to the LLM."""
 
-    def _build_payload(self, prompt: str = "a cute cat") -> dict:
-        """Re-build the payload using the same logic as proxy.py (post-cleanup version)."""
-        return {
-            "model": "test-model",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Decide whether an image generation request should have its "
-                        "background removed and returned as a transparent PNG. "
-                        "Use the user's intent, not keyword matching. Return only JSON "
-                        "with keys remove_background boolean, confidence number 0..1, "
-                        "and reason string. Choose true for reusable assets such as "
-                        "logos, stickers, product cutouts, icons, isolated objects for "
-                        "commerce, or explicitly transparent-background intent. Choose "
-                        "false for portraits, landscapes, scenes, paintings, context-rich "
-                        "images, and ordinary photos where the environment is part of the result."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0,
-            "max_tokens": 160,
-            "response_format": {"type": "json_object"},
-            "chat_template_kwargs": {QWEN3_ENABLE_THINKING_KEY: False},
-        }
-
-    def test_no_think_not_in_system_message(self) -> None:
-        """System message must NOT contain /no_think — injection is removed."""
-        payload = self._build_payload()
-        system_content = payload["messages"][0]["content"]
-        assert "/no_think" not in system_content, (
-            f"System message must not contain '/no_think', got: {system_content[:60]!r}"
-        )
-
-    def test_chat_template_kwargs_enable_thinking_false(self) -> None:
-        payload = self._build_payload()
-        assert payload["chat_template_kwargs"]["enable_thinking"] is False
-
-    def test_no_no_think_in_any_message(self) -> None:
-        """No /no_think text anywhere in any message."""
-        payload = self._build_payload("a logo design")
-        for msg in payload["messages"]:
-            assert "/no_think" not in msg.get("content", ""), (
-                f"/no_think found in message: {msg!r}"
-            )
-
-    def test_user_message_content_preserved(self) -> None:
+    def test_outbound_payload_uses_kwarg_only_suppression(self) -> None:
         prompt = "A professional logo for a tech startup"
-        payload = self._build_payload(prompt)
-        assert payload["messages"][1] == {"role": "user", "content": prompt}
+        sent: list[httpx.Request] = []
 
-    def test_other_fields_unchanged(self) -> None:
-        payload = self._build_payload()
+        def respond(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+            decision = {"remove_background": True, "confidence": 0.9, "reason": "logo"}
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(decision)}}]})
+
+        real_client = httpx.AsyncClient
+
+        def client(*_args, **kwargs):
+            return real_client(transport=httpx.MockTransport(respond), timeout=kwargs.get("timeout"))
+
+        async def active_backend() -> str:
+            return "tabby"
+
+        async def model_for_host(_host: str) -> str:
+            return "bg-decider-model"
+
+        auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
+        with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
+             patch.object(proxy, "get_active_backend", active_backend), \
+             patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": "http://127.0.0.1:9"}), \
+             patch.object(proxy, "effective_llm_model_for_host", model_for_host), \
+             patch.object(proxy.httpx, "AsyncClient", client):
+            decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
+
+        assert (decision.remove_background, decision.source) == (True, "llm")
+        assert len(sent) == 1
+        assert str(sent[0].url) == "http://127.0.0.1:9/v1/chat/completions"
+        payload = json.loads(sent[0].content)
+        # The kwarg is the only suppression mechanism; spelled out here so a
+        # renamed constant cannot keep this assertion passing.
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+        for message in payload["messages"]:
+            assert QWEN3_NO_THINK_HINT not in message["content"], message
+        system, user = payload["messages"]
+        assert system["role"] == "system"
+        assert system["content"].startswith("Decide whether")
+        assert user == {"role": "user", "content": prompt}
+        assert payload["model"] == "bg-decider-model"
         assert payload["temperature"] == 0
         assert payload["max_tokens"] == 160
         assert payload["response_format"] == {"type": "json_object"}
-
-    def test_system_message_starts_with_decide(self) -> None:
-        """System message starts directly with the task description (no hint prefix)."""
-        payload = self._build_payload()
-        system_content = payload["messages"][0]["content"]
-        assert system_content.startswith("Decide whether"), (
-            f"System message must start with 'Decide whether', got: {system_content[:40]!r}"
-        )

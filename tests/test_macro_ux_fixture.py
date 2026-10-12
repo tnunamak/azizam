@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import socket
+import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +20,60 @@ SPEC = importlib.util.spec_from_file_location("macro_ux_fixture", HELPER_PATH)
 fixture = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(fixture)
+
+
+_FIXTURE_STORES = {
+    "AZIZAM_ADMIN_DB": "admin.db",
+    "AZIZAM_METRICS_DB": "metrics.db",
+    "AZIZAM_RESPONSES_DB": "responses.db",
+    "AZIZAM_RECEIPTS_DB": "receipts.db",
+    "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
+    "AZIZAM_KEY_ACTIVITY_LOG": "key_activity.jsonl",
+    "AZIZAM_IMAGE_CACHE_DIR": "images",
+    "AZIZAM_VRAM_ESTIMATES_PATH": "vram_estimates.json",
+    "AZIZAM_DRIFT_REPORT_PATH": "drift_status.json",
+}
+
+# Runs in a child process: start the launcher, wait for its ready file, GET
+# /health on the advertised port (unless it is protected), then stop it.
+_LAUNCHER_DRIVER = """
+import json, os, subprocess, sys, time, urllib.error, urllib.request
+helper, state = sys.argv[1], sys.argv[2]
+log = open(os.path.join(state, "launcher.log"), "w")
+proc = subprocess.Popen([sys.executable, helper, "--serve", "--state-root", state, "--scenario", "all_clear"],
+                        stdout=log, stderr=subprocess.STDOUT)
+result = {}
+try:
+    ready = os.path.join(state, "fixture-ready.json")
+    deadline = time.monotonic() + 120
+    while "port" not in result:
+        if proc.poll() is not None or time.monotonic() > deadline:
+            log.flush()
+            result = {"error": "launcher never became ready", "exit": proc.poll(),
+                      "log": open(log.name).read()[-3000:]}
+            break
+        try:
+            result = {"port": json.load(open(ready))["port"], "health": None}
+        except (OSError, ValueError, KeyError):
+            time.sleep(0.1)
+    if result.get("port") not in (None, 5000, 15000):
+        while time.monotonic() < deadline and result["health"] is None:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{result['port']}/health", timeout=2) as response:
+                    result["health"] = response.status
+            except urllib.error.HTTPError as error:
+                result["health"] = error.code
+            except OSError:
+                time.sleep(0.1)
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+print(json.dumps(result))
+"""
 
 
 class TestMacroUxFixture(unittest.TestCase):
@@ -78,13 +135,34 @@ class TestMacroUxFixture(unittest.TestCase):
             other_required = next(row for row in other["backends"] if row["key"] == "fixture-required")
             self.assertNotIn("history", other_required)
 
-    def test_fixture_listener_is_ephemeral_and_protected_ports_are_not_used(self) -> None:
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            listener.bind(("127.0.0.1", 0))
-            self.assertNotIn(listener.getsockname()[1], {5000, 15000})
-        finally:
-            listener.close()
+    def test_launcher_serves_on_an_ephemeral_port_never_a_protected_one(self) -> None:
+        # The hermetic guard forbids signalling and connecting to another
+        # process's port from this process, so a driver child starts the real
+        # launcher, probes the port it advertises and stops it.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            env = {
+                **os.environ,
+                **{name: str(state / filename) for name, filename in _FIXTURE_STORES.items()},
+                "AZIZAM_ADMIN_SESSION_KEY": "launcher-test-session-key-32-bytes-min",
+                "AZIZAM_LITELLM_BASE_URL": "http://127.0.0.1:9",
+                "AZIZAM_HOST_TELEMETRY_DISABLED": "1",
+                "TTS_ENABLED": "false",
+                "PYTHONUNBUFFERED": "1",
+            }
+            driver = subprocess.run(
+                [sys.executable, "-c", _LAUNCHER_DRIVER, str(HELPER_PATH), str(state)],
+                env=env, capture_output=True, text=True, timeout=180,
+            )
+            self.assertEqual(driver.returncode, 0, driver.stderr[-4000:])
+            result = json.loads(driver.stdout.strip().splitlines()[-1])
+        self.assertIsNone(result.get("error"), result)
+        port = result["port"]
+        self.assertNotIn(port, {5000, 15000})
+        low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+        self.assertTrue(low <= port <= high, f"port {port} is not OS-assigned ({low}-{high})")
+        # The advertised port is the live listener, not a stale number.
+        self.assertEqual(result["health"], 200, result)
 
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")

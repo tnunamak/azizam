@@ -10,7 +10,8 @@ Covers:
 - _build_role_catalog_entries: a new backend's role now lists.
 - _build_role_catalog_entries: unknown backend role still skipped.
 - _build_role_catalog_entries: remote role with no model field skipped (malformed).
-- role-is-alarm-only pin: standby down → display "standby"; role field does NOT
+- role-is-alarm-only pin: in the admin health projection a standby failure is
+  still observed "down" but warns instead of alarming; the role field does NOT
   affect routing/resolution functions.
 """
 
@@ -26,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway.admin_api import derive_admin_health_projection  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -301,33 +303,42 @@ class TestRoleIsAlarmOnly(unittest.TestCase):
             out["role"] = role
         return out
 
-    # --- Display path: standby down → live_status becomes "standby" ----------
+    # --- Display path: the production health projection -----------------------
 
-    def test_standby_down_display_status(self) -> None:
-        """Verified (proxy.py:9969): role==standby suppresses a down-alarm display."""
-        # The live_status mutation is a pure if-statement; we replicate it here
-        # as a logic test so a future refactor cannot silently break it.
-        role = "standby"
-        live_status = "down"
-        if role == "standby" and live_status == "down":
-            live_status = "standby"
-        self.assertEqual(live_status, "standby")
+    def test_role_changes_only_the_alarm_in_the_health_projection(self) -> None:
+        """For the same live state, role sets the tone; it never hides a failure.
 
-    def test_required_down_stays_down(self) -> None:
-        """role==required does NOT suppress a down alarm."""
-        role = "required"
-        live_status = "down"
-        if role == "standby" and live_status == "down":
-            live_status = "standby"
-        self.assertEqual(live_status, "down")
+        A standby failure is still observed "down" but warns instead of
+        alarming; the same failure on a required service alarms ("bad"); a
+        healthy standby is plain "up". A stopped on-demand service is the one
+        role-specific observation ("standby_stopped" for standby, else "idle").
+        """
+        on_demand = {"lifecycle": {"driver": "systemd"}}
+        registry = {"services": {
+            "standby-down": {"role": "standby"},
+            "required-down": {"role": "required"},
+            "standby-up": {"role": "standby"},
+            "standby-stopped": {"role": "standby", "config": on_demand},
+            "required-stopped": {"role": "required", "config": on_demand},
+        }}
+        payload = {"backends": [
+            {"key": "standby-down", "status": "down"},
+            {"key": "required-down", "status": "down"},
+            {"key": "standby-up", "status": "up"},
+            {"key": "standby-stopped", "status": "stopped"},
+            {"key": "required-stopped", "status": "stopped"},
+        ]}
 
-    def test_standby_up_stays_up(self) -> None:
-        """A standby backend that is UP shows as UP, not 'standby'."""
-        role = "standby"
-        live_status = "up"
-        if role == "standby" and live_status == "down":
-            live_status = "standby"
-        self.assertEqual(live_status, "up")
+        projection = derive_admin_health_projection(registry, payload, observation_available=True)
+
+        rows = {row["service_id"]: (row["observation"], row["tone"]) for row in projection["services"]}
+        self.assertEqual(rows, {
+            "standby-down": ("down", "warn"),
+            "required-down": ("down", "bad"),
+            "standby-up": ("up", "ok"),
+            "standby-stopped": ("standby_stopped", "neutral"),
+            "required-stopped": ("idle", "neutral"),
+        })
 
     # --- Routing functions ignore role field ----------------------------------
 
