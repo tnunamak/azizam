@@ -12,8 +12,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from tests.support.access import access_context, auth_identity  # noqa: E402
-from gateway import admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
+from tests.support.access import access_context, auth_identity, store_plan  # noqa: E402
+from gateway import accounts, admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash
 from gateway.api import create_gateway_router
@@ -27,6 +27,8 @@ def owners(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     user = admin_store.upsert_oidc_user("fixture", "azizam-user", path=db)
+    accounts.initialize(db)
+    accounts.change_person(user["id"], "test", path=db, plan_id=store_plan("Everything", path=db)["id"])
     first = admin_store.create_app("Azizam one", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     second = admin_store.create_app("Azizam two", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     credentials = []
