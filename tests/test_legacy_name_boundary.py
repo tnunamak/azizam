@@ -42,6 +42,8 @@ FIXTURES = {
     "tests/test_media_provenance.py": {"com.vividfish.", "vividfish"},
     "tests/test_model_metadata.py": {"vivid_fish"},
     "tests/test_provider_sidecar.py": {"AI_GATEWAY_"},
+    # Names the preserved docs/design history directory it skips.
+    "tests/test_no_old_ui_paths.py": {"vivid-fish"},
 }
 BRAND_REFERENCES = re.compile(r"@vivid-fish/brand|(?:~/code/|/|\")vivid-fish-brand|Vivid-Fish/vivid-fish-brand", re.IGNORECASE)
 
