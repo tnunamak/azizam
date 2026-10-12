@@ -228,10 +228,11 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
 
     def test_built_in_voices_are_unchanged(self) -> None:
         self.make_voice(name="Narrator")
-        for given, expected in (("shimmer", "shimmer"), ("Marin", "marin"), ("cheerful_female", "shimmer"), ("nope", "alloy")):
+        for given, expected in (("shimmer", "shimmer"), ("Marin", "marin"), ("cheerful_female", "shimmer")):
             with self.subTest(voice=given):
                 self.assertEqual(self.speak(given).status_code, 200)
                 self.assertEqual(_FakeClient.requests[-1]["body"]["voice"], expected)
+        self.assertEqual(self.speak("nope").json()["error"]["code"], "voice_not_available")
 
 
 class ShadowingTests(CustomVoiceRouteCase):
@@ -239,7 +240,7 @@ class ShadowingTests(CustomVoiceRouteCase):
         for name in ("shimmer", "Alloy", "cheerful_female"):
             with self.subTest(name=name):
                 with self.assertRaises(cv.VoiceError) as ctx:
-                    cv.validate_name(name)
+                    cv.validate_name(name, reserved=proxy._builtin_voice_names())
                 self.assertEqual(ctx.exception.code, "voice_name_reserved")
 
     def test_a_custom_voice_with_a_look_alike_name_does_not_change_what_the_built_in_name_means(self) -> None:

@@ -92,6 +92,7 @@ def test_rotation_voice_http_reads_mutation_and_legacy_duplicates(owners, monkey
         store=lambda: owners.store, sample_limits=SampleLimits,
         authenticate=lambda request, path: active[0], enforce_policy=lambda auth, path: None,
         owner_of=proxy._asset_owner_key, probe_quality=lambda path: None, design_voice=lambda *args: None,
+        design_settings=lambda: None, builtin_voice_names=frozenset,
         compatible_engines=lambda: [], quality_warn_below=lambda: 0.45,
     ))
     client = TestClient(app)

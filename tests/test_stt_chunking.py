@@ -113,12 +113,26 @@ class SttChunkMergeTests(unittest.TestCase):
         self.assertEqual(tokens["usage"]["total_tokens"], 23)
         self.assertEqual(tokens["usage"]["input_token_details"], {"audio_tokens": 5, "text_tokens": 4})
 
-    def test_engine_timing_diagnostics_are_dropped_not_rejected(self) -> None:
+    def test_a_service_row_drops_its_engine_diagnostics_before_the_merge_check(self) -> None:
+        timing = [{"kind": "drop-params", "phase": "response", "drop": ["timing"]}]
         body = json.dumps({"text": "hello", "timing": {"wall_ms": 12.5, "rtf": 0.01}}).encode()
-        payload = stt_chunking._parse_mergeable_chunk_payload(body)
+        payload = stt_chunking._parse_mergeable_chunk_payload(body, timing)
         self.assertEqual(stt_chunking.merge_transcription_payloads([payload, payload]), {"text": "hello hello"})
         with self.assertRaises(stt_chunking.SttChunkResponseError):
-            stt_chunking._parse_mergeable_chunk_payload(json.dumps({"text": "x", "segments": []}).encode())
+            stt_chunking._parse_mergeable_chunk_payload(json.dumps({"text": "x", "segments": []}).encode(), timing)
+
+    def test_without_a_row_no_field_is_engine_knowledge(self) -> None:
+        # A diagnostic is unmergeable unless the service's data says to drop it.
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(json.dumps({"text": "x", "timing": {}}).encode())
+        # Another engine's diagnostic needs only a different row.
+        latency = [{"kind": "drop-params", "phase": "response", "drop": ["latency_ms"]}]
+        body = json.dumps({"text": "x", "latency_ms": 4}).encode()
+        self.assertEqual(stt_chunking._parse_mergeable_chunk_payload(body, latency), {"text": "x"})
+        # A request-phase row does not touch chunk responses.
+        request_row = [{"kind": "drop-params", "drop": ["latency_ms"]}]
+        with self.assertRaises(stt_chunking.SttChunkResponseError):
+            stt_chunking._parse_mergeable_chunk_payload(body, request_row)
 
     def test_merges_each_optional_sdk_token_detail_without_inventing_absent_values(self) -> None:
         payload = stt_chunking.merge_transcription_payloads([
@@ -370,6 +384,52 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome.mode, "upstream_error")
             self.assertFalse(stt_chunking.upstream_response_succeeded(302))
             self.assertFalse(stt_chunking.upstream_response_succeeded(outcome.upstream_response.status_code))
+
+    async def test_service_rows_run_on_chunks_and_a_row_that_cannot_run_fails_before_upload(self) -> None:
+        async def extract(_source, destination, **_kwargs):
+            Path(destination).write_bytes(b"RIFFchunk")
+
+        for rows, policy, expected in (
+            ([{"kind": "drop-params", "phase": "response", "drop": ["timing"]}], "passthrough", "chunked"),
+            ([{"kind": "no-such-kind"}], "passthrough", "passthrough"),
+            (["no-such-transform"], "error", stt_chunking.SttSetupFailure),
+        ):
+            with self.subTest(rows=rows), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                base = _config(root, setup_failure_policy=policy)
+                config = stt_chunking.SttExecutionConfig.from_service(
+                    service_id="stt-test", config_directory=root,
+                    service_config={**base.backend_config, "transforms": rows},
+                )
+                source = root / "source.wav"
+                source.write_bytes(b"source")
+                posted: list[str] = []
+
+                async def post(_path, filename):
+                    posted.append(filename)
+                    return stt_chunking.UpstreamResponse(200, b'{"text":"part","timing":{"wall_ms":1}}', {})
+
+                run = stt_chunking.execute_chunking(
+                    source_path=source, source_stem="source", fields=[("response_format", "json")], config=config,
+                    post_file=post, cancellation_waiters=(), deadline_at=asyncio.get_running_loop().time() + 10,
+                    on_cancel=None,
+                )
+                with (
+                    patch.object(stt_chunking, "probe_audio", new=AsyncMock(return_value=stt_chunking.ProbedAudio(75, 8000, 1))),
+                    patch.object(stt_chunking, "detect_silences", new=AsyncMock(return_value=[(19, 21), (39, 41), (59, 61)])),
+                    patch.object(stt_chunking, "extract_segment", new=AsyncMock(side_effect=extract)),
+                ):
+                    if isinstance(expected, type):
+                        with self.assertRaises(expected):
+                            await run
+                        self.assertEqual(posted, [])
+                        continue
+                    outcome = await run
+                self.assertEqual(outcome.mode, expected)
+                if expected == "chunked":
+                    self.assertEqual(outcome.merged_payload, {"text": "part part part"})
+                else:
+                    self.assertEqual((outcome.fallback_reason, posted), ("setup_failed_before_attempt", []))
 
     async def test_partial_failure_never_replays_the_whole_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

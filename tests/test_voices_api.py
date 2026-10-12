@@ -16,6 +16,7 @@ from gateway import voices_api as api
 from gateway.voice_audio import SampleLimits
 from gateway.voices_api import VoiceApiDeps
 from tests.voice_test_audio import HAVE_FFMPEG, speechlike
+from tests.test_voice_design import OMNIVOICE as SEEDED_DESIGN_SETTINGS
 
 SAMPLE = speechlike(10) if HAVE_FFMPEG else b""
 
@@ -30,6 +31,7 @@ class ApiCase(unittest.TestCase):
         self.store = cv.VoiceStore(Path(self.tmp.name), self.limits)
         self.probed: list[Path] = []
         self.designs: list[tuple] = []
+        self.design_settings = SEEDED_DESIGN_SETTINGS
         self.allow = True
 
         self.probe_result = {"speaker_similarity": 0.71, "encoder": "ecapa-test", "engine": "chatterbox"}
@@ -58,6 +60,8 @@ class ApiCase(unittest.TestCase):
             owner_of=lambda auth: auth.owner,
             probe_quality=probe,
             design_voice=design,
+            design_settings=lambda: self.design_settings,
+            builtin_voice_names=lambda: frozenset({"alloy", "shimmer", "cheerful_female"}),
             compatible_engines=lambda: ["chatterbox", "omnivoice"],
             quality_warn_below=lambda: 0.45,
         )
@@ -261,6 +265,16 @@ class PromptVoiceTests(ApiCase):
         self.assertEqual(meta["transcript"], self.designs[0][1])  # kept so OmniVoice can clone it later
         self.assertTrue(self.store.reference_path("key-a", body["id"]).is_file())
 
+    def test_an_engine_without_a_vocabulary_receives_the_exact_description(self) -> None:
+        self.design_settings = None
+        resp = self.create(seed=7, prompt="  A warm, calm narrator who sounds like a lighthouse keeper.  ")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(self.designs[0][0], "  A warm, calm narrator who sounds like a lighthouse keeper.  ")
+        self.assertEqual(resp.json()["design_instruct"], self.designs[0][0])
+        self.assertFalse([w for w in resp.json()["warnings"] if w.startswith("design_terms_ignored")])
+        # Nothing is refused for lacking a vocabulary word.
+        self.assertEqual(self.create(prompt="warm and calm").status_code, 200)
+
     def test_script_hint_replaces_the_default_script(self) -> None:
         hint = "This is the exact sentence that this designed voice should say during creation. " * 2
         self.create(script_hint=hint)
@@ -299,7 +313,8 @@ class PromptVoiceTests(ApiCase):
         deps = VoiceApiDeps(
             store=lambda: self.store, sample_limits=lambda: SampleLimits(),
             authenticate=lambda r, p: SimpleNamespace(owner="key-a"), enforce_policy=lambda a, p: None,
-            owner_of=lambda a: a.owner, probe_quality=lambda p: None, design_voice=down,
+            owner_of=lambda a: a.owner, probe_quality=lambda p: None, design_voice=down, design_settings=lambda: None,
+            builtin_voice_names=frozenset,
             compatible_engines=lambda: [], quality_warn_below=lambda: 0.45,
         )
         app = FastAPI()

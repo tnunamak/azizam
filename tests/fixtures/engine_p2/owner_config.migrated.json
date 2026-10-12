@@ -1,0 +1,1076 @@
+{
+ "_source": "owner_config.json with the migrated model_aliases.speech and voices sections of proxy_config.yml and the admin-schema migration applied to backends.",
+ "model_aliases": {
+  "speech": {
+   "voice_aliases": {
+    "neutral_female": "alloy",
+    "casual_female": "coral",
+    "cheerful_female": "shimmer",
+    "neutral_male": "ash",
+    "casual_male": "echo",
+    "sophia": "alloy",
+    "isabella": "shimmer",
+    "lily": "coral",
+    "juniper": "coral",
+    "evan": "echo",
+    "adam": "ash"
+   },
+   "engines": {
+    "omnivoice": {
+     "service": "tts",
+     "model": "k2-fsa/OmniVoice",
+     "custom_voices": true,
+     "default_voice": "alloy",
+     "voices": [
+      {
+       "id": "alloy",
+       "name": "Alloy",
+       "language": "en",
+       "gender": "female",
+       "description": "Neutral, balanced, versatile."
+      },
+      {
+       "id": "ash",
+       "name": "Ash",
+       "language": "en",
+       "gender": "male",
+       "description": "Clear, steady, conversational."
+      },
+      {
+       "id": "ballad",
+       "name": "Ballad",
+       "language": "en",
+       "gender": "male",
+       "description": "Gentle, soft, melodic."
+      },
+      {
+       "id": "cedar",
+       "name": "Cedar",
+       "language": "en",
+       "gender": "male",
+       "description": "Warm, grounded, natural."
+      },
+      {
+       "id": "coral",
+       "name": "Coral",
+       "language": "en",
+       "gender": "female",
+       "description": "Warm, friendly, upbeat."
+      },
+      {
+       "id": "echo",
+       "name": "Echo",
+       "language": "en",
+       "gender": "male",
+       "description": "Smooth, calm, even."
+      },
+      {
+       "id": "fable",
+       "name": "Fable",
+       "language": "en",
+       "gender": "male",
+       "description": "Expressive storyteller."
+      },
+      {
+       "id": "marin",
+       "name": "Marin",
+       "language": "en",
+       "gender": "female",
+       "description": "Natural, polished, composed."
+      },
+      {
+       "id": "nova",
+       "name": "Nova",
+       "language": "en",
+       "gender": "female",
+       "description": "Energetic, bright, upbeat."
+      },
+      {
+       "id": "onyx",
+       "name": "Onyx",
+       "language": "en",
+       "gender": "male",
+       "description": "Deep, authoritative."
+      },
+      {
+       "id": "sage",
+       "name": "Sage",
+       "language": "en",
+       "gender": "female",
+       "description": "Calm, thoughtful, measured."
+      },
+      {
+       "id": "shimmer",
+       "name": "Shimmer",
+       "language": "en",
+       "gender": "female",
+       "description": "Bright, cheerful, light."
+      },
+      {
+       "id": "verse",
+       "name": "Verse",
+       "language": "en",
+       "gender": "male",
+       "description": "Expressive, dynamic."
+      },
+      {
+       "id": "ar_female",
+       "name": "Arabic Female",
+       "language": "ar",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "ar_male",
+       "name": "Arabic Male",
+       "language": "ar",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "de_female",
+       "name": "German Female",
+       "language": "de",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "de_male",
+       "name": "German Male",
+       "language": "de",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "es_female",
+       "name": "Spanish Female",
+       "language": "es",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "es_male",
+       "name": "Spanish Male",
+       "language": "es",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "fr_female",
+       "name": "French Female",
+       "language": "fr",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "fr_male",
+       "name": "French Male",
+       "language": "fr",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "hi_female",
+       "name": "Hindi Female",
+       "language": "hi",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "hi_male",
+       "name": "Hindi Male",
+       "language": "hi",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "it_female",
+       "name": "Italian Female",
+       "language": "it",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "it_male",
+       "name": "Italian Male",
+       "language": "it",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "nl_female",
+       "name": "Dutch Female",
+       "language": "nl",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "nl_male",
+       "name": "Dutch Male",
+       "language": "nl",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "pt_female",
+       "name": "Portuguese Female",
+       "language": "pt",
+       "gender": "female",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      },
+      {
+       "id": "pt_male",
+       "name": "Portuguese Male",
+       "language": "pt",
+       "gender": "male",
+       "description": "Multilingual voice-design preset (speaker identity is not fixed)"
+      }
+     ],
+     "description": "OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Supertonic, first engine of tts-quality, and the only voice-cloning engine while Chatterbox is disabled",
+     "voice_design": {
+      "request": {
+       "input": "{input}",
+       "voice": "alloy",
+       "instructions": "{instructions}",
+       "seed": "{seed}",
+       "response_format": "wav"
+      },
+      "separator": ", ",
+      "ignore": [
+       "a",
+       "an",
+       "the",
+       "and",
+       "with",
+       "voice",
+       "pitch",
+       "accent",
+       "sounding",
+       "sounds",
+       "like",
+       "who",
+       "is",
+       "of",
+       "in",
+       "very",
+       "tone",
+       "speaker",
+       "narrator",
+       "person"
+      ],
+      "vocabulary": {
+       "gender": {
+        "female": [
+         "female",
+         "woman",
+         "women",
+         "girl",
+         "lady",
+         "feminine"
+        ],
+        "male": [
+         "male",
+         "man",
+         "men",
+         "boy",
+         "guy",
+         "masculine"
+        ]
+       },
+       "age": {
+        "child": [
+         "child",
+         "kid",
+         "childlike"
+        ],
+        "teenager": [
+         "teenager",
+         "teen",
+         "teenage",
+         "adolescent"
+        ],
+        "young adult": [
+         "young adult",
+         "young",
+         "twenties",
+         "thirties",
+         "youthful"
+        ],
+        "middle-aged": [
+         "middle-aged",
+         "middle aged",
+         "middle age",
+         "forties",
+         "fifties",
+         "mature"
+        ],
+        "elderly": [
+         "elderly",
+         "old",
+         "older",
+         "senior",
+         "aged"
+        ]
+       },
+       "pitch": {
+        "very low pitch": [
+         "very low",
+         "very deep",
+         "bass",
+         "booming"
+        ],
+        "very high pitch": [
+         "very high",
+         "squeaky",
+         "shrill"
+        ],
+        "low pitch": [
+         "low",
+         "deep",
+         "baritone",
+         "husky"
+        ],
+        "high pitch": [
+         "high",
+         "bright",
+         "light",
+         "soprano"
+        ],
+        "moderate pitch": [
+         "moderate",
+         "medium",
+         "mid-range",
+         "midrange",
+         "mid pitch"
+        ]
+       },
+       "style": {
+        "whisper": [
+         "whisper",
+         "whispering",
+         "whispered",
+         "hushed"
+        ]
+       },
+       "accent": {
+        "american accent": [
+         "american"
+        ],
+        "british accent": [
+         "british",
+         "uk",
+         "u.k.",
+         "london"
+        ],
+        "australian accent": [
+         "australian",
+         "aussie"
+        ],
+        "canadian accent": [
+         "canadian"
+        ],
+        "indian accent": [
+         "indian"
+        ],
+        "chinese accent": [
+         "chinese"
+        ],
+        "japanese accent": [
+         "japanese"
+        ],
+        "korean accent": [
+         "korean"
+        ],
+        "portuguese accent": [
+         "portuguese"
+        ],
+        "russian accent": [
+         "russian"
+        ]
+       }
+      }
+     }
+    },
+    "chatterbox": {
+     "service": "tts-chatterbox",
+     "model": "chatterbox-turbo",
+     "streaming": true,
+     "native_sample_rate": 24000,
+     "custom_voices": true,
+     "placement": "Python server on GPU0 (about 3.1 GB while running, weights never unloaded while the process lives), on-demand unit. Temporarily disabled since 2026-10-08.",
+     "default_voice": "alloy",
+     "voices": [
+      {
+       "id": "alloy",
+       "name": "Alloy"
+      },
+      {
+       "id": "ash",
+       "name": "Ash"
+      },
+      {
+       "id": "ballad",
+       "name": "Ballad"
+      },
+      {
+       "id": "cedar",
+       "name": "Cedar"
+      },
+      {
+       "id": "coral",
+       "name": "Coral"
+      },
+      {
+       "id": "echo",
+       "name": "Echo"
+      },
+      {
+       "id": "fable",
+       "name": "Fable"
+      },
+      {
+       "id": "marin",
+       "name": "Marin"
+      },
+      {
+       "id": "nova",
+       "name": "Nova"
+      },
+      {
+       "id": "onyx",
+       "name": "Onyx"
+      },
+      {
+       "id": "sage",
+       "name": "Sage"
+      },
+      {
+       "id": "shimmer",
+       "name": "Shimmer"
+      },
+      {
+       "id": "verse",
+       "name": "Verse"
+      }
+     ],
+     "voice_map": {
+      "alloy": "alloy",
+      "ash": "ash",
+      "ballad": "ballad",
+      "cedar": "cedar",
+      "coral": "coral",
+      "echo": "echo",
+      "fable": "fable",
+      "marin": "marin",
+      "nova": "nova",
+      "onyx": "onyx",
+      "sage": "sage",
+      "shimmer": "shimmer",
+      "verse": "verse"
+     },
+     "description": "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
+    },
+    "supertonic": {
+     "service": "tts-supertonic",
+     "model": "supertonic",
+     "streaming": true,
+     "native_sample_rate": 44100,
+     "placement": "audio.cpp on GPU0 (~0.7 GB, model always loaded: never unloaded when idle), always-warm unit started at boot",
+     "default_voice": "F1",
+     "voices": [
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "M1",
+      "M2",
+      "M3",
+      "M4",
+      "M5"
+     ],
+     "voice_map": {
+      "alloy": "F1",
+      "marin": "F1",
+      "coral": "F3",
+      "nova": "F2",
+      "sage": "F5",
+      "shimmer": "F4",
+      "ash": "M3",
+      "echo": "M4",
+      "ballad": "M4",
+      "cedar": "M2",
+      "fable": "M1",
+      "verse": "M1",
+      "onyx": "M5"
+     },
+     "description": "Supertonic realtime engine (bake-off: 49 ms first audio)"
+    },
+    "kokoro": {
+     "service": "tts-kokoro",
+     "model": "kokoro",
+     "streaming": true,
+     "native_sample_rate": 24000,
+     "placement": "Python server on GPU0 (~1.7 GB while running; exits after 10 min idle), on-demand unit",
+     "default_voice": "af_heart",
+     "voices": [
+      {
+       "id": "af_alloy",
+       "name": "Alloy",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_aoede",
+       "name": "Aoede",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_bella",
+       "name": "Bella",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_heart",
+       "name": "Heart",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_jessica",
+       "name": "Jessica",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_kore",
+       "name": "Kore",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_nicole",
+       "name": "Nicole",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_nova",
+       "name": "Nova",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_river",
+       "name": "River",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_sarah",
+       "name": "Sarah",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "af_sky",
+       "name": "Sky",
+       "language": "en-US",
+       "gender": "female"
+      },
+      {
+       "id": "am_adam",
+       "name": "Adam",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_echo",
+       "name": "Echo",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_eric",
+       "name": "Eric",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_fenrir",
+       "name": "Fenrir",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_liam",
+       "name": "Liam",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_michael",
+       "name": "Michael",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_onyx",
+       "name": "Onyx",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_puck",
+       "name": "Puck",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "am_santa",
+       "name": "Santa",
+       "language": "en-US",
+       "gender": "male"
+      },
+      {
+       "id": "bf_alice",
+       "name": "Alice",
+       "language": "en-GB",
+       "gender": "female"
+      },
+      {
+       "id": "bf_emma",
+       "name": "Emma",
+       "language": "en-GB",
+       "gender": "female"
+      },
+      {
+       "id": "bf_isabella",
+       "name": "Isabella",
+       "language": "en-GB",
+       "gender": "female"
+      },
+      {
+       "id": "bf_lily",
+       "name": "Lily",
+       "language": "en-GB",
+       "gender": "female"
+      },
+      {
+       "id": "bm_daniel",
+       "name": "Daniel",
+       "language": "en-GB",
+       "gender": "male"
+      },
+      {
+       "id": "bm_fable",
+       "name": "Fable",
+       "language": "en-GB",
+       "gender": "male"
+      },
+      {
+       "id": "bm_george",
+       "name": "George",
+       "language": "en-GB",
+       "gender": "male"
+      },
+      {
+       "id": "bm_lewis",
+       "name": "Lewis",
+       "language": "en-GB",
+       "gender": "male"
+      }
+     ],
+     "voice_map": {
+      "alloy": "af_alloy",
+      "ash": "am_michael",
+      "ballad": "am_puck",
+      "cedar": "am_adam",
+      "coral": "af_sky",
+      "echo": "am_echo",
+      "fable": "bm_fable",
+      "marin": "af_bella",
+      "nova": "af_nova",
+      "onyx": "am_onyx",
+      "sage": "af_river",
+      "shimmer": "af_heart",
+      "verse": "am_liam"
+     },
+     "description": "Kokoro quality engine (bake-off: best quality balance, UTMOS 3.83, round-trip WER 3.1%)"
+    }
+   },
+   "stable": {
+    "tts": [
+     "supertonic",
+     "omnivoice"
+    ],
+    "tts-fast": [
+     "supertonic",
+     "omnivoice"
+    ],
+    "tts-quality": [
+     "omnivoice",
+     "kokoro"
+    ]
+   },
+   "openai": [
+    {
+     "match": "tts-1",
+     "to": "tts"
+    },
+    {
+     "match": "tts-1-hd",
+     "to": "tts-quality"
+    },
+    {
+     "match": "gpt-4o*-tts*",
+     "to": "tts"
+    }
+   ]
+  },
+  "transcriptions": {
+   "engines": {
+    "parakeet": {
+     "service": "stt",
+     "model": "parakeet-tdt-0.6b-v3",
+     "description": "NVIDIA Parakeet TDT 0.6B v3 (CPU service; long audio is chunked by the gateway)"
+    },
+    "parakeet-gpu": {
+     "service": "stt-parakeet-gpu",
+     "model": "parakeet-tdt-0.6b-v3",
+     "upload_format": "wav16k",
+     "placement": "audio.cpp on GPU0 (about 2.3-3.2 GB while loaded; weights unload after 5 min idle), on-demand unit",
+     "description": "Parakeet TDT 0.6B v3 q8 on GPU0 (same model as `parakeet`, no blanked spans: 5 min set WER 1.5% in 1.1 s vs 2.05% in 13.8 s on CPU)"
+    },
+    "nemotron-streaming": {
+     "service": "stt-nemotron",
+     "model": "nemotron-3.5-asr-streaming-0.6b",
+     "stream_model": "nemotron-3.5-asr-streaming-0.6b-stream",
+     "streaming": true,
+     "upload_format": "wav16k",
+     "placement": "audio.cpp on GPU0 (~2.2 GB with both modes loaded, always loaded: never unloaded when idle), always-warm unit started at boot",
+     "description": "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
+    },
+    "canary": {
+     "service": "stt-canary",
+     "model": "canary-180m-flash",
+     "upload_format": "wav16k",
+     "placement": "audio.cpp on GPU0 (~0.9 GB while loaded; weights unload after 5 min idle), on-demand unit",
+     "description": "Canary 180M Flash (low VRAM, strong clean-speech WER)"
+    },
+    "nemotron-diarize": {
+     "service": "stt-diarize",
+     "model": "nemotron-3-diarization",
+     "streaming": true,
+     "placement": "CPU only (about 1.5 GB RAM; exits after 15 min idle), on-demand unit; words come from the Parakeet service",
+     "description": "Nemotron 3 Diarization (speakers) + Parakeet TDT (word timestamps): gpt-4o-transcribe-diarize shape, diarized_json"
+    }
+   },
+   "stable": {
+    "stt": [
+     "parakeet-gpu",
+     "parakeet"
+    ],
+    "stt-fast": [
+     "nemotron-streaming",
+     "parakeet"
+    ],
+    "stt-quality": [
+     "parakeet-gpu",
+     "parakeet",
+     "canary"
+    ],
+    "stt-diarize": [
+     "nemotron-diarize"
+    ]
+   },
+   "openai": [
+    {
+     "match": "*transcribe-diarize*",
+     "to": "stt-diarize"
+    },
+    {
+     "match": "whisper*",
+     "to": "stt"
+    },
+    {
+     "match": "parakeet-*",
+     "to": "stt"
+    },
+    {
+     "match": "gpt-4o-mini-transcribe*",
+     "to": "stt-fast"
+    },
+    {
+     "match": "gpt-4o*transcribe*",
+     "to": "stt-quality"
+    },
+    {
+     "match": "*transcribe*",
+     "to": "stt"
+    }
+   ]
+  }
+ },
+ "voices": {
+  "dir": "data/voices",
+  "consent_mode": "optional",
+  "max_voices_per_key": 20,
+  "max_consents_per_key": 50,
+  "max_bytes_per_key": 209715200,
+  "max_upload_bytes": 10485760,
+  "min_seconds": 5,
+  "max_seconds": 60,
+  "min_speech_seconds": 3.5,
+  "target_seconds": 12,
+  "quality_engine": "chatterbox",
+  "quality_warn_below": 0.45,
+  "design_engine": "omnivoice"
+ },
+ "backends": {
+  "stt": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 5092,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "default_model": "parakeet-tdt-0.6b-v3",
+   "timeout": 120,
+   "chunking": {
+    "backend_timeout_seconds": 180,
+    "deadline_seconds": 360,
+    "enabled": true,
+    "global_concurrency": 2,
+    "max_channels": 2,
+    "max_decoded_bytes": 1073741824,
+    "max_duration_seconds": 14400,
+    "max_field_bytes": 65536,
+    "max_fields": 100,
+    "max_files": 8,
+    "max_input_bytes": 536870912,
+    "max_media_output_bytes": 8388608,
+    "max_response_bytes": 16777216,
+    "max_sample_rate": 48000,
+    "max_segments": 16,
+    "min_free_bytes": 67108864,
+    "setup_failure_policy": "passthrough",
+    "silence_min_seconds": 0.5,
+    "silence_noise_db": "-30dB",
+    "silence_search_seconds": 120,
+    "spool_dir": "data/stt-spool",
+    "target_seconds": 150,
+    "threshold_seconds": 180
+   },
+   "priority": 100,
+   "role": "required",
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
+  },
+  "stt-canary": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8013,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "default_model": "canary-180m-flash",
+   "timeout": 120,
+   "chunking": {
+    "backend_timeout_seconds": 180,
+    "deadline_seconds": 360,
+    "enabled": true,
+    "max_duration_seconds": 3600,
+    "max_segments": 64,
+    "silence_search_seconds": 40,
+    "spool_dir": "data/stt-spool",
+    "target_seconds": 120,
+    "threshold_seconds": 200
+   },
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
+  },
+  "stt-diarize": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8014,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "default_model": "nemotron-3-diarization",
+   "timeout": 1800,
+   "chunking": {
+    "backend_timeout_seconds": 1800,
+    "deadline_seconds": 2400,
+    "enabled": false,
+    "max_duration_seconds": 14400,
+    "max_field_bytes": 8388608,
+    "spool_dir": "data/stt-spool"
+   },
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
+  },
+  "stt-nemotron": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8012,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "default_model": "nemotron-3.5-asr-streaming-0.6b",
+   "timeout": 120,
+   "chunking": {
+    "backend_timeout_seconds": 180,
+    "deadline_seconds": 360,
+    "enabled": true,
+    "max_duration_seconds": 3600,
+    "max_segments": 64,
+    "silence_search_seconds": 30,
+    "spool_dir": "data/stt-spool",
+    "target_seconds": 60,
+    "threshold_seconds": 110
+   },
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
+  },
+  "stt-parakeet-gpu": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8017,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "transcriptions"
+   ],
+   "default_model": "parakeet-tdt-0.6b-v3",
+   "timeout": 120,
+   "chunking": {
+    "backend_timeout_seconds": 180,
+    "deadline_seconds": 360,
+    "enabled": true,
+    "max_duration_seconds": 3600,
+    "max_segments": 128,
+    "silence_search_seconds": 10,
+    "spool_dir": "data/stt-spool",
+    "target_seconds": 30,
+    "threshold_seconds": 40
+   },
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true,
+   "transforms": [
+    {
+     "kind": "drop-params",
+     "phase": "response",
+     "drop": [
+      "timing"
+     ]
+    }
+   ]
+  },
+  "tts": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8002,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "timeout": 86400,
+   "priority": 100,
+   "role": "standby",
+   "native_passthrough": true
+  },
+  "tts-chatterbox": {
+   "enabled": false,
+   "host": "127.0.0.1",
+   "port": 8015,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "timeout": 120,
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true
+  },
+  "tts-kokoro": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8011,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "timeout": 120,
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true
+  },
+  "tts-supertonic": {
+   "enabled": true,
+   "host": "127.0.0.1",
+   "port": 8010,
+   "base_path": "/v1",
+   "capabilities": [
+    "audio",
+    "speech"
+   ],
+   "timeout": 120,
+   "priority": 200,
+   "role": "standby",
+   "native_passthrough": true
+  }
+ }
+}

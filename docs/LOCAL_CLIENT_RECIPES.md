@@ -1689,6 +1689,17 @@ answer once (an SSE request gets one delta). See the shared
 and streaming behavior. `GET /v1/audio/voices` lists each deployed engine's
 voices under `engines`.
 
+**Voices are engine data.** Each engine in `model_aliases.speech.engines` lists
+its `voices`; `voice_map` and the speech section's `voice_aliases` are accepted
+spellings (an OpenAI name such as `shimmer`, or an older one such as
+`cheerful_female`). A model served by a tier of engines (`stable`) sends a voice
+to the first engine, in the tier's order, that accepts it; a voice that no engine
+of the model accepts is `400 voice_not_available` (`param: voice`), not a silent
+default. Omitting `voice` uses the first engine's `default_voice`. An engine with
+no `voices` list takes any voice id. `GET /v1/audio/voices?model=<model>` lists
+exactly the voices that model accepts (without `model`, those of `tts-1`), and
+Try offers the same voices per model.
+
 ### Custom voices
 
 Users can create their own voices and use them with the speech route. The request
@@ -1714,7 +1725,7 @@ curl "$AZIZAM_BASE_URL/v1/audio/speech" -H "Authorization: Bearer $AZIZAM_API_KE
 | Route | Notes |
 |---|---|
 | `POST /v1/audio/voices` | multipart: `name`, `audio_sample` (file, <= 10 MiB; wav, mp3, flac, ogg, aac, webm, m4a), `consent` (id), `type` (`audio_sample`, default). Extras: `description`, `labels` (JSON object, <= 10), `remove_background_noise` (default false). |
-| `POST /v1/audio/voices` with `type: "prompt"` | JSON or multipart: `name`, `prompt` (1-2000 chars), `script_hint`, `model` (`auto`), extra `seed`. OmniVoice designs from a fixed vocabulary, not free text: the gateway reads the description for gender (male, female), age (child, teenager, young adult, middle-aged, elderly), pitch (very low, low, moderate, high, very high), `whisper` and an accent (american, british, australian, canadian, indian, chinese, japanese, korean, portuguese, russian), lists the words it could not use in `warnings` (`design_terms_ignored: ...`), and returns the attributes it applied as `design_instruct`. A description with none of them is `400 invalid_prompt`. OmniVoice renders the script once and the gateway keeps that clip, so the voice then works on every cloning engine (OpenAI limits prompt voices to its Live API). |
+| `POST /v1/audio/voices` with `type: "prompt"` | JSON or multipart: `name`, `prompt` (1-2000 chars), `script_hint`, `model` (`auto`), extra `seed`. The engine named by `voices.design_engine` does the design. When that engine's data declares a `voice_design.vocabulary` (the shipped OmniVoice data does: gender, age, pitch, `whisper` and an accent), the gateway reads the description for those attributes, lists the words it could not use in `warnings` (`design_terms_ignored: ...`), and returns the attributes it applied as `design_instruct`; a description with none of them is `400 invalid_prompt`. An engine with no vocabulary receives the description unchanged. OmniVoice renders the script once and the gateway keeps that clip, so the voice then works on every cloning engine (OpenAI limits prompt voices to its Live API). |
 | `GET /v1/audio/voices` | Built-in list as before, plus `object: "list"`, `data` (your custom voices, newest first), `first_id`, `last_id`, `has_more`; `after` and `limit` (1-100). |
 | `GET/POST/DELETE /v1/audio/voices/{id}` | Get; rename or relabel (JSON `name`, `description`, `labels`); delete (`{"id", "object": "audio.voice", "deleted": true}`). |
 | `GET /v1/audio/voices/{id}/sample` | The stored reference clip (`audio/wav`), to hear what the clone is built from. |

@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 from gateway import custom_voices as cv
-from gateway.transforms import CANONICAL_TTS_VOICES, LEGACY_TTS_VOICE_ALIASES
+
+# The lower-case built-in names the gateway passes in (the default engine's voices and older spellings).
+BUILT_IN = frozenset({"alloy", "shimmer", "ash", "cheerful_female", "de_female"})
 
 WAV = b"RIFF----WAVEfmt " + b"\x00" * 64
 
@@ -101,11 +103,12 @@ class VoiceLifecycleTests(StoreTestCase):
 
 class ValidationTests(StoreTestCase):
     def test_built_in_names_and_legacy_aliases_cannot_be_used_as_a_name(self) -> None:
-        for name in (*CANONICAL_TTS_VOICES, "Alloy", " SHIMMER ", *list(LEGACY_TTS_VOICE_ALIASES)[:3]):
+        for name in ("alloy", "Alloy", " SHIMMER ", "Cheerful_Female", "de_female"):
             with self.subTest(name=name):
                 with self.assertRaises(cv.VoiceError) as ctx:
-                    cv.validate_name(name)
+                    cv.validate_name(name, reserved=BUILT_IN)
                 self.assertEqual(ctx.exception.code, "voice_name_reserved")
+        self.assertEqual(cv.validate_name("Alloy", reserved=frozenset()), "Alloy")
 
     def test_ordinary_names_pass_and_bad_names_fail(self) -> None:
         self.assertEqual(cv.validate_name("  My narrator "), "My narrator")
@@ -117,7 +120,7 @@ class ValidationTests(StoreTestCase):
     def test_ids_cannot_collide_with_built_in_names(self) -> None:
         self.assertFalse(cv.is_voice_id("alloy"))
         self.assertTrue(cv.is_voice_id("voice_" + "a" * 24))
-        for builtin in CANONICAL_TTS_VOICES:
+        for builtin in BUILT_IN:
             self.assertFalse(cv.is_voice_id(builtin))
 
     def test_labels_are_bounded(self) -> None:

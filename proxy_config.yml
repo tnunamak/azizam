@@ -287,6 +287,8 @@ backends:
     host: 127.0.0.1
     port: 5092
     default_model: parakeet-tdt-0.6b-v3
+    # Per-chunk fields the engine adds beside the text; dropped before chunked transcripts merge.
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     health_endpoint: /health
     timeout: 120
     # Generic long-audio protection. This storage root must be on a durable
@@ -429,6 +431,7 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3.5-asr-streaming-0.6b
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Offline mode handles about 120 s per request, so longer audio is cut at silences.
     # (stream=true uses streaming mode, which has no length limit.)
     chunking:
@@ -464,6 +467,7 @@ backends:
       - transcriptions
     managed: false
     default_model: canary-180m-flash
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured: accurate to about 240 s per request, drops words near 300 s. Cut longer audio at silences.
     chunking:
       enabled: true
@@ -498,6 +502,7 @@ backends:
       - transcriptions
     managed: false
     default_model: parakeet-tdt-0.6b-v3
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Measured on 313 s and 1576 s read speech (WER): 15 s 1.7/3.3%, 20 s 1.5/3.8%, 30 s 1.5/3.3%, 45 s -/3.8%,
     # 60 s 2.0/4.8%, 90 s 2.0/5.4%, 200 s 6.0%; one 313 s request fails outright. Shorter than the 60 s the CPU
     # service needs: cut at silences into about 30 s pieces.
@@ -536,6 +541,7 @@ backends:
       - transcriptions
     managed: false
     default_model: nemotron-3-diarization
+    transforms: [{kind: drop-params, phase: response, drop: [timing]}]
     # Gateway chunking would split speakers across chunks; the service chunks the audio itself.
     # known_speaker_references[] are base64 data URLs, so the field limit is raised from 64 KiB.
     chunking:
@@ -1199,24 +1205,102 @@ model_aliases:
     # listed for discovery only. Every engine id is also a valid `model`.
     # Engine data keys: streaming (answers with incremental PCM when asked),
     # native_sample_rate (Hz of that PCM; the gateway resamples to OpenAI's
-    # 24 kHz), voice_map (OpenAI voice name -> the engine's voice), voices.
+    # 24 kHz), voices (the complete list: an id, or {id, name, language,
+    # gender, description}; a voice not in it is refused with 400
+    # voice_not_available; an engine without the list takes any voice id),
+    # voice_map (accepted spelling, such as an OpenAI voice name -> a voice id;
+    # never listed as a voice), default_voice (used only when the request
+    # names no voice).
+    # Older voice spellings (Voxtral presets, retired names) -> the OpenAI voice name each means.
+    # They are accepted spellings only: applied before an engine's voice_map, never listed as voices.
+    voice_aliases: {neutral_female: alloy, casual_female: coral, cheerful_female: shimmer, neutral_male: ash, casual_male: echo, sophia: alloy, isabella: shimmer, lily: coral, juniper: coral, evan: echo, adam: ash}
     engines:
       omnivoice:
         service: tts
         model: k2-fsa/OmniVoice
-        voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
+        default_voice: alloy
+        # The 13 OpenAI voice names, each one fixed speaker identity (a reference clip the engine clones),
+        # then the multilingual design presets. `voices` is the complete list: another voice is refused.
+        voices:
+          - {id: alloy, name: Alloy, language: en, gender: female, description: "Neutral, balanced, versatile."}
+          - {id: ash, name: Ash, language: en, gender: male, description: "Clear, steady, conversational."}
+          - {id: ballad, name: Ballad, language: en, gender: male, description: "Gentle, soft, melodic."}
+          - {id: cedar, name: Cedar, language: en, gender: male, description: "Warm, grounded, natural."}
+          - {id: coral, name: Coral, language: en, gender: female, description: "Warm, friendly, upbeat."}
+          - {id: echo, name: Echo, language: en, gender: male, description: "Smooth, calm, even."}
+          - {id: fable, name: Fable, language: en, gender: male, description: "Expressive storyteller."}
+          - {id: marin, name: Marin, language: en, gender: female, description: "Natural, polished, composed."}
+          - {id: nova, name: Nova, language: en, gender: female, description: "Energetic, bright, upbeat."}
+          - {id: onyx, name: Onyx, language: en, gender: male, description: "Deep, authoritative."}
+          - {id: sage, name: Sage, language: en, gender: female, description: "Calm, thoughtful, measured."}
+          - {id: shimmer, name: Shimmer, language: en, gender: female, description: "Bright, cheerful, light."}
+          - {id: verse, name: Verse, language: en, gender: male, description: "Expressive, dynamic."}
+          - {id: ar_female, name: Arabic Female, language: ar, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: ar_male, name: Arabic Male, language: ar, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: de_female, name: German Female, language: de, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: de_male, name: German Male, language: de, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: es_female, name: Spanish Female, language: es, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: es_male, name: Spanish Male, language: es, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: fr_female, name: French Female, language: fr, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: fr_male, name: French Male, language: fr, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: hi_female, name: Hindi Female, language: hi, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: hi_male, name: Hindi Male, language: hi, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: it_female, name: Italian Female, language: it, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: it_male, name: Italian Male, language: it, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: nl_female, name: Dutch Female, language: nl, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: nl_male, name: Dutch Male, language: nl, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: pt_female, name: Portuguese Female, language: pt, gender: female, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
+          - {id: pt_male, name: Portuguese Male, language: pt, gender: male, description: "Multilingual voice-design preset (speaker identity is not fixed)"}
         description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Supertonic, first engine of tts-quality, and the only voice-cloning engine while Chatterbox is disabled
+        # Voice design (POST /v1/audio/voices, type prompt) when voices.design_engine names this engine.
+        # OmniVoice designs from a fixed vocabulary, not free text: at most one attribute per category.
+        # Categories and attributes are in precedence order (the first attribute whose word appears
+        # wins its category, so the more specific pitch comes first); `ignore` lists words that are
+        # not reported as unused. An engine with no vocabulary receives the description unchanged.
+        voice_design:
+          request: {input: "{input}", voice: alloy, instructions: "{instructions}", seed: "{seed}", response_format: wav}
+          separator: ", "
+          ignore: [a, an, the, and, with, voice, pitch, accent, sounding, sounds, like, who, is, of, in, very, tone, speaker, narrator, person]
+          vocabulary:
+            gender:
+              female: [female, woman, women, girl, lady, feminine]
+              male: [male, man, men, boy, guy, masculine]
+            age:
+              child: [child, kid, childlike]
+              teenager: [teenager, teen, teenage, adolescent]
+              young adult: [young adult, young, twenties, thirties, youthful]
+              middle-aged: [middle-aged, middle aged, middle age, forties, fifties, mature]
+              elderly: [elderly, old, older, senior, aged]
+            pitch:
+              very low pitch: [very low, very deep, bass, booming]
+              very high pitch: [very high, squeaky, shrill]
+              low pitch: [low, deep, baritone, husky]
+              high pitch: [high, bright, light, soprano]
+              moderate pitch: [moderate, medium, mid-range, midrange, mid pitch]
+            style:
+              whisper: [whisper, whispering, whispered, hushed]
+            accent:
+              american accent: [american]
+              british accent: [british, uk, u.k., london]
+              australian accent: [australian, aussie]
+              canadian accent: [canadian]
+              indian accent: [indian]
+              chinese accent: [chinese]
+              japanese accent: [japanese]
+              korean accent: [korean]
+              portuguese accent: [portuguese]
+              russian accent: [russian]
       chatterbox:
         service: tts-chatterbox
         model: chatterbox-turbo
-        voice_transform: voxtral-voices    # OpenAI voice names -> the 13 reference clips the engine clones
         streaming: true                    # response_format=pcm streams one chunk per sentence group
         native_sample_rate: 24000
         custom_voices: true                # accepts a user-created voice (voice_ref = its stored clip)
         placement: "Python server on GPU0 (about 3.1 GB while running, weights never unloaded while the process lives), on-demand unit. Temporarily disabled since 2026-10-08."
         default_voice: alloy
-        voices: [alloy, ash, ballad, cedar, coral, echo, fable, marin, nova, onyx, sage, shimmer, verse]
+        # The 13 OpenAI-named reference clips OmniVoice also clones (described there).
+        voices: [{id: alloy, name: Alloy}, {id: ash, name: Ash}, {id: ballad, name: Ballad}, {id: cedar, name: Cedar}, {id: coral, name: Coral}, {id: echo, name: Echo}, {id: fable, name: Fable}, {id: marin, name: Marin}, {id: nova, name: Nova}, {id: onyx, name: Onyx}, {id: sage, name: Sage}, {id: shimmer, name: Shimmer}, {id: verse, name: Verse}]
         voice_map: {alloy: alloy, ash: ash, ballad: ballad, cedar: cedar, coral: coral, echo: echo, fable: fable, marin: marin, nova: nova, onyx: onyx, sage: sage, shimmer: shimmer, verse: verse}
         description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
       supertonic:
@@ -1238,7 +1322,36 @@ model_aliases:
         native_sample_rate: 24000
         placement: "Python server on GPU0 (~1.7 GB while running; exits after 10 min idle), on-demand unit"
         default_voice: af_heart
-        voices: [af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky, am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck, am_santa, bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis]
+        # Vendor ids; the name drops the prefix (a = American, b = British English; f/m = female/male).
+        voices:
+          - {id: af_alloy, name: Alloy, language: en-US, gender: female}
+          - {id: af_aoede, name: Aoede, language: en-US, gender: female}
+          - {id: af_bella, name: Bella, language: en-US, gender: female}
+          - {id: af_heart, name: Heart, language: en-US, gender: female}
+          - {id: af_jessica, name: Jessica, language: en-US, gender: female}
+          - {id: af_kore, name: Kore, language: en-US, gender: female}
+          - {id: af_nicole, name: Nicole, language: en-US, gender: female}
+          - {id: af_nova, name: Nova, language: en-US, gender: female}
+          - {id: af_river, name: River, language: en-US, gender: female}
+          - {id: af_sarah, name: Sarah, language: en-US, gender: female}
+          - {id: af_sky, name: Sky, language: en-US, gender: female}
+          - {id: am_adam, name: Adam, language: en-US, gender: male}
+          - {id: am_echo, name: Echo, language: en-US, gender: male}
+          - {id: am_eric, name: Eric, language: en-US, gender: male}
+          - {id: am_fenrir, name: Fenrir, language: en-US, gender: male}
+          - {id: am_liam, name: Liam, language: en-US, gender: male}
+          - {id: am_michael, name: Michael, language: en-US, gender: male}
+          - {id: am_onyx, name: Onyx, language: en-US, gender: male}
+          - {id: am_puck, name: Puck, language: en-US, gender: male}
+          - {id: am_santa, name: Santa, language: en-US, gender: male}
+          - {id: bf_alice, name: Alice, language: en-GB, gender: female}
+          - {id: bf_emma, name: Emma, language: en-GB, gender: female}
+          - {id: bf_isabella, name: Isabella, language: en-GB, gender: female}
+          - {id: bf_lily, name: Lily, language: en-GB, gender: female}
+          - {id: bm_daniel, name: Daniel, language: en-GB, gender: male}
+          - {id: bm_fable, name: Fable, language: en-GB, gender: male}
+          - {id: bm_george, name: George, language: en-GB, gender: male}
+          - {id: bm_lewis, name: Lewis, language: en-GB, gender: male}
         # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
         # (see ~/.tmp/media-refresh/speech-tiers/REPORT.md). Preset voices only, no cloning.
         voice_map: {alloy: af_alloy, ash: am_michael, ballad: am_puck, cedar: am_adam, coral: af_sky, echo: am_echo, fable: bm_fable, marin: af_bella, nova: af_nova, onyx: am_onyx, sage: af_river, shimmer: af_heart, verse: am_liam}
