@@ -9,7 +9,7 @@ def test_dbg(fake_upstreams, monkeypatch, tmp_path):
             req = c.build_request("POST", fake.base_url + "/v1/chat/completions", json={"model": "fk-model", "stream": True})
             r = await c.send(req, stream=True)
             n = 0; done = []
-            async for ch in le.iter_llm_response_bytes(c, r):
+            async for ch in r.aiter_raw():
                 print("CHUNK", ch); n += ch.count(b"\n\n")
                 if n == 1 and not done:
                     done.append(1); await fake_upstreams.clock.until_waiting(); fake_upstreams.clock.advance(1)
