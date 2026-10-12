@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
-    for (const state of ["seeded", "empty", "error"]) {
+    for (const state of ["seeded", "error"]) {
       test(`Try ${state} ${theme} ${width}`, async ({ page }) => {
         await page.setViewportSize({
           width,
@@ -148,4 +148,35 @@ test("Try prepares a key and links a real public chat receipt", async ({
   await expect(page.getByText("Catalog loaded", { exact: true })).toHaveCount(
     0,
   );
+});
+
+test("an empty decision catalog has no inferred model and cannot run", async ({ page }) => {
+  const inferencePosts: string[] = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" &&
+        (path.startsWith("/openai/v1/") || path.startsWith("/v1/"))) {
+      inferencePosts.push(path);
+    }
+  });
+
+  await page.route("**/me/api/models/catalog", (route) =>
+    route.fulfill({ json: { aliases: [], models: [] } }),
+  );
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({
+      json: { schema_version: 1, workflows: [], counts: { workflows: 0, capabilities: 0 } },
+    }),
+  );
+
+  await page.goto("/try/?capability=decide");
+  await expect(page.getByRole("heading", { name: "Try", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "Choose an option", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText(/No decision models are available/)).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await expect(page.getByRole("link", { name: "View receipt", exact: true })).toHaveCount(0);
+  expect(inferencePosts).toEqual([]);
 });
