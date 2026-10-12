@@ -120,5 +120,56 @@ class ProcessSampleTests(unittest.TestCase):
             self.assertEqual((handle.getnchannels(), handle.getsampwidth(), handle.getframerate()), (1, 2, RATE))
 
 
+def test_process_sample_passes_the_denoise_choice_to_the_decoder():
+    from unittest.mock import patch
+
+    uploaded = speechlike(8, noise=800)
+    decoded = samples_of(uploaded)
+    for requested in (False, True):
+        with patch.object(va, "decode_pcm", return_value=decoded) as decode:
+            result = va.process_sample(uploaded, LIMITS, denoise=requested)
+        decode.assert_called_once_with(
+            uploaded, max_seconds=LIMITS.max_seconds, denoise=requested
+        )
+        assert result.denoised is requested
+        assert result.wav[:4] == b"RIFF"
+
+
+def test_decoder_uses_the_noise_filter_only_when_requested():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    pcm = array.array("h", [100, -200, 300, -400])
+    for requested in (False, True):
+        with patch.object(
+            va.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                stdout=pcm.tobytes(), stderr=b"", returncode=0
+            ),
+        ) as run:
+            actual = va.decode_pcm(
+                b"encoded-audio-fixture", max_seconds=8, denoise=requested
+            )
+
+        assert actual.tolist() == [100, -200, 300, -400]
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        assert command[-7:] == [
+            "-ac", "1", "-ar", "24000", "-f", "s16le", "pipe:1"
+        ]
+        assert command[command.index("-t") + 1] == "9.00"
+        if requested:
+            assert command.count("-af") == 1
+            assert command[command.index("-af") + 1] == "afftdn=nf=-25"
+        else:
+            assert "-af" not in command
+        assert run.call_args.kwargs == {
+            "capture_output": True,
+            "timeout": 60,
+            "check": False,
+        }
+
+
 if __name__ == "__main__":
     unittest.main()

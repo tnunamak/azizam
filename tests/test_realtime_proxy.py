@@ -163,6 +163,32 @@ class RefusalTests(RealtimeRouteCase):
                 finish(ws, self.upstream)
         self.assertEqual([c.args[1] for c in enforce.call_args_list], list(proxy._REALTIME_POLICY_PATHS))
 
+    def test_every_required_realtime_policy_is_independently_enforced(self) -> None:
+        required = (
+            "/v1/audio/transcriptions",
+            "/v1/chat/completions",
+            "/v1/audio/speech",
+        )
+        with patch.object(proxy, "_enforce_runtime_route_policy", return_value=None) as enforce:
+            self.assertIsNone(proxy._realtime_policy_denial(proxy.NO_AUTH_CONTEXT))
+        self.assertEqual([call.args[1] for call in enforce.call_args_list], list(required))
+
+        for index, denied_path in enumerate(required):
+            with self.subTest(denied_path=denied_path):
+                self.connect.reset_mock()
+                self.ensure.reset_mock()
+                denied = proxy._tts_error("not allowed", 403, "policy_denied")
+
+                def policy(_auth_context, path, **_kwargs):
+                    return denied if path == denied_path else None
+
+                with patch.object(proxy, "_enforce_runtime_route_policy", side_effect=policy) as enforce:
+                    self.assertEqual(self._refused(), 403)
+
+                self.assertEqual([call.args[1] for call in enforce.call_args_list], list(required[: index + 1]))
+                self.ensure.assert_not_awaited()
+                self.connect.assert_not_called()
+
     def test_unconfigured_service_is_a_503(self) -> None:
         cfg = {**proxy.config, "backends": {k: v for k, v in proxy.config["backends"].items() if k != "realtime"}}
         with patch.object(proxy, "config", cfg):
