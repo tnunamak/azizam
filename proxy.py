@@ -1007,17 +1007,18 @@ def reload_runtime_config() -> dict:
     # Re-overlay the service registry onto the bootstrap YAML config.
     new_cfg = _load_effective_runtime_config(_bootstrap_config)
 
+    # Derive every backend constant from the candidate BEFORE publishing
+    # anything: a bad config must raise here and leave the old config and
+    # constants serving, never a new config paired with old constants.
+    updates = _derive_backend_constants(new_cfg)
+
     # Publish the completed registry-derived configuration by one reference
     # swap.  A request either captures the old mapping or the new mapping; it
     # can never rank ids from one while resolving records from the other.
-    global config
-    config = new_cfg
-
-    # Re-derive and reassign every backend-derived constant.
     # Use globals() rather than sys.modules[__name__] so this works even when
     # a test has popped 'proxy' from sys.modules (e.g. test_gateway_api.py).
     _g = globals()
-    updates = _derive_backend_constants(new_cfg)
+    _g["config"] = new_cfg
     for name, value in updates.items():
         _g[name] = value
 
