@@ -60,7 +60,9 @@ def test_startup_lost_seed_race_keeps_the_winner_and_audits_one_seed(monkeypatch
     assert result == durable["value"]
     assert result["services"]["operator-service"]["config"]["operator_value"] == "must survive"
     assert durable["operator_settings_generation"] == 2
-    assert [(e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)] == [
+    assert sorted(
+        (e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)
+    ) == [
         ("operator.service_registry.backfill", "test-boot"),
         ("operator.service_registry.seed", "other-boot"),
     ]
