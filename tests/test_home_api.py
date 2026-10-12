@@ -674,7 +674,7 @@ def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_c
     })
     def upstream_projection(identity):
         raw = [*registered_model_capabilities(c.registry), *build_alias_capabilities(c.aliases_override)]
-        projected = [proxy._capability_for_profile(cap, proxy.AuthContext(identity=identity))
+        projected = [proxy._capability_for_access(cap, proxy.AuthContext(identity=identity))
                      for cap in resolve_capability_targets(raw, c.registry)]
         assert all(cap.policy_available == (restriction == "allowed_canonical_grant") for cap in projected)
         if not remote_tags:
@@ -784,8 +784,8 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
     assert "remote" not in aliases[0].tags
     identity = RuntimeIdentity(name="Service policy", key_hash="", access=access(load_profile(profile_document)))
     expected = permission == "allowed_canonical_grant"
-    assert proxy._capability_for_profile(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
-    c.capabilities_override = lambda caller: [proxy._capability_for_profile(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
+    assert proxy._capability_for_access(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
+    c.capabilities_override = lambda caller: [proxy._capability_for_access(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
     c.health = {"backends": [{"key": "voice-cloud", "live_status": "up"}]}
     for path in ("/me/api/home", "/me/api/status"):
         response = c.http.get(path)

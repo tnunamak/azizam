@@ -270,7 +270,7 @@ def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
         "restricted", "hash", access=access(plan_for("restricted")),
     ))
     cap = proxy.DECISION_RUNTIME.capabilities()[0]
-    assert proxy._capability_for_profile(cap, auth).policy_available is False
+    assert proxy._capability_for_access(cap, auth).policy_available is False
     ensure = AsyncMock(return_value=None)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", ensure)
     assert proxy._decision_authorized(auth, model, "small") is False
@@ -524,7 +524,7 @@ def test_allowed_local_tag_agrees_for_discovery_and_direct_dispatch(monkeypatch)
     auth = proxy.AuthContext(RuntimeIdentity("local", "hash", access=access(plan_for("local"))))
     for name in ("decide", "small", "small-v1", "jev-latest"):
         cap = proxy.DECISION_RUNTIME.capability_for(name, "small")
-        assert proxy._capability_for_profile(cap, auth).policy_available is True
+        assert proxy._capability_for_access(cap, auth).policy_available is True
         assert proxy._decision_authorized(auth, name, "small") is True
 
 

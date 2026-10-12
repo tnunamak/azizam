@@ -512,7 +512,7 @@ def test_unknown_remote_litellm_body_and_existing_only_path_remain_unchanged() -
     remote_body = {"model": "remote/model", "messages": [], "reasoning_effort": "high"}
     assert _forward_to_fake_upstream(remote_body) == remote_body
 
-    with _local_model_config(), patch.object(proxy, "_profile_target_activation", return_value="existing_only"):
+    with _local_model_config(), patch.object(proxy, "_target_activation", return_value="existing_only"):
         error, prepared = asyncio.run(
             proxy._prepare_litellm_local_llm_request(
                 access_context(),

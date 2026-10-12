@@ -2319,7 +2319,7 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
 
     def test_provider_still_policy_projects_capabilities(self) -> None:
         seen: list[Any] = []
-        original_project = proxy._capability_for_profile
+        original_project = proxy._capability_for_access
 
         def spy_project(capability, auth_context, *, protocol=None):
             projected = original_project(
@@ -2330,7 +2330,7 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             seen.append(projected)
             return projected
 
-        with patch.object(proxy, "_capability_for_profile", spy_project), \
+        with patch.object(proxy, "_capability_for_access", spy_project), \
              patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 

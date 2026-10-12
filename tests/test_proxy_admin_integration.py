@@ -1004,7 +1004,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
             def capabilities_for(auth_context):
                 return [
-                    proxy._capability_for_profile(
+                    proxy._capability_for_access(
                         Capability(
                             intent="chat.completions",
                             backend="svc",
@@ -1014,7 +1014,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                         ),
                         auth_context,
                     ),
-                    proxy._capability_for_profile(
+                    proxy._capability_for_access(
                         Capability(
                             intent="chat.completions",
                             backend="svc",
