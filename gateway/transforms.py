@@ -819,24 +819,30 @@ class ReasoningFieldNormalizeTransform:
 # ---------------------------------------------------------------------------
 
 # The maximum delimiter length we need to buffer across chunks.
+_THINK_OPEN_TAG = "<think>"
 _THINK_CLOSE_TAG = "</think>"
 _THINK_CLOSE_TAG_LEN = len(_THINK_CLOSE_TAG)
 
 
 class StreamingThinkSplitTransform:
-    """Step 4b built-in: catch ``</think>`` split across SSE chunks.
+    """Step 4b built-in: repair ``<think>`` / ``</think>`` tags split across SSE frames.
 
     Ships OPT-IN — attached only when explicitly configured.  When NOT attached,
     the existing per-chunk behavior (_normalize_chat_completion_sse_chunk) is
     byte-identical (no regression).
 
-    Maintains a bounded cross-chunk buffer (at most len("</think>") - 1 bytes)
-    to catch the case where the close-delimiter is split across two consecutive
-    SSE chunks.  The buffer is flushed immediately on finding the delimiter.
+    A tag can be cut at any byte, either inside one network read or between two
+    SSE frames (``{"content":"...</thi"}`` then ``{"content":"nk>answer"}``).  The
+    transform therefore works on the decoded ``delta.content`` text, not on raw
+    bytes: per choice it holds back a trailing partial tag (at most
+    ``len("</think>") - 1`` characters), routes text inside the tags to
+    ``reasoning_content`` and text outside to ``content``.  A held remainder is
+    released on the choice's ``finish_reason`` frame or at ``[DONE]``.  It also
+    carries an incomplete trailing SSE line to the next read.
 
-    This is a stateful built-in; it holds mutable state (the carry buffer) and
-    is therefore NOT safe to share across concurrent requests — each request must
-    use its own instance.  The registry stores the class; callers instantiate.
+    This is a stateful built-in; it holds mutable state and is therefore NOT safe
+    to share across concurrent requests — each request must use its own instance.
+    The registry stores the class; callers instantiate.
 
     NOTE: This transform operates on raw SSE bytes, not on the dict payload, so
     it does not fit the standard on_request/on_response protocol.  It exposes a
@@ -844,80 +850,143 @@ class StreamingThinkSplitTransform:
     is a no-op (included for registry protocol compliance).
     """
 
+    _TAGS = (_THINK_OPEN_TAG, _THINK_CLOSE_TAG)
+
     def __init__(self) -> None:
-        self._carry: bytes = b""
+        self._raw_carry: bytes = b""
+        # choice index -> [held partial-tag text, currently inside <think>]
+        self._choice_state: dict[int, list[Any]] = {}
+        self._last_payload: dict[str, Any] | None = None
+
+    @classmethod
+    def _partial_tag_len(cls, text: str) -> int:
+        """Length of the longest suffix of *text* that is a proper prefix of a tag."""
+        lowered = text.lower()
+        for length in range(min(_THINK_CLOSE_TAG_LEN - 1, len(lowered)), 0, -1):
+            suffix = lowered[-length:]
+            if any(tag.startswith(suffix) and len(tag) > length for tag in cls._TAGS):
+                return length
+        return 0
+
+    def _split_text(self, state: list[Any], text: str, *, final: bool) -> tuple[str, str]:
+        """Return (visible, reasoning) for *text*, updating the choice *state*."""
+        held, in_think = state
+        text = held + text
+        visible: list[str] = []
+        reasoning: list[str] = []
+        while text:
+            lowered = text.lower()
+            tag = _THINK_CLOSE_TAG if in_think else _THINK_OPEN_TAG
+            idx = lowered.find(tag)
+            if idx < 0 and not in_think:
+                # A close tag with no opener: the text before it was reasoning.
+                idx_close = lowered.find(_THINK_CLOSE_TAG)
+                if idx_close >= 0 and (lowered.find(_THINK_OPEN_TAG) < 0 or idx_close < lowered.find(_THINK_OPEN_TAG)):
+                    reasoning.append(text[:idx_close])
+                    text = text[idx_close + _THINK_CLOSE_TAG_LEN :]
+                    continue
+            if idx >= 0:
+                (reasoning if in_think else visible).append(text[:idx])
+                text = text[idx + len(tag) :]
+                in_think = not in_think
+                continue
+            keep = 0 if final else self._partial_tag_len(text)
+            (reasoning if in_think else visible).append(text[: len(text) - keep])
+            text = text[len(text) - keep :]
+            break
+        state[0], state[1] = text, in_think
+        return "".join(visible), "".join(reasoning)
+
+    def _rewrite_payload(self, payload: dict[str, Any]) -> bool:
+        changed = False
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            return False
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            state = self._choice_state.setdefault(choice.get("index", 0), ["", False])
+            finishing = choice.get("finish_reason") is not None
+            if not isinstance(content, str) and not (finishing and state[0]):
+                continue
+            visible, reasoning = self._split_text(state, content if isinstance(content, str) else "", final=finishing)
+            if visible != content or reasoning:
+                delta["content"] = visible
+                if reasoning:
+                    delta["reasoning_content"] = (delta.get("reasoning_content") or "") + reasoning
+                changed = True
+        return changed
+
+    def _flush_frame(self) -> str:
+        """Frame releasing any held text when the stream ends without a finish frame."""
+        template = self._last_payload
+        if not template:
+            return ""
+        out_choices = []
+        for index, state in sorted(self._choice_state.items()):
+            if not state[0]:
+                continue
+            visible, reasoning = self._split_text(state, "", final=True)
+            delta: dict[str, Any] = {"content": visible}
+            if reasoning:
+                delta["reasoning_content"] = reasoning
+            out_choices.append({"index": index, "delta": delta, "finish_reason": None})
+        if not out_choices:
+            return ""
+        frame = {k: v for k, v in template.items() if k in ("id", "object", "created", "model")}
+        frame["choices"] = out_choices
+        return f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
 
     def process_chunk(self, chunk: bytes) -> bytes:
-        """Process one raw SSE chunk, applying cross-chunk delimiter repair."""
-        data = self._carry + chunk
-        self._carry = b""
-
-        # Fast path: if no hint of think tags, return immediately.
-        lower = data.lower()
-        if b"</think>" not in lower and b"</" not in lower:
-            return chunk  # nothing to buffer — emit original
-
+        """Process one raw SSE read, repairing tags split across reads or frames."""
+        data = self._raw_carry + chunk
+        cut = data.rfind(b"\n") + 1
+        tail = data[cut:].lstrip()
+        # Only an unfinished ``data:`` line is worth carrying; anything else passes through.
+        if tail and (tail.startswith(b"data:") or b"data:".startswith(tail)):
+            self._raw_carry = data[cut:]
+            data = data[:cut]
+        else:
+            self._raw_carry = b""
+        if not data:
+            return b""
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            return chunk  # can't decode — pass through unchanged
-
-        # Check if data ends with a prefix of </think> (partial delimiter).
-        # Buffer the suffix so next chunk can complete it.
-        close_tag_lower = _THINK_CLOSE_TAG  # "</think>"
-        # Search for the last occurrence of a partial suffix of </think> at the end.
-        end_carry = b""
-        for length in range(1, _THINK_CLOSE_TAG_LEN):
-            suffix = _THINK_CLOSE_TAG[:length].encode("utf-8")
-            if data.endswith(suffix) and b"</think>" not in data[:-length + 1 or None].lower():
-                end_carry = suffix
-                data = data[: len(data) - length]
-                break
-        self._carry = end_carry
-
-        # Now process data for full </think> delimiters using the existing SSE logic.
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            self._carry = b""  # reset carry on decode error
-            return chunk
-
-        if "data:" not in text or ("reasoning_content" not in text and "</think>" not in text.lower()):
-            return data if end_carry else chunk
+            self._raw_carry = b""
+            return data
 
         out_lines: list[str] = []
-        changed = False
         for line in text.splitlines(keepends=True):
-            stripped = line.strip()
-            if not stripped.startswith("data:"):
+            if not line.strip().startswith("data:"):
                 out_lines.append(line)
                 continue
             prefix, rest = line.split("data:", 1)
-            newline = ""
-            if rest.endswith("\r\n"):
-                rest = rest[:-2]
-                newline = "\r\n"
-            elif rest.endswith("\n"):
-                rest = rest[:-1]
-                newline = "\n"
+            newline = "\r\n" if rest.endswith("\r\n") else "\n" if rest.endswith("\n") else ""
             rest = rest.strip()
-            if not rest or rest == "[DONE]":
+            if rest == "[DONE]":
+                out_lines.append(self._flush_frame())
                 out_lines.append(line)
                 continue
             try:
-                payload = json.loads(rest)
+                payload = json.loads(rest) if rest else None
             except json.JSONDecodeError:
+                payload = None
+            if not isinstance(payload, dict):
                 out_lines.append(line)
                 continue
-            if isinstance(payload, dict) and normalize_chat_completion_payload(payload):
+            self._last_payload = payload
+            changed = self._rewrite_payload(payload)
+            changed = normalize_chat_completion_payload(payload) or changed
+            if changed:
                 out_lines.append(f"{prefix}data: {json.dumps(payload, separators=(',', ':'))}{newline}")
-                changed = True
             else:
                 out_lines.append(line)
-
-        if changed or end_carry:
-            return "".join(out_lines).encode("utf-8")
-        return chunk
+        return "".join(out_lines).encode("utf-8")
 
     # Protocol shims for registry compliance
     def on_request(self, body: dict[str, Any], ctx: TransformContext) -> dict[str, Any]:
