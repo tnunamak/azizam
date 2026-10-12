@@ -10,7 +10,7 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8404  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
+pytest = 8448  # +44: FK-NEXT (the four held azgap files on FK: 33; speech and OOM protocol faults: 8; FK self-tests: 2; video workflow upload-failure: 1). Prior note: +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
 vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
 playwright = 759
 
@@ -25,6 +25,7 @@ node = 103
 # new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
 # a migration lowers it in the same change. Counted with the AST scanner on
 # 0bff0431: 55 files (the earlier regex scan found 29 and missed
-# patch.object(proxy.httpx, "AsyncClient", ...) fakes).
+# patch.object(proxy.httpx, "AsyncClient", ...) fakes). FK-NEXT: 50 -> 47 (video workflow
+# execution, speech privacy over HTTP, prompt-memory image route).
 [ratchets]
 ad_hoc_upstream_fake_files = 47
