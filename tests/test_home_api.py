@@ -450,7 +450,9 @@ def test_home_and_connection_follow_the_persons_plan_for_same_as_person_apps(hom
 def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
     c = home_case
     accounts.change_person(c.user["id"], "test", path=c.db, plan_id=None)
-    data = c.http.get("/me/api/home").json()
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200, response.text
+    data = response.json()
     assert data["has_access_plan"] is False
     assert data["capabilities"] == [] and data["aliases"] == [] and data["new_app_aliases"] == []
     assert c.http.get("/me/api/status").json()["capabilities"] == []
