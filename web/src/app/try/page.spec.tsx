@@ -79,6 +79,16 @@ test.each([false, true])(
   "recording retry does not mutate credentials (key present: %s)",
   async (withKey) => {
     mocks.params = new URLSearchParams("capability=transcribe");
+    fetchMock.mockImplementation(async (url: string) =>
+      response(
+        url.includes("workflows")
+          ? workflows
+          : {
+              aliases: [],
+              models: [{ id: "stt-a", name: "Words", capabilities: ["transcribe"] }],
+            },
+      ),
+    );
     const getUserMedia = vi
       .fn()
       .mockRejectedValue(new Error("Permission denied"));
@@ -89,6 +99,9 @@ test.each([false, true])(
     render(<TryPage />);
     await screen.findByRole("button", { name: "Record" });
     if (withKey) {
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
+      );
       fireEvent.click(screen.getByRole("button", { name: "Run" }));
       await screen.findByText(/Try uses a temporary key/);
     }
@@ -120,9 +133,9 @@ test("equal labels retain each selectable model ID", async () => {
   );
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Shared name"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Shared name"),
   );
-  await userEvent.click(screen.getByRole("combobox"));
+  await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
   expect(
     screen
       .getAllByRole("option")
@@ -153,11 +166,15 @@ test("fallback model list keeps capabilities and leaves unknown rows unclassifie
   });
   render(<TryPage />);
   await screen.findByText("Model catalog could not be loaded.");
-  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  // Run waits for a list. Retry prepares the key and reads the fallback.
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("NEW Chat");
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("NEW Chat"),
+  );
   expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("NEW Picture");
   expect(screen.getByText(/1 model has no supported Try capability/)).toBeVisible();
   await userEvent.click(screen.getByRole("tab", { name: "Make a picture" }));
@@ -177,11 +194,13 @@ test("fallback does not send an unknown model as chat", async () => {
   });
   render(<TryPage />);
   await screen.findByText("Model catalog could not be loaded.");
-  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/openai/v1/models", expect.anything(),
   ));
+  await screen.findByText(/No chat models are available/);
   expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
   expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/chat/completions")).toBe(false);
 });
 
@@ -267,7 +286,7 @@ test.each(["http", "transport"])(
     });
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
     );
     await userEvent.click(screen.getByRole("tab", { name: "Workflow" }));
     expect(
@@ -278,7 +297,7 @@ test.each(["http", "transport"])(
       screen.getByRole("button", { name: "Retry workflow catalog" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
         "Working workflow",
       ),
     );
@@ -298,7 +317,7 @@ test.each(["http", "transport"])(
     });
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
         "Working workflow",
       ),
     );
@@ -311,7 +330,7 @@ test.each(["http", "transport"])(
       screen.getByRole("button", { name: "Retry model catalog" }),
     );
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
     );
     expect(
       fetchMock.mock.calls.filter(([url]) => url === "/me/api/workflows"),
@@ -330,7 +349,7 @@ test("catalogs start concurrently and workflows render before models settle", as
   mocks.params = new URLSearchParams("capability=workflow");
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow"),
   );
   expect(fetchMock).toHaveBeenCalledTimes(2);
   await act(async () => finishModels(response(models)));
@@ -358,7 +377,7 @@ test("navigation aborts old catalogs and ignores late successful responses", asy
   mocks.params = new URLSearchParams("workflow=wf-a");
   view.rerender(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow"),
   );
   expect(signals.every((signal) => signal.aborted)).toBe(true);
   await act(async () => {
@@ -374,9 +393,9 @@ test("navigation aborts old catalogs and ignores late successful responses", asy
       }),
     );
   });
-  expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow");
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow");
   await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
-  expect(screen.getByRole("combobox")).toHaveTextContent("Chat model");
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model");
   view.unmount();
   expect(
     fetchMock.mock.calls
@@ -390,9 +409,11 @@ test("empty workflow catalog disables the selector and Run", async () => {
     response(url.includes("workflows") ? { workflows: [] } : models),
   );
   render(<TryPage />);
-  expect(await screen.findByText("No workflows are listed")).toBeVisible();
-  expect(screen.getByRole("combobox")).toBeDisabled();
-  expect(screen.getByRole("combobox")).toHaveTextContent(
+  expect(
+    await screen.findByText("No workflows are available. Ask the owner."),
+  ).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
     "No options available",
   );
   expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
@@ -440,4 +461,127 @@ test("a new key replaces the stored one and Revoke forgets it", async () => {
   await waitFor(() =>
     expect(localStorage.getItem("azizam.try.key")).toBeNull(),
   );
+});
+
+// WP-5: a link names a task or a kind of work; Try opens that, or says why it
+// cannot, and never quietly opens Chat (PF-001).
+const kindWorkflows = {
+  workflows: [
+    { id: "wf-song", title: "Song maker", capability: "music", aliases: ["song"], inputs: [], outputs: [{ kind: "audio" }] },
+    { id: "wf-boom", title: "Boom maker", capability: "sfx", inputs: [], outputs: [{ kind: "audio" }] },
+    { id: "wf-pic", title: "Picture tool", capability: "image", inputs: [], outputs: [{ kind: "image" }] },
+  ],
+};
+function serveKinds() {
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? kindWorkflows : models),
+  );
+}
+test.each([
+  ["music", "Song maker", "Boom maker", "Showing music workflows."],
+  ["sfx", "Boom maker", "Song maker", "Showing sound effects workflows."],
+  ["audio", "Song maker", "Picture tool", "Choose an audio workflow to make music or sound effects."],
+])("a %s link opens only those workflows", async (kind, shown, hidden, line) => {
+  mocks.params = new URLSearchParams({ capability: kind, model: "song" });
+  serveKinds();
+  render(<TryPage />);
+  await screen.findByText(line);
+  expect(screen.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
+  const picker = screen.getByRole("combobox", { name: "Model" });
+  expect(picker).toHaveTextContent(shown);
+  await userEvent.click(picker);
+  const names = screen.getAllByRole("option").map((option) => option.textContent);
+  expect(names.join("|")).not.toContain(hidden);
+  expect(names.join("|")).not.toContain("song ·");
+  await userEvent.keyboard("{Escape}");
+  // The filter is one tap from all workflows.
+  await userEvent.click(screen.getByRole("button", { name: "Show all workflows" }));
+  expect(screen.queryByText(line)).toBeNull();
+  await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+  expect(screen.getAllByRole("option")).toHaveLength(3);
+});
+test("a video link with no video workflow says so and does not open Chat", async () => {
+  mocks.params = new URLSearchParams("capability=video");
+  serveKinds();
+  render(<TryPage />);
+  expect(
+    await screen.findByText("No video is available to you right now. Ask the owner about video."),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+});
+test("a link to work Try cannot run says so", async () => {
+  mocks.params = new URLSearchParams("capability=rerank");
+  render(<TryPage />);
+  expect(await screen.findByText("Try can’t run reranking. Choose another task.")).toBeVisible();
+});
+
+// PF-002: Run waits for the model list and needs a model on it.
+test("Run stays off while the models load, after they fail and when none fit", async () => {
+  let finish!: (value: Response) => void;
+  fetchMock.mockImplementation((url: string) =>
+    url.includes("workflows")
+      ? Promise.resolve(response(workflows))
+      : new Promise<Response>((resolve) => { finish = resolve; }),
+  );
+  mocks.params = new URLSearchParams("capability=image");
+  render(<TryPage />);
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  // The list has chat models only: nothing makes a picture.
+  finish(response(models));
+  expect(await screen.findByText("No picture models are available. Ask the owner.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+  expect(screen.queryByText(/from your link/)).toBeNull();
+});
+test("a model in the link is offered with its doubt stated", async () => {
+  mocks.params = new URLSearchParams("capability=chat&model=not-listed");
+  render(<TryPage />);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
+      "from your link, not in your list",
+    ),
+  );
+  expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+});
+
+// PF-003: a phone picks a task from a labelled select with every task in it.
+test("the phone task picker lists every task and switches the form", async () => {
+  render(<TryPage />);
+  const picker = screen.getByRole("combobox", { name: "Task" });
+  expect(
+    [...(picker as HTMLSelectElement).options].map((option) => option.text),
+  ).toEqual([
+    "Chat",
+    "Make a picture",
+    "Read text aloud",
+    "Transcribe a recording",
+    "Choose an option",
+    "Turn text into numbers",
+    "Workflow",
+  ]);
+  fireEvent.change(picker, { target: { value: "decide" } });
+  expect(screen.getByRole("tab", { name: "Choose an option" })).toHaveAttribute("aria-selected", "true");
+  // PF-005: the decision form asks in plain words.
+  expect(screen.getByText("What is happening?")).toBeVisible();
+  expect(screen.queryByText("State")).toBeNull();
+});
+
+// PF-004: the empty result says where the result goes, not "Run chat" again.
+test("the empty result names where the result appears", async () => {
+  render(<TryPage />);
+  expect(await screen.findByText("Your result appears here")).toBeVisible();
+  expect(screen.queryByText("Run chat")).toBeNull();
+});
+test("a member's sound effects link reads as a plural", async () => {
+  mocks.params = new URLSearchParams("capability=sfx");
+  fetchMock.mockImplementation(async (url: string) =>
+    response(url.includes("workflows") ? { workflows: [] } : models),
+  );
+  render(<TryPage />);
+  expect(
+    await screen.findByText(
+      "No sound effects are available to you right now. Ask the owner about sound effects.",
+    ),
+  ).toBeVisible();
 });

@@ -110,7 +110,7 @@ async function openWorkflow(viewer: Viewer = member) {
     </ViewerContext.Provider>,
   );
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Flux2 Klein 4B Edit"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Flux2 Klein 4B Edit"),
   );
 }
 

@@ -61,7 +61,7 @@ it("a failed result offers Edit and run again, which repeats nothing", async () 
   const user = userEvent.setup();
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Request failed")).toBeVisible();
@@ -103,7 +103,7 @@ it.each(["model", "workflow"])(
     fetchMock.mockClear();
     await user.click(retry);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
         section === "workflow" ? "Working workflow" : "Chat model",
       ),
     );
@@ -143,7 +143,7 @@ it.each([
     const user = userEvent.setup();
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
     );
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("Provider unavailable")).toBeVisible();
@@ -186,10 +186,10 @@ it.each([false, true, undefined])("honors workflow availability %s in the picker
   const user = userEvent.setup();
   render(<TryPage />);
   await user.click(screen.getByRole("tab", { name: "Workflow" }));
-  await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow"));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow"));
   const run = screen.getByRole("button", { name: "Run" });
   if (available === false) {
-    expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow · Unavailable");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Working workflow · Unavailable");
     expect(run).toBeDisabled();
     expect(run.nextElementSibling).toHaveTextContent(reason);
     expect(screen.getByText(reason)).toBeVisible();
@@ -197,7 +197,7 @@ it.each([false, true, undefined])("honors workflow availability %s in the picker
     expect(account.tryKey).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   } else {
-    expect(screen.getByRole("combobox")).not.toHaveTextContent("Unavailable");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Unavailable");
     expect(run).toBeEnabled();
     expect(screen.queryByText(reason)).toBeNull();
   }

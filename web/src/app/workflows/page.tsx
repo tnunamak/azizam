@@ -925,8 +925,27 @@ export default function WorkflowsPage() {
               />
               <span className="sr-only">Search workflows</span>
             </label>
+            {/* A phone has no room for every task in a row, and a strip
+                that scrolls hides the ones past the edge. A select lists
+                them all (P4); wider screens keep the segments. */}
+            <label className="block basis-full space-y-2 sm:hidden">
+              <span className="text-sm font-medium">Task</span>
+              <select
+                className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
+                value={capability}
+                onChange={(event) => setCapability(event.target.value)}
+              >
+                <option value="all">All</option>
+                {availableCapabilities.map((cap) => (
+                  <option key={cap} value={cap}>
+                    {capabilityLabel(cap)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Segmented
               label="Workflow task"
+              className="max-sm:hidden"
               value={capability}
               onChange={setCapability}
               options={[

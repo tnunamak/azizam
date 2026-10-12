@@ -134,6 +134,10 @@ type WorkflowOption = {
   short_id?: string;
   title: string;
   description?: string;
+  /** The catalog's declared capability: "video", "music", "sfx", ... */
+  capability?: string;
+  /** Other names the gateway accepts for this workflow. */
+  aliases?: string[];
   availability?: WorkflowAvailability;
   inputs: WorkflowInput[];
   inputMapping?: WorkflowInputMapping;
@@ -312,10 +316,54 @@ const CAPABILITY_TABS: Record<string, TryTab> = {
   decision: "decide",
   embed: "embed",
   embeddings: "embed",
-  audio: "workflow",
-  music: "workflow",
-  sfx: "workflow",
   workflow: "workflow",
+};
+
+/**
+ * Kinds of work Try runs through a workflow. A request for one opens
+ * Workflow with only the workflows whose catalog capability matches. The
+ * keys are the capability vocabulary, not engine or workflow names.
+ */
+type RequestedKind = {
+  /** Lower case, for sentences: "No video is available to you right now." */
+  noun: string;
+  /** The noun takes "are": "No sound effects are available". */
+  plural?: boolean;
+  /** Catalog workflow capabilities that make this kind. */
+  capabilities: string[];
+  /** Try has no way to run this kind at all. */
+  untryable?: boolean;
+};
+const REQUESTED_KINDS: Record<string, RequestedKind> = {
+  video: { noun: "video", capabilities: ["video"] },
+  music: { noun: "music", capabilities: ["music"] },
+  sfx: { noun: "sound effects", plural: true, capabilities: ["sfx"] },
+  sound_effects: { noun: "sound effects", plural: true, capabilities: ["sfx"] },
+  audio: { noun: "audio", capabilities: ["music", "sfx", "audio"] },
+  rerank: { noun: "reranking", capabilities: [], untryable: true },
+};
+
+function requestedTabFor(key: string | undefined): TryTab | null {
+  if (!key) return null;
+  if (CAPABILITY_TABS[key]) return CAPABILITY_TABS[key];
+  const kind = REQUESTED_KINDS[key];
+  return kind && !kind.untryable ? "workflow" : null;
+}
+
+function workflowMakes(option: CatalogOption, kind: RequestedKind) {
+  const capability = option.workflow?.capability;
+  return Boolean(capability && kind.capabilities.includes(capability));
+}
+
+/** What the model picker is called in the "none available" line. */
+const EMPTY_NOUN: Record<TryTab, string> = {
+  chat: "chat models",
+  image: "picture models",
+  speech: "voice models",
+  transcribe: "transcription models",
+  decide: "decision models",
+  embed: "embedding models",
+  workflow: "workflows",
 };
 
 function baseUrl() {
@@ -798,6 +846,10 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
         stringValue(record.display_name) ??
         String(record.id ?? ""),
       description: stringValue(record.description) ?? undefined,
+      capability: stringValue(record.capability) ?? undefined,
+      aliases: Array.isArray(record.aliases)
+        ? record.aliases.filter((name): name is string => typeof name === "string")
+        : undefined,
       availability: record.availability as WorkflowOption["availability"],
       outputs: Array.isArray(record.outputs)
         ? (record.outputs as WorkflowOption["outputs"])
@@ -1029,6 +1081,26 @@ export default function TryPage() {
   const requestedCapability = searchParams.get("capability");
   const requestedModel = searchParams.get("model") ?? searchParams.get("alias");
   const requestedCapabilityKey = requestedCapability?.toLowerCase().trim();
+  const requestedTab = requestedTabFor(requestedCapabilityKey);
+  const requestedKind = requestedCapabilityKey
+    ? (REQUESTED_KINDS[requestedCapabilityKey] ?? null)
+    : null;
+  // A model in the link is a deliberate choice for this task, even when the
+  // catalog does not list it. A kind of work names workflows, not models.
+  const linkedModelTab: TryTab | null =
+    requestedModel && !requestedKind ? (requestedTab ?? "chat") : null;
+  // "Show all workflows" (or another task, for a kind Try cannot run)
+  // clears what the link asked for; a new link asks again.
+  const [kindCleared, setKindCleared] = useState(false);
+  const [kindKey, setKindKey] = useState(requestedCapabilityKey);
+  if (kindKey !== requestedCapabilityKey) {
+    setKindKey(requestedCapabilityKey);
+    setKindCleared(false);
+  }
+  const kindFilter =
+    requestedKind && !requestedKind.untryable && !kindCleared && !requestedWorkflow
+      ? requestedKind
+      : null;
   const [key, setKey] = useState<TryKey | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -1101,11 +1173,17 @@ export default function TryPage() {
         .filter(Boolean),
     [options],
   );
+  const workflowChoices = useMemo(
+    () =>
+      (catalog.workflow ?? []).filter(
+        (option) => !kindFilter || workflowMakes(option, kindFilter),
+      ),
+    [catalog.workflow, kindFilter],
+  );
   const selectedWorkflow = useMemo(
     () =>
-      catalog.workflow?.find((option) => option.id === model.workflow)
-        ?.workflow,
-    [catalog.workflow, model.workflow],
+      workflowChoices.find((option) => option.id === model.workflow)?.workflow,
+    [workflowChoices, model.workflow],
   );
   const owner = viewer.admin;
   const workflowAvailability = selectedWorkflow
@@ -1146,12 +1224,8 @@ export default function TryPage() {
   }, []);
 
   useEffect(() => {
-    const tab =
-      requestedCapability == null
-        ? null
-        : CAPABILITY_TABS[requestedCapability.toLowerCase().trim()];
-    if (tab) setActiveTab(tab);
-  }, [requestedCapability]);
+    if (requestedTab) setActiveTab(requestedTab);
+  }, [requestedTab]);
 
   useEffect(() => {
     try {
@@ -1179,14 +1253,10 @@ export default function TryPage() {
   }, [personViewer]);
 
   useEffect(() => {
-    if (!requestedModel || requestedCapabilityKey === "audio") return;
-    const tab =
-      requestedCapability == null
-        ? "chat"
-        : (CAPABILITY_TABS[requestedCapability.toLowerCase().trim()] ?? "chat");
-    explicitModelTabs.current.add(tab);
-    setModel((current) => ({ ...current, [tab]: requestedModel }));
-  }, [requestedCapability, requestedCapabilityKey, requestedModel]);
+    if (!requestedModel || !linkedModelTab) return;
+    explicitModelTabs.current.add(linkedModelTab);
+    setModel((current) => ({ ...current, [linkedModelTab]: requestedModel }));
+  }, [linkedModelTab, requestedModel]);
 
   useEffect(() => {
     if (requestedWorkflow) {
@@ -1252,6 +1322,22 @@ export default function TryPage() {
     } catch {
       // A blocked store only means the choice lasts for this page.
     }
+  }
+
+  function chooseTab(tab: TryTab) {
+    setActiveTab(tab);
+    // A kind Try cannot run was a notice about the link; choosing a task
+    // answers it.
+    if (requestedKind?.untryable) setKindCleared(true);
+  }
+
+  async function retryCatalog(section: CatalogSection) {
+    const loaded = await loadCatalogSection(section, key?.secret);
+    // Without a key only the account catalog can be read. Run is off until
+    // a list loads, so preparing the key, as Run does, also tries the
+    // gateway's own model list.
+    if (!loaded && section === "models" && !key?.secret && mounted.current)
+      await prepareKey();
   }
 
   async function prepareKey() {
@@ -1355,8 +1441,25 @@ export default function TryPage() {
     sourceModel: Record<TryTab, string> = model,
   ) {
     const next = { ...sourceModel };
+    const workflows = (grouped.workflow ?? []).filter(
+      (option) => !kindFilter || workflowMakes(option, kindFilter),
+    );
+    // A link that names a kind of work and a model picks that workflow
+    // when it is one of them; any other name is not a workflow.
+    const linkedWorkflow =
+      kindFilter && requestedModel
+        ? workflows.find(
+            (option) =>
+              option.id === requestedModel ||
+              option.workflow?.short_id === requestedModel ||
+              option.workflow?.aliases?.includes(requestedModel),
+          )
+        : undefined;
+    if (linkedWorkflow && !workflows.some((option) => option.id === next.workflow))
+      next.workflow = linkedWorkflow.id;
     for (const tab of TAB_ITEMS) {
-      const options = grouped[tab.value] ?? [];
+      const options =
+        tab.value === "workflow" ? workflows : (grouped[tab.value] ?? []);
       next[tab.value] = selectedOrDefaultModel(
         next[tab.value],
         options,
@@ -1380,7 +1483,11 @@ export default function TryPage() {
     return mounted.current ? catalogRef.current : null;
   }
 
-  async function loadCatalogSection(section: CatalogSection, secret?: string) {
+  /** True when this section's list loaded (even empty). */
+  async function loadCatalogSection(
+    section: CatalogSection,
+    secret?: string,
+  ): Promise<boolean> {
     catalogRequests.current[section]?.abort();
     const controller = new AbortController();
     catalogRequests.current[section] = controller;
@@ -1401,18 +1508,7 @@ export default function TryPage() {
       let unknownCount = 0;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
-        let workflowOptions = groupWorkflows(await response.json());
-        if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
-          workflowOptions = workflowOptions.filter((option) =>
-            option.workflow?.outputs?.some(
-              (output) =>
-                output.kind === "audio" ||
-                output.type === "audio" ||
-                output.media_type?.startsWith("audio/"),
-            ),
-          );
-        }
-        grouped = { workflow: workflowOptions };
+        grouped = { workflow: groupWorkflows(await response.json()) };
       } else if (response.ok) {
         grouped = groupCatalog(await response.json());
       } else if (secret) {
@@ -1435,7 +1531,7 @@ export default function TryPage() {
       } else {
         throw new Error("Model catalog unavailable");
       }
-      if (!current()) return;
+      if (!current()) return false;
       const merged =
         section === "workflows"
           ? { ...catalogRef.current, workflow: grouped.workflow }
@@ -1451,9 +1547,11 @@ export default function TryPage() {
         ...states,
         [section]: hasOptions ? "ready" : "empty",
       }));
+      return true;
     } catch {
       if (current())
         setCatalogState((states) => ({ ...states, [section]: "error" }));
+      return false;
     }
   }
 
@@ -2118,15 +2216,32 @@ export default function TryPage() {
         )}
       </section>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as TryTab)}
-      >
+      {requestedKind?.untryable && !kindCleared ? (
+        <p role="status" className="text-muted-foreground text-sm">
+          Try can’t run {requestedKind.noun}. Choose another task.
+        </p>
+      ) : null}
+
+      <Tabs value={activeTab} onValueChange={(value) => chooseTab(value as TryTab)}>
+        {/* A phone has no room for seven task names in a row, and a strip
+            that scrolls hides the ones past the edge. A select lists them
+            all (P4); wider screens keep the tabs. */}
+        <label className="block space-y-2 sm:hidden">
+          <span className="text-sm font-medium">Task</span>
+          <select
+            className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
+            value={activeTab}
+            onChange={(event) => chooseTab(event.target.value as TryTab)}
+          >
+            {TAB_ITEMS.map((tab) => (
+              <option key={tab.value} value={tab.value}>
+                {tab.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <div
-          // On a phone the strip runs edge to edge and fades at both ends,
-          // so a chip that is partly off screen reads as "more this way",
-          // not as a label cut mid-word.
-          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)] max-sm:px-5"
+          className="overflow-x-auto pb-1 max-sm:hidden"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
@@ -2137,7 +2252,7 @@ export default function TryPage() {
                 value={tab.value}
                 // A chip keeps its full label; the strip scrolls instead of
                 // squeezing chips into each other.
-                className="flex-none shrink-0 max-sm:min-w-fit"
+                className="flex-none shrink-0"
               >
                 <tab.icon aria-hidden="true" />
                 {tab.label}
@@ -2148,7 +2263,19 @@ export default function TryPage() {
         {TAB_ITEMS.map((tab) => {
           const currentResult = results[tab.value];
           const currentError = errors[tab.value];
-          const unavailableMessage = catalog[tab.value]?.find((option) => option.id === model[tab.value])?.unavailableMessage;
+          const section: CatalogSection =
+            tab.value === "workflow" ? "workflows" : "models";
+          const choices =
+            tab.value === "workflow"
+              ? workflowChoices
+              : (catalog[tab.value] ?? []);
+          const unavailableMessage = choices.find((option) => option.id === model[tab.value])?.unavailableMessage;
+          const linked = linkedModelTab === tab.value && Boolean(model[tab.value]);
+          const listed =
+            catalogState[section] === "ready" ||
+            catalogState[section] === "empty";
+          // Run waits for the list, and needs something on it to run.
+          const runBlocked = !listed || (!choices.length && !linked);
           return (
             <TabsContent key={tab.value} value={tab.value} className="mt-4">
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -2168,9 +2295,9 @@ export default function TryPage() {
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">Model name</span>
                     <ModelSelect
-                      loading={["idle", "loading"].includes(catalogState[tab.value === "workflow" ? "workflows" : "models"])}
+                      loading={["idle", "loading"].includes(catalogState[section])}
                       value={model[tab.value]}
-                      options={catalog[tab.value] ?? []}
+                      options={choices}
                       onChange={(value) => {
                         setModel((current) => ({
                           ...current,
@@ -2184,33 +2311,30 @@ export default function TryPage() {
                   ) : null}
                   {tab.value === activeTab && (
                     <CatalogNotice
-                      state={
-                        catalogState[
-                          tab.value === "workflow" ? "workflows" : "models"
-                        ]
-                      }
+                      state={catalogState[section]}
                       unknownModelCount={unknownModelCount}
-                      section={
-                        tab.value === "workflow" ? "workflows" : "models"
+                      section={section}
+                      empty={
+                        listed &&
+                        !choices.length &&
+                        !linked &&
+                        !(tab.value === "workflow" && kindFilter)
+                          ? EMPTY_NOUN[tab.value]
+                          : null
                       }
-                      onRetry={() =>
-                        void loadCatalogSection(
-                          tab.value === "workflow" ? "workflows" : "models",
-                          key?.secret,
-                        )
-                      }
+                      owner={owner}
+                      onRetry={() => void retryCatalog(section)}
                     />
                   )}
-                  {tab.value === "workflow" &&
-                    requestedCapabilityKey === "audio" && (
-                      <p
-                        role="status"
-                        className="text-muted-foreground text-sm"
-                      >
-                        Audio has no dedicated Try panel. Choose a workflow if
-                        this gateway exposes one.
-                      </p>
-                    )}
+                  {tab.value === "workflow" && kindFilter && listed ? (
+                    <KindNotice
+                      kind={kindFilter}
+                      matches={workflowChoices.length}
+                      others={(catalog.workflow?.length ?? 0) > workflowChoices.length}
+                      owner={owner}
+                      onShowAll={() => setKindCleared(true)}
+                    />
+                  ) : null}
                   {tab.value === "image" && (
                     <p className="text-muted-foreground text-xs">
                       Editing, upscaling and other tools that start from a
@@ -2227,7 +2351,9 @@ export default function TryPage() {
                   )}
                   {tab.value === "decide" && (
                     <label className="block space-y-2">
-                      <span className="text-sm font-medium">State</span>
+                      <span className="text-sm font-medium">
+                        What is happening?
+                      </span>
                       <Textarea
                         value={decisionState}
                         onChange={(event) =>
@@ -2406,6 +2532,7 @@ export default function TryPage() {
                       running !== null ||
                       keyBusy ||
                       checkingJob ||
+                      runBlocked ||
                       (tab.value === "workflow" &&
                         (!workflowAvailability ||
                           !workflowAvailability.runnable))
@@ -2510,7 +2637,7 @@ export default function TryPage() {
                   ) : (
                     <EmptyState
                       icon={tab.icon}
-                      title={`Run ${tab.label.toLowerCase()}`}
+                      title="Your result appears here"
                     />
                   )}
                 </section>
@@ -2931,7 +3058,8 @@ function ModelSelect({
       ? [
           {
             id: value,
-            label: `${modelDisplayName(value)} · Unverified model`,
+            // Only a link puts a model here that the list does not have.
+            label: `${modelDisplayName(value)} · from your link, not in your list`,
             price: "",
             locality: "Not in the catalog",
           },
@@ -2971,11 +3099,16 @@ function ModelSelect({
 function CatalogNotice({
   state,
   section,
+  empty,
+  owner,
   unknownModelCount = 0,
   onRetry,
 }: {
   state: CatalogState;
   section: CatalogSection;
+  /** What the empty list holds ("chat models"), when this task has none. */
+  empty: string | null;
+  owner: boolean;
   unknownModelCount?: number;
   onRetry: () => void;
 }) {
@@ -3001,8 +3134,85 @@ function CatalogNotice({
         {unsupported}
       </div>
     );
-  if (unsupported) return unsupported;
-  if (state === "empty")
-    return <Badge variant="outline">No {section} are listed</Badge>;
+  const none = empty ? (
+    <p role="status" className="text-muted-foreground text-sm">
+      No {empty} are available
+      {owner ? (
+        <>
+          .{" "}
+          <Link className="text-foreground underline underline-offset-4" href="/engines/">
+            Add one in Engines
+          </Link>
+          .
+        </>
+      ) : (
+        ". Ask the owner."
+      )}
+    </p>
+  ) : null;
+  if (unsupported || none)
+    return (
+      <>
+        {none}
+        {unsupported}
+      </>
+    );
   return null;
+}
+
+/**
+ * The link asked for a kind of work (video, music, sound effects) that Try
+ * runs through workflows. Only workflows of that kind are offered, and the
+ * line says so, with a way back to all of them.
+ */
+function KindNotice({
+  kind,
+  matches,
+  others,
+  owner,
+  onShowAll,
+}: {
+  kind: RequestedKind;
+  matches: number;
+  /** Other workflows exist beyond this kind. */
+  others: boolean;
+  owner: boolean;
+  onShowAll: () => void;
+}) {
+  const showAll = others ? (
+    <button
+      type="button"
+      className="text-foreground min-h-11 underline underline-offset-4"
+      onClick={onShowAll}
+    >
+      Show all workflows
+    </button>
+  ) : null;
+  if (!matches)
+    return (
+      <div role="status" className="text-muted-foreground space-y-1 text-sm">
+        <p>
+          {owner ? (
+            <>
+              No {kind.noun} engine is set up.{" "}
+              <Link className="text-foreground underline underline-offset-4" href="/engines/">
+                Add one in Engines
+              </Link>
+              .
+            </>
+          ) : (
+            `No ${kind.noun} ${kind.plural ? "are" : "is"} available to you right now. Ask the owner about ${kind.noun}.`
+          )}
+        </p>
+        {showAll}
+      </div>
+    );
+  return (
+    <p role="status" className="text-muted-foreground text-sm">
+      {kind.capabilities.length > 1
+        ? "Choose an audio workflow to make music or sound effects."
+        : `Showing ${kind.noun} workflows.`}{" "}
+      {showAll}
+    </p>
+  );
 }

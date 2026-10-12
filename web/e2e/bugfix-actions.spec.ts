@@ -125,12 +125,9 @@ test("audio capability never selects an image-only workflow", async ({
   await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByText(
-      "Audio has no dedicated Try panel. Choose a workflow if this gateway exposes one.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  // No audio workflow: say so with the owner's next step, never another task.
+  await expect(page.getByText("No audio engine is set up.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Add one in Engines" })).toBeVisible();
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "Image-only workflow",
   );

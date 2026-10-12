@@ -71,10 +71,16 @@ async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
   await routeCatalogs(page, workflows);
   await page.goto("/ui/try/?workflow=image.generate.poster");
   if (!workflows.workflows.length)
-    await expect(page.getByText("No workflows are listed")).toBeVisible();
-  await expect(
-    page.getByRole("tab", { name: "Workflow", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText(/No workflows are available/)).toBeVisible();
+  // Tabs above 640 px; the Task select on a phone.
+  if ((page.viewportSize()?.width ?? 0) >= 640)
+    await expect(
+      page.getByRole("tab", { name: "Workflow", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+  else
+    await expect(
+      page.getByRole("combobox", { name: "Task", exact: true }),
+    ).toHaveValue("workflow");
 }
 
 for (const theme of ["light", "dark"] as const) {
@@ -135,7 +141,7 @@ for (const theme of ["light", "dark"] as const) {
 
       await prepareWorkflowTry(page, { ...workflowCatalog, workflows: [] });
       await expect(
-        page.getByText("Run workflow", { exact: true }),
+        page.getByText("Your result appears here", { exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("combobox", { name: "Model", exact: true }),

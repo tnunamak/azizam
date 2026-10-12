@@ -167,8 +167,8 @@ const TASKS: Task[] = [
   { key: "image", title: taskNames.image, tab: "image" },
   { key: "speech", title: taskNames.speech, tab: "speech" },
   { key: "chat", title: taskNames.chat, tab: "chat" },
-  { key: "music", title: taskNames.music, tab: "audio" },
-  { key: "sfx", title: taskNames.sound_effects, tab: "audio" },
+  { key: "music", title: taskNames.music, tab: "music" },
+  { key: "sfx", title: taskNames.sound_effects, tab: "sfx" },
   { key: "video", title: taskNames.video, tab: "video" },
   { key: "transcribe", title: taskNames.transcribe, tab: "transcribe" },
 ];

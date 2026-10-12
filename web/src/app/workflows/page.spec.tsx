@@ -599,6 +599,23 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.getByText("Upscale image")).toBeVisible();
   });
 
+  // PF-003: a phone picks the task from one labelled select, so no task
+  // hides past the edge of a scrolling strip.
+  test("the phone task select lists every task and filters the list", async () => {
+    renderWorkflows();
+    await screen.findByText("Upscale image");
+    const task = screen.getByRole("combobox", { name: "Task" });
+    // The same choices as the segments on a wide screen, in the same order.
+    const segments = within(screen.getByRole("group", { name: "Workflow task" }));
+    expect([...(task as HTMLSelectElement).options].map((o) => o.text)).toEqual(
+      segments.getAllByRole("button").map((button) => button.textContent),
+    );
+    expect((task as HTMLSelectElement).options).toHaveLength(3);
+    fireEvent.change(task, { target: { value: "image" } });
+    expect(screen.getByText("Upscale image")).toBeVisible();
+    expect(screen.queryByText("Clean text")).toBeNull();
+  });
+
 });
 describe("workflow state and payload regressions", () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });

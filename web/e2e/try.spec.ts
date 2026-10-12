@@ -549,28 +549,14 @@ function catalogRow(
   };
 }
 
-test("capability chips keep full labels and never overlap on a phone", async ({
-  page,
-}) => {
+test("a phone picks every task from one labelled select", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/ui/try/");
-  const tabs = page.getByRole("tablist", { name: "Try capability" });
-  await expect(tabs.getByRole("tab")).toHaveCount(7);
-  const layout = await tabs.evaluate((list) =>
-    [...list.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => {
-      const box = tab.getBoundingClientRect();
-      return {
-        text: tab.textContent?.trim() ?? "",
-        left: box.left,
-        right: box.right,
-        // Text wider than its chip means it spills into the next one.
-        clipped: tab.scrollWidth > tab.clientWidth + 1,
-        // A label that ends mid-word has an ellipsis or a cut-off box.
-        overflow: getComputedStyle(tab).textOverflow,
-      };
-    }),
-  );
-  expect(layout.map((tab) => tab.text)).toEqual([
+  // The strip of tabs is gone on a phone; nothing hides past an edge.
+  await expect(page.getByRole("tablist", { name: "Try capability" })).toBeHidden();
+  const task = page.getByRole("combobox", { name: "Task", exact: true });
+  await expect(task).toBeVisible();
+  await expect(task.locator("option")).toHaveText([
     "Chat",
     "Make a picture",
     "Read text aloud",
@@ -579,24 +565,76 @@ test("capability chips keep full labels and never overlap on a phone", async ({
     "Turn text into numbers",
     "Workflow",
   ]);
-  for (const [index, tab] of layout.entries()) {
-    expect(tab.clipped, `${tab.text} is clipped`).toBe(false);
-    expect(tab.overflow).not.toBe("ellipsis");
-    const next = layout[index + 1];
-    if (next) {
-      expect(tab.right, `${tab.text} overlaps ${next.text}`).toBeLessThanOrEqual(
-        next.left + 0.5,
-      );
-    }
-  }
-  // The strip scrolls; the page itself does not.
+  const box = await task.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await task.selectOption({ label: "Choose an option" });
+  await expect(page.getByText("What is happening?", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await page.getByRole("tab", { name: "Workflow" }).click();
-  await expect(page.getByRole("tab", { name: "Workflow" })).toBeInViewport();
+  await page.screenshot({ path: "test-results/screens/try-task-select-390.png" });
+});
+
+const kindCatalog = {
+  workflows: [
+    { id: "wf-song", title: "Song maker", capability: "music", aliases: ["song"], inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
+    { id: "wf-boom", title: "Boom maker", capability: "sfx", inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
+  ],
+};
+
+test("a link to a kind of work opens it, or says why it cannot, never Chat", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({ json: kindCatalog }),
+  );
+  const task = page.getByRole("combobox", { name: "Task", exact: true });
+  const model = page.getByRole("combobox", { name: "Model", exact: true });
+
+  await page.goto("/ui/try/?capability=music&model=song");
+  await expect(task).toHaveValue("workflow");
+  await expect(page.getByText("Showing music workflows.")).toBeVisible();
+  await expect(model).toContainText("Song maker");
+  await model.click();
+  await expect(page.getByRole("option")).toHaveText([/Song maker/]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Show all workflows" }).click();
+  await model.click();
+  await expect(page.getByRole("option")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+
+  await page.goto("/ui/try/?capability=sfx&model=sfx");
+  await expect(task).toHaveValue("workflow");
+  await expect(model).toContainText("Boom maker");
+
+  await page.goto("/ui/try/?capability=video");
+  await expect(task).toHaveValue("workflow");
+  // The e2e viewer is the owner: the next step is in Engines.
+  await expect(page.getByText("No video engine is set up.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Add one in Engines" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await page.screenshot({ path: "test-results/screens/try-video-unavailable-390.png" });
+
+  await page.goto("/ui/try/?capability=rerank");
+  await expect(page.getByText("Try can’t run reranking. Choose another task.")).toBeVisible();
+});
+
+test("Run waits for the model list", async ({ page }) => {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/me/api/models/catalog", async (route) => {
+    await ready;
+    await route.fulfill({ json: { aliases: [catalogRow("chat", "chat.completions")], models: [] } });
+  });
+  await page.goto("/ui/try/", { waitUntil: "domcontentloaded" });
+  const run = page.getByRole("button", { name: "Run", exact: true });
+  await expect(run).toBeDisabled();
+  release();
+  await expect(run).toBeEnabled();
 });
 
 test("an image-to-video workflow offers a picture picker, checks before it runs and keeps values after a failure", async ({
@@ -612,17 +650,21 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
     route.fulfill({ json: ltxCatalog }),
   );
   await page.goto("/ui/try/?workflow=video.generate.ltx-2.5-i2v");
-  await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(page.getByRole("combobox").first()).toContainText(
+  await expect(
+    page.getByRole("combobox", { name: "Task", exact: true }),
+  ).toHaveValue("workflow");
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText(
     "LTX 2.5 Distilled I2V",
   );
 
-  // One heading for the tab: the chip, not the chip and a card title.
+  // One name for the task: the phone's Task select, not it and a card title.
   await expect(page.getByRole("heading", { name: "Workflow" })).toHaveCount(0);
-  await expect(page.getByText("Workflow", { exact: true })).toHaveCount(1);
+  await expect(
+    page
+      .getByText("Workflow", { exact: true })
+      .and(page.locator(":not(option)"))
+      .filter({ visible: true }),
+  ).toHaveCount(0);
 
   // A picture picker, in plain words; nothing reads as developer output.
   const group = page.getByRole("group", { name: /Starting picture/ });

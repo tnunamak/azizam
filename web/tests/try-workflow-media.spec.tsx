@@ -192,7 +192,7 @@ afterEach(() => {
 async function openWorkflow() {
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
       "LTX 2.5 Distilled I2V",
     ),
   );
@@ -233,7 +233,8 @@ describe("an image-to-video workflow on Try", () => {
 
   it("names the selected tab once, with no matching heading above the form", async () => {
     await openWorkflow();
-    expect(screen.getAllByText("Workflow")).toHaveLength(1);
+    // The phone task picker (an <option>) is hidden by CSS above 640 px.
+    expect(screen.getAllByText("Workflow", { ignore: "option" })).toHaveLength(1);
     expect(screen.queryByRole("heading", { name: "Workflow" })).toBeNull();
   });
 
@@ -404,7 +405,7 @@ it("says the Try key is temporary, in plain words", async () => {
   const user = userEvent.setup();
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText(/Try uses a temporary key/)).toBeVisible();
@@ -544,7 +545,7 @@ describe("media selection races", () => {
     ));
     await openWorkflow();
     fireEvent.change(pickerInput(), { target: { files: [PNG] } });
-    const select = screen.getByRole("combobox");
+    const select = screen.getByRole("combobox", { name: "Model" });
     select.focus();
     fireEvent.keyDown(select, { key: "Enter" });
     fireEvent.click(await screen.findByRole("option", { name: /Another workflow/ }));
@@ -611,15 +612,22 @@ describe("readable Try model choices", () => {
       return json(catalog);
     });
     render(<TryPage />);
-    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Example Model"));
-    expect(screen.getByRole("combobox")).not.toHaveTextContent("/private/");
-    expect(screen.getByRole("combobox")).not.toHaveTextContent(".gguf");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Example Model"));
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("/private/");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent(".gguf");
+    if (source === "fallback") {
+      // Run waits while the list has failed; Retry reads the fallback list.
+      await screen.findByRole("button", { name: "Retry model catalog" });
+      expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+    }
+    await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect(postedBody().model).toBe(raw);
-    expect(screen.getByRole("combobox")).toHaveTextContent("Example Model");
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Example Model");
     if (source !== "unverified") {
-      expect(screen.getByRole("combobox")).not.toHaveTextContent("Unverified model");
+      expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Unverified model");
     }
   });
 });
