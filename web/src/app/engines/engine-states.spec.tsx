@@ -296,9 +296,35 @@ it("labels degraded and standby engines as such, never Busy or Starting", async 
 it("adds, edits, toggles and removes engines through the existing APIs with the documented bodies", async () => {
   const user = userEvent.setup();
   mount();
-  const added = vi.spyOn(api.services, "add").mockResolvedValue(registry);
-  const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
-  const remove = vi.spyOn(api.services, "remove").mockResolvedValue(registry);
+  // Only the network is faked: the production API client serializes every body.
+  const writes: { method: string; path: string; body: Record<string, unknown> | undefined; ifMatch: string | null }[] = [];
+  const registryReply = () =>
+    new Response(JSON.stringify({ service_registry: registry }), {
+      headers: { "content-type": "application/json", etag: "test-etag" },
+    });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      if (path === "/admin/api/session") {
+        return new Response(JSON.stringify({ actor: { csrf_token: "csrf-fixture" } }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method !== "GET") {
+        writes.push({
+          method,
+          path,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          ifMatch: new Headers(init?.headers).get("if-match"),
+        });
+      }
+      return registryReply();
+    }),
+  );
+  const sent = (method: string) => writes.filter((write) => write.method === method);
+  try {
 
   await screen.findByRole("row", { name: /Local chat engine/ });
   await user.click(screen.getAllByRole("button", { name: "Add engine" })[0]);
@@ -309,13 +335,12 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.type(within(addDialog).getByLabelText(/^Base URL/), "http://127.0.0.1:18083/v1");
   await user.click(within(addDialog).getByRole("button", { name: "Add engine" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine added"));
-  expect(added).toHaveBeenCalledWith(
-    expect.objectContaining({
-      name: "Added engine",
-      preset: "openai-compatible",
-      base_url: "http://127.0.0.1:18083/v1",
-    }),
-  );
+  expect(sent("POST")).toHaveLength(1);
+  expect(sent("POST")[0]).toMatchObject({
+    path: "/admin/api/operator/services",
+    ifMatch: "test-etag",
+    body: { name: "Added engine", preset: "openai-compatible", base_url: "http://127.0.0.1:18083/v1" },
+  });
 
   const dialog = await openEdit(user, "Local chat engine");
   const name = within(dialog).getByLabelText(/^Name/);
@@ -333,7 +358,7 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.type(json, "null");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
   expect(await within(dialog).findByText("Advanced fields must be a JSON object.")).toBeVisible();
-  expect(edit).not.toHaveBeenCalled();
+  expect(sent("PATCH")).toHaveLength(0);
   // user.type reads "{" as a key chord, so paste the original JSON back.
   await user.clear(json);
   await user.click(json);
@@ -341,19 +366,17 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.clear(endpoint);
   await user.type(endpoint, "http://127.0.0.1:19000/v1");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
-  expect(edit).toHaveBeenLastCalledWith(
-    "chat",
-    expect.objectContaining({
-      name: "Renamed chat engine",
-      host: "127.0.0.1",
-      port: 19000,
-      base_path: "/v1",
-      custom_flag: "keep-me",
-      enabled: true,
-    }),
-  );
-  expect(edit.mock.calls[0][1]).not.toHaveProperty("base_url");
+  await waitFor(() => expect(sent("PATCH")).toHaveLength(1));
+  expect(sent("PATCH")[0].path).toBe("/admin/api/operator/services/chat");
+  expect(sent("PATCH")[0].body).toMatchObject({
+    name: "Renamed chat engine",
+    host: "127.0.0.1",
+    port: 19000,
+    base_path: "/v1",
+    custom_flag: "keep-me",
+    enabled: true,
+  });
+  expect(sent("PATCH")[0].body).not.toHaveProperty("base_url");
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
 
   await user.click(screen.getByText("Show infrastructure", { exact: true }));
@@ -366,20 +389,19 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.type(note, "Managed note changed.");
   expect(within(managed).queryByLabelText("Endpoint")).toBeNull();
   await user.click(within(managed).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(2));
-  expect(edit).toHaveBeenLastCalledWith("managed", {
-    name: "Renamed substrate",
-    note: "Managed note changed.",
-    enabled: true,
+  await waitFor(() => expect(sent("PATCH")).toHaveLength(2));
+  expect(sent("PATCH")[1]).toMatchObject({
+    path: "/admin/api/operator/services/managed",
+    body: { name: "Renamed substrate", note: "Managed note changed.", enabled: true },
   });
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
 
   const toggle = await openEdit(user, "Local chat engine");
   await user.click(within(toggle).getByRole("switch", { name: "Toggle Local chat engine" }));
-  expect(edit).toHaveBeenCalledTimes(2);
+  expect(sent("PATCH")).toHaveLength(2);
   await user.click(within(toggle).getByRole("button", { name: "Save engine" }));
-  await waitFor(() => expect(edit).toHaveBeenCalledTimes(3));
-  expect(edit).toHaveBeenLastCalledWith("chat", expect.objectContaining({ enabled: false }));
+  await waitFor(() => expect(sent("PATCH")).toHaveLength(3));
+  expect(sent("PATCH")[2]).toMatchObject({ path: "/admin/api/operator/services/chat", body: { enabled: false } });
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull());
 
   await user.click(screen.getByRole("switch", { name: "Show not in use" }));
@@ -390,6 +412,10 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   const confirm = await screen.findByRole("dialog", { name: "Remove engine?" });
   await user.type(within(confirm).getByRole("textbox"), "Local image engine");
   await user.click(within(confirm).getByRole("button", { name: "Remove engine" }));
-  await waitFor(() => expect(remove).toHaveBeenCalledWith("image"));
+  await waitFor(() => expect(sent("DELETE")).toHaveLength(1));
+  expect(sent("DELETE")[0]).toMatchObject({ path: "/admin/api/operator/services/image", ifMatch: "test-etag" });
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine removed"));
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
