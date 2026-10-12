@@ -185,9 +185,9 @@ host was shared with other agents (load 13-40).
 | Layout | Wall | CPU | Cases / first-try failures | Gateway+engine pairs |
 |---|---|---|---|---|
 | before: 10 shard lanes + live-data + household, copies of `web/` | 342 s | 3,321 | 735 / 0 | 12 |
-| after: 1 pool server, 6 workers | 999 s | 3,736 | 735 / 4 | 3 |
-| after: 1 pool server, 10 workers | 931 s | 4,879 | 735 / 3 | 3 |
-| after: 3 pool servers, 9 workers (default) | 480 s | 3,033 | 735 / 0 | 5 |
+| after: 1 pool server, 6 workers | 999 s | 3,736 | 735 / 4 | 4 |
+| after: 1 pool server, 10 workers | 931 s | 4,879 | 735 / 3 | 4 |
+| after: 3 pool servers, 9 workers (default) | 480 s | 3,033 | 735 / 0 | 6 |
 
 The slowest part of the "after" run is the serial `@global-state` project
 (about 255 s of test time) plus the pool. The rest of the gate (Python tier)
