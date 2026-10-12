@@ -23,7 +23,6 @@ from starlette.responses import Response
 import proxy
 from gateway import media_jobs, receipt_store, receipts, media_ingestion
 from gateway.policy import AppProfile
-
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 CASES = [
