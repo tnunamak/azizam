@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 const baseURL = process.env.AZIZAM_BASE_URL;
 const apiKey = process.env.AZIZAM_API_KEY;
 const liveLLM = process.env.AZIZAM_SMOKE_LIVE_LLM === "1";
+const liveEmbeddings = process.env.AZIZAM_SMOKE_LIVE_EMBEDDINGS === "1";
 const model = process.env.AZIZAM_SMOKE_OPENAI_MODEL || "default";
 
 if (!baseURL) {
@@ -32,7 +33,9 @@ if (!baseURL) {
     assert.ok(Array.isArray(result.data));
   });
 
-  test("POST /v1/embeddings returns vectors", async () => {
+  test("POST /v1/embeddings returns vectors", {
+    skip: liveEmbeddings ? false : "AZIZAM_SMOKE_LIVE_EMBEDDINGS not set; live embeddings probe disabled",
+  }, async () => {
     const result = await client.embeddings.create({
       model: process.env.AZIZAM_SMOKE_EMBEDDINGS_MODEL || "nomic-embed-text-v1.5",
       input: "compatibility probe",

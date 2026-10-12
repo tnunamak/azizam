@@ -16,14 +16,18 @@ const timeout = Number(process.env.AZIZAM_SMOKE_TIMEOUT || "10") * 1000;
 function requireApiKey(t) {
   if (!apiKey) {
     t.skip("AZIZAM_API_KEY not set; authenticated SDK probe disabled");
+    return false;
   }
+  return true;
 }
 
 function requireLiveLLM(t) {
-  requireApiKey(t);
+  if (!requireApiKey(t)) return false;
   if (!liveLLM) {
     t.skip("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled");
+    return false;
   }
+  return true;
 }
 
 if (!baseURL) {
@@ -45,13 +49,13 @@ if (!baseURL) {
   });
 
   test("models.list returns a page-like object", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const models = await client.models.list({ limit: 20 });
     assert.ok(Array.isArray(models.data));
   });
 
   test("messages.countTokens returns input token count", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     const result = await client.messages.countTokens({
       model,
       messages: [{ role: "user", content: "compatibility probe" }],
@@ -61,7 +65,7 @@ if (!baseURL) {
   });
 
   test("messages.create validates invalid max_tokens", async (t) => {
-    requireApiKey(t);
+    if (!requireApiKey(t)) return;
     await assert.rejects(
       client.messages.create({
         model,
@@ -73,7 +77,7 @@ if (!baseURL) {
   });
 
   test("messages.create returns text content", async (t) => {
-    requireLiveLLM(t);
+    if (!requireLiveLLM(t)) return;
     const message = await client.messages.create({
       model,
       max_tokens: 8,
@@ -89,7 +93,7 @@ if (!baseURL) {
   });
 
   test("messages.create streaming emits Anthropic event names", async (t) => {
-    requireLiveLLM(t);
+    if (!requireLiveLLM(t)) return;
     const stream = await client.messages.create({
       model,
       max_tokens: 8,
