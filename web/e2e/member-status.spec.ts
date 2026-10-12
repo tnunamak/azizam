@@ -222,6 +222,14 @@ for (const theme of ["light", "dark"] as const) {
             ["serious", "critical"].includes(v.impact ?? ""),
           ),
         ).toEqual([]);
+        // WCAG 2.5.3 is an experimental axe rule, so the default run skips it.
+        expect(
+          (
+            await new AxeBuilder({ page })
+              .withRules(["label-content-name-mismatch"])
+              .analyze()
+          ).violations,
+        ).toEqual([]);
         await expect(
           page.getByText(/GPU|disk|VRAM|Engines|Providers/, { exact: true }),
         ).toHaveCount(0);

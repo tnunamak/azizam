@@ -309,14 +309,12 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                     const meta = capabilityMeta(capability);
                     const Icon = meta.icon;
                     const state = receiptWord(receipt.status);
-                    const describedBy = `receipt-${receipt.request_id}`;
                     return (
                       <li key={receipt.request_id}>
-                        {/* The gateway sends the receipt link; a plain anchor loads Usage with it. */}
+                        {/* The gateway sends the receipt link; a plain anchor loads Usage with it.
+            Its name is its visible text (WCAG 2.5.3), so no aria-label. */}
                         <a
                           href={receipt.href}
-                          aria-label="View request receipt"
-                          aria-describedby={describedBy}
                           className="group flex min-h-(--row-1) max-sm:min-h-(--row-phone-1) items-center gap-3 py-1.5"
                         >
                           <Icon
@@ -324,7 +322,6 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                             className="text-muted-foreground size-4 shrink-0"
                           />
                           <span
-                            id={describedBy}
                             className="flex min-w-0 flex-1 items-center gap-3"
                           >
                             <span className="min-w-0 flex-1 truncate text-meta font-medium group-hover:underline">
