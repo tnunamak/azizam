@@ -58,7 +58,7 @@ def _flat(routing: dict) -> dict:
 
 
 def _now_needs_a_key(old: str | None, new: str | None) -> bool:
-    """A path nothing serves answers a caller with no key 401 (key_required), not 404."""
+    """A method nothing serves answers a caller with no key 401 (key_required), not 404."""
     return old is not None and new is not None and old.replace("none: 404", "none: 401") == new
 
 
@@ -80,10 +80,6 @@ def _deliberate(key: str) -> str | None:
     if _method in {"GET", "HEAD"} and ui_routes.first_segment(path) not in proxy.WEB_UI_ROUTE.registered_segments:
         return "html404"
     return None
-
-
-def path_is_unserved(key: str) -> bool:
-    return key.split(" ", 1)[1].startswith("/.well-known")
 
 
 def _method_of(key: str) -> str:
@@ -125,7 +121,7 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue
         if kind == "access-plans":
             continue  # the access plan API replaced /admin/api/profiles
-        if path_is_unserved(key) and _now_needs_a_key(old.get(key), new.get(key)):
+        if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
@@ -149,7 +145,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
         kind = _deliberate(key)
         if kind in {"ui", "deleted", "new", "access-plans"}:
             continue
-        if path_is_unserved(key) and _now_needs_a_key(old.get(key), new.get(key)):
+        if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
             continue
