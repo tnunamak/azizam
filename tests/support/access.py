@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from gateway.access_plans import CAPABILITIES, AccessPlan, CapabilityGrant, DirectEngineAccess, PlanCaps
 from gateway.policy import EffectiveAccess
+from gateway.service_registry import canonical_provider_id
 from gateway.runtime_auth import RuntimeIdentity
 
 
@@ -81,7 +82,8 @@ def plan_for(
         name=plan_id,
         can_use={cap: grant for cap in (CAPABILITIES if caps is None else caps)},
         direct_engine_access=direct,
-        paid_providers=frozenset(paid or ()),
+        # Parsed plans hold canonical provider ids; so do these.
+        paid_providers=frozenset(canonical_provider_id(item) for item in paid or ()),
         provider_fallback=fallback,
         caps=PlanCaps(*(None if value is None else Decimal(value)
                         for value in (usd_per_request, usd_per_day, usd_per_month))),
