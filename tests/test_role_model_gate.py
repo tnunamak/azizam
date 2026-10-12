@@ -1,12 +1,12 @@
 """Tests pinning role-model gate generalization (ENGINE_REGISTRY_DESIGN §2.3 + §8 Step 4).
 
 Covers:
-- _normalize_models_catalog: kobold/tabby entries with paths still parse identically
+- _normalize_models_catalog: kobold entries with paths still parse identically
   (golden / byte-identical proof).
 - _normalize_models_catalog: a NEW enabled backend's entry now parses (was dropped).
 - _normalize_models_catalog: an UNKNOWN/disabled backend is still skipped.
 - _normalize_models_catalog: a swap-backend entry without a path is still skipped.
-- _build_role_catalog_entries: kobold/tabby roles identical to before.
+- _build_role_catalog_entries: kobold roles identical to before.
 - _build_role_catalog_entries: a new backend's role now lists.
 - _build_role_catalog_entries: unknown backend role still skipped.
 - _build_role_catalog_entries: remote role with no model field skipped (malformed).
@@ -73,7 +73,7 @@ def _role_entries(roles: dict, backends: dict | None = None) -> list[dict]:
 class TestNormalizeModelsCatalog(unittest.TestCase):
     """Gate-1: config["models"] GGUF alias catalog."""
 
-    # --- Golden / byte-identical for kobold/tabby ----------------------------
+    # --- Golden / byte-identical for kobold ----------------------------
 
     def test_kobold_entry_with_path_accepted(self) -> None:
         """kobold entry with a path parses exactly as before."""
@@ -85,15 +85,8 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
         self.assertEqual(entry["path"], "/models/q4.gguf")
         self.assertIsNone(entry["mmproj"])
 
-    def test_tabby_entry_with_path_accepted(self) -> None:
-        """tabby entry with a path parses exactly as before."""
-        raw = [{"id": "my-tabby", "backend": "tabby", "path": "/models/fp16.gguf"}]
-        result = _normalize(raw, backends=_backends_with("tabby"))
-        self.assertIn("my-tabby", result)
-        self.assertEqual(result["my-tabby"]["backend"], "tabby")
-
     def test_kobold_no_backends_key_still_accepted(self) -> None:
-        """kobold/tabby are _LOCAL_SWAP_BACKENDS and accepted even if absent
+        """kobold is a _LOCAL_SWAP_BACKEND and accepted even if absent
         from config["backends"] (backwards-compat: old configs may not have
         them under backends)."""
         raw = [{"id": "bare-kobold", "backend": "kobold", "path": "/models/q5.gguf"}]
@@ -144,11 +137,6 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
         result = _normalize(raw, backends={})
         self.assertNotIn("pathless", result)
 
-    def test_tabby_without_path_skipped(self) -> None:
-        raw = [{"id": "pathless-tabby", "backend": "tabby"}]
-        result = _normalize(raw, backends={})
-        self.assertNotIn("pathless-tabby", result)
-
     def test_new_backend_without_path_skipped(self) -> None:
         """New backend with no path: still skipped (GGUF catalog requires path)."""
         raw = [{"id": "remote-no-path", "backend": "my-vllm"}]
@@ -172,7 +160,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 class TestBuildRoleCatalogEntries(unittest.TestCase):
     """Gate-2: ROLES dict → /v1/models listing."""
 
-    # --- Golden for kobold/tabby (byte-identical) ----------------------------
+    # --- Golden for kobold (byte-identical) ----------------------------
 
     def test_kobold_role_with_model_path_listed(self) -> None:
         """kobold role with model path produces azizam_model_path (unchanged)."""
@@ -191,26 +179,15 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         self.assertEqual(entry["azizam_model_path"], "/models/q4.gguf")
         self.assertTrue(entry["azizam_role"])
 
-    def test_tabby_role_without_model_listed(self) -> None:
-        """Tabby role without a pinned model is still listed (unpinned backend role)."""
-        roles = {"assistant": {"backend": "tabby"}}
-        entries = _role_entries(roles, backends=_backends_with("tabby"))
+    def test_kobold_role_without_model_listed(self) -> None:
+        """A local-swap role without a pinned model is still listed (unpinned backend role)."""
+        roles = {"assistant": {"backend": "kobold"}}
+        entries = _role_entries(roles, backends=_backends_with("kobold"))
         ids = {e["id"] for e in entries}
         self.assertIn("assistant", ids)
         entry = next(e for e in entries if e["id"] == "assistant")
         self.assertNotIn("azizam_model_path", entry)
-        self.assertEqual(entry["azizam_backend"], "tabby")
-
-    def test_tabby_role_with_model_path_has_model_path_field(self) -> None:
-        roles = {
-            "vision": {
-                "backend": "tabby",
-                "model": "/models/vision.gguf",
-            }
-        }
-        entries = _role_entries(roles, backends=_backends_with("tabby"))
-        entry = next(e for e in entries if e["id"] == "vision")
-        self.assertEqual(entry["azizam_model_path"], "/models/vision.gguf")
+        self.assertEqual(entry["azizam_backend"], "kobold")
 
     # --- New backend now participates ----------------------------------------
 

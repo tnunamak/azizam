@@ -68,7 +68,7 @@ def fixture_registry(service_id, existing):
     return {"services": {service_id: service}}
 
 
-@pytest.mark.parametrize("service_id", ["kobold", "tabby"])
+@pytest.mark.parametrize("service_id", ["kobold"])
 @pytest.mark.parametrize("existing", [False, True])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("effort", ["absent", None, "none", "minimal", "low", "medium", "high", "xhigh", "invalid", 42])
@@ -278,13 +278,13 @@ def test_fresh_seed_declares_opt_in_as_data():
     import yaml
     config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
     seed = service_registry.build_service_registry_seed(config)
-    for service_id in ("kobold", "tabby"):
+    for service_id in ("kobold",):
         assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]
     custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
 
 
-@pytest.mark.parametrize("preset", ["openai-compatible", "vllm", "ollama", "tabbyapi", "lmstudio"])
+@pytest.mark.parametrize("preset", ["openai-compatible", "vllm", "ollama", "lmstudio"])
 def test_local_chat_preset_declares_overridable_attachment(preset):
     form = {"preset": preset, "base_url": "http://127.0.0.1:5111/v1"}
     raw = service_registry.service_form_to_raw(form)

@@ -1,7 +1,7 @@
 # Agent instructions — Azizam
 
 This is a self-hosted, OpenAI-compatible gateway that fronts whatever local AI
-engines an operator runs (llama.cpp, vLLM, Ollama, TabbyAPI, ComfyUI, TTS/STT,
+engines an operator runs (llama.cpp, vLLM, Ollama, ComfyUI, TTS/STT,
 and whatever replaces them). Read this before doing engine-related work.
 
 **Restart rule:** restart the gateway only with `scripts/safe-restart` (`--llama` for llama-bee), never a bare `systemctl --user restart`. See `docs/ops/SAFE_RESTART.md`.
@@ -66,9 +66,9 @@ encoding per-engine fixes it must maintain.
 appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
 / `--jinja`). proxy.py has no allowlist entries: the remaining reviewed engine
-literals (the kobold/tabby local-swap lifecycle set and similar properties) live
+literals (the kobold local-swap lifecycle set and similar properties) live
 in `gateway/engine_quarantine.py` as frozen migration debt, not operator data.
-The guard scans `proxy.py` and `gateway/**/*.py`, and freezes all eleven
+The guard scans `proxy.py` and `gateway/**/*.py`, and freezes all six
 quarantine tables and their membership predicates: do not add IDs, tables or
 predicate behavior. Migrate each property to operator-owned configuration and
 delete its frozen entry with the consumer migration. The UI guard is a limited

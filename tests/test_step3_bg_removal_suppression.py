@@ -43,7 +43,7 @@ class TestBackgroundRemovalOutboundPayload:
         fake = fake_upstreams.asgi(load_scenario("openai-compatible/json-decision", model="bg-decider-model"), host="bg.fk.test")
 
         async def active_backend() -> str:
-            return "tabby"
+            return "kobold"
 
         async def model_for_host(_host: str) -> str:
             return "bg-decider-model"
@@ -51,7 +51,7 @@ class TestBackgroundRemovalOutboundPayload:
         auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
-             patch.dict(proxy.LLM_BACKEND_HOSTS, {"tabby": fake.base_url}), \
+             patch.dict(proxy.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
              patch.object(proxy, "effective_llm_model_for_host", model_for_host):
             decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
 

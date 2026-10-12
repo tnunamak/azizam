@@ -933,16 +933,6 @@ PROVIDER_PRESETS: tuple[dict[str, Any], ...] = (
         "transforms": ["reasoning-effort-final-chat"],
     },
     {
-        "id": "tabbyapi",
-        "label": "TabbyAPI",
-        "base_path": "/v1",
-        "default_port": 5000,
-        "protocol": "openai-compatible",
-        "capabilities": ["chat", "completions", "vision"],
-        "native_passthrough": True,
-        "transforms": ["reasoning-effort-final-chat"],
-    },
-    {
         "id": "lmstudio",
         "label": "LM Studio",
         "base_path": "/v1",

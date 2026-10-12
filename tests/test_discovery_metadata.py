@@ -366,7 +366,7 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("/ollama/api", text)
         self.assertIn("/gateway/v1/providers/{provider}/{path...}", text)
         self.assertIn("native_passthrough", text)
-        self.assertIn("no root Tabby shim", text)
+        self.assertNotIn("Tabby", text)
         self.assertIn("unsupported_operation", text)
         self.assertIn("create/pull/push/copy/delete", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)

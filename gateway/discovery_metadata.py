@@ -327,7 +327,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "3. GET /gateway/v1/capabilities with bearer auth.",
         "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
         "5. Use /anthropic/v1 or /ollama/api only for clients that require those protocols; /api remains an Ollama convenience route.",
-        "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough; there is no root Tabby shim.",
+        "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough.",
         "7. Ollama lifecycle routes create/pull/push/copy/delete return unsupported_operation and do not mutate model files.",
         "8. Fetch /gateway/v1/workflows before using extensions.com.azizam.workflow controls.",
         "9. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",

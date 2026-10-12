@@ -4,7 +4,7 @@ Step 1 of the migration plan: implement the LifecycleDriver Protocol and the TWO
 simplest drivers (external + docker).
 
 SystemdDriver and HttpLoadUnloadDriver are the two swap-capable drivers that
-replaced the kobold/tabby hard-coded swap branches (now deleted). They are the
+replaced the per-engine hard-coded swap branches (now deleted). They are the
 sole swap path in ensure_target — there is no flag and no legacy fallback.
 
 Design axioms (§0):
@@ -43,15 +43,14 @@ SystemdDriver  (swap_strategy: dropin-env-restart)
     NEVER installs or modifies the unit itself.
 
 HttpLoadUnloadDriver  (http-load-unload)
-    Drives a model-server that exposes load/unload HTTP endpoints (e.g. TabbyAPI).
+    Drives a model-server that exposes load/unload HTTP endpoints.
     swap()        → verify current → unload if needed → load target → confirm.
     stop()        → POST unload_url.
     driver_config keys: load_url, unload_url, admin_header, load_body_params,
                         load_timeout_s, success_marker, verify_endpoint.
     The load_body_params value names a registered params-provider (option A from
     LIFECYCLE_DRIVER_PORT.md §3.2) — the driver calls
-    PARAMS_PROVIDERS[load_body_params](svc) to get live model params at swap time,
-    keeping byte-identical parity with the legacy get_tabby_model_config() read.
+    PARAMS_PROVIDERS[load_body_params](svc) to get live model params at swap time.
 """
 
 from __future__ import annotations
@@ -149,7 +148,7 @@ class SwapContext:
     """Engine-agnostic context the caller supplies to driver.swap().
 
     The driver uses this to apply the already-loaded short-circuit and
-    pin-loaded policy WITHOUT requiring the driver to know about kobold/tabby
+    pin-loaded policy WITHOUT requiring the driver to know about any engine's
     probe functions.  The caller (ensure_target) collects the current state
     once and passes it in.
 
@@ -163,7 +162,7 @@ class SwapContext:
         already-loaded comparison instead of inferring it from activation.
     loaded_aux:
         Currently-loaded aux file (mmproj) for drivers that support aux, or
-        None.  Ignored by drivers that have no aux concept (e.g. tabby).
+        None.  Ignored by drivers that have no aux concept.
     target_aux:
         Desired aux file (mmproj) after the swap, or None for text-only.
         Ignored by drivers that have no aux concept.
@@ -834,8 +833,7 @@ class CommandDriver:
 #
 # Maps a string name to a callable (svc) -> dict of extra load-body params.
 # The name lives in driver_config.load_body_params (pure data — the driver
-# never knows what engine it is talking to).  The registration key is
-# engine-named ("tabby-config"), but the driver code only sees the name.
+# never knows what engine it is talking to).
 # ---------------------------------------------------------------------------
 
 PARAMS_PROVIDERS: dict[str, Callable[[Mapping[str, Any]], dict]] = {}
@@ -1223,7 +1221,7 @@ class SystemdDriver:
 
     def _already_loaded(self, dropin_path: Path, dropin_text: str, ctx: SwapContext) -> bool:
         # Aux match: only compare aux if the activation env carries an aux
-        # key — drivers without aux (e.g. tabby) won't have it, so we only
+        # key — drivers without aux won't have it, so we only
         # factor aux in when the env dict actually contains an aux-shaped key.
         # We detect aux by checking whether loaded_aux / target_aux are
         # meaningful: if the activation.env is empty there's nothing to do
@@ -1400,7 +1398,7 @@ class SystemdDriver:
 # ---------------------------------------------------------------------------
 
 class HttpLoadUnloadDriver:
-    """Drive a model-server with HTTP load/unload endpoints (e.g. TabbyAPI).
+    """Drive a model-server with HTTP load/unload endpoints.
 
     swap()  → GET verify_endpoint → POST unload_url (if loaded) →
               POST load_url with body → confirm via success_marker or verify.
@@ -1490,7 +1488,7 @@ class HttpLoadUnloadDriver:
         """Build the activation dict for an http-load-unload swap from driver_config.
 
         Reads the model body key name from ``driver_config.activation_model_key``
-        (defaults to ``"model_name"`` when absent — matches the legacy tabby shape).
+        (defaults to ``"model_name"``).
         No precheck is performed (the server rejects invalid model names itself).
 
         Returns ``{<model_key>: model}``.

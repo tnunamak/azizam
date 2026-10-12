@@ -1,13 +1,12 @@
 {
   "files": {
-    "firehose_render.py": 91,
+    "firehose_render.py": 74,
     "gateway/a1111_api.py": 2,
     "gateway/comfy_ui_graph.py": 4,
     "gateway/comfy_workflow_catalog.py": 4,
     "gateway/comfyui_workflow_validation.py": 1,
-    "gateway/config_sources.py": 3,
-    "gateway/discovery_metadata.py": 1,
-    "gateway/engine_quarantine.py": 15,
+    "gateway/config_sources.py": 2,
+    "gateway/engine_quarantine.py": 9,
     "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/local_capabilities.py": 17,
@@ -17,10 +16,10 @@
     "gateway/model_presentation.py": 1,
     "gateway/openai_media_schemas.py": 1,
     "gateway/protocols/ollama.py": 1,
-    "gateway/service_registry.py": 8,
+    "gateway/service_registry.py": 6,
     "gateway/showcase.py": 1,
     "gateway/toolcall_detection.py": 6,
-    "gateway/transforms.py": 6,
+    "gateway/transforms.py": 5,
     "gateway/video_extend.py": 21,
     "gateway/video_extend_h3.py": 11,
     "gateway/video_extensions.py": 2,
@@ -28,7 +27,7 @@
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 779,
-    "status_endpoint.py": 151
+    "proxy.py": 703,
+    "status_endpoint.py": 143
   }
 }

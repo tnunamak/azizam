@@ -304,43 +304,33 @@ def _check_engine_flag_literals() -> list[str]:
 # ---------------------------------------------------------------------------
 # Check 4: quarantine tables and predicates are frozen
 #
-# This includes LOCAL_SWAP_BACKENDS == {kobold, tabby}: a third managed engine
+# This includes LOCAL_SWAP_BACKENDS == {kobold}: a second managed engine
 # fails here and forces an explicit, reviewed edit of this inventory.
 # ---------------------------------------------------------------------------
 
 # P2-3 transitional inventory. Every table and its consumer predicate is
 # explicit; adding a capability must be reviewed as a service-data migration.
 _QUARANTINE_TABLES: dict[str, frozenset[str]] = {
-    "LOCAL_SWAP_BACKENDS": frozenset({"kobold", "tabby"}),
-    "_HAS_DEFAULT_MODEL_FALLBACK": frozenset({"tabby"}),
-    "_ACTIVATION_FROM_UPSTREAM_ID": frozenset({"tabby"}),
+    "LOCAL_SWAP_BACKENDS": frozenset({"kobold"}),
     "_ACTIVATION_REQUIRES_ABS_PATH": frozenset({"kobold"}),
     "_HAS_AUX_MMPROJ": frozenset({"kobold"}),
     "_LOADED_MODEL_IS_PATH": frozenset({"kobold"}),
-    "_LOADED_MODEL_IS_HTTP_ID": frozenset({"tabby"}),
-    "_ROLES_MAY_BE_UNPINNED": frozenset({"tabby"}),
     "_VISION_VIA_AUX": frozenset({"kobold"}),
-    "_CONTEXT_WINDOW_FROM_MODEL_PARAMS": frozenset({"tabby"}),
     "_CONTEXT_WINDOW_FROM_LIVE_PROBE": frozenset({"kobold"}),
 }
 
 _QUARANTINE_PREDICATES: dict[str, str] = {
     "is_local_swap_backend": "LOCAL_SWAP_BACKENDS",
-    "has_default_model_fallback": "_HAS_DEFAULT_MODEL_FALLBACK",
-    "activation_from_upstream_id": "_ACTIVATION_FROM_UPSTREAM_ID",
     "activation_requires_abs_path": "_ACTIVATION_REQUIRES_ABS_PATH",
     "has_aux_mmproj": "_HAS_AUX_MMPROJ",
     "loaded_model_is_path": "_LOADED_MODEL_IS_PATH",
-    "loaded_model_is_http_id": "_LOADED_MODEL_IS_HTTP_ID",
-    "roles_may_be_unpinned": "_ROLES_MAY_BE_UNPINNED",
     "vision_via_aux": "_VISION_VIA_AUX",
-    "context_window_from_model_params": "_CONTEXT_WINDOW_FROM_MODEL_PARAMS",
     "context_window_from_live_probe": "_CONTEXT_WINDOW_FROM_LIVE_PROBE",
 }
 
 
 def _check_quarantine_frozen(source: str | None = None) -> list[str]:
-    """Freeze the 11 literal sets and their exact one-lookup predicate shapes."""
+    """Freeze the 6 literal sets and their exact one-lookup predicate shapes."""
     tree = ast.parse(source if source is not None else _QUARANTINE.read_text(encoding="utf-8"))
     violations: list[str] = []
     tables: dict[str, ast.expr] = {}
@@ -882,7 +872,7 @@ class TestEngineKnowledgeBoundary:
             assert any(name in violation for violation in _check_quarantine_frozen(changed)), name
         assert _check_quarantine_frozen(source + '\n_NEW_BACKENDS = frozenset({"vllm"})\n')
         assert _check_quarantine_frozen(source.replace(
-            "return backend in _HAS_DEFAULT_MODEL_FALLBACK",
+            "return backend in _ACTIVATION_REQUIRES_ABS_PATH",
             "return True",
         ))
 
