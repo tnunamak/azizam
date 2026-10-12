@@ -26750,7 +26750,7 @@ async def list_response_input_items(response_id: str, request: Request):
     )
     if decision.denied:
         return _policy_denied_response(decision)
-    row = responses_store.get(response_id)
+    row = await asyncio.to_thread(responses_store.get, response_id)
     if not _responses_row_visible(row, auth_context):
         return _responses_error(
             f"Response with id '{response_id}' not found.",
