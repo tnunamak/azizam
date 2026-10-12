@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useCopied } from "@/components/ui/copy-button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export interface CodeSnippet {
@@ -19,21 +20,15 @@ export function CodeBlock({
   snippets,
 }: CodeBlockProps) {
   const values = snippets?.length ? snippets : [{ code, language }];
-  const [copied, setCopied] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  async function copy(snippet: CodeSnippet) {
-    try {
-      await navigator.clipboard.writeText(snippet.code);
-      setCopied(snippet.language);
-      setError(false);
-    } catch {
-      setCopied(null);
-      setError(true);
-    }
-  }
+  const [selectedLanguage, setSelectedLanguage] = useState(values[0].language);
+  const activeLanguage = values.some((snippet) => snippet.language === selectedLanguage)
+    ? selectedLanguage
+    : values[0].language;
+  const { copied, failed, copy } = useCopied(JSON.stringify([activeLanguage, values]));
   return (
     <Tabs
-      defaultValue={values[0].language}
+      value={activeLanguage}
+      onValueChange={setSelectedLanguage}
       className="bg-muted min-w-0 gap-0 rounded-lg"
     >
       <div className="overflow-x-auto border-b px-3 pt-2">
@@ -57,10 +52,10 @@ export function CodeBlock({
             size="icon-sm"
             className="absolute top-2 right-2"
             disabled={!s.code}
-            onClick={() => copy(s)}
+            onClick={() => void copy(s.code)}
             aria-label={`Copy ${s.language} code`}
           >
-            {copied === s.language ? <Check /> : <Copy />}
+            {copied && activeLanguage === s.language ? <Check /> : <Copy />}
           </Button>
           {s.code ? (
             <pre className="overflow-x-auto pr-8 font-mono text-xs leading-relaxed">
@@ -76,9 +71,9 @@ export function CodeBlock({
       <span role="status" className="sr-only">
         {copied ? "Code copied" : ""}
       </span>
-      {error && (
+      {failed && (
         <p role="alert" className="text-destructive p-3 text-sm">
-          Copy failed. Select the code and copy it manually.
+          {"Couldn't copy. Select the text and copy it yourself."}
         </p>
       )}
     </Tabs>

@@ -73,7 +73,7 @@ for (const theme of ["light", "dark"] as const) {
         .filter({ hasText: "Couldn’t load your account" });
       await expect(failure).toBeVisible();
       await expect(failure).toContainText(
-        "Check your connection and try again.",
+        "We couldn't tell why your account didn't load. Try again.",
       );
       await expect(page).toHaveURL(/\/ui\/models\/$/);
       await expect(page.getByRole("navigation")).toHaveCount(0);

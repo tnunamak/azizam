@@ -386,7 +386,7 @@ test("session failure explains the problem and retry restores the account", asyn
   );
   await page.goto("/ui/");
   await expect(
-    page.getByText("Check your connection and try again.", { exact: true }),
+    page.getByText("We couldn't tell why your account didn't load. Try again.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Settings", exact: true }),

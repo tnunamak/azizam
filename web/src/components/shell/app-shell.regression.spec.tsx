@@ -1,10 +1,15 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "./app-shell";
 import type { QueryClient } from "@tanstack/react-query";
 import { resetSessionCache } from "@/lib/api";
+import { ErrorState } from "@/components/product/error-state";
+import { CopyButton } from "@/components/ui/copy-button";
+import { CodeBlock } from "@/components/product/code-block";
+import { Progress } from "@/components/ui/progress";
+import { healthHistory, healthStory, hourSlots, UptimeBar } from "@/components/product/uptime-bar";
 
 const clients = vi.hoisted(() => [] as QueryClient[]);
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -105,7 +110,7 @@ beforeEach(() => {
       }
       if (url.endsWith("/admin/api/users")) return jsonResponse({ users: [] });
       if (url.endsWith("/admin/api/operator/service-registry")) {
-        return jsonResponse({ services: {} });
+        return jsonResponse({ service_registry: { schema_version: 1, services: {} } });
       }
       return jsonResponse({});
     }),
@@ -184,6 +189,7 @@ describe("AppShell accessible names", () => {
     });
     await user.click(menus[0]);
     await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    expect(await screen.findByText("We couldn't confirm you were signed out. Refresh this page and try again.")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
       "/logout",
       expect.objectContaining({
@@ -275,7 +281,7 @@ describe("Service admin session", () => {
       </AppShell>,
     );
     expect(
-      await screen.findByRole("heading", { name: "Service admin session" }),
+      await screen.findByRole("heading", { name: "Admin key" }),
     ).toBeVisible();
     expect(screen.queryByText("Private library consumer")).toBeNull();
     expect(
@@ -338,7 +344,7 @@ describe("Signed-out private pages", () => {
     const loading = screen.getByRole("status", {
       name: "Loading your account",
     });
-    expect(loading).toHaveTextContent("Checking your session");
+    expect(loading).toHaveTextContent("Loading your account");
     expect(loading).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByText("Private consumer")).toBeNull();
@@ -362,4 +368,159 @@ describe("Signed-out private pages", () => {
     expect(screen.queryByText("Private consumer")).toBeNull();
     expect(replace).not.toHaveBeenCalled();
   });
+});
+
+describe("WP-20 shell recovery", () => {
+  it("keeps sign-out pending and rejects repeat selections", async () => {
+    const originalFetch = fetch;
+    const logout = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/logout" ? logout() : originalFetch(input, init),
+    ));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: "Account menu: Alex Owner" }))[0]);
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    const pending = await screen.findByRole("menuitem", { name: "Signing out…" });
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(pending);
+    expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Help in the common menu without developer links", async () => {
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: "Account menu: Alex Owner" }))[0]);
+    expect(await screen.findByRole("menuitem", { name: "Help" })).toHaveAttribute("href", "/docs");
+    expect(screen.queryByRole("menuitem", { name: "Design system" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "API reference" })).toBeNull();
+  });
+
+  it("shows apps loading, failure, retry and empty states in Go to", async () => {
+    clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
+    const originalFetch = fetch;
+    let commandRequest = false;
+    let retry = false;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (commandRequest && String(input).endsWith("/me/api/session")) {
+        if (retry) return jsonResponse({ apps: [] });
+        await pending;
+        return jsonResponse({}, { status: 503 });
+      }
+      return originalFetch(input, init);
+    }));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await screen.findAllByRole("button", { name: "Account menu: Alex Owner" });
+    commandRequest = true;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Go to" }));
+    expect(await screen.findByText("Loading apps…")).toBeVisible();
+    await user.type(screen.getByRole("combobox"), "no such app");
+    expect(screen.getByText("Loading apps…")).toBeVisible();
+    await act(async () => release());
+    expect(await screen.findByText(/Apps couldn't be loaded/)).toBeVisible();
+    retry = true;
+    await user.click(screen.getByText(/Apps couldn't be loaded/).querySelector("button")!);
+    expect(await screen.findByText("No apps match.")).toBeVisible();
+    expect(screen.queryByText("No matches. Try a page or app name.")).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Go to" }));
+    expect(await screen.findByRole("combobox")).toHaveValue("");
+  });
+
+  it("does not call a responding unhealthy gateway unreachable", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/health")
+        ? jsonResponse({ status: "degraded" })
+        : originalFetch(input, init),
+    ));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await screen.findAllByRole("button", { name: "Account menu: Alex Owner" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Go to" }));
+    await user.click(await screen.findByRole("option", { name: "Check gateway reachability" }));
+    expect(await screen.findByText("The gateway responded, but reported a problem. View Status.")).toBeVisible();
+    expect(screen.queryByText("The gateway could not be reached. Try again.")).toBeNull();
+  });
+});
+
+describe("WP-20 shared widgets", () => {
+  it("does not invent a failing layer when no context is known", () => {
+    render(<ErrorState />);
+    expect(screen.getByText("We couldn't tell where this stopped. Reload this page.")).toBeVisible();
+  });
+
+  it("keeps missing progress indeterminate and honors a custom maximum", () => {
+    const { container, rerender } = render(<Progress aria-label="Loading" />);
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    expect(container.querySelector('[data-slot="progress-indicator"]')).not.toHaveStyle({ transform: "translateX(-100%)" });
+    rerender(<Progress aria-label="Loading" value={50} max={200} />);
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(container.querySelector('[data-slot="progress-indicator"]')).toHaveStyle({ transform: "translateX(-75%)" });
+  });
+
+  it("shows clipboard failure visibly and resets it for new content", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => false) });
+    const { rerender } = render(<CopyButton value="first" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't copy. Select the text and copy it yourself.");
+    expect(screen.getByRole("alert")).not.toHaveClass("sr-only");
+    rerender(<CopyButton value="second" />);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("clears copied code when the snippet changes", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    const { rerender } = render(<CodeBlock code="first" language="Text" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy Text code" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Code copied"));
+    rerender(<CodeBlock code="second" language="Text" />);
+    await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
+  });
+
+  it("does not apply an old clipboard completion to new content", async () => {
+    let finish!: () => void;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => new Promise<void>((resolve) => { finish = resolve; }) } });
+    const { rerender } = render(<CopyButton value="first" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    rerender(<CopyButton value="second" />);
+    await act(async () => finish());
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("uses the latest health state and never infers recovery across a gap", () => {
+    const degraded = [{ start: 0, value: 0 }, { start: 3600, value: 0.5 }];
+    expect(healthStory(healthHistory(degraded), degraded).current).toMatch(/^Degraded since/);
+    const missing = [...degraded, { start: 7200, value: null }];
+    expect(healthHistory(missing).recoveredAt).toBeNull();
+    expect(healthStory(healthHistory(missing), missing).current).toBe("No recent check");
+    const afterGap = [...missing, { start: 10800, value: 1 }];
+    expect(healthHistory(afterGap).recoveredAt).toBeNull();
+    const recovered = [{ start: 0, value: 0 }, { start: 3600, value: 1 }];
+    expect(healthHistory(recovered).recoveredAt).toBe(3600);
+  });
+
+  it("keeps empty and invalid health samples as gaps", () => {
+    expect(hourSlots([[1, Number.NaN]], 3600).every((slot) => slot.value === null)).toBe(true);
+    render(<UptimeBar series={[]} end={86400} label="Engine" />);
+    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "Engine: no checks recorded in the last 24 hours");
+  });
+});
+
+it("keeps the status popover as unknown when owner health fails", async () => {
+  clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
+  const originalFetch = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/admin/api/status")) return jsonResponse({}, { status: 503 });
+    if (String(input).endsWith("/me/api/home")) return jsonResponse({ authenticated: true, capabilities: [], aliases: [], receipts: [] });
+    return originalFetch(input, init);
+  }));
+  render(<AppShell><h1>Home</h1></AppShell>);
+  const buttons = await screen.findAllByRole("button", { name: "Gateway status: Status unknown" });
+  await userEvent.setup().click(buttons[0]);
+  expect(screen.queryByText("Your AI")).toBeNull();
 });

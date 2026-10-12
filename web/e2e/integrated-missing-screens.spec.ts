@@ -127,7 +127,7 @@ for (const theme of themes) {
           ).toBeVisible();
         } else {
           await expect(
-            page.getByText("Check your connection and try again."),
+            page.getByText("We couldn't tell why your account didn't load. Try again."),
           ).toBeVisible();
         }
         await inspect(page, `apps-${state}-${theme}-${width}`);

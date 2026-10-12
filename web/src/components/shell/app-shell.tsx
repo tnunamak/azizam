@@ -178,12 +178,15 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
       {loaded ? (
         <Suspense
           fallback={
-            <AccountMenuPlaceholder
-              compact={compact}
-              name={viewer.name}
-              expanded={open}
-              onClick={openMenu}
-            />
+            <>
+              <AccountMenuPlaceholder
+                compact={compact}
+                name={viewer.name}
+                expanded={open}
+                onClick={openMenu}
+              />
+              {open && <p role="status">Loading navigation…</p>}
+            </>
           }
         >
           <AccountMenuContent
@@ -337,19 +340,16 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   const listedProblems = [...sorted.faults, ...sorted.unchecked];
   const busy = sorted.busy.length;
   const pill = problemPill(model.verdict.problems);
+  const statusError = model.isError || model.ownerHealthError;
+  const currentCapabilities = !!gatewayData && !gatewayError && !model.isPending && !statusError;
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
     : !gatewayData
       ? { label: "Checking", tone: "unknown" as const }
       : !signedIn
         ? { label: "Gateway reachable", tone: "ok" as const }
-        : model.isError || model.ownerHealthError
-          ? // Reachable, but the capability states (or, for an owner, the
-            // engine checks) did not load: no count from old data, no
-            // all-clear (red team round 2).
-            { label: "Status unknown", tone: "unknown" as const }
-          : model.isPending
-            ? { label: "Checking", tone: "unknown" as const }
+        : !currentCapabilities
+          ? { label: statusError ? "Status unknown" : "Checking", tone: "unknown" as const }
             : pill
               ? pill
               : busy
@@ -360,8 +360,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   const visibleLabel = label;
   const dot = dotClass(tone);
   // The capabilities behind the count: tapping the pill must explain it.
-  const listed =
-    signedIn && !gatewayError && !model.isPending && !model.isError;
+  const listed = signedIn && currentCapabilities;
   const reasons = listed ? listedProblems : [];
   return (
     <Popover>
@@ -405,7 +404,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
             )}
           </dd>
           {/* With the gateway unreachable, nothing current can be said about it. */}
-          {signedIn && !gatewayError && !model.isPending && !model.isError ? (
+          {listed ? (
             <>
               <dt className="text-muted-foreground">Your AI</dt>
               <dd>
@@ -433,7 +432,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               </dd>
             </>
           ) : null}
-          {ownerAlert ? (
+          {listed && ownerAlert ? (
             <>
               <dt className="text-muted-foreground">{ownerAlert.section}</dt>
               <dd>{ownerAlert.message}</dd>
@@ -669,7 +668,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       aria-busy="true"
       className="text-muted-foreground text-body mx-auto max-w-md py-12"
     >
-      Checking your session…
+      Loading your account…
     </p>
   ) : sessionError ? (
     <>
@@ -682,7 +681,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       <ErrorState
         heading="Couldn’t load your account"
-        message="Check your connection and try again."
+        message="We couldn't tell why your account didn't load. Try again."
         onRetry={() => {
           void refreshSession();
         }}
@@ -703,9 +702,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         (d.group === "You" || ["People", "Activity"].includes(d.title)),
     ) ? (
     <>
-      <PageHeader title="Service admin session" />
+      <PageHeader title="Admin key" />
       <p className="text-muted-foreground">
-        This session uses a key to manage the gateway. Sign in as a person to
+        This admin key manages the gateway. Sign in as a person to
         use your AI, view your library and usage, or manage people.
       </p>
       <Button variant="outline" asChild>
@@ -965,7 +964,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </SheetContent>
         </Sheet>
         {!showPublicShell && commandMounted && (
-          <Suspense fallback={null}>
+          <Suspense fallback={commandOpen ? <p role="status" className="bg-background fixed inset-x-4 top-20 z-50 rounded-lg border p-4">Loading navigation…</p> : null}>
             <CommandPalette
               open={commandOpen}
               setOpen={setCommandOpen}

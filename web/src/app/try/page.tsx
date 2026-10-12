@@ -65,6 +65,7 @@ import {
 import { taskNames } from "@/lib/terms";
 import { modelDisplayName } from "@/lib/model-name";
 import { Button } from "@/components/ui/button";
+import { useCopied } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -2839,21 +2840,15 @@ function SnippetBlock({
 }) {
   const firstLanguage = snippets[0]?.language ?? "";
   const [activeLanguage, setActiveLanguage] = useState(firstLanguage);
-  const [copied, setCopied] = useState<string | null>(null);
-  async function copy(language: string, code: string) {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(language);
-    } catch {
-      setCopied("Copy failed");
-    }
-  }
+  const selectedLanguage = snippets.some((snippet) => snippet.language === activeLanguage)
+    ? activeLanguage
+    : firstLanguage;
+  const { copied, failed, copy } = useCopied(JSON.stringify([selectedLanguage, snippets]));
   return (
     <Tabs
-      value={activeLanguage || firstLanguage}
+      value={selectedLanguage}
       onValueChange={(language) => {
         setActiveLanguage(language);
-        setCopied(null);
       }}
       className="bg-muted rounded-lg border"
     >
@@ -2872,18 +2867,15 @@ function SnippetBlock({
           className="min-h-11 self-end sm:self-auto"
           onClick={() => {
             const snippet =
-              snippets.find((item) => item.language === activeLanguage) ??
+              snippets.find((item) => item.language === selectedLanguage) ??
               snippets[0];
-            if (snippet) void copy(snippet.language, snippet.code);
+            if (snippet) void copy(snippet.code);
           }}
         >
-          {copied === "Copy failed"
-            ? "Copy failed"
-            : copied
-              ? "Copied"
-              : "Copy"}
+          {copied ? "Copied" : "Copy"}
         </Button>
       </div>
+      {failed && <p role="alert" className="text-destructive p-3 text-sm">{"Couldn't copy. Select the text and copy it yourself."}</p>}
       {snippets.map((snippet) => (
         <TabsContent
           key={snippet.language}

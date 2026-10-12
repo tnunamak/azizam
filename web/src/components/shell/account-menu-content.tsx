@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRef, useState } from "react";
 import {
-  BookOpen,
   ChevronDown,
   CircleHelp,
   KeyRound,
@@ -39,8 +39,13 @@ export function AccountMenuContent({
   onOpenChange: (open: boolean) => void;
 }) {
   const viewer = useViewer();
+  const signingOutRef = useRef(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   async function signOut() {
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    setSigningOut(true);
     try {
       const member = await fetch("/me/api/session", {
         credentials: "same-origin",
@@ -57,7 +62,9 @@ export function AccountMenuContent({
       if (!response.ok) throw new Error("Sign out failed");
       window.location.assign("/ui/sign-in/");
     } catch {
-      toast.error("Could not sign out. Refresh the page and try again.");
+      signingOutRef.current = false;
+      setSigningOut(false);
+      toast.error("We couldn't confirm you were signed out. Refresh this page and try again.");
     }
   }
 
@@ -87,7 +94,7 @@ export function AccountMenuContent({
           <span className="block font-medium">{viewer.name}</span>
           <span className="text-muted-foreground block text-xs">
             {viewer.serviceAdmin
-              ? "Service key"
+              ? "Admin key"
               : (roleLabels[viewer.role] ?? "Member")}
           </span>
         </DropdownMenuLabel>
@@ -110,21 +117,21 @@ export function AccountMenuContent({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem asChild>
-            <Link href="/design">
-              <BookOpen />
-              Design system
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
             <a href="/docs">
               <CircleHelp />
-              API reference
+              Help
             </a>
           </DropdownMenuItem>
           {viewer.authenticated ? (
-            <DropdownMenuItem onSelect={() => void signOut()}>
+            <DropdownMenuItem
+              disabled={signingOut}
+              onSelect={(event) => {
+                event.preventDefault();
+                void signOut();
+              }}
+            >
               <LogOut />
-              Sign out
+              {signingOut ? "Signing out…" : "Sign out"}
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem asChild>

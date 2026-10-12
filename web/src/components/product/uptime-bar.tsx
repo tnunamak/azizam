@@ -11,7 +11,9 @@ export function hourSlots(
   series: SeriesPoint[] | undefined,
   end: number,
 ): Array<{ start: number; value: number | null }> {
-  const points = series ?? [];
+  const points = (series ?? []).filter(([timestamp, value]) =>
+    Number.isFinite(timestamp) && Number.isFinite(value),
+  );
   return Array.from({ length: 24 }, (_, index) => {
     const start = end - (24 - index) * 3600;
     const inSlot = points.filter(
@@ -84,6 +86,7 @@ export function healthHistory(
       if (!previousBad) spells += 1;
       lastBadEnd = slot.start + 3600;
     }
+    if (slot.value === null) lastBadEnd = null;
     previousBad = bad;
   }
   const since = failingSince(slots);
@@ -92,7 +95,9 @@ export function healthHistory(
     degraded,
     spells,
     failingSince: since,
-    recoveredAt: since === null ? lastBadEnd : null,
+    recoveredAt: slots.at(-1)?.value != null && slots.at(-1)!.value! >= 1
+      ? lastBadEnd
+      : null,
   };
 }
 
@@ -117,7 +122,8 @@ export function healthStory(
   slots: Array<{ start: number; value: number | null }>,
 ): HealthStory {
   const { down, degraded, spells, failingSince: since, recoveredAt } = history;
-  if (!down && !degraded) return { current: null, day: null };
+  const latest = slots.at(-1)?.value ?? null;
+  if (!down && !degraded) return { current: latest === null ? "No recent check" : null, day: null };
   // Plain words (D1.5: "3 spells: down 4 h" read as jargon).
   const hours = (n: number) => `${n} hour${n === 1 ? "" : "s"}`;
   const amounts =
@@ -129,13 +135,16 @@ export function healthStory(
   const day = `${amounts} in the last 24 hours${
     spells > 1 ? `, in ${spells} separate stretches` : ""
   }.`;
+  if (latest === null) return { current: "No recent check", day };
   if (since !== null) {
-    // The current run is "down" if any of its hours was down, else degraded.
-    const run = slots.filter((slot) => slot.start >= since);
-    const word = run.some((slot) => slot.value !== null && slot.value <= 0)
-      ? "Down"
-      : "Degraded";
-    return { current: `${word} since about ${clock(since)}`, day };
+    const downNow = latest <= 0;
+    let stateSince = slots.at(-1)!.start;
+    for (let index = slots.length - 2; index >= 0; index -= 1) {
+      const slot = slots[index];
+      if (slot.value === null || slot.value >= 1 || (slot.value <= 0) !== downNow) break;
+      stateSince = slot.start;
+    }
+    return { current: `${downNow ? "Down" : "Degraded"} since about ${clock(stateSince)}`, day };
   }
   return {
     current:
@@ -232,12 +241,13 @@ export function UptimeBar({
   size?: "sm" | "lg";
 }) {
   const large = size === "lg";
-  if (!series?.length) return null;
   const slots = hourSlots(series, end);
   const { up, checked } = hoursUp(slots);
   const summary = !enabled
     ? `${label}: turned off`
-    : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
+    : checked === 0
+      ? `${label}: no checks recorded in the last 24 hours`
+      : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
   // Only the colours this bar shows, so every word names a cell.
   const legend = showLegend ? (
     <ul

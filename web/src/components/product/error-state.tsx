@@ -65,13 +65,15 @@ export function ErrorState({
     <Callout
       as="div"
       severity={severity}
-      title={heading ?? (error ? copy.heading : "Couldn’t load this")}
+      title={heading ?? (error ? copy.heading : "Something didn’t load")}
       actions={actionNode}
     >
       {message === null ? null : (
         <p className="text-muted-foreground">
           {message ??
-            (error ? copy.message : onRetry ? "Try again." : "Reload this page.")}
+            (error
+              ? copy.message
+              : `We couldn't tell where this stopped. ${onRetry ? "Try again." : "Reload this page."}`)}
         </p>
       )}
       {copy.details && (

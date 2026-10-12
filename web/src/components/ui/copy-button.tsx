@@ -39,7 +39,7 @@ export async function copyText(value: string): Promise<boolean> {
 }
 
 /** Shared "flash a check for 2s after copying" state. */
-export function useCopied(): {
+export function useCopied(value?: string): {
   copied: boolean;
   failed: boolean;
   copy: (value: string) => Promise<void>;
@@ -47,15 +47,27 @@ export function useCopied(): {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generation = useRef(0);
+
+  useEffect(() => {
+    generation.current += 1;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    setCopied(false);
+    setFailed(false);
+  }, [value]);
 
   useEffect(() => {
     return () => {
+      generation.current += 1;
       if (timer.current) clearTimeout(timer.current);
     };
   }, []);
 
   const copy = useCallback(async (value: string) => {
+    const request = ++generation.current;
     const ok = await copyText(value);
+    if (request !== generation.current) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
     setCopied(ok);
@@ -85,8 +97,9 @@ export function CopyButton({
   className,
   "aria-label": ariaLabel,
 }: CopyButtonProps) {
-  const { copied, failed, copy } = useCopied();
+  const { copied, failed, copy } = useCopied(value);
   return (
+    <>
     <Button
       type="button"
       size={size}
@@ -110,12 +123,10 @@ export function CopyButton({
       )}
       {children}
       <span role="status" aria-live="polite" className="sr-only">
-        {failed
-          ? "Couldn't copy. Select the text and copy it yourself."
-          : copied
-            ? "Copied to clipboard"
-            : ""}
+        {copied ? "Copied to clipboard" : ""}
       </span>
     </Button>
+    {failed && <span role="alert" className="text-destructive text-sm">{"Couldn't copy. Select the text and copy it yourself."}</span>}
+    </>
   );
 }

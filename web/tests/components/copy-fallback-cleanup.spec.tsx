@@ -36,7 +36,7 @@ it.each([false, "throw"])(
       render(<CopyButton value="fixture-copy-text" />);
       await user.click(screen.getByRole("button", { name: "Copy" }));
       expect(fallback).toHaveBeenCalledWith("copy");
-      expect(screen.getByRole("status")).toHaveTextContent(
+      expect(await screen.findByRole("alert")).toHaveTextContent(
         "Couldn't copy. Select the text and copy it yourself.",
       );
       expect(screen.queryByText("Copied to clipboard")).toBeNull();
@@ -67,9 +67,10 @@ it("clears the prior success check and announcement when a repeat copy fails", a
     expect(button.querySelector("svg")!.outerHTML).not.toBe(copyIcon);
     await user.click(button);
     expect(button.querySelector("svg")!.outerHTML).toBe(copyIcon);
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn't copy. Select the text and copy it yourself.",
     );
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
     expect(container).not.toHaveTextContent("Copied to clipboard");
   } finally {
     if (original) Object.defineProperty(document, "execCommand", original);

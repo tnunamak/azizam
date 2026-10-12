@@ -117,7 +117,7 @@ test("slow session checks never mount the app shell and retain filters and fragm
     await route.continue();
   });
   await page.goto("/ui/models/?capability=chat#selection");
-  await expect(page.getByRole("status")).toHaveText("Checking your session…");
+  await expect(page.getByRole("status")).toHaveText("Loading your account…");
   await expect(page.getByRole("navigation")).toHaveCount(0);
   await expect(page.locator("[data-slot=skeleton]")).toHaveCount(0);
   release();

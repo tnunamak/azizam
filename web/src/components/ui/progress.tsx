@@ -7,12 +7,18 @@ import { Progress as ProgressPrimitive } from "radix-ui";
 function Progress({
   className,
   value,
+  max = 100,
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+  const maximum = Number.isFinite(max) && max > 0 ? max : 100;
+  const current = typeof value === "number" && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(0, value))
+    : null;
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
-      value={value}
+      value={current}
+      max={maximum}
       className={cn(
         "bg-primary/20 relative h-2 w-full overflow-hidden rounded-full",
         className,
@@ -21,8 +27,8 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="bg-primary h-full w-full flex-1 transition-all"
-        style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
+        className={cn("bg-primary h-full transition-all", current === null ? "w-1/3 motion-safe:animate-pulse" : "w-full")}
+        style={current === null ? undefined : { transform: `translateX(-${100 - current / maximum * 100}%)` }}
       />
     </ProgressPrimitive.Root>
   );
