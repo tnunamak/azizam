@@ -580,3 +580,48 @@ test("a member's sound effects link reads as a plural", async () => {
     ),
   ).toBeVisible();
 });
+
+test.each(["switch-task", "unmount"] as const)(
+  "releases permission granted after %s without starting a recorder",
+  async (ending) => {
+    mocks.params = new URLSearchParams("capability=transcribe");
+    fetchMock.mockImplementation(async (url: string) =>
+      response(url.includes("workflows") ? { workflows: [] } : {
+        aliases: [],
+        models: [
+          ...models.models,
+          { id: "fixture-stt", name: "Fixture transcription", capabilities: ["transcribe"] },
+        ],
+      }),
+    );
+    let finish!: (value: MediaStream) => void;
+    const getUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => {
+      finish = resolve;
+    }));
+    const stop = vi.fn();
+    const original = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const recorderConstructor = vi.fn();
+    vi.stubGlobal("MediaRecorder", recorderConstructor);
+    const view = render(<TryPage />);
+    try {
+      fireEvent.click(await screen.findByRole("button", { name: "Record" }));
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      if (ending === "unmount") view.unmount();
+      else await userEvent.setup().click(screen.getByRole("tab", { name: "Chat" }));
+      await act(async () => {
+        finish({ getTracks: () => [{ stop }] } as unknown as MediaStream);
+      });
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(recorderConstructor).not.toHaveBeenCalled();
+      expect(mocks.tryKey).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      if (original) Object.defineProperty(navigator, "mediaDevices", original);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  },
+);
