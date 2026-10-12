@@ -1429,7 +1429,9 @@ class _GatedMakeRuntime:
 
         self.calls.append(json.loads(json.dumps(payload)))
         self.started.set()
-        await asyncio.to_thread(self.release.wait, 10)
+        if not await asyncio.to_thread(self.release.wait, 10):
+            # Completing here would race the lifecycle assertions of a held job.
+            raise AssertionError("the test never released this held make job")
         if payload["job_id"] in self.canceled:
             raise me_make.MakeCanceled()
         if self.fail_with is not None:
