@@ -52,8 +52,8 @@ For the operator-facing first-run story this model implies, see
 - **OIDC uses the configured public origin.** When Settings has a public base
   URL, browser sign-in replaces the OIDC `redirect_uri` origin with that URL
   and keeps the callback path. For example, a login started on
-  `openai.vivid.fish` with `https://ai.vivid.fish` saved in Settings sends the
-  identity provider `https://ai.vivid.fish/admin/oidc/callback`. Without a
+  `api.example.com` with `https://ai.example.com` saved in Settings sends the
+  identity provider `https://ai.example.com/admin/oidc/callback`. Without a
   public base URL, the configured OIDC `redirect_uri` stays unchanged; the
   incoming host does not choose it. Register the resulting exact callback URL
   with the identity provider. A pending login keeps its original callback URL
