@@ -46,7 +46,7 @@ test("owner signs in, opens Connect and copies the MCP config", async ({
 
     await expect(page.getByRole("link", { name: "Create a key" })).toHaveAttribute(
       "href",
-      "/apps?action=create-key",
+      /^\/apps\/?\?action=create-key$/,
     );
   } finally {
     await context.close();
