@@ -108,11 +108,10 @@ describe("member Status diagnosis", () => {
       screen.queryByText("Ask the owner", { exact: true }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
-    const receipt = screen.getByRole("link", { name: "View request receipt" });
+    // The visible capability and state name the link (WCAG 2.5.3); the id stays out.
+    const receipt = screen.getByRole("link", { name: /Images.*Failed/ });
     expect(receipt).toHaveAttribute("href", snapshot.receipts[0].href);
-    // The visible capability and state describe the link; the id stays out.
-    expect(receipt).toHaveAccessibleDescription(/Images.*Failed/);
-    expect(receipt).not.toHaveAccessibleDescription(/my-failed-request/);
+    expect(receipt).not.toHaveAccessibleName(/my-failed-request/);
     await user.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Flux", { exact: true })).toBeVisible();
     expect(screen.getByText(/Names you can use/)).toBeInTheDocument();
@@ -319,7 +318,7 @@ it("keeps the owner's own requests alongside the household status", async () => 
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
   expect(screen.getByText("Owner status")).toBeVisible();
   expect(await screen.findByRole("heading", { name: "Your latest requests" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "View request receipt" })).toHaveAttribute("href", snapshot.receipts[0].href);
+  expect(screen.getByRole("link", { name: /Failed/ })).toHaveAttribute("href", snapshot.receipts[0].href);
   expect(screen.queryByRole("heading", { name: "What you can use" })).toBeNull();
   // The owner is not told to ask the owner or to check their app connection here.
   expect(screen.queryByText(/Check your connection|if it does not recover|before the limit resets/)).toBeNull();
