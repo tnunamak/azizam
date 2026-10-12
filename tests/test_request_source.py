@@ -70,3 +70,38 @@ def test_gateway_ui_tests_keep_app_identity_and_reset_attribution():
         assert rows[-1].source_kind == "gateway-ui"
         assert receipt_store._with_source(rows[-1].to_dict("internal"))["source"]["app_id"] == "owned-app"
     asyncio.run(run())
+
+
+def test_request_context_restores_in_the_same_task_on_success_and_failure():
+    import pytest
+    from gateway.request_source import current_gateway_ui
+
+    async def exercise():
+        assert current_client_hint() is None
+        assert current_gateway_ui() is False
+
+        for fail in (False, True):
+            async def app(scope, receive, send):
+                assert current_client_hint() == "Daisy/pi"
+                assert current_gateway_ui() is True
+                if fail:
+                    raise RuntimeError("fixture")
+
+            wrapped = RequestSourceMiddleware(app)
+            scope = {
+                "type": "http",
+                "headers": [(b"user-agent", b"Daisy/1 private"),
+                            (b"host", b"gateway.test"),
+                            (b"referer", b"http://gateway.test/try/")],
+            }
+            if fail:
+                with pytest.raises(RuntimeError, match="fixture"):
+                    await wrapped(scope, None, None)
+            else:
+                await wrapped(scope, None, None)
+
+            # These checks must be inside this coroutine, after await.
+            assert current_client_hint() is None
+            assert current_gateway_ui() is False
+
+    asyncio.run(exercise())
