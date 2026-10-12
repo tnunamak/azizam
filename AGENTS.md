@@ -65,13 +65,13 @@ encoding per-engine fixes it must maintain.
 `tests/test_engine_knowledge_boundary.py` fails the build if new per-engine code
 appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
-/ `--jinja`). proxy.py has no allowlist entries: the remaining reviewed engine
-literals (the kobold local-swap lifecycle set and similar properties) live
-in `gateway/engine_quarantine.py` as frozen migration debt, not operator data.
-The guard scans `proxy.py` and `gateway/**/*.py`, and freezes all six
-quarantine tables and their membership predicates: do not add IDs, tables or
-predicate behavior. Migrate each property to operator-owned configuration and
-delete its frozen entry with the consumer migration. The UI guard is a limited
+/ `--jinja`). proxy.py has no allowlist entries, and there is no quarantine module:
+behaviour that differs by backend is a field on the service record (lifecycle
+`driver_config`, `loaded_model_identity`, `aux`, `context_window_probe`).
+`gateway/engine_quarantine.py` stays deleted; the guard fails if it returns.
+A per-file ratchet (`tests/engine_knowledge_baseline.json`) counts every engine
+name in production Python and may only fall. The guard scans `proxy.py` and
+`gateway/**/*.py`. The UI guard is a limited
 syntactic check of known model/voice sinks and local bindings; catalog replacement
 component tests provide the behavioral backstop. Neither scanner proves full
 discovery provenance or replaces semantic review. The former engine-named

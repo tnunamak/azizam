@@ -181,7 +181,6 @@ from gateway.workflows_catalog import (
     build_workflows_catalog,
     create_workflows_catalog_router,
 )
-from gateway import engine_quarantine
 from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,

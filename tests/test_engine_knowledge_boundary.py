@@ -54,8 +54,6 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).parent.parent
 _PROXY = _REPO_ROOT / "proxy.py"
 _TRANSFORMS = _REPO_ROOT / "gateway" / "transforms.py"
-# The residual engine literals are isolated in the quarantine module; the
-# LOCAL_SWAP_BACKENDS frozen set now lives there (proxy aliases it).
 _QUARANTINE = _REPO_ROOT / "gateway" / "engine_quarantine.py"
 
 _FAKE_UPSTREAM = _REPO_ROOT / "tests" / "support" / "fake_upstream"
@@ -108,7 +106,7 @@ def _fail_message(check_name: str, violations: list[str]) -> str:
 # check. P2-1 voice compiler, P2-2 reasoning dialect, P2-4 voice catalog,
 # P2-5 audio intake, P2-6 STT diagnostics, P2-7 UI fallback, P2-8 public
 # design alias, P2-9 STT planning, and P2-10 think format need separate
-# config/behavior ownership review. P2-3 quarantine is frozen below.
+# config/behavior ownership review. P2-3 quarantine is deleted (check 4).
 # ---------------------------------------------------------------------------
 
 _ENGINE_NAMES: frozenset[str] = frozenset({
@@ -128,16 +126,11 @@ _ENGINE_NAMES: frozenset[str] = frozenset({
 # both — they represent the same reviewed pattern.
 _ENGINE_BRANCH_ALLOWLIST: dict[tuple[str, str], str] = {
     # -------------------------------------------------------------------
-    # proxy.py is now CLEAN of inline engine-named branches. Every residual
-    # engine literal was moved into the quarantine module
-    # (gateway/engine_quarantine.py); proxy.py calls named predicates
-    # (engine_quarantine.is_local_swap_backend(...), etc.) instead of branching
-    # on a backend id inline. So there are no proxy.py allowlist entries — if a
-    # new `if backend == "..."` ever appears in proxy.py, this guard fails;
-    # put the property in operator-owned service data.
-    #
-    # P2-3: quarantine tables are data-shaped transitional debt; G2 freezes
-    # every table and predicate. This is an exact expression exception only.
+    # proxy.py is CLEAN of inline engine-named branches. Behaviour that
+    # differs by backend is a field on the service record. There are no
+    # proxy.py allowlist entries — if a new `if backend == "..."` ever appears
+    # in proxy.py, this guard fails; put the property in operator-owned
+    # service data.
     # Resource admission's protocol discriminator parses the Ollama HTTP error
     # envelope. It is a declared transport protocol, not backend-ID routing.
     ("gateway/resource_admission_http.py", "protocol == 'ollama' and isinstance(body.get('error'), str)"): "P2-G1 reviewed protocol error envelope",
@@ -302,71 +295,11 @@ def _check_engine_flag_literals() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Check 4: quarantine tables and predicates are frozen
+# Check 4: the quarantine module is gone and stays gone
 #
-# This includes LOCAL_SWAP_BACKENDS == {kobold}: a second managed engine
-# fails here and forces an explicit, reviewed edit of this inventory.
+# Backend behaviour that differed by engine is now a field on the service
+# record. There is no table of backend ids to keep, and no module to put one in.
 # ---------------------------------------------------------------------------
-
-# P2-3 transitional inventory. Every table and its consumer predicate is
-# explicit; adding a capability must be reviewed as a service-data migration.
-_QUARANTINE_TABLES: dict[str, frozenset[str]] = {
-}
-
-_QUARANTINE_PREDICATES: dict[str, str] = {
-}
-
-
-def _check_quarantine_frozen(source: str | None = None) -> list[str]:
-    """Freeze the 6 literal sets and their exact one-lookup predicate shapes."""
-    tree = ast.parse(source if source is not None else _QUARANTINE.read_text(encoding="utf-8"))
-    violations: list[str] = []
-    tables: dict[str, ast.expr] = {}
-    predicates: dict[str, ast.FunctionDef] = {}
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
-            continue
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            continue  # module docstring
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            if node.target.id in tables:
-                violations.append(f"engine_quarantine.py:{node.lineno}: duplicate table {node.target.id}")
-            tables[node.target.id] = node.value
-        elif isinstance(node, ast.FunctionDef):
-            if node.name in predicates:
-                violations.append(f"engine_quarantine.py:{node.lineno}: duplicate predicate {node.name}")
-            predicates[node.name] = node
-        else:
-            violations.append(f"engine_quarantine.py:{node.lineno}: unreviewed top-level code")
-    if tables.keys() != _QUARANTINE_TABLES.keys():
-        violations.append(f"quarantine tables changed: expected {sorted(_QUARANTINE_TABLES)}, found {sorted(tables)}")
-    for name, expected in _QUARANTINE_TABLES.items():
-        value = tables.get(name)
-        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                and value.func.id == "frozenset" and len(value.args) == 1
-                and not value.keywords and isinstance(value.args[0], ast.Set)
-                and all(isinstance(item, ast.Constant) and isinstance(item.value, str)
-                        for item in value.args[0].elts)
-                and frozenset(item.value for item in value.args[0].elts) == expected):
-            violations.append(f"quarantine table {name} changed value or definition")
-    if predicates.keys() != _QUARANTINE_PREDICATES.keys():
-        violations.append(f"quarantine predicates changed: expected {sorted(_QUARANTINE_PREDICATES)}, found {sorted(predicates)}")
-    for name, table in _QUARANTINE_PREDICATES.items():
-        node = predicates.get(name)
-        if node is None:
-            continue
-        body = node.body[1:] if (node.body and isinstance(node.body[0], ast.Expr)
-                                   and isinstance(node.body[0].value, ast.Constant)
-                                   and isinstance(node.body[0].value.value, str)) else node.body
-        expected_return = ast.parse(f"return backend in {table}").body[0]
-        if (node.decorator_list or len(node.args.args) != 1 or node.args.args[0].arg != "backend"
-                or node.args.posonlyargs or node.args.kwonlyargs or node.args.vararg
-                or node.args.kwarg or node.args.defaults or node.args.kw_defaults
-                or len(body) != 1 or ast.dump(body[0], include_attributes=False)
-                != ast.dump(expected_return, include_attributes=False)):
-            violations.append(f"quarantine predicate {name} changed shape")
-    return violations
-
 
 # Reviewed semantic findings from the audit. These anchors make deletion or
 # relocation visible in this guard. They do not prove the policies are safe;
@@ -746,9 +679,15 @@ class TestEngineKnowledgeBoundary:
         violations = _check_engine_flag_literals()
         assert not violations, _fail_message("engine CLI flag literals", violations)
 
-    def test_quarantine_tables_and_predicates_frozen(self) -> None:
-        violations = _check_quarantine_frozen()
-        assert not violations, _fail_message("quarantine inventory", violations)
+    def test_the_quarantine_module_stays_deleted(self) -> None:
+        assert not _QUARANTINE.exists(), (
+            "gateway/engine_quarantine.py is back. Put the behaviour in a field on the "
+            "service record instead of a table of backend ids."
+        )
+        assert not any(
+            "engine_quarantine" in path.read_text(encoding="utf-8")
+            for path in _production_files()
+        ), "production code imports or names engine_quarantine"
 
     def test_reviewed_semantic_policy_anchors_are_tracked(self) -> None:
         violations = _check_semantic_policy_anchors()
@@ -777,7 +716,7 @@ class TestEngineKnowledgeBoundary:
         allowlist entry) must still be reported as a violation.
         """
         synthetic_lines = [
-            # An engine-agnostic line (calls the quarantine predicate, no engine
+            # An engine-agnostic line (reads a service field, no engine
             # literal) — must NOT be flagged.
             'if service_has_field(backend): pass',
             # A synthetic new inline engine branch — must BE flagged.
@@ -786,10 +725,10 @@ class TestEngineKnowledgeBoundary:
         violations = _check_engine_named_branches(
             _source_lines=[("proxy.py", synthetic_lines)]
         )
-        # The quarantine-predicate line must NOT appear in violations
+        # The service-field line must NOT appear in violations
         agnostic_reported = [v for v in violations if "service_has_field" in v]
         assert not agnostic_reported, (
-            "Guard incorrectly flagged an engine-agnostic predicate call: "
+            "Guard incorrectly flagged an engine-agnostic field read: "
             + "\n".join(agnostic_reported)
         )
         # The synthetic vllm line MUST appear in violations
@@ -849,17 +788,6 @@ class TestEngineKnowledgeBoundary:
         violations = _check_engine_named_branches(sources)
         assert len(violations) == 3
         assert all("gateway/new_adapter.py" in item for item in violations)
-
-    def test_quarantine_freeze_rejects_new_backend_table_and_predicate(self) -> None:
-        source = _QUARANTINE.read_text(encoding="utf-8")
-        assert not _check_quarantine_frozen(source)
-        for name in _QUARANTINE_TABLES:
-            pattern = rf'({re.escape(name)}: frozenset\[str\] = frozenset\(\{{)'
-            changed, count = re.subn(pattern, r'\g<1>"vllm", ', source, count=1)
-            assert count == 1, name
-            assert any(name in violation for violation in _check_quarantine_frozen(changed)), name
-        assert _check_quarantine_frozen(source + '\n_NEW_BACKENDS = frozenset({"vllm"})\n')
-        assert _check_quarantine_frozen(source + '\ndef is_new(backend: str) -> bool:\n    return True\n')
 
 
 class TestEngineKnowledgeRatchet:
