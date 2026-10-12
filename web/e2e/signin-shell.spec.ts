@@ -106,7 +106,7 @@ test("signed-out root shows the landing, not a sign-in redirect", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await expect(
     page.getByText("Your own AI, in the apps you use", { exact: true }),
   ).toBeVisible();

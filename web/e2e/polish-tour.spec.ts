@@ -204,7 +204,8 @@ for (const theme of ["light", "dark"] as const) {
         "providers",
         "settings",
       ]) {
-        await page.goto(`/${name}/`);
+        // Home is the root page; there is no /home/ page.
+        await page.goto(name === "home" ? "/" : `/${name}/`);
         await inspect(page, `${name}-seeded-${theme}-${width}`);
       }
       await page.goto("/workflows/");

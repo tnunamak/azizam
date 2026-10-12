@@ -445,7 +445,8 @@ test("Home and Library render a frame from posterless video", async ({
   );
 
   for (const route of ["home", "library"]) {
-    await page.goto(`/${route}/`);
+    // Home is the root page; there is no /home/ page.
+    await page.goto(route === "home" ? "/" : `/${route}/`);
     const video = page.locator("main video");
     await expect(video).toBeVisible();
     // Home's tile preloads nothing until it plays; Library's posterless tile

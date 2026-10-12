@@ -122,7 +122,10 @@ test("Models shows no host path when a model is registered by file path", async 
   await page.goto("/models/");
   await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
   const all = page.getByRole("button", { name: "Show all models" });
-  if (await all.count()) await all.click();
+  const model = page.getByText(/Qwen3\.8/).first();
+  // Wait for the catalog to render before choosing; count() does not wait.
+  await expect(model.or(all).first()).toBeVisible();
+  if (await all.isVisible()) await all.click();
   await expect(page.getByText(/Qwen3\.8/).first()).toBeVisible();
   await expectNoHostPath(page, "models");
 });

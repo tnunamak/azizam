@@ -190,7 +190,7 @@ test("setup uses configured single sign-on without a password form", async ({
   await page.goto("/setup/");
   await expect(
     page.getByRole("link", { name: "Continue with single sign-on" }),
-  ).toHaveAttribute("href", "/login?return_to=/setup");
+  ).toHaveAttribute("href", "/login?return_to=/setup/");
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
 });
 

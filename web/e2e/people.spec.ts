@@ -453,7 +453,7 @@ test("people lane account acceptance reveals a key once, then lands on Home", as
   ).toBeVisible();
   expect(new URL(page.url()).hash).toBe("");
   await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
 });
 
 test("people lane unbound invitation requires an explicit choice", async ({
@@ -514,7 +514,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
   ).toContainText("Email or password is incorrect.");
   failed = false;
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await page.goto("/sign-in/#reset=reset-browser-token");
   await expect(
     page.getByRole("heading", { name: "Choose a new password" }),
@@ -760,7 +760,7 @@ test("people lane real invitation creates an account, app and working key, then 
       ).ok(),
     ).toBe(true);
     await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(memberPage).toHaveURL(/\/$/);
+    await expect(memberPage).toHaveURL(/^https?:\/\/[^/]+\/$/);
     const member = await memberContext.request.get("/me/api/session");
     const memberData = await member.json();
     expect(memberData.authenticated).toBe(true);

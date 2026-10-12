@@ -336,7 +336,8 @@ async function openEngineActions(
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
-    for (const route of ["engines", "services"]) {
+    // The services page was removed; Engines is the only route for this view.
+    for (const route of ["engines"]) {
       test(`${route} seeded ${theme} ${width}`, async ({ page }) => {
         await mockEngineApis(page);
         await page.setViewportSize({

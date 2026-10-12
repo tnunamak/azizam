@@ -365,7 +365,7 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     const accepted = await (await acceptedResponse).json();
     expect(accepted.credential.api_key).toBeTruthy();
     await memberPage.getByRole("button", { name: "I’ve saved it" }).click();
-    await expect(memberPage).toHaveURL(/\/$/);
+    await expect(memberPage).toHaveURL(/^https?:\/\/[^/]+\/$/);
 
     const status = await memberContext.request.get("/me/api/status");
     expect(status.ok()).toBe(true);

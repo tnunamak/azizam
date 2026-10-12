@@ -451,7 +451,7 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
 
 test("signed-in root shows Home", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await openClientInstructionsOnPhone(page, 1280);
   await expect(
     page.getByRole("button", { name: "Open WebUI", exact: true }),
@@ -780,12 +780,14 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       .getByRole("link", { name: "View request receipt", exact: true })
       .click();
     await expect(page).toHaveURL(new RegExp(`/usage/\\?receipt=${connection.request_id}$`));
-    await expect(
-      page.getByRole("dialog", { name: "Request detail", exact: true }),
-    ).toBeVisible();
-    await expect(page.locator("#receipt-body")).toContainText(
-      connection.request_id,
-    );
+    // /usage/?receipt= opens the Usage receipt sheet (the /r/<id> page is gone).
+    const sheet = page.getByRole("dialog", {
+      name: "Request receipt",
+      exact: true,
+    });
+    await expect(sheet).toBeVisible();
+    await sheet.getByText("Technical details", { exact: true }).click();
+    await expect(sheet).toContainText(`Request ID: ${connection.request_id}`);
   } finally {
     expect(
       (

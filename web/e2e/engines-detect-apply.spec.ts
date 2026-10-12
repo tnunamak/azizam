@@ -244,9 +244,7 @@ for (const theme of ["light", "dark"]) {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.goto(
-        `/${width === 390 ? "services" : "engines"}/?service=${serviceId}`,
-      );
+      await page.goto(`/engines/?service=${serviceId}`);
       const card = page.locator(`tr[data-engine-id="${serviceId}"]`);
       if (width === 390) {
         const actionBox = await card
