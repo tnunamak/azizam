@@ -15868,7 +15868,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             status_code=401,
         )
     default_profile_id = (await asyncio.to_thread(_default_profile_id_for_session, session))
-    user_snapshot = build_user_portal_snapshot(
+    user_snapshot = await asyncio.to_thread(
+        build_user_portal_snapshot,
         session,
         default_profile_id=default_profile_id,
         path=ADMIN_STORE.path,
@@ -15879,7 +15880,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    auth_contexts = auth_contexts_from_user_snapshot(
+    auth_contexts = await asyncio.to_thread(
+        auth_contexts_from_user_snapshot,
         user_snapshot,
         default_profile_id=default_profile_id,
         profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
@@ -15894,41 +15896,50 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         for capability_set in capability_sets
         for capability in capability_set
     ]
-    activity = build_user_activity_snapshot(
-        session,
-        limit=50,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
-    scope = {
-        "app_ids": None
-        if activity.get("scope") == "instance"
-        else [
-            str(app["id"])
-            for app in user_snapshot.get("apps") or []
-            if isinstance(app, Mapping) and app.get("id")
-        ]
-    }
-    jobs = media_jobs.recent(
-        limit=50,
-        audience="internal",
-        path=media_jobs.DB_PATH,
-        **scope,
-    )
-    service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
-    capabilities = project_capabilities(
-        capabilities, service_records=service_records,
-        evidence=await _capabilities_availability_evidence(capabilities, service_records),
-        workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
-    )
-    return build_workflows_catalog(
-        records=GATEWAY_WORKFLOW_REGISTRY.records(),
-        capabilities=capabilities,
-        aliases=_gateway_aliases_provider(),
-        recent_receipts=activity.get("receipts") or (),
-        recent_jobs=jobs,
-        base_url=_public_base_url(request),
-    )
+    def read_activity_and_jobs():
+        activity = build_user_activity_snapshot(
+            session,
+            limit=50,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+        scope = {
+            "app_ids": None
+            if activity.get("scope") == "instance"
+            else [
+                str(app["id"])
+                for app in user_snapshot.get("apps") or []
+                if isinstance(app, Mapping) and app.get("id")
+            ]
+        }
+        jobs = media_jobs.recent(
+            limit=50,
+            audience="internal",
+            path=media_jobs.DB_PATH,
+            **scope,
+        )
+        service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
+        return activity, jobs, service_records
+
+    activity, jobs, service_records = await asyncio.to_thread(read_activity_and_jobs)
+    evidence = await _capabilities_availability_evidence(capabilities, service_records)
+
+    def build_catalog() -> dict[str, Any]:
+        projected = project_capabilities(
+            capabilities, service_records=service_records,
+            evidence=evidence,
+            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+        )
+        return build_workflows_catalog(
+            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            capabilities=projected,
+            aliases=_gateway_aliases_provider(),
+            recent_receipts=activity.get("receipts") or (),
+            recent_jobs=jobs,
+            base_url=_public_base_url(request),
+        )
+
+    return await asyncio.to_thread(build_catalog)
 
 
 app.include_router(create_workflows_catalog_router(_user_workflows_catalog_payload))
@@ -15948,7 +15959,8 @@ async def user_portal_activity(request: Request):
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = build_user_activity_snapshot(
+    snapshot = await asyncio.to_thread(
+        build_user_activity_snapshot,
         session,
         limit=limit if limit else 20,
         path=ADMIN_STORE.path,
@@ -15971,7 +15983,8 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
     """
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        receipt = get_user_receipt(
+        receipt = await asyncio.to_thread(
+            get_user_receipt,
             session,
             request_id,
             path=ADMIN_STORE.path,
@@ -17518,7 +17531,7 @@ def _drain_authorize(request: Request, *, write: bool) -> Response | None:
 
 @app.get("/admin/api/drain", include_in_schema=False)
 async def admin_drain_status(request: Request):
-    denied = _drain_authorize(request, write=False)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=False)
     if denied is not None:
         return denied
     return JSONResponse(DRAIN_STATE.snapshot())
@@ -17527,7 +17540,7 @@ async def admin_drain_status(request: Request):
 @app.post("/admin/api/drain", include_in_schema=False)
 async def admin_drain_set(request: Request):
     """Set or clear the draining flag. Body: {"draining": bool, "ttl_s": num, "reason": str}."""
-    denied = _drain_authorize(request, write=True)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=True)
     if denied is not None:
         return denied
     try:
@@ -17958,34 +17971,38 @@ async def list_voices(request: Request):
     if policy_response is not None:
         return policy_response
 
-    # Every voice that ?model= (by default the model a request without one uses) accepts: the
-    # voices its engines list, in engine order, then the other spellings that resolve to them.
-    model = request.query_params.get("model") or "tts-1"
-    try:
-        specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
-    except ModelCompatibilityError as exc:
-        if "model" in request.query_params:
-            return model_compatibility_error(exc)
-        specs = []
-    voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
-    # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
-    try:
-        after, limit = voices_api.parse_page_args(request)
-        mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
-    except custom_voices.VoiceError as exc:
-        return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
-    engines = _custom_voice_engines()
-    engines = [engine for engine in engines if _category_entry_visible(
-        auth_context, {"id": engine, "operation": "speech"},
-    )]
-    if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
-        mine, has_more = [], False
-    page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
-    if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
-        voices = []
-    engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
-                     if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
-    return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+    def build_listing():
+        # Every voice that ?model= (by default the model a request without one uses) accepts: the
+        # voices its engines list, in engine order, then the other spellings that resolve to them.
+        model = request.query_params.get("model") or "tts-1"
+        try:
+            specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
+        except ModelCompatibilityError as exc:
+            if "model" in request.query_params:
+                return model_compatibility_error(exc)
+            specs = []
+        voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
+        # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
+        try:
+            after, limit = voices_api.parse_page_args(request)
+            mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
+        except custom_voices.VoiceError as exc:
+            return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
+        engines = _custom_voice_engines()
+        engines = [engine for engine in engines if _category_entry_visible(
+            auth_context, {"id": engine, "operation": "speech"},
+        )]
+        if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
+            mine, has_more = [], False
+        page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
+        if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
+            voices = []
+        engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
+                         if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
+        return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+
+    # Voice stores and category checks read SQLite and files: keep them off the event loop.
+    return await asyncio.to_thread(build_listing)
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
@@ -26702,7 +26719,7 @@ async def retrieve_response(response_id: str, request: Request):
     if decision.denied:
         return _policy_denied_response(decision)
     try:
-        row = responses_store.get(response_id)
+        row = await asyncio.to_thread(responses_store.get, response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.get failed: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)

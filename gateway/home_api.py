@@ -546,46 +546,51 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
         except AdminAuthError as exc:
             return _error(exc)
-        registry = store.get_service_registry()
+        registry = await asyncio.to_thread(store.get_service_registry)
         status_payload = await live_status_payload()
-        injected = status_payload.get("_availability_evidence")
-        availability_evidence = (
-            dict(injected)
-            if isinstance(injected, Mapping)
-            else availability_evidence_snapshot(
-                service_records=registry,
-                status_payload=status_payload,
-                receipt_store_path=receipts_path(),
+
+        # The evidence reads below are blocking SQLite: build the answer on a worker thread.
+        def build_progress() -> JSONResponse:
+            injected = status_payload.get("_availability_evidence")
+            availability_evidence = (
+                dict(injected)
+                if isinstance(injected, Mapping)
+                else availability_evidence_snapshot(
+                    service_records=registry,
+                    status_payload=status_payload,
+                    receipt_store_path=receipts_path(),
+                )
             )
-        )
-        services = registry.get("services", [])
-        if isinstance(services, Mapping):
-            services = [{"id": key, **row} for key, row in services.items()]
-        connected = any(
-            service.get("enabled", True)
-            and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
-            for service in services
-        )
-        succeeded = _has_success(receipts_path())
-        evidence = _setup_evidence(store.path, context.subject)
-        external_client, unattributed_use = _external_client_evidence(receipts_path())
-        app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
-        invited = _invitation_created(store.path)
-        steps = [
-            {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
-            {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/engines/"},
-            {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/#connect"},
-            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/#connect"},
-            {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/people/"},
-        ]
-        dismissed = "checklist_dismissed" in evidence
-        evidence["observed_external_client"] = external_client
-        evidence.setdefault("checklist_dismissed", {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
-        evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
-        for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
-            evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
-        return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
-                      "dismissed": dismissed, "steps": steps, "evidence": evidence})
+            services = registry.get("services", [])
+            if isinstance(services, Mapping):
+                services = [{"id": key, **row} for key, row in services.items()]
+            connected = any(
+                service.get("enabled", True)
+                and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
+                for service in services
+            )
+            succeeded = _has_success(receipts_path())
+            evidence = _setup_evidence(store.path, context.subject)
+            external_client, unattributed_use = _external_client_evidence(receipts_path())
+            app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
+            invited = _invitation_created(store.path)
+            steps = [
+                {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
+                {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/engines/"},
+                {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/#connect"},
+                {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/#connect"},
+                {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/people/"},
+            ]
+            dismissed = "checklist_dismissed" in evidence
+            evidence["observed_external_client"] = external_client
+            evidence.setdefault("checklist_dismissed", {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
+            evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
+            for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
+                evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
+            return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
+                          "dismissed": dismissed, "steps": steps, "evidence": evidence})
+
+        return await asyncio.to_thread(build_progress)
 
     return router
 

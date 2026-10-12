@@ -128,7 +128,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
     these routes from route enumeration (``app.routes``) that the alias and registry tests rely on.
     """
 
-    def guard(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
+    def guard_sync(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
         auth = deps.authenticate(request, policy_path)
         if isinstance(auth, Response):
             return auth
@@ -136,6 +136,10 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         if denied is not None:
             return denied
         return auth, deps.owner_of(auth)
+
+    async def guard(request: Request, policy_path: str) -> tuple[Any, str | None] | Response:
+        # Authentication reads SQLite; keep it off the event loop.
+        return await asyncio.to_thread(guard_sync, request, policy_path)
 
     def view(meta: Mapping[str, Any]) -> dict[str, Any]:
         return voice_view(meta, deps.compatible_engines())
@@ -150,7 +154,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
 
     # ---- consents ----------------------------------------------------------
     async def create_consent(request: Request):
-        gate = guard(request, "/v1/audio/voice_consents")
+        gate = await guard(request, "/v1/audio/voice_consents")
         if isinstance(gate, Response):
             return gate
         _, owner = gate
@@ -176,27 +180,27 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
                 await form.close()
 
     async def list_consents(request: Request):
-        gate = guard(request, "/v1/audio/voice_consents")
+        gate = await guard(request, "/v1/audio/voice_consents")
         if isinstance(gate, Response):
             return gate
         try:
             after, limit = parse_page_args(request)
-            items, more = deps.store().list_consents(gate[1], after=after, limit=limit)
+            items, more = await asyncio.to_thread(deps.store().list_consents, gate[1], after=after, limit=limit)
             return JSONResponse(list_page(items, more, dict))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def get_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
-            return JSONResponse(deps.store().get_consent(gate[1], consent_id))
+            return JSONResponse(await asyncio.to_thread(deps.store().get_consent, gate[1], consent_id))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def rename_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -209,7 +213,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def delete_consent(request: Request, consent_id: str):
-        gate = guard(request, "/v1/audio/voice_consents/{consent_id}")
+        gate = await guard(request, "/v1/audio/voice_consents/{consent_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -254,7 +258,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         return store.update_voice(owner, meta["id"], {"quality": quality, "warnings": warnings})
 
     async def create_voice(request: Request):
-        gate = guard(request, "/v1/audio/voices")
+        gate = await guard(request, "/v1/audio/voices")
         if isinstance(gate, Response):
             return gate
         _, owner = gate
@@ -343,16 +347,16 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
         )
 
     async def get_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
-            return JSONResponse(view(deps.store().get_voice(gate[1], voice_id)))
+            return JSONResponse(view(await asyncio.to_thread(deps.store().get_voice, gate[1], voice_id)))
         except VoiceError as exc:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def update_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -373,7 +377,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def delete_voice(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
@@ -383,7 +387,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
             return error_response(exc.status, exc.code, exc.message, param=exc.param)
 
     async def voice_sample(request: Request, voice_id: str):
-        gate = guard(request, "/v1/audio/voices/{voice_id}")
+        gate = await guard(request, "/v1/audio/voices/{voice_id}")
         if isinstance(gate, Response):
             return gate
         try:
