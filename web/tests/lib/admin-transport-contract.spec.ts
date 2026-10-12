@@ -94,3 +94,14 @@ it('bounds transient retries and refuses deterministic or mutation retries', () 
     client.clear();
   }
 });
+
+it('never replays a GET refusal and sends no write headers on a GET', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(csrfDenied());
+  vi.stubGlobal('fetch', fetchMock);
+  await expect(adminFetch('/admin/api/test-read'))
+    .rejects.toMatchObject({ code: 'admin_csrf_required', status: 403 });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+  expect(headers.has('x-azizam-admin-action')).toBe(false);
+  expect(headers.has('x-azizam-csrf')).toBe(false);
+});
