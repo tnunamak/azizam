@@ -30,7 +30,6 @@ _PROVIDER_MUTATIONS = [
     ("DELETE", "/openrouter"),
     ("PUT", "/openrouter/caps"),
     ("DELETE", "/openrouter/caps"),
-    ("PUT", "/openrouter/allowed-plans"),
     ("PUT", "/-/global-caps"),
     ("DELETE", "/-/global-caps"),
     ("POST", "/openrouter/reconciliation/1"),
@@ -56,7 +55,7 @@ def test_provider_mutation_guard_matrix(tmp_path, method, suffix, kind, expected
             auth_method="session",
             csrf_token="expected" if kind == "wrong_csrf" else "",
         )
-    before = copy.deepcopy((store.registry, store.profiles, store.provider_admin_state))
+    before = copy.deepcopy((store.registry, store.access_plans, store.provider_admin_state))
     app = FastAPI()
     ledger = tmp_path / "ledger.db"
     app.include_router(create_provider_admin_router(
@@ -70,11 +69,11 @@ def test_provider_mutation_guard_matrix(tmp_path, method, suffix, kind, expected
             response = client.request(
                 method, "/admin/api/providers" + suffix,
                 headers={"x-azizam-csrf": "wrong"},
-                json={"daily_usd": 1, "allowed_plans": ["builders"], "actual_usd": "0"},
+                json={"daily_usd": 1, "actual_usd": "0"},
             )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == expected_code
-    assert (store.registry, store.profiles, store.provider_admin_state) == before
+    assert (store.registry, store.access_plans, store.provider_admin_state) == before
     assert store.audit == []
     assert not ledger.exists()
     probe.assert_not_awaited()
@@ -116,9 +115,9 @@ def test_provider_remove_fails_closed_on_corrupt_ledger(tmp_path):
     original = b"This is not a SQLite database."
     ledger.write_bytes(original)
     store.provider_admin_state["providers"]["openrouter"] = {
-        "caps": {"daily_usd": 2}, "allowed_plans": ["builders"],
+        "caps": {"daily_usd": 2},
     }
-    before = copy.deepcopy((store.registry, store.profiles, store.provider_admin_state))
+    before = copy.deepcopy((store.registry, store.access_plans, store.provider_admin_state))
     app = FastAPI()
     app.include_router(create_provider_admin_router(
         store, auth=_auth, ledger_path=ledger,
@@ -132,7 +131,7 @@ def test_provider_remove_fails_closed_on_corrupt_ledger(tmp_path):
         )
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "provider_ledger_unavailable"
-    assert (store.registry, store.profiles, store.provider_admin_state) == before
+    assert (store.registry, store.access_plans, store.provider_admin_state) == before
     assert store.audit == []
     assert ledger.read_bytes() == original
     store._test_dir.cleanup()
@@ -145,9 +144,9 @@ def test_provider_remove_fails_closed_on_corrupt_ledger(tmp_path):
 def test_provider_stale_generation_is_409_without_mutation(tmp_path, method, suffix):
     store = FakeProviderAdminStore()
     store.provider_admin_state["providers"]["openrouter"] = {
-        "allowed_plans": ["builders"], "caps": {"daily_usd": 3},
+        "caps": {"daily_usd": 3},
     }
-    before = copy.deepcopy((store.registry, store.profiles, store.provider_admin_state))
+    before = copy.deepcopy((store.registry, store.access_plans, store.provider_admin_state))
     app = FastAPI()
     app.include_router(create_provider_admin_router(
         store, auth=_auth,
@@ -177,7 +176,7 @@ def test_provider_stale_generation_is_409_without_mutation(tmp_path, method, suf
             delete_secret.assert_not_called()
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "service_registry_conflict"
-    assert (store.registry, store.profiles, store.provider_admin_state) == before
+    assert (store.registry, store.access_plans, store.provider_admin_state) == before
     assert store.audit == []
     store._test_dir.cleanup()
 
