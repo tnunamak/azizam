@@ -83,6 +83,7 @@ describe("Home connection transport", () => {
     { status: 403, code: "access_denied" },
     { status: 401, code: "authentication_required" },
     { status: 503, code: "unavailable" },
+    { status: 409, code: "user_csrf_required" },
   ])("does not replay $status / $code", async ({ status, code }) => {
     const sessions = vi.spyOn(accountApi, "session")
       .mockResolvedValue(session("fixture-csrf"));
