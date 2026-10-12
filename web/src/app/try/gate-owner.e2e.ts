@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
-    for (const state of ["seeded", "error"]) {
+    for (const state of ["seeded", "empty", "error"]) {
       test(`Try ${state} ${theme} ${width}`, async ({ page }) => {
         await page.setViewportSize({
           width,
