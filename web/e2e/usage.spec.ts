@@ -461,11 +461,10 @@ test("usage Source list stays on screen, scrolls inside itself and ranks apps", 
   await page.getByRole("combobox", { name: "Source" }).click();
   const list = page.getByRole("listbox");
   await expect(list).toBeVisible();
-  const box = await list.boundingBox();
-  expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);
-  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
-  expect(box?.y ?? -1).toBeGreaterThanOrEqual(0);
-  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(844);
+  // Radix parks an unplaced popper at translate(0, -200%) until it has
+  // measured, so the list is visible before it is on screen. Wait for it to
+  // sit fully inside the 390 x 844 viewport instead of reading its box once.
+  await expect(list).toBeInViewport({ ratio: 1 });
   // It has a maximum height and scrolls inside itself.
   const scroll = await list.evaluate((node) => {
     const holder = node.querySelector("[data-radix-select-viewport]") as HTMLElement;
