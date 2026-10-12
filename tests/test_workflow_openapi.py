@@ -280,10 +280,23 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(meta["links"]["workflow_catalog"], "/openapi.json#x-azizam-workflows")
 
     def test_augment_is_idempotent_on_a_bare_spec(self) -> None:
+        import copy
+
         bare = {"openapi": "3.1.0", "info": {"title": "FastAPI", "version": "1"}, "paths": {}}
-        out = augment_openapi(bare, self.registry.records(), None)
-        self.assertEqual(out["info"]["title"], "Azizam")
-        self.assertEqual(validate_openapi(out), [])
+        records = tuple(self.registry.records())
+        first = augment_openapi(bare, records, None)
+        self.assertIs(first, bare)
+        self.assertEqual(first["info"]["title"], "Azizam")
+        self.assertEqual(validate_openapi(first), [])
+        snapshot = copy.deepcopy(first)
+        second = augment_openapi(first, records, None)
+        self.assertIs(second, first)
+        self.assertEqual(second, snapshot)
+        self.assertEqual(validate_openapi(second), [])
+        self.assertEqual(
+            [row["id"] for row in second[ROOT_EXTENSION]],
+            sorted(record.id for record in records),
+        )
 
 
 if __name__ == "__main__":

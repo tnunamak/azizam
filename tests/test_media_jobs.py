@@ -44,6 +44,36 @@ def _make_job(**overrides: Any) -> MediaJob:
     return MediaJob(**defaults)
 
 
+def test_audience_contract_is_independent_of_implementation_tables():
+    job = _make_job(
+        owner_key_hash="owner-sentinel",
+        owner_scope="scope-sentinel",
+        input_hash="digest-sentinel",
+        creating_receipt_id="receipt-sentinel",
+        app_id="app-sentinel",
+    )
+    client_keys = {
+        "request_id", "job_id", "intent", "status", "progress", "assets", "error",
+        "created_at", "updated_at", "parent_request_id", "accepted_at", "queued_at",
+        "started_at", "first_output_at", "finished_at", "attempt_number",
+        "previous_attempts", "cancel_requested",
+    }
+    admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
+    internal_keys = {
+        "metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id",
+    }
+    client = job.to_dict("client")
+    admin = job.to_dict("admin")
+    internal = job.to_dict("internal")
+    assert set(client) == client_keys
+    assert set(admin) == client_keys | admin_keys
+    assert set(internal) == client_keys | admin_keys | internal_keys
+    assert internal["creating_receipt_id"] == "receipt-sentinel"
+    assert internal["owner_key_hash"] == "owner-sentinel"
+    assert admin["app_id"] == "app-sentinel"
+    assert client["job_id"] == job.job_id
+
+
 class TestMediaJobModel(unittest.TestCase):
     def test_defaults_are_filled(self) -> None:
         job = _make_job()

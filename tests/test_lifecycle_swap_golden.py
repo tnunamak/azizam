@@ -1140,46 +1140,49 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
     # -------------------------------------------------------------------
 
     def test_e_tabby_mismatch_unload_then_load(self):
-        """Case (e): tabby mismatch → unload POST then load POST, byte-identical to legacy.
+        """Case (e): tabby mismatch -> unload POST then load POST with the live params body."""
+        import copy
+        import json
+        import httpx
 
-        Legacy: if current != target: POST unload, POST load.
-        Driver with ctx: when ctx.loaded_model != target, same sequence.
-        """
-        _setup_tabby_params_provider()
+        svc = copy.deepcopy(self.tabby_svc)
+        dc = svc["lifecycle"]["driver_config"]
+        dc["load_body_params"] = "audit-live-params"
+        live_params = {"max_seq_len": 12345, "cache_size": 3456, "cache_mode": "Q8"}
+        captured = []
 
-        current_model = "OldModel-7B"
-        ctx = _lcd.SwapContext(
-            loaded_model=current_model,
-            target_model=_TABBY_MODEL,
-        )
+        def respond(request):
+            captured.append(request)
+            return httpx.Response(200, text='"status":"finished"')
 
-        success_text = '"status":"finished"'
-        mock_httpx_cls, mock_httpx_client = _httpx_client_200(text=success_text)
+        real_client = httpx.AsyncClient
 
-        with patch("httpx.AsyncClient", mock_httpx_cls):
+        def client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(respond)
+            return real_client(*args, **kwargs)
+
+        ctx = _lcd.SwapContext(loaded_model="OldModel-7B", target_model=_TABBY_MODEL)
+        with patch.dict(
+            _lcd.PARAMS_PROVIDERS,
+            {"audit-live-params": lambda _svc: dict(live_params)},
+        ), patch.object(httpx, "AsyncClient", side_effect=client):
             result = _run(self.tabby_driver.swap(
-                self.tabby_svc,
-                {"model_name": _TABBY_MODEL},
-                ctx=ctx,
+                svc, {"model_name": _TABBY_MODEL}, ctx=ctx,
             ))
 
-        self.assertTrue(result, "Case (e): tabby mismatch swap must succeed (mocked)")
-
-        # Must have made an unload POST and a load POST.
-        post_calls = mock_httpx_client.post.call_args_list
-        self.assertEqual(len(post_calls), 2, "Case (e): must issue exactly 2 POSTs (unload then load)")
-
-        unload_call = post_calls[0]
-        load_call = post_calls[1]
-
-        # Verify unload URL
-        self.assertIn("/v1/model/unload", str(unload_call))
-        # Verify load URL and body
-        self.assertIn("/v1/model/load", str(load_call))
-        # Load body must include model_name
-        load_kwargs = load_call.kwargs if load_call.kwargs else {}
-        if "json" in load_kwargs:
-            self.assertEqual(load_kwargs["json"].get("model_name"), _TABBY_MODEL)
+        self.assertIs(result, True)
+        self.assertEqual(
+            [(request.method, request.url.path) for request in captured],
+            [("POST", "/v1/model/unload"), ("POST", "/v1/model/load")],
+        )
+        self.assertEqual(captured[0].content, b"")
+        self.assertEqual(
+            json.loads(captured[1].content),
+            {"model_name": _TABBY_MODEL, **live_params},
+        )
+        for request in captured:
+            self.assertIn("x-admin-key", request.headers)
+        self.assertEqual(captured[1].headers["content-type"], "application/json")
 
 
 # ---------------------------------------------------------------------------
