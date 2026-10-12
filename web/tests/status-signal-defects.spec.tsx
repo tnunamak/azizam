@@ -260,6 +260,55 @@ it("shows Ready, Degraded, Off and Unknown with only recorded engine check times
   }
 });
 
+it("renders engine states from actual observations with arbitrary IDs", async () => {
+  // No mockEngineRows: the real engineHealthPresentation classifies each row.
+  expect(vi.isMockFunction(healthPresentation.engineHealthPresentation)).toBe(false);
+  vi.spyOn(session, "useViewer").mockReturnValue({
+    authenticated: true, role: "owner", admin: true, name: "Alex", email: null,
+  } as ReturnType<typeof session.useViewer>);
+  const ids = ["fixture-a", "fixture-b", "fixture-c", "fixture-d", "fixture-e", "fixture-f"];
+  const services = Object.fromEntries(ids.map((id) => [id, {
+    id, name: id, capabilities: ["chat"], enabled: id !== "fixture-d",
+    kind: "openai-compatible", editable: true, source: "ui",
+    role: "primary", priority: 1, config: { host: "localhost", port: 18123 },
+  }]));
+  vi.spyOn(api.services, "registry").mockResolvedValue({
+    schema_version: 1, services,
+  } as unknown as Awaited<ReturnType<typeof api.services.registry>>);
+  vi.spyOn(api, "status").mockResolvedValue({
+    generated_at: 1760000120,
+    backends: [{ service_id: "fixture-a", observed_at_s: 1760000000 }],
+    current_health: {
+      observation_available: true,
+      signals: [],
+      services: [
+        { service_id: "fixture-a", observation: "up", tone: "ok", in_use: true },
+        { service_id: "fixture-b", observation: "up", tone: "warn", in_use: true },
+        { service_id: "fixture-c", observation: "down", tone: "bad", in_use: true },
+        { service_id: "fixture-d", observation: "up", tone: "ok", in_use: true },
+        { service_id: "fixture-f", observation: "up", tone: "bad", in_use: true },
+      ],
+    },
+  } as unknown as StatusPayload);
+  mountHealthErrorPage(<EnginesPage />);
+  fireEvent.click(await screen.findByRole("switch", { name: "Show not in use" }));
+  const row = (id: string) => document.querySelector<HTMLElement>(`[data-engine-id="${id}"]`);
+  await waitFor(() => {
+    for (const [id, label] of [
+      ["fixture-a", "Ready"], ["fixture-b", "Degraded"],
+      ["fixture-c", "Unavailable"], ["fixture-d", "Off"], ["fixture-e", "Unknown"],
+      ["fixture-f", "Unavailable"],
+    ]) {
+      expect(row(id)).not.toBeNull();
+      expect(within(row(id)!).getByText(label, { exact: true })).toBeVisible();
+    }
+  });
+  expect(within(row("fixture-a")!).getByText(/Last checked/)).toBeVisible();
+  for (const id of ids.slice(1)) {
+    expect(within(row(id)!).queryByText(/Last checked/)).toBeNull();
+  }
+});
+
 it("keeps capability and infrastructure engines in one compact table", async () => {
   mockEngineRows();
   mountHealthErrorPage(<EnginesPage />);
