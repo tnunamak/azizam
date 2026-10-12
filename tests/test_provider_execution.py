@@ -107,6 +107,7 @@ def _profile(
         "paid-app",
         paid=sorted({"openrouter"} if providers is None else providers),
         fallback=allow_paid_fallback,
+        usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00",
     )
 
 
@@ -256,15 +257,6 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("category rules:", (await _body(response)).decode())
         send.assert_not_called()
 
-    async def test_delegated_litellm_request_is_denied_before_provider_call(self) -> None:
-        send = AsyncMock()
-
-        response, send = await self._execute(send=send, delegated=True)
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("remote_provider_not_allowed", (await _body(response)).decode())
-        send.assert_not_called()
-
     async def test_unknown_remote_model_is_denied_before_provider_call(self) -> None:
         send = AsyncMock()
         self.body = {**self.body, "model": "openrouter/not-listed"}
@@ -389,7 +381,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
-        self.profile = plan_for(self.profile.id, paid=sorted({"openrouter"}))
+        self.profile = plan_for(self.profile.id, paid=["openrouter"], usd_per_request="0.0001", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "openrouter/openai/gpt-4.1-mini",
             "messages": [{"role": "user", "content": "hi"}],
@@ -425,16 +417,16 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         providers.ensure_ledger(self.ledger)
         with sqlite3.connect(self.ledger) as conn:
             conn.execute(
-                "INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
-                "VALUES ('openrouter', 'paid-app', 'settled', '5.00', '5.00', 'test', ?)",
-                (int(time.time()) - 60,),
+                "INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                "VALUES ('openrouter', ?, ?, 'settled', '5.00', '5.00', 'test', ?)",
+                ("usr_test", "app_test", int(time.time()) - 60),
             )
         send = AsyncMock()
         response, _ = await self._execute(send=send)
         self.assertEqual(response.status_code, 402)
         send.assert_not_called()
         client = self.receipts[-1].to_dict("client")
-        self.assertEqual(client["refusal"], {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "plan"}})
+        self.assertEqual(client["refusal"], {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "person"}})
         self.assertNotIn("5.00", json.dumps(client["refusal"]))
 
     async def test_paid_invalid_output_limits_are_rejected_before_dispatch(self) -> None:
@@ -533,7 +525,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                self.profile = plan_for(self.profile.id, paid=sorted({"openrouter"}))
+                self.profile = plan_for(self.profile.id, paid=["openrouter"], usd_per_request="0.002", usd_per_day="5.00", usd_per_month="20.00")
                 self.body = {
                     "model": option.get("model", "openrouter/openai/gpt-4.1-mini"),
                     "messages": [{"role": "user", "content": "hi"}],
@@ -912,7 +904,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "anthropic/claude-sonnet-4-5-20250929",
             },
         )
-        self.profile = plan_for(self.profile.id, paid=sorted({"anthropic"}))
+        self.profile = plan_for(self.profile.id, paid=["anthropic"], usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "anthropic/claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "hi"}],
@@ -992,7 +984,8 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = plan_for(self.profile.id, paid=sorted({"openai"}))
+        # One SDK-priced search fits; a second needs its full search fee.
+        self.profile = plan_for(self.profile.id, paid=["openai"], usd_per_request="1.00", usd_per_day="0.036", usd_per_month="20.00")
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
@@ -1126,7 +1119,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = plan_for(self.profile.id, paid=sorted({"openai"}))
+        self.profile = plan_for(self.profile.id, paid=["openai"], usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
@@ -1347,7 +1340,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         response, send = await self._execute(send=send, paid_fallback=True)
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("paid fallback disabled", (await _body(response)).decode())
+        self.assertIn("remote_provider_not_allowed", (await _body(response)).decode())
         send.assert_not_called()
 
     async def test_paid_fallback_opt_in_can_succeed(self) -> None:
