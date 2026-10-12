@@ -170,6 +170,26 @@ def test_a_udp_send_cannot_leave_the_namespace() -> None:
     assert raised.value.errno in {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EACCES}
 
 
+def _denied_by_the_namespace(stderr: bytes) -> bool:
+    """Only "network unreachable" (no route in an empty namespace) proves the namespace denied the
+    connection.  "Connection refused" means the SYN left for a real host that answered with a reset."""
+    text = stderr.decode(errors="replace").lower()
+    return os.strerror(errno.ENETUNREACH).lower() in text and os.strerror(errno.ECONNREFUSED).lower() not in text
+
+
+@pytest.mark.parametrize(
+    "stderr, denied",
+    [
+        (b"bash: connect: Network is unreachable\nbash: /dev/tcp/192.0.2.1/443: Network is unreachable\n", True),
+        (b"bash: connect: Connection refused\nbash: /dev/tcp/192.0.2.1/443: Connection refused\n", False),
+        (b"bash: connect: Connection timed out\n", False),
+    ],
+)
+def test_only_a_network_unreachable_error_counts_as_namespace_denial(stderr: bytes, denied: bool) -> None:
+    # An outside host that rejects the connection must not pass the native-child proof below.
+    assert _denied_by_the_namespace(stderr) is denied
+
+
 def test_a_native_child_cannot_connect_outside_the_namespace(test_owned_tcp_listener) -> None:
     # bash opens the socket itself, so no Python hook runs: only the namespace stops it.
     def connect(host: str, port: int) -> subprocess.CompletedProcess[bytes]:
@@ -182,7 +202,7 @@ def test_a_native_child_cannot_connect_outside_the_namespace(test_owned_tcp_list
     assert connect("127.0.0.1", test_owned_tcp_listener.getsockname()[1]).returncode == 0
     outside = connect("192.0.2.1", 443)
     assert outside.returncode != 0
-    assert b"192.0.2.1" in outside.stderr or b"unreachable" in outside.stderr.lower()
+    assert _denied_by_the_namespace(outside.stderr), outside.stderr
 
 
 def test_the_runner_installed_the_guard_for_this_run() -> None:

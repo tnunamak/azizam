@@ -14,11 +14,15 @@ def _fs_type(path: Path) -> str:
     return subprocess.run(["stat", "-f", "-c", "%T", str(path)], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def test_tmp_path_is_ram_and_host_disk_dir_is_not(tmp_path: Path, host_disk_dir: Path) -> None:
-    if os.environ.get("HERMETIC_TMPDIR_ON_DISK"):
-        return  # the runner announced a disk fallback
-    assert _fs_type(tmp_path) in RAM_FS
+def test_host_disk_dir_is_not_ram_in_every_run(host_disk_dir: Path) -> None:
+    # Also under the disk fallback: a test that asks for real-disk semantics must never get RAM.
     assert _fs_type(host_disk_dir) not in RAM_FS
+
+
+def test_tmp_path_is_ram_and_on_another_device_than_host_disk_dir(tmp_path: Path, host_disk_dir: Path) -> None:
+    if os.environ.get("HERMETIC_TMPDIR_ON_DISK"):
+        return  # the runner announced a disk fallback: tmp_path is on disk too
+    assert _fs_type(tmp_path) in RAM_FS
     assert os.stat(tmp_path).st_dev != os.stat(host_disk_dir).st_dev
 
 

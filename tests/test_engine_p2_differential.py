@@ -180,7 +180,7 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
         """One model: every request matches the golden except where a voice was silently replaced,
         and the listing is exactly the voices the model accepts.  One model per test keeps each sweep
         short; both checks read the same observed requests, so the sweep runs once."""
-        from tests.engine_p2_differential import _observe_speech, _speak
+        from tests.engine_p2_differential import _observe_speech
 
         with running_gateway(load_fixture("owner_config.migrated.json")) as (proxy, client, upstream, _root):
             observed = asyncio.run(_observe_speech(proxy, client, upstream, (model,)))
@@ -198,8 +198,10 @@ class SpeechVoiceDifferentialTests(unittest.TestCase):
                     self.assertEqual(new["response"]["json"]["error"]["code"], "voice_not_available", case)
                     self.assertEqual(new["upstream"], [], case)
                     refused.append(case)
-                elif model in _REROUTED and new == _speak(client, upstream, _REROUTED[model], voice):
-                    # A tier sends the voice to its first engine that lists it, exactly as naming that engine does.
+                elif model in _REROUTED and new == _golden_engine_request(_REROUTED[model], voice):
+                    # A tier sends the voice to its first engine that lists it, exactly as naming that engine did
+                    # in the golden run.  The reference is the recorded golden, not a request made in this context,
+                    # so a runtime-configuration change (a wrong upstream host) cannot move both sides together.
                     rerouted.append(case)
                 else:
                     new_body = json.loads(new["upstream"][0]["body"])
@@ -302,6 +304,21 @@ _ENGINE_DEFAULTS = {"supertonic": "F1", "kokoro": "af_heart", "k2-fsa/OmniVoice"
 # The engine a tier's later-listed voices reach in the owner's configuration.
 _REROUTED = {"tts-1": "omnivoice", "gpt-4o-mini-tts": "omnivoice", "tts": "omnivoice", "tts-fast": "omnivoice",
              "tts-1-hd": "kokoro", "tts-quality": "kokoro"}
+
+
+def _golden_engine_request(engine: str, voice: Any) -> dict[str, Any] | None:
+    """The golden observation of naming `engine` with `voice`.  Where the golden gateway had replaced the
+    voice by the engine's default (a voice the engine lists but the golden gateway mapped away), the same
+    recorded request with the voice put back is the expectation."""
+    recorded = _GOLDEN["speech"].get(f"{engine} voice={json.dumps(voice)}")
+    if recorded is None or not recorded["upstream"]:
+        return recorded
+    expected = copy.deepcopy(recorded)
+    body = json.loads(expected["upstream"][0]["body"])
+    if body["voice"] == _ENGINE_DEFAULTS.get(body["model"]) and voice != body["voice"]:
+        body["voice"] = voice
+        expected["upstream"][0]["body"] = json.dumps(body)
+    return expected
 
 
 def _prompt_index(prompt: str) -> int:
