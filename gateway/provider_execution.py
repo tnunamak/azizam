@@ -498,17 +498,16 @@ def _resolved_upstream_model(provider: providers.ProviderRef, model: str) -> str
 
 async def execute_paid_litellm(
     request: Request, *, request_path: str, body: Mapping[str, Any],
-    provider: providers.ProviderRef, access: EffectiveAccess,
+    provider: providers.ProviderRef, identity: Any,
     runtime: LiteLlmRuntimeConfig, ledger_path: Path,
     admin_db_path: Path | None = None,
-    app_id: str | None = None, app_name: str | None = None,
     paid_fallback: bool = False,
     requested_model: str | None = None,
-    identity: Any = None,
 ) -> Response:
+    """``identity`` carries the request's two plans, its App and the App's
+    accountable person; each of them is needed to admit and charge the call."""
     model = str(body.get("model") or "")
-    if identity is None:
-        identity = SimpleNamespace(access=access, app_id=app_id, person_id=None, accountable_person_id=None)
+    access, app_id, app_name = identity.access, identity.app_id, identity.name
     protocol, intent = (
         ("openai.embeddings", "text.embeddings") if request_path == "/v1/embeddings"
         else ("openai.chat", "text.completions" if request_path == "/v1/completions" else "chat.completions")

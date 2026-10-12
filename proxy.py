@@ -27028,14 +27028,11 @@ async def _forward_litellm_proxy_request(
         identity = auth_context.identity
         return await provider_execution.execute_paid_litellm(
             request, request_path=request_path, body=body_json,
-            provider=remote_provider, access=_access_for_auth_context(auth_context),
+            provider=remote_provider, identity=identity,
             runtime=runtime_config, ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
             admin_db_path=ADMIN_DB_PATH,
-            app_id=identity.app_id if identity else None,
-            app_name=identity.name if identity else None,
             paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
             requested_model=getattr(request.state, "provider_requested_model", None),
-            identity=identity,
         )
 
     try:

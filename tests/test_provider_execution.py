@@ -17,7 +17,7 @@ import httpx
 from starlette.requests import Request
 
 from gateway import provider_execution, providers, receipt_store
-from tests.support.access import access as access_of, plan_for  # noqa: E402
+from tests.support.access import identity as identity_of, plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig, sanitize_litellm_execution_request
 from gateway.providers import ProviderRef
 
@@ -162,7 +162,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.env_patch.stop()
         self.tmp.cleanup()
 
-    async def _execute(self, *, send=None, **kwargs):
+    async def _execute(self, *, send=None, app_id="app_test", **kwargs):
         send = send or AsyncMock(
             return_value=(
                 _Client(),
@@ -191,7 +191,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 request_path="/v1/chat/completions",
                 body=self.body,
                 provider=self.provider,
-                access=access_of(self.profile),
+                identity=identity_of(self.profile, name="paid-app", app_id=app_id, accountable_person_id="usr_test"),
                 runtime=self.runtime,
                 ledger_path=self.ledger,
                 **kwargs,
@@ -223,8 +223,6 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         send.assert_not_called()
 
     async def test_owner_category_rules_deny_a_governed_app_before_provider_call(self) -> None:
-        from types import SimpleNamespace
-
         from gateway import category_enforcement
         from tests.test_category_enforcement import _activate, _snapshot
 
@@ -234,27 +232,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(category_enforcement.configure, None)
         send = AsyncMock()
 
-        response, send = await self._execute(
-            send=send, identity=SimpleNamespace(person_id=None, app_id="family-app"))
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
-        send.assert_not_called()
-
-    async def test_owner_category_rules_govern_an_app_id_without_identity(self) -> None:
-        from gateway import category_enforcement
-        from tests.test_category_enforcement import _activate, _snapshot
-
-        path = Path(self.tmp.name) / "categories.db"
-        _activate(path, _snapshot())  # governs family-app
-        category_enforcement.configure(path)
-        self.addCleanup(category_enforcement.configure, None)
-        send = AsyncMock()
-
         response, send = await self._execute(send=send, app_id="family-app")
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("category rules:", (await _body(response)).decode())
+        self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
         send.assert_not_called()
 
     async def test_unknown_remote_model_is_denied_before_provider_call(self) -> None:
