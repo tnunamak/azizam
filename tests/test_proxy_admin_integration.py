@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import admin_store  # noqa: E402
+from gateway import accounts, admin_store  # noqa: E402
+from tests.support.access import plan_document, store_plan  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
     OIDCConfig,
@@ -77,7 +78,17 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
+        accounts.initialize(self.db)
+        self.accountable = admin_store.upsert_oidc_user(
+            "https://idp.example", "accountable", email="accountable@example.test", path=self.db)
+        self.plan = store_plan("Everything", path=self.db)
+        accounts.change_person(self.accountable["id"], "test", path=self.db, plan_id=self.plan["id"])
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
+
+    def _create_app(self, name: str, **body):
+        """An App accountable to the test person, "Same as its person" unless told otherwise."""
+        return self.client.post("/admin/api/apps", headers=self._auth(), json={
+            "name": name, "owner_user_id": self.accountable["id"], "access_plan": "person", **body})
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -212,11 +223,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         overview = self.client.get("/admin/api/overview", headers=self._auth())
         self.assertEqual(overview.status_code, 200, overview.text)
 
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "brother-laptop"},
-            headers=self._auth(),
-        )
+        created = self._create_app("brother-laptop")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
@@ -264,25 +271,13 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("cannot start with '-'", stderr.getvalue())
         self.assertEqual(len(admin_store.list_credentials(path=self.db)), before)
 
-    def test_admin_created_app_key_authenticates_runtime_with_profile(self) -> None:
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "chat-only",
-                "profile": {
-                    "id": "chat-only",
-                    "protocols": ["openai.chat"],
-                    "fallback": {"cloud_allowed": False},
-                    "status_visibility": {"level": "basic"},
-                },
-            },
+    def test_admin_created_app_key_authenticates_runtime_with_its_access_plan(self) -> None:
+        plan = self.client.post(
+            "/admin/api/access-plans",
+            json=plan_document("Chat only", caps=("chat",)),
             headers=self._auth(),
-        ).json()["profile"]
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "brother-chat", "profile_id": profile["id"]},
-            headers=self._auth(),
-        )
+        ).json()["access_plan"]
+        created = self._create_app("brother-chat", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
         key_response = self.client.post(
@@ -305,7 +300,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             headers={"Authorization": f"Bearer {app_key}"},
         )
         self.assertEqual(denied.status_code, 403, denied.text)
-        self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+        self.assertEqual(denied.json()["error"]["code"], "not_in_access_plan")
+        self.assertEqual(denied.json()["error"]["details"]["side"], "app")
 
         admin_key_on_runtime = self.client.get(
             "/gateway/v1/capabilities",
