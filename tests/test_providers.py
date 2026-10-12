@@ -11,6 +11,7 @@ import tempfile
 import threading
 import types
 import unittest
+from unittest import mock
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
@@ -309,14 +310,13 @@ class TestSpendReservations(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        key = mock.patch.dict(os.environ, {"TYPESAFE_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
         self.ledger = Path(self.tmp.name) / "ledger.db"
         self.admin_db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(self.admin_db)
-        os.environ["TYPESAFE_TEST_KEY"] = "test-key"
-
-    def tearDown(self) -> None:
-        os.environ.pop("TYPESAFE_TEST_KEY", None)
-        self.tmp.cleanup()
 
     def test_default_profile_denies_paid_provider_before_ledger_write(self) -> None:
         with self.assertRaises(Exception) as cm:
@@ -1411,12 +1411,11 @@ class TestCosts(unittest.TestCase):
 class TestTypeSafeHttpHook(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        key = mock.patch.dict(os.environ, {"TYPESAFE_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
         self.ledger = Path(self.tmp.name) / "ledger.db"
-        os.environ["TYPESAFE_TEST_KEY"] = "test-key"
-
-    def tearDown(self) -> None:
-        os.environ.pop("TYPESAFE_TEST_KEY", None)
-        self.tmp.cleanup()
 
     def test_vendor_auth_error_maps_to_provider_auth_failed(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:

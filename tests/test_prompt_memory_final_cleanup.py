@@ -1,10 +1,12 @@
 """Final prompt-memory regressions: upgrade, missing cache, locks and erasure."""
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -27,6 +29,7 @@ def household(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path / 'cache')
     monkeypatch.setattr(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', tmp_path / 'payloads')
     monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOADS', {})
+    monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES', {})
     people = [admin_store.upsert_oidc_user('test', name, path=admin) for name in ('owner', 'robin', 'other')]
     apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], path=admin)
             for name, user in zip(('owner', 'robin', 'other'), people)]
@@ -86,9 +89,9 @@ def test_request_policy_reads_do_not_wait_for_admin_writer(household):
     hh = household
     with sqlite3.connect(hh.admin) as lock:
         lock.execute('BEGIN IMMEDIATE')
-        started = time.monotonic()
         decision = prompt_memory.decide_for_person(hh.robin['id'], {'prompt': 'private'}, admin_path=hh.admin)
-        assert time.monotonic() - started < 0.5
+        # The writer holds its lock for the whole block, so a read that waited
+        # on it would end in storage_unavailable, not keep.
         assert decision.keep
         # The final write guard remains conservative while a mutation is pending.
         assert not prompt_memory.safe_put('video_locked', hh.robin['id'], 'private',
@@ -203,11 +206,21 @@ def test_missing_preference_under_lock_degrades_to_dont_store(household):
     hh = household
     with sqlite3.connect(hh.admin) as conn:
         conn.execute('DELETE FROM prompt_memory_preferences WHERE user_id=?', (hh.robin['id'],))
-    with sqlite3.connect(hh.admin) as lock:
+    statements: list[str] = []
+    real_conn = admin_store._conn
+
+    @contextlib.contextmanager
+    def traced_conn(path=admin_store.DB_PATH):
+        with real_conn(path) as conn:
+            conn.set_trace_callback(statements.append)
+            yield conn
+
+    with sqlite3.connect(hh.admin) as lock, patch.object(admin_store, '_conn', traced_conn):
         lock.execute('BEGIN IMMEDIATE')
-        started = time.monotonic()
         decision = prompt_memory.decide_for_person(hh.robin['id'], {'prompt': 'private'}, admin_path=hh.admin)
-        assert time.monotonic() - started < 0.5
+        # The request path must not queue behind the writer: it asks for no busy
+        # wait before it asks for its own write lock.
+        assert statements.index('PRAGMA busy_timeout=0') < statements.index('BEGIN IMMEDIATE')
         assert decision.keep is False
         assert decision.reason == 'storage_unavailable'
 

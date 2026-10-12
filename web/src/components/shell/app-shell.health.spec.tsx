@@ -17,6 +17,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     createQueryClient: () => {
       const client = actual.createQueryClient();
+      // Production retries a 5xx twice with backoff, which no test waits for.
+      // Set once here, keeping the other defaults, so no test depends on which
+      // earlier test switched retries off.
+      const defaults = client.getDefaultOptions();
+      client.setDefaultOptions({ ...defaults, queries: { ...defaults.queries, retry: false } });
       clients.push(client);
       return client;
     },
@@ -242,10 +247,6 @@ describe("shell health pill", () => {
       rows: [capability("image", "Images", "down")],
       health: () => json({ error: "unavailable" }, 503),
     });
-    // The pill reports a failed reachability check once retries are spent. AppShell
-    // builds its one QueryClient at import (app-shell.tsx), so `clients` already holds
-    // it here; without this line the test finds no "Gateway unreachable" pill.
-    clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
     const { popover } = await openPill("Gateway status: Gateway unreachable");
     expect(popover).toHaveTextContent("GatewayNot reachable");
     expect(within(popover).queryByText("Your AI")).toBeNull();

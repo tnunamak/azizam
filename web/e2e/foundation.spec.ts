@@ -94,6 +94,9 @@ for (const { theme, width, only } of passes) {
             .toBe("1");
         }
         if (name !== "design") {
+          // A page that is still loading is not the page to scan: axe would
+          // read the placeholders. Every loading state sets aria-busy.
+          await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
           // Design examples intentionally show error states; axe still checks them.
           await expect(
             page

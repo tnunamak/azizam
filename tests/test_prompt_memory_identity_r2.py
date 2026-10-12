@@ -52,6 +52,7 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "data/payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     owner = admin_store.upsert_oidc_user("iss", "owner", email="owner@x.test", path=admin)
     robin = admin_store.upsert_oidc_user("iss", "robin", email="robin@x.test", path=admin)
     robin_app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)

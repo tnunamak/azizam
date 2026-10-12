@@ -44,8 +44,9 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
         self.ledger = Path(self.tmp.name) / "provider_spend.db"
         self.admin_db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(self.admin_db)
-        os.environ["OPENROUTER_TEST_KEY"] = "test-key"
-        self.addCleanup(lambda: os.environ.pop("OPENROUTER_TEST_KEY", None))
+        key = patch.dict(os.environ, {"OPENROUTER_TEST_KEY": "test-key"})
+        key.start()
+        self.addCleanup(key.stop)
 
     def _reserve(
         self,

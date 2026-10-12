@@ -84,12 +84,21 @@ def _any_accept(cells: str | None) -> dict:
 
 @pytest.fixture(scope="module")
 def current():
+    """Routing is pure inspection: no request is made to build it."""
+    return {"routing": route_matrix.routing_matrix(proxy.app, extra_paths=BASELINE["routing"])}
+
+
+@pytest.fixture
+def live_client():
+    """A client and the three principals; every live-outcome item gets its own admin store."""
     case = admin_integration.ProxyAdminIntegrationTests(methodName="runTest")
     case.setUp()
     try:
         accounts.initialize(case.db)
-        yield route_matrix.baseline(proxy.app, case.client, case.admin_key, route_matrix.mint_app_key(case),
-                                    extra_paths=BASELINE["routing"])
+        app_key = route_matrix.mint_app_key(case)
+        with route_matrix.one_portal(case.client):
+            yield case.client, {"none": {}, "app": {"Authorization": f"Bearer {app_key}"},
+                                "admin": {"Authorization": f"Bearer {case.admin_key}"}}
     finally:
         case.tearDown()
 
@@ -119,8 +128,14 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
     assert unexpected == {}
 
 
-def test_live_outcomes_differ_from_baseline_only_where_reviewed(current):
-    old, new = BASELINE["live"], current["live"]
+@pytest.mark.parametrize("method", route_matrix.METHODS)
+def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_client, method):
+    # One item per method so the sweep spreads over workers; together they cover every baseline row.
+    assert {_method_of(key) for key in BASELINE["live"]} <= set(route_matrix.METHODS)
+    client, principals = live_client
+    targets = [(verb, path) for verb, path in route_matrix.live_targets(current["routing"]) if verb == method]
+    old = {key: cells for key, cells in BASELINE["live"].items() if _method_of(key) == method}
+    new = route_matrix.live_matrix(client, targets, principals)
     unexpected = {}
     for key in sorted(set(old) | set(new)):
         if old.get(key) == new.get(key):
@@ -145,8 +160,15 @@ def test_deliberate_head_changes():
     assert routing["/admin"]["HEAD"].startswith("405 allow=DELETE,GET,OPTIONS,PATCH,POST,PUT via /{path:path}")
 
 
-def test_api_protocol_paths_keep_their_r18_answers(current):
-    for key in ("HEAD /v1/models", "HEAD /mcp", "HEAD /health", "HEAD /llms.txt", "GET /mcp", "DELETE /mcp"):
-        if key in BASELINE["live"]:
-            assert current["live"][key] == BASELINE["live"][key], key
+def test_api_protocol_paths_keep_their_r18_answers(current, live_client):
+    keys = ("HEAD /v1/models", "HEAD /mcp", "HEAD /health", "HEAD /llms.txt", "GET /mcp", "DELETE /mcp")
+    required = {key for key in keys if key in BASELINE["live"]}
+    targets = [(method, path) for method, path in route_matrix.live_targets(current["routing"])
+               if f"{method} {path}" in required]
+    # A sentinel that is no longer a 405 or catch-all target must fail here, as it did when the whole matrix ran.
+    assert {f"{method} {path}" for method, path in targets} == required
+    client, principals = live_client
+    live = route_matrix.live_matrix(client, targets, principals)
+    for key in sorted(required):
+        assert live[key] == BASELINE["live"][key], key
     assert _flat(current["routing"])["HEAD /api/blobs/sample"] == _flat(BASELINE["routing"])["HEAD /api/blobs/sample"]

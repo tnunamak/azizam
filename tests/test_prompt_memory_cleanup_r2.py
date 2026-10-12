@@ -42,6 +42,7 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     robin = admin_store.upsert_oidc_user("issuer", "robin", email="robin@example.test", path=admin)
     app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)
     (tmp_path / "cache").mkdir()
@@ -434,6 +435,8 @@ def test_simultaneous_first_queue_writes_upgrade_schema_once(hh, legacy_schema):
         thread.start()
     for thread in threads:
         thread.join(30)
+    # A live worker would outlast the restored paths of this test.
+    assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     expected = set(people) | ({"usr_legacy"} if legacy_schema else set())
     assert set(proxy._pending_prompt_purges()) == expected

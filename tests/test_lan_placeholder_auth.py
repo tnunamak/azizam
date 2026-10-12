@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import ipaddress
+import traceback
 
+import anyio
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.testclient import WebSocketDenialResponse
@@ -254,14 +256,28 @@ def test_realtime_placeholder_does_not_hide_valid_or_revoked_subprotocol_key(gat
 
     monkeypatch.setattr(proxy, "_realtime_policy_denial", stop_after_auth)
     monkeypatch.setattr(proxy, "ws_connect", no_backend)
-    client = TestClient(proxy.app, base_url="https://gateway.example", client=("192.168.1.25", 41000))
+    app_errors: list[str] = []
+
+    async def recorded_app(scope, receive, send):
+        # A failed handshake closes the test client's streams and hides the real
+        # error behind ClosedResourceError; keep it for the failure message.
+        try:
+            await proxy.app(scope, receive, send)
+        except BaseException:
+            app_errors.append(traceback.format_exc())
+            raise
+
+    client = TestClient(recorded_app, base_url="https://gateway.example", client=("192.168.1.25", 41000))
     protocols = ["realtime", f"openai-insecure-api-key.{key['api_key']}"]
     headers = {"authorization": "Bearer dummy"} if placeholder_source == "header" else {}
     if placeholder_source == "subprotocol":
         protocols.insert(1, "openai-insecure-api-key.dummy")
-    with pytest.raises(WebSocketDenialResponse) as valid:
-        with client.websocket_connect("/v1/realtime", headers=headers, subprotocols=protocols):
-            pytest.fail("Policy-denied session was accepted")
+    try:
+        with pytest.raises(WebSocketDenialResponse) as valid:
+            with client.websocket_connect("/v1/realtime", headers=headers, subprotocols=protocols):
+                pytest.fail("Policy-denied session was accepted")
+    except anyio.ClosedResourceError:
+        pytest.fail("the Realtime handler raised before the handshake:\n" + "\n".join(app_errors))
     assert valid.value.status_code == 403
     assert identities[0].app_id == app["id"]
     admin_store.revoke_credential(key["id"], path=gateway)

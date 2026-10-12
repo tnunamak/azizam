@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -188,20 +189,27 @@ _UNKNOWN_VOICES = ("nope", "Jenny", "voice", "alloy ", " alloy", "alloy-2", "F9"
 _EMPTY_VOICES = ("<omitted>", "", None)
 
 
+_SPEECH_VOICES = (
+    *_EMPTY_VOICES, *_OPENAI_VOICES, *(v.upper() for v in _OPENAI_VOICES), "Marin", "sHiMmEr",
+    *_LEGACY_VOICES, "Cheerful_Female", *_PRESET_VOICES, "DE_Female", *_NATIVE_VOICES, *_UNKNOWN_VOICES,
+    "voice_0123456789abcdef01234567", {"id": "voice_0123456789abcdef01234567"},
+)
+
+
+def _speak(client: Any, upstream: _Upstream, model: str, voice: Any) -> dict[str, Any]:
+    """One speech request and what it sent upstream; the voice "<omitted>" sends none."""
+    body: dict[str, Any] = {"model": model, "input": "hello there", "response_format": "wav"}
+    if voice != "<omitted>":
+        body["voice"] = voice
+    resp = client.post("/v1/audio/speech", json=body)
+    return {"response": _response(resp), "upstream": upstream.take()}
+
+
 async def _observe_speech(proxy: Any, client: Any, upstream: _Upstream, models: tuple[str, ...] = _SPEECH_MODELS) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    voices = (
-        *_EMPTY_VOICES, *_OPENAI_VOICES, *(v.upper() for v in _OPENAI_VOICES), "Marin", "sHiMmEr",
-        *_LEGACY_VOICES, "Cheerful_Female", *_PRESET_VOICES, "DE_Female", *_NATIVE_VOICES, *_UNKNOWN_VOICES,
-        "voice_0123456789abcdef01234567", {"id": "voice_0123456789abcdef01234567"},
-    )
     for model in models:
-        for voice in voices:
-            body: dict[str, Any] = {"model": model, "input": "hello there", "response_format": "wav"}
-            if voice != "<omitted>":
-                body["voice"] = voice
-            resp = client.post("/v1/audio/speech", json=body)
-            out[f"{model} voice={json.dumps(voice)}"] = {"response": _response(resp), "upstream": upstream.take()}
+        for voice in _SPEECH_VOICES:
+            out[f"{model} voice={json.dumps(voice)}"] = _speak(client, upstream, model, voice)
     if models == _SPEECH_MODELS:
         listing = client.get("/v1/audio/voices")
         out["GET /v1/audio/voices"] = {"response": _response(listing), "upstream": upstream.take()}
@@ -298,13 +306,28 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
 
 # ---- runner ------------------------------------------------------------------
 
+def _memoized_process_sample(real):
+    """``process_sample`` decodes through ffmpeg and walks every sample in Python, about 0.1 s of
+    CPU per call; a design sweep gives it the same upstream clip hundreds of times.  It is a pure
+    function of its arguments, so the real function runs once per distinct input and each caller
+    gets its own copy of the result."""
+    @functools.lru_cache(maxsize=None)
+    def cached(data: bytes, limits: Any, denoise: bool) -> Any:
+        return real(data, limits, denoise=denoise)
+
+    def process(data: bytes, limits: Any, *, denoise: bool = False) -> Any:
+        return copy.deepcopy(cached(data, limits, denoise))
+
+    return process
+
+
 @contextmanager
 def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstream, Path]]:
     """The imported gateway with the fixture's configuration and fake engines: (proxy, client, upstream, scratch)."""
     import proxy
     from fastapi.testclient import TestClient
 
-    from gateway import media_jobs, receipt_store
+    from gateway import media_jobs, receipt_store, voices_api
     from tests.voice_test_audio import speechlike
 
     with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
@@ -329,6 +352,7 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
             patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
             patch.object(receipt_store, "DB_PATH", root / "receipts.db"),
             patch.object(media_jobs, "DB_PATH", root / "media_jobs.db"),
+            patch.object(voices_api, "process_sample", _memoized_process_sample(voices_api.process_sample)),
         ):
             stack.enter_context(patcher)
         yield proxy, TestClient(proxy.app), upstream, root
