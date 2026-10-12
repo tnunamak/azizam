@@ -210,3 +210,31 @@ def access_context(plan_or_access: AccessPlan | EffectiveAccess | None = None, *
     import proxy
 
     return proxy.AuthContext(identity=identity(plan_or_access, **identity_kwargs))
+
+
+class AdminAppFixtures:
+    """Mixin for admin API test cases: Apps made through an admin key need a
+    person who answers for them, and that person needs a plan.
+
+    The case provides ``db`` (the admin database), ``client`` and ``_auth()``.
+    The person is made on first use so cases that count people are unaffected.
+    """
+
+    _accountable_person: dict | None = None
+
+    @property
+    def accountable(self) -> dict:
+        if self._accountable_person is None:
+            from gateway import accounts, admin_store
+
+            accounts.initialize(self.db)
+            self._accountable_person = admin_store.upsert_oidc_user(
+                "https://idp.example", "accountable", email="accountable@example.test", path=self.db)
+            plan = store_plan("Everything", path=self.db)
+            accounts.change_person(self._accountable_person["id"], "test", path=self.db, plan_id=plan["id"])
+        return self._accountable_person
+
+    def _create_app(self, name: str, **body):
+        """An App accountable to the test person, "Same as its person" unless told otherwise."""
+        return self.client.post("/admin/api/apps", headers=self._auth(), json={
+            "name": name, "owner_user_id": self.accountable["id"], "access_plan": "person", **body})

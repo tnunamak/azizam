@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store  # noqa: E402
-from tests.support.access import plan_document, store_plan  # noqa: E402
+from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
     OIDCConfig,
@@ -48,7 +48,7 @@ def assert_authenticated_admin_dashboard(
     test_case.assertEqual(session.status_code, 200, session.text)
 
 
-class ProxyAdminIntegrationTests(unittest.TestCase):
+class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "admin.db"
@@ -79,23 +79,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "test-owner", path=self.db
         )
         self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
-        self._accountable = None
-
-    @property
-    def accountable(self) -> dict:
-        """The person who answers for Apps made through the admin key; holds a plan."""
-        if self._accountable is None:
-            accounts.initialize(self.db)
-            self._accountable = admin_store.upsert_oidc_user(
-                "https://idp.example", "accountable", email="accountable@example.test", path=self.db)
-            plan = store_plan("Everything", path=self.db)
-            accounts.change_person(self._accountable["id"], "test", path=self.db, plan_id=plan["id"])
-        return self._accountable
-
-    def _create_app(self, name: str, **body):
-        """An App accountable to the test person, "Same as its person" unless told otherwise."""
-        return self.client.post("/admin/api/apps", headers=self._auth(), json={
-            "name": name, "owner_user_id": self.accountable["id"], "access_plan": "person", **body})
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -655,11 +638,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
 
     def test_v1_status_rejects_app_runtime_key(self) -> None:
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "status-not-admin"},
-            headers=self._auth(),
-        )
+        created = self._create_app("status-not-admin")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
         key_response = self.client.post(
@@ -2398,7 +2377,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
 
 
-class AdminEffectiveProfileTests(unittest.TestCase):
+class AdminEffectiveAccessPlanTests(AdminAppFixtures, unittest.TestCase):
     """effective_profile_* fields on admin app responses."""
 
     def setUp(self) -> None:
@@ -2419,43 +2398,39 @@ class AdminEffectiveProfileTests(unittest.TestCase):
     def _auth(self):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
-    def test_app_without_profile_gets_fallback_effective_profile(self) -> None:
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "No Profile App"},
-            headers=self._auth(),
-        )
+    def test_same_as_person_app_reports_the_persons_plan(self) -> None:
+        created = self._create_app("Same App")
         self.assertEqual(created.status_code, 201, created.text)
         app = created.json()["app"]
-        self.assertIsNone(app.get("default_profile_id"))
-        self.assertEqual(app["effective_profile_id"], "default-local")
-        self.assertEqual(app["effective_profile_source"], "fallback")
+        self.assertTrue(app["same_as_person"])
+        self.assertEqual(app["access_plan_name"], "Everything")
+        self.assertEqual(app["accountable_person"]["id"], self.accountable["id"])
 
         listed = self.client.get("/admin/api/apps", headers=self._auth())
-        self.assertEqual(listed.status_code, 200)
         match = next(a for a in listed.json()["apps"] if a["id"] == app["id"])
-        self.assertEqual(match["effective_profile_id"], "default-local")
-        self.assertEqual(match["effective_profile_source"], "fallback")
+        self.assertEqual(match["effective_access_plan_id"], app["effective_access_plan_id"])
 
-    def test_app_with_explicit_profile_gets_app_default_effective_profile(self) -> None:
-        profile = admin_store.create_profile(
-            "Test Profile",
-            {"id": "test-profile", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "Profiled App", "profile_id": profile["id"]},
-            headers=self._auth(),
-        )
+    def test_app_with_its_own_plan_reports_that_plan(self) -> None:
+        plan = store_plan("Chat only", path=self.db, caps=("chat",))
+        created = self._create_app("Planned App", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app = created.json()["app"]
-        self.assertEqual(app["effective_profile_id"], profile["id"])
-        self.assertEqual(app["effective_profile_name"], "Test Profile")
-        self.assertEqual(app["effective_profile_source"], "app_default")
+        self.assertFalse(app["same_as_person"])
+        self.assertEqual(app["effective_access_plan_id"], plan["id"])
+        self.assertEqual(app["access_plan_name"], "Chat only")
+
+    def test_same_as_person_app_of_a_person_without_a_plan_reports_no_plan(self) -> None:
+        from gateway import accounts
+
+        created = self._create_app("Stranded App")
+        accounts.change_person(self.accountable["id"], "test", path=self.db, plan_id=None)
+        app = next(a for a in self.client.get("/admin/api/apps", headers=self._auth()).json()["apps"]
+                   if a["id"] == created.json()["app"]["id"])
+        self.assertIsNone(app["effective_access_plan_id"])
+        self.assertIsNone(app["access_plan_name"])
 
 
-class AdminCredentialDeleteAliasTests(unittest.TestCase):
+class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
     """DELETE /admin/api/credentials/{id} as alias for revoke."""
 
     def setUp(self) -> None:
@@ -2477,9 +2452,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
     def test_delete_credential_revokes_it(self) -> None:
-        app = self.client.post(
-            "/admin/api/apps", json={"name": "App"}, headers=self._auth()
-        ).json()["app"]
+        app = self._create_app("App").json()["app"]
         cred = self.client.post(
             f"/admin/api/apps/{app['id']}/keys",
             json={"display_name": "key1"},
@@ -2502,9 +2475,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         self.assertEqual(resp.json()["error"]["code"], "credential_not_found")
 
     def test_post_revoke_still_works(self) -> None:
-        app = self.client.post(
-            "/admin/api/apps", json={"name": "App2"}, headers=self._auth()
-        ).json()["app"]
+        app = self._create_app("App2").json()["app"]
         cred = self.client.post(
             f"/admin/api/apps/{app['id']}/keys",
             json={"display_name": "key2"},
@@ -2519,7 +2490,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         self.assertIsNotNone(resp.json()["credential"].get("revoked_at"))
 
 
-class AdminAuditEventsEndpointTests(unittest.TestCase):
+class AdminAuditEventsEndpointTests(AdminAppFixtures, unittest.TestCase):
     """GET /admin/api/audit-events as queryable audit log."""
 
     def setUp(self) -> None:
