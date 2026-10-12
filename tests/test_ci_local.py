@@ -190,7 +190,7 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["seed"] == "5"
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
-        "cases", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
+        "cases", "compat-node", "e2e-browser", "e2e-copy-18650", "e2e-copy-18660", "e2e-copy-18670", "e2e-household",
         "e2e-live-data", "e2e-plan", "e2e-shard-1-of-1", "e2e-venv", "fresh-compose", "fresh-native",
         "fresh-venv", "policy", "python-hermetic", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
