@@ -195,5 +195,14 @@ class DocsRouteTests(unittest.TestCase):
         self.assertTrue(showcase.is_public_showcase_path("/showcase/docs/api/openai/"))
 
 
+class ProductPageLinkTests(unittest.TestCase):
+    def test_product_page_links_to_the_docs_not_github(self) -> None:
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        hrefs = set(re.findall(r'href="([^"]+)"', html))
+        self.assertIn("/showcase/docs/", hrefs)
+        self.assertIn("/showcase/docs/start/install/", hrefs)
+        self.assertFalse([h for h in hrefs if "github.com" in h and "/docs/" in h], hrefs)
+
+
 if __name__ == "__main__":
     unittest.main()
