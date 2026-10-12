@@ -13,6 +13,9 @@ effect is a tripwire; no network request is made.
 
 from __future__ import annotations
 
+import shutil
+import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -58,12 +61,78 @@ PREFIXED_KNOWN_ROUTES = [
 CHAT_BODY = {"model": "test-model", "messages": [{"role": "user", "content": "hi"}]}
 
 
-@pytest.fixture
-def gateway(monkeypatch, tmp_path):
+_STORES = ((admin_store, "admin"), (receipt_store, "receipts"))
+
+
+@pytest.fixture(scope="module")
+def seeded_stores(tmp_path_factory):
+    """Seed the admin and receipt stores once per module.
+
+    Each case gets its own copy of these files (see _case), so cases stay as
+    isolated as when every case built its own stores, without paying for two
+    migrations and a seeded household per case.
+    """
+    root = tmp_path_factory.mktemp("catchall-template")
+    paths = {name: root / f"{name}.db" for _module, name in _STORES}
+    with pytest.MonkeyPatch.context() as patch:
+        for module, name in _STORES:
+            module.init_db(paths[name])
+            connect = module._conn
+            patch.setattr(module, "_conn", lambda _path, fn=connect, db=paths[name]: fn(db))
+        restricted = admin_store.create_profile(
+            "Restricted",
+            {
+                "id": "restricted",
+                "allow": {"intents": ["image.generate"]},
+                "native_passthrough": {"enabled": False},
+            },
+            path=paths["admin"],
+        )
+        user = admin_store.upsert_oidc_user(
+            "https://catchall.test", "member", email="member@example.test", path=paths["admin"]
+        )
+        session = AdminSession(
+            subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000,
+        )
+        member_app = admin_store.create_app(
+            "Phone", kind="personal", owner_user_id=user["id"],
+            default_profile_id=restricted["id"], path=paths["admin"],
+        )
+        member_key = mint_user_app_key(session, member_app["id"], path=paths["admin"])["api_key"]
+
+        service = admin_store.create_service_account("Robot", path=paths["admin"])
+        service_app = admin_store.create_app(
+            "Robot app", kind="service", owner_service_account_id=service["id"], path=paths["admin"],
+        )
+        app_key = generate_app_api_key()
+        admin_store.create_credential_hash(
+            subject_kind="app", subject_id=service_app["id"], app_id=service_app["id"],
+            hash=proxy.hash_api_key(app_key), prefix=app_key[:12], path=paths["admin"],
+        )
+    for path in paths.values():
+        # Fold the WAL into the main file, so copying that one file is a full copy.
+        with sqlite3.connect(path) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        wal = Path(f"{path}-wal")
+        assert not wal.exists() or wal.stat().st_size == 0, "template WAL not checkpointed"
+    return SimpleNamespace(
+        paths=paths,
+        restricted=restricted,
+        member_app=member_app,
+        service_app=service_app,
+        headers={
+            "member": {"Authorization": f"Bearer {member_key}"},
+            "app": {"Authorization": f"Bearer {app_key}"},
+        },
+    )
+
+
+def _case(seeded, monkeypatch, case_dir):
+    """Install private copies of the seeded stores and the backend tripwires."""
     paths = {}
-    for module, name in ((admin_store, "admin"), (receipt_store, "receipts")):
-        path = tmp_path / f"{name}.db"
-        module.init_db(path)
+    for module, name in _STORES:
+        path = case_dir / f"{name}.db"
+        shutil.copyfile(seeded.paths[name], path)
         connect = module._conn
         monkeypatch.setattr(module, "_conn", lambda _path, fn=connect, db=path: fn(db))
         monkeypatch.setattr(module, "DB_PATH", path)
@@ -107,49 +176,20 @@ def gateway(monkeypatch, tmp_path):
 
     monkeypatch.setattr(proxy, "ReceiptLifecycleOwner", receipt_owner)
 
-    restricted = admin_store.create_profile(
-        "Restricted",
-        {
-            "id": "restricted",
-            "allow": {"intents": ["image.generate"]},
-            "native_passthrough": {"enabled": False},
-        },
-        path=paths["admin"],
-    )
-    user = admin_store.upsert_oidc_user(
-        "https://catchall.test", "member", email="member@example.test", path=paths["admin"]
-    )
-    session = AdminSession(
-        subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000,
-    )
-    member_app = admin_store.create_app(
-        "Phone", kind="personal", owner_user_id=user["id"],
-        default_profile_id=restricted["id"], path=paths["admin"],
-    )
-    member_key = mint_user_app_key(session, member_app["id"], path=paths["admin"])["api_key"]
-
-    service = admin_store.create_service_account("Robot", path=paths["admin"])
-    service_app = admin_store.create_app(
-        "Robot app", kind="service", owner_service_account_id=service["id"], path=paths["admin"],
-    )
-    app_key = generate_app_api_key()
-    admin_store.create_credential_hash(
-        subject_kind="app", subject_id=service_app["id"], app_id=service_app["id"],
-        hash=proxy.hash_api_key(app_key), prefix=app_key[:12], path=paths["admin"],
-    )
-
     return SimpleNamespace(
         client=TestClient(proxy.app),
         calls=calls,
         paths=paths,
-        restricted=restricted,
-        member_app=member_app,
-        service_app=service_app,
-        headers={
-            "member": {"Authorization": f"Bearer {member_key}"},
-            "app": {"Authorization": f"Bearer {app_key}"},
-        },
+        restricted=seeded.restricted,
+        member_app=seeded.member_app,
+        service_app=seeded.service_app,
+        headers=seeded.headers,
     )
+
+
+@pytest.fixture
+def gateway(seeded_stores, monkeypatch, tmp_path):
+    return _case(seeded_stores, monkeypatch, tmp_path)
 
 
 def _receipt_count(gateway) -> int:
@@ -187,6 +227,29 @@ def test_identities_resolve_to_the_expected_apps_and_plan(gateway):
     assert member.app_id == gateway.member_app["id"]
     assert member.profile.id == "restricted"
     assert identity(gateway.headers["app"]).app_id == gateway.service_app["id"]
+
+
+def test_each_case_gets_fresh_stores_and_tripwires(seeded_stores, tmp_path):
+    """Cases share seeded data but never state: a receipt or a tripwire hit in
+    one case is absent from the next, and the seeded identities still resolve.
+    Each case gets its own MonkeyPatch, as each test does."""
+    with pytest.MonkeyPatch.context() as patch:
+        (tmp_path / "first").mkdir()
+        first = _case(seeded_stores, patch, tmp_path / "first")
+        response = _send(first, "POST", "/gateway/v1/providers/tabby/v1/model/load",
+                         headers=first.headers["member"])
+        assert response.status_code == 403, response.text
+        assert _receipt_count(first) == 1
+        first.calls.append("tripwire hit in the first case")
+
+    with pytest.MonkeyPatch.context() as patch:
+        (tmp_path / "second").mkdir()
+        second = _case(seeded_stores, patch, tmp_path / "second")
+        assert _receipt_count(second) == 0
+        assert second.calls == []
+        response = _send(second, "GET", "/not-a-route", headers=second.headers["member"])
+        assert response.status_code == 404, response.text  # 401 would mean the seed is gone
+        assert second.calls == []
 
 
 def test_restricted_plan_is_denied_on_the_canonical_native_route(gateway):
