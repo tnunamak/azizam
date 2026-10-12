@@ -72,12 +72,13 @@ def _with(path: tuple, value: object) -> dict:
         (_with(("provenance",), {"source": "hand-written", "reference": " "}), "provenance.reference"),
         (_with(("exchanges", 0, "match", "path"), "/api/chat"), "is not part of protocol 'openai-compatible'"),
         (_with(("exchanges", 0, "match", "verb"), "GET"), "unknown keys ['verb']"),
-        (_with(("exchanges", 0, "response", "body"), [{"text": "a", "hex": "00"}]), "exactly one of"),
+        (_with(("exchanges", 0, "response"), {"body": [{"text": "a", "hex": "00"}]}), "exactly one of"),
+        (_with(("exchanges", 0, "response", "body"), []), "either json or body, not both"),
         (_with(("exchanges", 0, "times"), 0), "times must be a positive integer"),
         (_with(("exchanges", 0, "match", "json"), {"model": "{{model}}"}), "placeholder {{model}} has no value"),
         (_with(("exchanges",), []), "at least one exchange"),
     ],
-    ids=["protocol", "source", "reference", "path", "match-key", "part", "times", "placeholder", "empty"],
+    ids=["protocol", "source", "reference", "path", "match-key", "part", "json-and-body", "times", "placeholder", "empty"],
 )
 def test_invalid_scenarios_fail_at_load(data: dict, message: str) -> None:
     with pytest.raises(ScenarioError) as error:

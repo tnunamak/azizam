@@ -1,4 +1,4 @@
-"""Wire protocols the fake upstream can speak, as data.
+"""Wire protocols the fake upstream can speak, loaded from ``protocols.json``.
 
 A protocol entry names the paths a scenario may match and how the protocol
 frames a stream of events. Code branches on these fields only. The keys are
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,57 +46,12 @@ def _template_regex(template: str) -> re.Pattern[str]:
 
 
 PROTOCOLS: dict[str, Protocol] = {
-    protocol.name: protocol
-    for protocol in (
-        Protocol(
-            name="openai-compatible",
-            paths=(
-                "/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/models",
-                "/v1/models/{model}", "/v1/responses", "/v1/audio/speech",
-                "/v1/audio/transcriptions", "/v1/audio/translations", "/v1/images/generations",
-                "/v1/images/edits", "/v1/rerank", "/health", "/v1/health",
-            ),
-            framing="sse-data",
-            stream_media_type="text/event-stream",
-            stream_end=b"data: [DONE]\n\n",
-        ),
-        Protocol(
-            name="anthropic-messages",
-            paths=("/v1/messages", "/v1/messages/count_tokens", "/v1/models", "/v1/models/{model}"),
-            framing="sse-typed",
-            stream_media_type="text/event-stream",
-        ),
-        Protocol(
-            name="ollama",
-            paths=(
-                "/api/chat", "/api/generate", "/api/embed", "/api/embeddings", "/api/tags",
-                "/api/show", "/api/ps", "/api/version",
-            ),
-            framing="ndjson",
-            stream_media_type="application/x-ndjson",
-        ),
-        Protocol(
-            name="comfyui",
-            paths=(
-                "/prompt", "/history", "/history/{prompt_id}", "/view", "/object_info",
-                "/object_info/{node_class}", "/queue", "/interrupt", "/upload/image",
-                "/system_stats", "/free",
-            ),
-            framing="none",
-        ),
-        Protocol(
-            name="litellm-admin",
-            paths=(
-                "/key/generate", "/key/info", "/key/list", "/key/delete", "/key/update",
-                "/key/block", "/key/unblock", "/user/new", "/user/info", "/model/info",
-                "/v1/model/info", "/health/liveliness", "/health/readiness",
-            ),
-            framing="none",
-        ),
-        Protocol(
-            name="oidc-idp",
-            paths=("/.well-known/openid-configuration", "/token", "/jwks", "/userinfo", "/authorize"),
-            framing="none",
-        ),
+    name: Protocol(
+        name=name,
+        paths=tuple(entry["paths"]),
+        framing=entry["framing"],
+        stream_media_type=entry.get("stream_media_type", ""),
+        stream_end=entry.get("stream_end", "").encode(),
     )
+    for name, entry in json.loads((Path(__file__).parent / "protocols.json").read_text(encoding="utf-8")).items()
 }
