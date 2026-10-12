@@ -18,6 +18,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     createQueryClient: () => {
       const client = actual.createQueryClient();
+      // Production retries a 5xx twice with backoff, which no test waits for.
+      // Set once here, keeping the other defaults, so no test depends on which
+      // earlier test switched retries off.
+      const defaults = client.getDefaultOptions();
+      client.setDefaultOptions({ ...defaults, queries: { ...defaults.queries, retry: false } });
       clients.push(client);
       return client;
     },
@@ -386,9 +391,6 @@ describe("Signed-out private pages", () => {
     pathname = "/library";
     window.history.replaceState(null, "", "/library/");
     vi.mocked(fetch).mockRejectedValue(new Error("Offline"));
-    clients.forEach((client) =>
-      client.setDefaultOptions({ queries: { retry: false } }),
-    );
     render(
       <AppShell>
         <h1>Private consumer</h1>
@@ -432,7 +434,6 @@ describe("WP-20 shell recovery", () => {
   });
 
   it("shows apps loading, failure and retry in Go to, then hides an empty group", async () => {
-    clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
     const originalFetch = fetch;
     let commandRequest = false;
     let retry = false;
@@ -547,7 +548,6 @@ describe("WP-20 shared widgets", () => {
 });
 
 it("keeps the status popover as unknown when owner health fails", async () => {
-  clients.forEach((client) => client.setDefaultOptions({ queries: { retry: false } }));
   const originalFetch = fetch;
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input).includes("/admin/api/status")) return jsonResponse({}, { status: 503 });
