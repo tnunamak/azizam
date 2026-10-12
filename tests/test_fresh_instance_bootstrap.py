@@ -154,5 +154,34 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
             self.skipTest("Live DB not present; isolation trivially satisfied")
 
 
+def test_bootstrap_admin_path_uses_env_then_yaml_then_repo_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gateway import bootstrap_config
+
+    root = tmp_path / "checkout"
+    elsewhere = tmp_path / "working-directory"
+    root.mkdir()
+    elsewhere.mkdir()
+    monkeypatch.setattr(bootstrap_config, "ROOT", root)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("AZIZAM_ADMIN_DB", "env/admin.db")
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == root / "env/admin.db"
+
+    monkeypatch.delenv("AZIZAM_ADMIN_DB")
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == root / "yaml/admin.db"
+    assert bootstrap_config.configured_admin_db_path({}) == root / "data/admin.db"
+
+    absolute = tmp_path / "absolute.db"
+    monkeypatch.setenv("AZIZAM_ADMIN_DB", str(absolute))
+    assert bootstrap_config.configured_admin_db_path(
+        {"db_path": "yaml/admin.db"}
+    ) == absolute
+
+
 if __name__ == "__main__":
     unittest.main()

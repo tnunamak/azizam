@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 from pathlib import Path
 
@@ -77,40 +78,63 @@ def _run_concurrent_ensure(
     *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> list[dict]:
     original_get = admin_store.get_service_registry_with_generation
+    original_write = admin_store.write_service_registry_with_audit
     first_reads = threading.Barrier(2)
-    read_count = 0
-    read_lock = threading.Lock()
-
-    def synchronized_get(*, path: Path) -> dict | None:
-        nonlocal read_count
-        with read_lock:
-            should_wait = read_count < 2
-            read_count += 1
-        if should_wait:
-            first_reads.wait(timeout=5)
-        return original_get(path=path)
-
-    monkeypatch.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+    mutex = threading.Lock()
+    snapshots: list[dict | None] = []
+    conflicts: list[int] = []
     results: list[dict] = []
     errors: list[BaseException] = []
 
+    def synchronized_get(*, path: Path) -> dict | None:
+        # Read first, then barrier: both callers hold a real snapshot before
+        # either one may write, so the second writer must see a stale CAS.
+        snapshot = original_get(path=path)
+        with mutex:
+            initial_read = len(snapshots) < 2
+            if initial_read:
+                snapshots.append(copy.deepcopy(snapshot))
+        if initial_read:
+            first_reads.wait(timeout=5)
+        return snapshot
+
+    def counted_write(*args, **kwargs):
+        try:
+            return original_write(*args, **kwargs)
+        except admin_store.OperatorSettingsGenerationConflict:
+            with mutex:
+                conflicts.append(kwargs["expected_generation"])
+            raise
+
     def worker() -> None:
         try:
-            results.append(
-                service_registry.ensure_service_registry(
-                    proxy_config, path=path, actor="boot"
-                )
+            result = service_registry.ensure_service_registry(
+                proxy_config, path=path, actor="boot"
             )
+            with mutex:
+                results.append(result)
         except BaseException as exc:  # assertion below makes failures visible
-            errors.append(exc)
+            with mutex:
+                errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-    assert all(not thread.is_alive() for thread in threads)
-    assert not errors
+    with monkeypatch.context() as patcher:
+        patcher.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+        patcher.setattr(admin_store, "write_service_registry_with_audit", counted_write)
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(2)]
+        try:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+            assert all(not thread.is_alive() for thread in threads)
+        finally:
+            first_reads.abort()
+
+    assert len(snapshots) == 2
+    assert snapshots[0] == snapshots[1]
+    assert not errors, errors
+    assert len(conflicts) == 1, conflicts
+    assert len(results) == 2
     return results
 
 
