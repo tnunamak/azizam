@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import io
 import json
 import sys
@@ -99,8 +100,10 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(ids.describe(35, "male"), "a man")
 
     def test_prepare_workflow_prunes_unused_slots(self) -> None:
+        template = copy.deepcopy(TEMPLATE)
+        original = copy.deepcopy(template)
         graph = ids.prepare_workflow(
-            TEMPLATE, image_nodes=NODES, used_images=3, prompt_node="7", seed_node="8",
+            template, image_nodes=NODES, used_images=3, prompt_node="7", seed_node="8",
             prompt="p", seed=9, resolution=1280, steps=20, cfg=1.5,
         )
         self.assertEqual({"L1", "L2", "L3"}, {k for k in graph if k.startswith("L")})
@@ -110,6 +113,12 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(graph["7"]["inputs"]["resolution"], 1280)
         self.assertNotIn("_meta", graph)
         self.assertIn("images.image_10", TEMPLATE["7"]["inputs"])  # the template itself is not mutated
+        self.assertEqual(
+            {key: graph["7"]["inputs"][key] for key in keys},
+            {"images.image_1": ["L1", 0], "images.image_2": ["L2", 0], "images.image_3": ["L3", 0]},
+            "identity graph: image slots point to wrong loaders",
+        )
+        self.assertEqual(template, original, "input template mutated")
 
     def test_pick_face(self) -> None:
         faces = [{"bbox": [0, 0, 50, 50]}, {"bbox": [200, 0, 320, 120]}]
