@@ -5,7 +5,6 @@ Each hot endpoint may open at most MAX_OPENS SQLite connections per request
 within P95_SLOW_LIMIT_S when every open costs 100 ms.
 """
 import asyncio
-import os
 import sqlite3
 import statistics
 import time
@@ -72,8 +71,7 @@ def test_endpoint_budget(gateway, path, auth):  # noqa: F811
     warm = counts[2:]  # the first requests may fill caches
     slow, _ = asyncio.run(_measure(path, headers, cookies, 0.1))
     p50, p95, slow_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
-    if os.environ.get("PERF_REPORT"):
-        print(f"PERF {path} opens={max(warm)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms", flush=True)
-    assert max(warm) <= MAX_OPENS, f"{path} opened {max(warm)} SQLite connections per request"
-    assert p95 <= P95_LIMIT_S, f"{path} p95 {p95*1000:.0f} ms"
-    assert slow_p95 <= P95_SLOW_LIMIT_S, f"{path} p95 with 100 ms opens {slow_p95*1000:.0f} ms"
+    note = f"{path}: opens={max(warm)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms"
+    assert max(warm) <= MAX_OPENS, f"PERF {note}"
+    assert p95 <= P95_LIMIT_S, f"PERF {note}"
+    assert slow_p95 <= P95_SLOW_LIMIT_S, f"PERF {note}"
