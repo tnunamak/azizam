@@ -131,14 +131,21 @@ describe("Make a picture", () => {
         status: polls < 2 ? "running" : "succeeded",
       });
     };
+    // The wake-up only works while the poller sits in its 2 s wait, and that
+    // wait is the only 2000 ms timer on the page. Wait for the poller to be
+    // there instead of guessing from the submit request.
+    const timer = vi.spyOn(window, "setTimeout");
+    const pollerWaits = () => timer.mock.calls.filter(([, ms]) => ms === 2000).length;
     await startRun(user);
-    await waitFor(() => expect(calls(SUBMIT)).toHaveLength(1));
+    await waitFor(() => expect(pollerWaits()).toBe(1));
     // The poll interval is 2 s; the wake-up must not wait for it.
-    const before = polls;
+    expect(polls).toBe(0);
     document.dispatchEvent(new Event("visibilitychange"));
-    await waitFor(() => expect(polls).toBeGreaterThan(before), { timeout: 1000 });
+    await waitFor(() => expect(polls).toBe(1), { timeout: 1000 });
+    await waitFor(() => expect(pollerWaits()).toBe(2));
     document.dispatchEvent(new Event("visibilitychange"));
     expect(await screen.findByAltText("Generated result", {}, { timeout: 1500 })).toBeVisible();
+    expect(polls).toBe(2);
   });
 
   describe("when the connection never comes back", () => {
