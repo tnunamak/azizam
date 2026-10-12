@@ -1,10 +1,5 @@
-import {
-  test,
-  expect,
-  request,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
+import { request, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -170,7 +165,7 @@ async function checkVisuals(page: Page, name: string) {
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
-    test(`detected model applies and routes with explicit access ${theme} ${width}`, async ({
+    test(`detected model applies and routes with explicit access ${theme} ${width}`, { tag: GLOBAL_STATE_TAG }, async ({
       page,
     }) => {
       const suffix = `${theme}-${width}`;
@@ -428,7 +423,7 @@ for (const theme of ["light", "dark"]) {
       await checkVisuals(page, `engines-applied-${suffix}`);
     });
 
-    test(`failed engine check identifies target and recovers ${theme} ${width}`, async ({
+    test(`failed engine check identifies target and recovers ${theme} ${width}`, { tag: GLOBAL_STATE_TAG }, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
@@ -482,7 +477,7 @@ for (const theme of ["light", "dark"]) {
   }
 }
 
-test("a registry conflict preserves the detected-model preview for retry", async ({
+test("a registry conflict preserves the detected-model preview for retry", { tag: GLOBAL_STATE_TAG }, async ({
   page,
 }) => {
   await page.route("**/admin/api/operator/services/capture-engine", (route) => {

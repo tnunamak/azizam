@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 
 // The banner truth table (disabled, unavailable, unobserved, hardware, unused,
 // unknown-usage) is asserted in src/components/shell/app-shell.health.spec.tsx.

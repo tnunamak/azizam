@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const plan = {
@@ -701,7 +702,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
   ).toBeNull();
 });
 
-test("people lane real invitation creates an account, app and working key, then revokes access", async ({
+test("people lane real invitation creates an account, app and working key, then revokes access", { tag: GLOBAL_STATE_TAG }, async ({
   browser,
   baseURL,
   request,

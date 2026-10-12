@@ -134,6 +134,33 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
             [row for row in backends or [] if row.get("key") not in unobserved]
         )
 
+def _mount_settings_restore():
+    """A fixture-only route that puts back an owner-global setting the admin API
+    cannot restore (web/e2e/fixtures/isolation.ts). The admin API refuses the
+    seeded sign-in mode "both" while no identity provider is enabled, so a test
+    that switches to built-in accounts could not otherwise undo its change.
+    Only non-secret settings on this allowlist are writable."""
+    import proxy
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+    from fastapi.routing import APIRoute
+    from gateway import admin_store
+
+    restorable = {"sign_in"}
+
+    async def restore(key: str, request: Request):
+        if key not in restorable or request.client is None or request.client.host != "127.0.0.1":
+            return JSONResponse({"error": "not restorable"}, status_code=403)
+        value = await request.json()
+        admin_store.put_operator_setting(key, value, updated_by="browser-fixture", path=proxy.ADMIN_DB_PATH)
+        return {"ok": True}
+
+    # First, ahead of the UI's catch-all routes.
+    proxy.app.router.routes.insert(0, APIRoute("/fixture/operator-settings/{key}", restore, methods=["PUT"]))
+
+
+_mount_settings_restore()
+
 import uvicorn
 
 # Playwright's request client keeps idle sockets alive with no timeout. With

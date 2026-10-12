@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // The app lives at the origin root (gateway/ui_pages.json). Old /ui URLs are
 // gone: no redirect, no alias.

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { chatAlias } from "../src/app/_home/recipes";
 
@@ -582,7 +583,7 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("inline reveal-once key tests a real chat request and produces one owned receipt", async ({
+test("inline reveal-once key tests a real chat request and produces one owned receipt", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -800,7 +801,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
   }
 });
 
-test("a new inherited key cannot borrow a broader existing app's recipe", async ({
+test("a new inherited key cannot borrow a broader existing app's recipe", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {

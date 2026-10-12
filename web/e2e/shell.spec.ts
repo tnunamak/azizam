@@ -1,5 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -42,7 +43,7 @@ test("You navigation keeps Workflows right after Models", async ({
   ).toBeVisible();
 });
 
-test("command palette navigates and runs three real actions", async ({
+test("command palette navigates and runs three real actions", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   context,
 }) => {

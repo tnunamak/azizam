@@ -1,8 +1,9 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 
-const screenshots = "/home/tnunamak/.tmp/gw-product/ui-review/gw-copy-shared";
+const screenshots = "test-results/screens/gw-copy-shared";
 
 async function checkAccessibility(page: Page) {
   const violations = (await new AxeBuilder({ page }).analyze()).violations

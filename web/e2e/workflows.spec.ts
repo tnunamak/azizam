@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 import { seededCatalog, seededRecentJobs } from "./fixtures/workflows-seeded";

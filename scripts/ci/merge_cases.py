@@ -75,7 +75,9 @@ def receipt_cases(report: Path, root: Path) -> list[dict]:
         cases.append({"framework": row["framework"], "config": row["config"], "project": row["project"],
                       "case": " > ".join([file, *row["titles"]]), "file": file,
                       "outcome": OUTCOME[row["status"]], "attempt": seen[key],
-                      "duration_s": row["duration_ms"] / 1000})
+                      "duration_s": row["duration_ms"] / 1000,
+                      # The isolated fixture's data namespace (TEST_STRATEGY.md 3.4.7).
+                      **({"namespace": row["namespace"]} if row.get("namespace") else {})})
         seen[key] += 1
     return cases
 

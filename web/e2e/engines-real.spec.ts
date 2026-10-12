@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
 type RegistryService = {
   id: string;
@@ -13,7 +13,7 @@ type RegistryResponse = {
   [key: string]: unknown;
 };
 
-test("real registry journey preserves disabled state and unknown config through endpoint edits", async ({
+test("real registry journey preserves disabled state and unknown config through endpoint edits", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   baseURL,
 }) => {

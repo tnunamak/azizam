@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const builtInOptions = {
@@ -108,7 +108,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
 });
 
 for (const theme of ["light", "dark"] as const) {
-  test(`native recovery failure fits 390px in ${theme}`, async ({
+  test(`native recovery failure fits 390px in ${theme}`, { tag: "@global-state" }, async ({
     page,
     context,
   }) => {

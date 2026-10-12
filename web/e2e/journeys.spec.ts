@@ -1,6 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
-test("create, rotate and revoke an app key, then inspect its audit receipt", async ({
+test("create, rotate and revoke an app key, then inspect its audit receipt", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
