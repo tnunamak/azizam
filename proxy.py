@@ -51,7 +51,7 @@ from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 import httpx
 import yaml
 from fastapi import FastAPI, Request, Response, WebSocket
-from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData, Headers, UploadFile
 from gateway.ui_static import UIStaticFiles
