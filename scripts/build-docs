@@ -283,7 +283,7 @@ def layout(*, title: str, description: str, nav: str, main: str, canonical: str,
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="docs-top">
   <div class="docs-top-inner">
-    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="brand" href="/showcase/"><span class="mark" aria-hidden="true"></span>Azizam</a>
     <a class="docs-home" href="{BASE}">Docs</a>
     <div class="docs-top-actions">
       <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">

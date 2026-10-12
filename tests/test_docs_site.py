@@ -120,7 +120,7 @@ class DocsServingTests(unittest.TestCase):
                 elif not target.startswith("/"):
                     self.assertTrue(href.startswith(("https://", "http://", "mailto:")), (url, href))
                     continue
-                if target == "/openapi.json" or target == "/showcase":
+                if target in ("/openapi.json", "/showcase/"):
                     continue
                 with self.subTest(page=url, href=href):
                     if target.startswith(BASE):

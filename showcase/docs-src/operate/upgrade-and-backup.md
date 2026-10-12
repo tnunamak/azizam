@@ -82,12 +82,12 @@ The script:
 3. Drains the gateway: new `POST`, `PUT` and `PATCH` requests get HTTP 503 with the code `gateway_draining` and a `Retry-After` header. Reads, job checks, cancels, sign-in, administration and health checks still work. It waits for running work to finish.
 4. Restarts the service and checks local health and, if you set it, the public address.
 
-Read every warning, even when the script exits with 0. A failed public check is reported as a warning. Do not use `--force` for a routine restart: it skips the waits and can cut off running work.
+Read every warning, even when the script exits with 0. Do not use `--force` for a routine restart: it skips the waits and can cut off running work.
 
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Restarted. Read the printed health and drain results. |
-| 1 | Health was not confirmed. |
+| 1 | Local health, or the public address you set, was not confirmed. |
 | 2 | The command options are wrong. |
 | 3 | Work was still running at the deadline. Nothing restarted. |
 | 4 | The drain endpoint was unavailable or refused. Nothing restarted. |

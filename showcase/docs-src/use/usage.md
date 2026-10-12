@@ -29,8 +29,8 @@ Open **Receipt coverage**, when it is shown, to read how much history the totals
 
 ## When usage does not load
 
-Select **Retry usage**. Until a refresh succeeds, the totals on screen are the last ones that loaded.
-
-If a receipt link says that the request wasn't found for your account, the receipt belongs to someone else or was deleted.
+- Select **Retry usage**. Until a refresh succeeds, the totals on screen are the last ones that loaded.
+- **Couldn’t open this receipt** means the receipt did not load. Select **Try again**.
+- **Receipt not available** means the receipt may belong to someone else or may have been deleted. Select **Dismiss** to close the message.
 
 Read [Receipts and usage](../concepts/receipts-and-usage.md) to learn how the totals are counted.

@@ -145,11 +145,11 @@ def build_showcase_router(
 
     docs_dir = static_dir / "docs"
 
-    @router.get(_DOCS_PREFIX, include_in_schema=False)
+    @router.api_route(_DOCS_PREFIX, methods=["GET", "HEAD"], include_in_schema=False)
     async def docs_root() -> Response:
         return RedirectResponse(_DOCS_PREFIX + "/", status_code=308)
 
-    @router.get(_DOCS_PREFIX + "/{path:path}", include_in_schema=False)
+    @router.api_route(_DOCS_PREFIX + "/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def docs_page(path: str) -> Response:
         if path == "search-index.json":
             return _file_response(docs_dir / path, cache="no-cache") if (docs_dir / path).is_file() else _docs_404()

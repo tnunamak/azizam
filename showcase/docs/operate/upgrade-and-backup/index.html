@@ -15,7 +15,7 @@
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="docs-top">
   <div class="docs-top-inner">
-    <a class="brand" href="/showcase"><span class="mark" aria-hidden="true"></span>Azizam</a>
+    <a class="brand" href="/showcase/"><span class="mark" aria-hidden="true"></span>Azizam</a>
     <a class="docs-home" href="/showcase/docs/">Docs</a>
     <div class="docs-top-actions">
       <button class="search-open js-only" type="button" aria-haspopup="dialog" aria-controls="search">
@@ -105,7 +105,7 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
 <li>Drains the gateway: new <code>POST</code>, <code>PUT</code> and <code>PATCH</code> requests get HTTP 503 with the code <code>gateway_draining</code> and a <code>Retry-After</code> header. Reads, job checks, cancels, sign-in, administration and health checks still work. It waits for running work to finish.</li>
 <li>Restarts the service and checks local health and, if you set it, the public address.</li>
 </ol>
-<p>Read every warning, even when the script exits with 0. A failed public check is reported as a warning. Do not use <code>--force</code> for a routine restart: it skips the waits and can cut off running work.</p>
+<p>Read every warning, even when the script exits with 0. Do not use <code>--force</code> for a routine restart: it skips the waits and can cut off running work.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table">
 <table>
 <thead>
@@ -121,7 +121,7 @@ docker<span class="w"> </span>compose<span class="w"> </span>ps
 </tr>
 <tr>
 <td>1</td>
-<td>Health was not confirmed.</td>
+<td>Local health, or the public address you set, was not confirmed.</td>
 </tr>
 <tr>
 <td>2</td>
