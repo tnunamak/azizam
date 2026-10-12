@@ -243,6 +243,22 @@ class TestMetricsStore(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_query_series_rejects_a_table_outside_the_allowlist(self) -> None:
+        for table in ("(SELECT 1 AS ts)", "samples; DROP TABLE samples", "sqlite_master"):
+            with self.assertRaises(ValueError, msg=table):
+                metrics_store.query_series("m", since_s=600, points=1, table=table)
+
+    def test_query_series_unknown_op_falls_back_to_avg(self) -> None:
+        conn = metrics_store.open_writer(self.db)
+        try:
+            bucket = ((int(time.time()) - 300) // 60) * 60
+            for offset, value in ((10, 2.0), (20, 10.0)):
+                metrics_store.record_sample(conn, bucket + offset, "ops2", value)
+            series = metrics_store.query_series("ops2", since_s=600, points=10, op="avg); DROP TABLE samples;--")
+            self.assertEqual(series, [(bucket, 6.0)])
+        finally:
+            conn.close()
+
     def test_downsample_minute(self) -> None:
         conn = metrics_store.open_writer(self.db)
         try:

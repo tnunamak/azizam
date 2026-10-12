@@ -176,6 +176,10 @@ def request_had_tools(request_body: dict[str, Any]) -> bool:
 # §5.5 — Streaming detection wrapper
 # ---------------------------------------------------------------------------
 
+# A line longer than this is dropped from detection (best-effort advisory).
+_MAX_LINE_CARRY_BYTES = 1 << 20
+
+
 class ToolcallStreamDetector:
     """Stateful per-request streaming tool-call detector.
 
@@ -218,7 +222,7 @@ class ToolcallStreamDetector:
         # the unfinished tail waits for the next read.
         data = self._line_carry + chunk
         cut = data.rfind(b"\n") + 1
-        self._line_carry = data[cut:]
+        self._line_carry = data[cut:] if len(data) - cut <= _MAX_LINE_CARRY_BYTES else b""
         for raw_line in data[:cut].splitlines():
             self._process_line(raw_line)
             if self._saw_tool_calls:

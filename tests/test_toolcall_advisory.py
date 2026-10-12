@@ -534,3 +534,9 @@ def test_stream_advisory_survives_transport_splits_and_long_deltas(structured_ca
                 assert "hermes_or_qwen" in advisory, (index, advisory)
 
     asyncio.run(exercise())
+
+
+def test_oversized_unterminated_line_is_not_retained():
+    detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
+    detector._process_chunk(b": " + b"x" * ((1 << 20) + 1))
+    assert detector._line_carry == b""

@@ -391,6 +391,8 @@ def query_series(
     """Down-sample to N points for sparklines. Returns [(ts, value), ...]."""
     if points <= 0:
         return []
+    if table not in ("samples", "samples_1min", "samples_1hour"):
+        raise ValueError(f"unknown samples table: {table!r}")
     now = int(time.time())
     cutoff = now - since_s
     bucket_s = max(1, since_s // points)
