@@ -8,6 +8,9 @@ import asyncio
 import sqlite3
 import statistics
 import time
+import traceback
+from collections import Counter
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -33,9 +36,11 @@ ENDPOINTS = (
 )
 
 
-def _counting_connect(real, delay, counter):
+def _counting_connect(real, delay, counter, opened):
     def connect(*args, **kwargs):
         counter[0] += 1
+        frames = [f for f in traceback.extract_stack()[:-1] if "/gateway/" in f.filename or f.filename.endswith("proxy.py")]
+        opened.append(f"{Path(str(args[0])).name}@{frames[-1].name if frames else '?'}")
         if delay:
             time.sleep(delay)
         return real(*args, **kwargs)
@@ -44,10 +49,11 @@ def _counting_connect(real, delay, counter):
 
 async def _measure(path, headers, cookies, delay):
     opens = [0]
+    opened = []
     times = []
     transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000))
     async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=cookies) as client:
-        with patch.object(sqlite3, "connect", _counting_connect(sqlite3.connect, delay, opens)):
+        with patch.object(sqlite3, "connect", _counting_connect(sqlite3.connect, delay, opens, opened)):
             counts = []
             for _ in range(SAMPLES if not delay else 5):
                 before = opens[0]
@@ -56,7 +62,7 @@ async def _measure(path, headers, cookies, delay):
                 times.append(time.perf_counter() - started)
                 counts.append(opens[0] - before)
                 assert response.status_code == 200, (path, response.status_code, response.text[:200])
-    return times, counts
+    return times, counts, Counter(opened)
 
 
 def _p(times, q):
@@ -75,11 +81,11 @@ def media_store(tmp_path, monkeypatch):
 def test_endpoint_budget(gateway, path, auth):  # noqa: F811
     headers = gateway["bearer"] if auth == "bearer" else {}
     cookies = gateway["cookies"] if auth == "cookie" else {}
-    fast, counts = asyncio.run(_measure(path, headers, cookies, 0))
+    fast, counts, opened = asyncio.run(_measure(path, headers, cookies, 0))
     warm = counts[2:]  # the first requests may fill caches
-    slow, _ = asyncio.run(_measure(path, headers, cookies, 0.1))
+    slow, _, _ = asyncio.run(_measure(path, headers, cookies, 0.1))
     p50, p95, slow_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
-    note = f"{path}: opens={max(warm)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms"
+    note = f"{path}: opens={max(warm)} {dict(opened)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms"
     assert max(warm) <= MAX_OPENS, f"PERF {note}"
     assert p95 <= P95_LIMIT_S, f"PERF {note}"
     assert slow_p95 <= P95_SLOW_LIMIT_S, f"PERF {note}"
