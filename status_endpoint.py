@@ -62,7 +62,10 @@ def _resolve_commit_hash() -> Optional[str]:
 
 
 _COMMIT_HASH: Optional[str] = _resolve_commit_hash()
-_HTTP_TIMEOUT = httpx.Timeout(2.0, connect=1.0)
+# A refused connection fails at once; a connect that merely takes long means a
+# slow or loaded host. 3 s lets a busy host finish its handshake without
+# stretching the whole-status budget (probes run concurrently).
+_HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
 _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
 
 # Cached budget read (60s TTL — file rarely changes).
@@ -255,7 +258,7 @@ async def _probe(
             "latency_ms": dt,
             "last_error": f"HTTP {r.status_code}",
         }
-    except (httpx.ConnectError, httpx.ConnectTimeout):
+    except httpx.ConnectError:
         return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
