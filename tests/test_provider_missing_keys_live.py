@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import socket
-import threading
-import time
+import asyncio
+from pathlib import Path
 from typing import Any, Mapping
 
 import httpx
 import pytest
-import uvicorn
 from fastapi import FastAPI, Request
 
 from gateway.admin_api import AdminAuthError, AdminContext
@@ -81,37 +79,13 @@ def _admin_auth(request: Request) -> AdminContext:
     return AdminContext(subject="usr_test", roles=frozenset({"admin"}))
 
 
-def _find_18xxx_port() -> int:
-    for port in range(18000, 19000):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError("no free test port in 18000-18999")
-
-
-def _wait_for_server(port: int) -> None:
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            with httpx.Client(timeout=0.2) as client:
-                response = client.get(f"http://127.0.0.1:{port}/admin/api/providers")
-                if response.status_code in {200, 401}:
-                    return
-        except httpx.HTTPError:
-            time.sleep(0.05)
-    raise AssertionError("uvicorn test server did not start")
-
-
 @pytest.mark.parametrize(
     ("provider_id", "env_name"),
     (("openrouter", "OPENROUTER_API_KEY"), ("typesafe", "TYPESAFE_API_KEY")),
 )
-def test_provider_admin_reports_missing_env_keys_over_real_tcp(
+def test_provider_admin_reports_missing_env_keys_in_process(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     provider_id: str,
     env_name: str,
 ) -> None:
@@ -124,36 +98,26 @@ def test_provider_admin_reports_missing_env_keys_over_real_tcp(
             TemporaryProviderAdminStore(),
             auth=_admin_auth,
             spending_provider=lambda: {},
+            ledger_path=tmp_path / "spend.db",
+            receipts_path=tmp_path / "receipts.db",
         )
     )
 
-    port = _find_18xxx_port()
-    server = uvicorn.Server(
-        # Auto-selecting uvloop changes the process-wide event-loop policy and
-        # interferes with later IsolatedAsyncioTestCase tests in this process.
-        uvicorn.Config(
-            app, host="127.0.0.1", port=port, log_level="warning", loop="asyncio"
-        )
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        _wait_for_server(port)
-        with httpx.Client(timeout=2) as client:
-            response = client.get(
-                f"http://127.0.0.1:{port}/admin/api/providers/{provider_id}",
+    async def fetch() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            return await client.get(
+                f"/admin/api/providers/{provider_id}",
                 headers={"authorization": "Bearer test-admin"},
             )
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["provider"]["key_status"] == {
-            "state": "missing",
-            "source": "env",
-            "api_key_env": env_name,
-        }
-        assert env_name in response.text
-        assert "sk-" not in response.text
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
-        assert not thread.is_alive()
+
+    response = asyncio.run(fetch())
+    assert response.status_code == 200
+    assert response.json()["provider"]["key_status"] == {
+        "state": "missing",
+        "source": "env",
+        "api_key_env": env_name,
+    }
+    assert env_name in response.text
+    assert "sk-" not in response.text

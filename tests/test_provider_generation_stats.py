@@ -220,21 +220,33 @@ def test_lookup_generation_cost_unknown_on_timeout(monkeypatch):
 
 def test_lookup_generation_cost_does_not_follow_redirects(monkeypatch):
     monkeypatch.setenv("PROVIDER_STATS_KEY", "test-key")
+    for destination in (
+        "https://provider.test/redirected",
+        "https://elsewhere.test/redirected",
+    ):
+        seen: list[httpx.Request] = []
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={"location": "https://elsewhere.test"})
+        def handler(request: httpx.Request, seen=seen, destination=destination) -> httpx.Response:
+            seen.append(request)
+            if len(seen) == 1:
+                return httpx.Response(302, headers={"location": destination})
+            return httpx.Response(200, json={"data": {"total_cost": "0.05"}})
 
-    async def call():
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            follow_redirects=True,
-        ) as client:
-            return await lookup_generation_cost(_provider(), "gen-redirect", client=client)
+        async def call(handler=handler):
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                follow_redirects=True,
+            ) as client:
+                return await lookup_generation_cost(_provider(), "gen-redirect", client=client)
 
-    cost = _run(call())
+        cost = _run(call())
 
-    assert cost.usd is None
-    assert cost.source == "provider-generation-stats-unavailable"
+        assert [(r.method, str(r.url)) for r in seen] == [
+            ("GET", "https://provider.test/api/v1/generation?id=gen-redirect")
+        ]
+        assert seen[0].headers["authorization"] == "Bearer test-key"
+        assert cost.usd is None
+        assert cost.source == "provider-generation-stats-unavailable"
 
 
 def test_lookup_generation_cost_unknown_for_nonfinite_reported_costs(monkeypatch):

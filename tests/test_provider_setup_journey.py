@@ -125,6 +125,69 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     assert "cloud-test" not in store.get_profile(plan["id"])["profile"]["remote"]["providers"]
 
 
+def test_setup_and_removal_share_the_paid_admission_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = tmp_path / "admin.db"
+    ledger = tmp_path / "spend.db"
+    monkeypatch.setattr(admin_store, "DB_PATH", db)
+    store = AdminSQLiteStore(db)
+    store.init_db()
+    plan = store.create_profile(
+        data={
+            "name": "Journey",
+            "profile": {
+                "id": "journey-plan",
+                "protocols": ["openai"],
+                "remote": {"providers": [], "budget_usd_per_day": "2.00"},
+            },
+        },
+        actor=OWNER,
+    )
+    app = FastAPI()
+    app.include_router(create_provider_admin_router(
+        store, auth=_owner, ledger_path=ledger, receipts_path=tmp_path / "receipts.db",
+    ))
+    with TestClient(app) as client:
+        created = client.post("/admin/api/providers", json={
+            "preset_id": "openrouter",
+            "provider_id": "journey-cloud",
+            "key_mode": "secret",
+            "api_key": "synthetic-journey-key",
+            "models": [{
+                "id": "test/model",
+                "upstream_model": "test/model",
+                "enabled": True,
+                "price": {
+                    "input_usd_per_million_tokens": "1",
+                    "output_usd_per_million_tokens": "1",
+                },
+            }],
+            "allowed_plans": [plan["id"]],
+        })
+        assert created.status_code == 201, created.json()
+        provider = providers.provider_lookup(store.get_service_registry(), "journey-cloud")
+        assert provider is not None
+        saved_plan = store.get_profile(plan["id"])
+        assert saved_plan is not None
+        reservation = providers.reserve_provider_spend(
+            load_profile(saved_plan["profile"]), provider,
+            providers.Cost(Decimal("0.001"), "price-table", provider.id),
+            path=ledger, admin_db_path=db,
+        )
+
+        blocked = client.delete("/admin/api/providers/journey-cloud")
+        assert blocked.status_code == 409, blocked.json()
+        assert blocked.json()["error"]["code"] == "provider_spend_pending"
+        assert "journey-cloud" in store.get_service_registry()["services"]
+
+        providers.release_provider_spend(reservation, path=ledger)
+        removed = client.delete("/admin/api/providers/journey-cloud")
+        assert removed.status_code == 200, removed.json()
+        assert client.get("/admin/api/providers/journey-cloud").status_code == 404
+        assert "journey-cloud" not in store.get_profile(plan["id"])["profile"]["remote"]["providers"]
+
+
 @pytest.mark.parametrize("rate", ["NaN", "Infinity", "-1", True, ""])
 def test_invalid_paid_prices_fail_before_secret_or_registry_writes(tmp_path: Path, rate: object) -> None:
     db = tmp_path / "admin.db"

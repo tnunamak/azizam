@@ -166,14 +166,25 @@ class LaterStatsRetryTests(ReconciliationExecutionFixture):
         assert not providers.list_provider_reconciliations(path=self.ledger)
 
 
-def test_direct_estimator_resolves_upstream_price_and_preserves_alias_override():
+def test_direct_estimator_resolves_upstream_price_and_preserves_alias_override(monkeypatch):
+    seen = []
+
+    def fixed_token_count(payload):
+        seen.append(payload)
+        return 1000
+
+    monkeypatch.setattr(providers, '_estimate_tokens_from_json', fixed_token_count)
     ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'KEY', 'paid-remote',
         {'input_usd_per_million_tokens':'1', 'output_usd_per_million_tokens':'1', 'models': {
             'upstream': {'output_usd_per_million_tokens':'100'},
             'one/alias': {'input_usd_per_million_tokens':'5'}}},
         {'credential_origin': 'https://provider.test', 'models':[{'id':'alias', 'upstream_model':'upstream'}]})
     cost = providers.estimate_chat_cost(ref, {'model':'one/alias', 'messages':[], 'max_tokens':100})
-    assert cost.usd >= Decimal('0.01')
+    assert seen == [{'messages': []}]
+    # 1000 input tokens at the alias rate 5 plus 100 output tokens at the upstream rate 100.
+    assert cost.usd == Decimal('0.015000000')
+    assert cost.source == 'price-table'
+    assert cost.provider == 'one'
 
 
 class RejectedChargeCleanupTests(ReconciliationExecutionFixture):
