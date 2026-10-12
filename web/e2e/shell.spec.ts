@@ -159,11 +159,9 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   });
   await expect(field).toHaveValue(address);
   await expect(field).toBeFocused();
-  expect(
-    await field.evaluate((element: HTMLInputElement) =>
+  await expect.poll(() => field.evaluate((element: HTMLInputElement) =>
       element.value.slice(element.selectionStart!, element.selectionEnd!),
-    ),
-  ).toBe(address);
+    )).toBe(address);
   // Pending command groups ("Loading apps…") are status regions of their own.
   await expect(
     dialog.getByTestId("gateway-address-recovery").getByRole("status"),
