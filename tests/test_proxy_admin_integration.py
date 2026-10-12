@@ -1086,27 +1086,10 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             display_name="Brother",
             path=self.db,
         )
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "brother-chat",
-                "profile": {
-                    "id": "brother-chat",
-                    "protocols": ["openai.chat"],
-                },
-            },
-            headers=self._auth(),
-        ).json()["profile"]
-        created = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "brother-laptop",
-                "kind": "personal",
-                "owner_user_id": user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        )
+        accounts.initialize(self.db)
+        chat_plan = store_plan("brother-chat", path=self.db, caps=("chat",))
+        accounts.change_person(user["id"], "test", path=self.db, plan_id=chat_plan["id"])
+        created = self._create_app("brother-laptop", kind="personal", owner_user_id=user["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
@@ -1303,11 +1286,6 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
-        profile = admin_store.create_profile(
-            "portal matrix",
-            {"id": "portal-matrix", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
         user_a = admin_store.upsert_oidc_user(
             cfg.issuer, "user-a", email="a@example.com", path=self.db
         )
@@ -1318,14 +1296,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             "User A App",
             kind="personal",
             owner_user_id=user_a["id"],
-            default_profile_id=profile["id"],
             access_plan="person", path=self.db,
         )
         app_b = admin_store.create_app(
             "User B App",
             kind="personal",
             owner_user_id=user_b["id"],
-            default_profile_id=profile["id"],
             access_plan="person", path=self.db,
         )
         credential_a = admin_store.create_credential_hash(
