@@ -549,7 +549,20 @@ class RunCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pid_file = Path(tmp) / "grandchild.pid"
             script = f"sleep 60 & echo $! > {pid_file}; wait"
-            code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+
+            class ReadyPopen(subprocess.Popen):
+                """Starts the timeout clock only once the grandchild exists."""
+
+                def wait(self, timeout=None):
+                    ready_by = time.monotonic() + 30  # watchdog; the pid file is the event
+                    while not (pid_file.exists() and pid_file.read_text().endswith("\n")):
+                        if time.monotonic() > ready_by:
+                            raise AssertionError("grandchild never started")
+                        time.sleep(0.01)
+                    return super().wait(timeout)
+
+            with patch.object(sr.subprocess, "Popen", ReadyPopen):
+                code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
             self.assertEqual(code, 124)
             grandchild = int(pid_file.read_text())
             deadline = time.time() + 5
