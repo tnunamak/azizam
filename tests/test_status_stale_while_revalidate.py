@@ -28,6 +28,7 @@ def test_stale_status_is_served_without_waiting_for_the_rebuild():
             assert stale["build"] == 1 and stale["cache_age_s"] > status._CACHE_TTL_S
             again = await asyncio.wait_for(status.get_cached_status({}), timeout=0.5)
             assert again["build"] == 1
+            await asyncio.sleep(0)
             assert len(builds) == 2, "one background rebuild, however many requests arrive"
             release.set()
             await asyncio.sleep(0.05)
