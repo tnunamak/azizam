@@ -532,6 +532,16 @@ function pauseOtherAudio(current: HTMLAudioElement) {
  * its own cover and title. One persistent control groups play, type and
  * length, leaving room for the day chip without adding another overlay.
  */
+/** The file a signed URL points at. A refetch re-signs the query, not the file. */
+function mediaResource(url: string) {
+  try {
+    const parsed = new URL(url, "http://resource.invalid");
+    return parsed.protocol === "data:" ? url : parsed.origin + parsed.pathname;
+  } catch {
+    return url;
+  }
+}
+
 function AudioTile({
   assetId,
   src,
@@ -1304,7 +1314,7 @@ function AssetTile({
       >
         {playableAudio ? (
           <AudioTile
-            key={asset.download_url}
+            key={mediaResource(asset.download_url!)}
             assetId={asset.asset_id}
             src={asset.download_url!}
             title={assetTitle(asset)}
@@ -2715,7 +2725,7 @@ export default function LibraryPage() {
               ))}
               {storedAssets.map((asset, index) => (
                 <AssetTile
-                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
+                  key={asset.asset_id}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}
@@ -2767,7 +2777,7 @@ export default function LibraryPage() {
             <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
               {goneAssets.map((asset) => (
                 <AssetTile
-                  key={`${asset.asset_id}:${asset.download_url ?? ""}:${asset.poster_asset_id ?? ""}:${asset.duration_s ?? ""}`}
+                  key={asset.asset_id}
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}
