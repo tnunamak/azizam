@@ -372,9 +372,12 @@ def test_oidc_mode_requires_configured_provider_and_invalid_settings_fail(accoun
     client, state = account_client
     state["oidc_enabled"] = False
     headers = {**OWNER_HEADERS, "If-Match": "0"}
-    for mode in ("oidc", "both"):
-        assert client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers=headers).status_code == 409
+    assert client.put("/admin/api/operator/sign-in", json={"mode": "oidc"}, headers=headers).status_code == 409
     assert client.put("/admin/api/operator/sign-in", json={"mode": "built-in"}, headers=headers).status_code == 200
+    # The default can be put back without a provider; it still reads as built-in only.
+    restored = client.put("/admin/api/operator/sign-in", json={"mode": "both"}, headers={**OWNER_HEADERS, "If-Match": client.get("/admin/api/operator/sign-in", headers=OWNER_HEADERS).json()["revision"]})
+    assert restored.status_code == 200
+    assert client.get("/auth/api/options").json()["oidc"] is False
     assert client.put("/admin/api/operator/sign-in", json={"mode": "anything"}, headers=OWNER_HEADERS).status_code == 422
     assert client.post("/admin/api/invites", json={"profile_id": "unused", "expires_in": True}, headers=OWNER_HEADERS).status_code == 422
     assert client.patch("/admin/api/people/unused", json={"disabled": "false"}, headers=OWNER_HEADERS).status_code == 422
