@@ -297,6 +297,27 @@ class TestStreamingThinkSplitTransform:
         parsed = _parse_sse_chunk(result)
         assert parsed["choices"][0]["delta"]["content"] == "V"
 
+    def test_finish_releases_held_text_when_stream_ends_without_done(self) -> None:
+        sst = StreamingThinkSplitTransform()
+        out = sst.process_chunk(_sse_chunk({"choices": [{"index": 0, "delta": {"content": "hello <thi"}}]}))
+        assert _parse_sse_chunk(out)["choices"][0]["delta"]["content"] == "hello "
+        tail = _parse_sse_chunk(sst.finish())
+        assert tail["choices"][0]["delta"]["content"] == "<thi"
+        assert sst.finish() == b""
+
+    def test_unicode_before_tag_keeps_offsets(self) -> None:
+        # U+0130 lowercases to two code points; offsets must still match the original text.
+        chunk = _sse_chunk({"choices": [{"delta": {"content": "\u0130<think>R</think>V"}}]})
+        delta = _parse_sse_chunk(StreamingThinkSplitTransform().process_chunk(chunk))["choices"][0]["delta"]
+        assert delta["content"] == "\u0130V"
+        assert delta["reasoning_content"] == "R"
+
+    def test_oversized_unterminated_line_is_passed_through_not_carried(self) -> None:
+        sst = StreamingThinkSplitTransform()
+        big = b"data: " + b"x" * ((1 << 20) + 1)
+        assert sst.process_chunk(big) == big
+        assert sst._raw_carry == b""
+
     def test_split_think_close_tag_across_chunks(self) -> None:
         """A </think> cut at any offset between two frames still yields clean channels."""
         text = "<think>reasoning</think>answer"

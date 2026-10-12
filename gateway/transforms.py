@@ -822,6 +822,10 @@ class ReasoningFieldNormalizeTransform:
 _THINK_OPEN_TAG = "<think>"
 _THINK_CLOSE_TAG = "</think>"
 _THINK_CLOSE_TAG_LEN = len(_THINK_CLOSE_TAG)
+# str.lower() can change length (U+0130), which shifts tag offsets; fold ASCII only.
+_ASCII_LOWER = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
+# An SSE line longer than this is not carried across reads; it passes through unparsed.
+_MAX_CARRY_BYTES = 1 << 20
 
 
 class StreamingThinkSplitTransform:
@@ -861,7 +865,7 @@ class StreamingThinkSplitTransform:
     @classmethod
     def _partial_tag_len(cls, text: str) -> int:
         """Length of the longest suffix of *text* that is a proper prefix of a tag."""
-        lowered = text.lower()
+        lowered = text.translate(_ASCII_LOWER)
         for length in range(min(_THINK_CLOSE_TAG_LEN - 1, len(lowered)), 0, -1):
             suffix = lowered[-length:]
             if any(tag.startswith(suffix) and len(tag) > length for tag in cls._TAGS):
@@ -875,7 +879,7 @@ class StreamingThinkSplitTransform:
         visible: list[str] = []
         reasoning: list[str] = []
         while text:
-            lowered = text.lower()
+            lowered = text.translate(_ASCII_LOWER)
             tag = _THINK_CLOSE_TAG if in_think else _THINK_OPEN_TAG
             idx = lowered.find(tag)
             if idx < 0 and not in_think:
@@ -941,6 +945,10 @@ class StreamingThinkSplitTransform:
         frame["choices"] = out_choices
         return f"data: {json.dumps(frame, separators=(',', ':'))}\n\n"
 
+    def finish(self) -> bytes:
+        """Release held text when the upstream closes without a finish frame or [DONE]."""
+        return self._flush_frame().encode("utf-8")
+
     def process_chunk(self, chunk: bytes) -> bytes:
         """Process one raw SSE read, repairing tags split across reads or frames."""
         data = self._raw_carry + chunk
@@ -950,6 +958,8 @@ class StreamingThinkSplitTransform:
         if tail and (tail.startswith(b"data:") or b"data:".startswith(tail)):
             self._raw_carry = data[cut:]
             data = data[:cut]
+            if len(self._raw_carry) > _MAX_CARRY_BYTES:
+                data, self._raw_carry = data + self._raw_carry, b""
         else:
             self._raw_carry = b""
         if not data:
