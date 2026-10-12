@@ -297,6 +297,7 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_content_route_returns_signed_video_asset_payload(self) -> None:
         asset_id = "vid_" + "d" * 64
         job = media_jobs.MediaJob(
+            app_id="app_test",  # the App the test key belongs to
             intent="video.generate",
             request_id="vid_done",
             status=media_jobs.STATUS_SUCCEEDED,

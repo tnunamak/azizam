@@ -270,6 +270,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         asset_id = "aud_" + "b" * 64
         job = media_jobs.MediaJob(
+            app_id="app_test",  # the App the test key belongs to
             intent="music.generate",
             request_id="aud_done",
             status=media_jobs.STATUS_SUCCEEDED,

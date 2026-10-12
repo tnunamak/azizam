@@ -621,6 +621,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_content_route_returns_openai_image_payload_for_succeeded_job(self) -> None:
         job = media_jobs.MediaJob(
+            app_id="app_test",  # the App the test key belongs to
             intent="image.generate",
             request_id="req_done",
             status=media_jobs.STATUS_SUCCEEDED,

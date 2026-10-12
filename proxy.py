@@ -13460,7 +13460,6 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     return owns_record(
         kind, record, app_id=identity.app_id if identity else None,
         owner_keys=_asset_read_owner_keys(auth_context),
-        unrestricted=False,
     )
 
 
