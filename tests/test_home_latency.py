@@ -15,11 +15,11 @@ def test_connections_secure_a_state_path_once(tmp_path):
     admin_store.init_db(db)
     with admin_store._conn(db):
         pass
-    with patch("pathlib.Path.mkdir") as mkdir, patch("pathlib.Path.chmod") as chmod, patch("os.open") as os_open:
+    with patch.object(admin_store, "secure_state_path", wraps=admin_store.secure_state_path) as secure:
         for _ in range(5):
             with admin_store._conn(db):
                 pass
-    assert (mkdir.call_count, chmod.call_count, os_open.call_count) == (0, 0, 0)
+    assert secure.call_count == 0
 
 
 def test_secure_state_path_still_retightens_on_demand(tmp_path):
