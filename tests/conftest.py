@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import socket
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,17 @@ def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR
+
+
+@pytest.fixture
+def host_disk_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A private directory on the host disk, for the few tests whose subject is
+    a real-disk property (fsync, free space, a device boundary).  `tmp_path` is
+    RAM under the hermetic runner (docs/design/TEST_STRATEGY.md 4.4)."""
+    root = os.environ.get("HERMETIC_HOST_DISK_DIR")
+    if not root:
+        pytest.fail("host_disk_dir needs the hermetic runner: HERMETIC_HOST_DISK_DIR is unset")
+    return Path(tempfile.mkdtemp(prefix="case-", dir=root))
 
 
 @pytest.fixture
