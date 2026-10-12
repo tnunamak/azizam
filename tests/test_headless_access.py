@@ -236,7 +236,7 @@ def principals():
         providers.ensure_ledger(path=proxy.ADMIN_DB_PATH.parent / "provider_spend.db")
         receipt_store.init_db()
         app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "auth-fixture", "access_plan": "person"})
-        assert app.status_code == 201
+        assert app.status_code == 201, app.text
         minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
                                  headers=case._auth(), json={"label": "auth-fixture"})
         assert minted.status_code == 201
