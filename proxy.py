@@ -25198,7 +25198,7 @@ async def _drain_streaming_upstream_error(
 
 async def _iter_openai_sse_json(upstream: httpx.Response):
     """Yield decoded JSON payloads from OpenAI-style ``data:`` SSE lines."""
-    buffer = ""
+    buffer = b""
 
     async def parse_line(line: str):
         line = line.strip()
@@ -25216,17 +25216,19 @@ async def _iter_openai_sse_json(upstream: httpx.Response):
     async for chunk in upstream.aiter_bytes():
         if not chunk:
             continue
-        buffer += chunk.decode("utf-8", errors="replace")
-        while "\n" in buffer:
-            line, buffer = buffer.split("\n", 1)
-            parsed = await parse_line(line)
+        # Split on bytes and decode whole lines: a wire chunk can end inside
+        # a UTF-8 character.
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            parsed = await parse_line(line.decode("utf-8", errors="replace"))
             if parsed is StopAsyncIteration:
                 return
             if parsed is not None:
                 yield parsed
 
     if buffer.strip():
-        parsed = await parse_line(buffer)
+        parsed = await parse_line(buffer.decode("utf-8", errors="replace"))
         if parsed is not None and parsed is not StopAsyncIteration:
             yield parsed
 

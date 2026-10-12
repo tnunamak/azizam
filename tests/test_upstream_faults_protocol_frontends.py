@@ -179,7 +179,6 @@ def _forwarded_stream(fake, frontend: str) -> None:
     _forwarded(fake, stream=True, stream_options={"include_usage": True}, **({"max_tokens": 16} if frontend == "anthropic" else {}))
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_events_cut_across_wire_chunks_reach_the_client_whole(frontend_gateway, fake_upstreams, frontend) -> None:
     serve, hop = frontend_gateway
@@ -264,7 +263,6 @@ def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upst
     expect_fixed("FK-B3", json.loads(raw), expected)
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B4: the frontends decode each wire chunk on its own, so a cut UTF-8 character becomes U+FFFD (fix/fk-upstream-faults)")
 def test_frontend_sse_reader_reassembles_a_cut_utf8_character(fake_upstreams) -> None:
     """The frontends' SSE reader on its own, against the wire, without the chat hop's event alignment."""
     fake = fake_upstreams.loopback(load_scenario("openai-compatible/stream-split-event", model=MODEL))
