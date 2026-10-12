@@ -73,7 +73,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             name="compat-chat-only",
             key_hash=key_hash,
             downstream={},
-            access=access(plan_for("compat-chat-only"), caps=('chat',)),
+            access=access(plan_for("compat-chat-only", caps=("chat",))),
         )
         lookup = Mock(
             side_effect=lambda candidate_hash, **kwargs:
