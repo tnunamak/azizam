@@ -9748,18 +9748,20 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
         return (None, None)
     if q_resp.status_code != 200 or h_resp.status_code != 200:
         return (None, None)
+    # A body that is not the expected JSON object says nothing about the
+    # queue: an empty answer here would read as "ComfyUI forgot every prompt"
+    # and orphan live jobs, so it counts as unavailable.
     try:
-        q_data = q_resp.json() or {}
+        q_data = q_resp.json()
+        h_data = h_resp.json()
     except Exception:
-        q_data = {}
-    try:
-        h_data = h_resp.json() or {}
-    except Exception:
-        h_data = {}
+        return (None, None)
+    if not isinstance(q_data, dict) or not isinstance(h_data, dict):
+        return (None, None)
     active: set[str] = set()
     active |= _extract_prompt_ids(q_data.get("queue_running") or [])
     active |= _extract_prompt_ids(q_data.get("queue_pending") or [])
-    return (active, h_data if isinstance(h_data, dict) else {})
+    return (active, h_data)
 
 
 async def _reconcile_video_progress() -> None:
@@ -10923,7 +10925,18 @@ async def proxy_comfy_video_create(
     if metadata_error is not None:
         return metadata_error
 
-    prompt = (body.get("prompt") or "").strip()
+    raw_prompt = body.get("prompt")
+    if raw_prompt is not None and not isinstance(raw_prompt, str):
+        return Response(
+            content=json.dumps({"error": {
+                "message": "prompt must be a string",
+                "type": "invalid_request_error",
+                "param": "prompt",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
+    prompt = (raw_prompt or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
     public_model = str(requested_model)
     size_from_body = body.get("size")
@@ -22050,6 +22063,11 @@ async def _run_video_media_job(job_id: str) -> None:
                 message = _media_job_failure_message(content_response)
                 _mark_video_media_job_failed(job_id, message, http_status=content_status)
                 return
+
+            # A cancel that arrived during the fetch must not leave a stored asset behind.
+            current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
+            if (current.get("metadata") or {}).get("cancel_requested_at"):
+                raise media_jobs.CancellationPending()
 
             content = bytes(getattr(content_response, "body", b"") or b"")
             filename = _video_filename_from_response(
