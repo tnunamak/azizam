@@ -58,6 +58,7 @@ def _member(db):
 def _post(path: str, body: dict, *, headers: list[tuple[str, str]], params: str = "") -> httpx.Response:
     async def call() -> httpx.Response:
         async with gateway_client(client=LAN_PEER) as client:
+            client.headers.pop("authorization", None)  # only the member's own credential goes out
             return await client.post(path + (f"?{params}" if params else ""), json=body, headers=headers)
 
     return asyncio.run(call())

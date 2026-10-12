@@ -70,7 +70,7 @@ KEYS = {
     "cred_cap_legacy": ("app_cap", "prof_cap", "Imported legacy cap key", "legacy-cap", False, None, None),
     "cred_openwebui_legacy": ("app_openwebui", "prof_openwebui", "Imported legacy open-webui key", "legacy-open-webui", False, T, None),
     "cred_museum": ("app_museum", None, "App", "opk_museum", False, None, TIM),
-    "cred_paperless": ("app_paperless", "prof_assistant", "PAPERLESS_AI_GATEWAY_KEY", "opk_pl", False, T, None),
+    "cred_paperless": ("app_paperless", "prof_assistant", "PAPERLESS_ACCESS_KEY", "opk_pl", False, T, None),
     "cred_openwhispr": ("app_openwhispr", None, "Default key", "opk_ow", False, T, TIM),
     "cred_probe": ("app_probe", None, "dsh-probe", "opk_probe", False, T, None),
     "cred_paid_proof_denied": ("app_paid_proof", "prof_simon", "Paid proof denied plan key", "opk_ppd", True, T, None),
