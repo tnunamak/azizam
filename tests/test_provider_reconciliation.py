@@ -21,7 +21,7 @@ class ReconciliationExecutionFixture(unittest.IsolatedAsyncioTestCase):
 
 class UnknownChargeExecutionTests(ReconciliationExecutionFixture):
     async def test_malformed_completed_charge_blocks_second_dispatch(self):
-        self.profile = plan_for('paid-app', paid=['openrouter'], usd_per_day='5.00')
+        self.profile = plan_for('paid-app', paid=['openrouter'], usd_per_day='0.02')
         self.body = {**self.body, 'stream': True}
         send = AsyncMock(return_value=(_Client(), _Response(
             headers={'content-type': 'text/event-stream'}, chunks=[
@@ -200,7 +200,7 @@ class RejectedChargeCleanupTests(ReconciliationExecutionFixture):
              'models': [{'id': 'gpt-4.1-mini'}]},
         )
         self.body = {**self.body, 'model': 'openai/gpt-4.1-mini'}
-        self.profile = plan_for('paid-app', paid=['openai'], usd_per_day='5.00')
+        self.profile = plan_for('paid-app', paid=['openai'], usd_per_day='0.02')
         send = AsyncMock(return_value=(_Client(), CancelledClose(status_code=500,
             headers={'content-type':'application/json', 'x-litellm-response-cost':'0.03'})))
         with self.assertRaises(asyncio.CancelledError):
