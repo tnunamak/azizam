@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from gateway import admin_store, receipt_store
-from tests.support.access import plan_for  # noqa: E402
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.provider_admin import create_provider_admin_router
 from test_provider_admin import FakeProviderAdminStore, _auth
 
@@ -152,7 +152,8 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
                     {
                         "id": 1,
                         "provider": "openrouter",
-                        "profile_id": "builders",
+                        "app_id": None,
+                        "person_id": None,
                         "status": "needs_reconciliation",
                         "estimated_usd": "0.020000000",
                         "actual_usd": None,
@@ -391,7 +392,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
 
         provider = provider_lookup(self.store.registry, "openrouter-canonical")
         self.assertIsNotNone(provider)
-        profile = plan_for("builders", paid=sorted({"openrouter-canonical"}))
+        profile = identity("builders-plan" and plan_for("builders", paid=sorted({"openrouter-canonical"})))
         with patch.dict(os.environ, {"OPENROUTER_CANONICAL_API_KEY": "test-key"}):
             reserve_provider_spend(
                 profile,
