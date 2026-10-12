@@ -3283,7 +3283,7 @@ async def _ensure_litellm_local_backend_target(
             decision=DENIED,
             reasons=(f"backend {backend!r} not permitted by profile",),
         ))
-    availability = _service_availability_response(backend, service_label=backend)
+    availability = (await asyncio.to_thread(_service_availability_response, backend, service_label=backend))
     if availability is not None:
         return availability
     try:
@@ -3589,7 +3589,7 @@ async def _current_loaded_llm_target(
             decision=DENIED,
             reasons=(f"backend {active!r} not permitted by profile",),
         ))
-    availability = _service_availability_response(active, service_label=active)
+    availability = (await asyncio.to_thread(_service_availability_response, active, service_label=active))
     if availability is not None:
         return None, availability
 
@@ -4373,7 +4373,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     )
     if admission is not None:
         return admission
-    service_response = _service_availability_response("tts", service_label="TTS")
+    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
     if service_response is not None:
         return service_response
 
@@ -4457,7 +4457,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 )
                 if admission is not None:
                     return admission
-                service_response = _service_availability_response(tts_service_id, service_label=tts_service_id)
+                service_response = (await asyncio.to_thread(_service_availability_response, tts_service_id, service_label=tts_service_id))
                 if service_response is not None:
                     return service_response
                 headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
@@ -4850,7 +4850,7 @@ async def _dispatch_selected_stt_route(
     if execution is None:
         # No service can be dispatched. Preserve the generic route gate for
         # this no-target case; once a target exists, policy always uses its id.
-        denied = _enforce_runtime_route_policy(auth_context, f"/v1/audio/{operation}")
+        denied = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, f"/v1/audio/{operation}"))
         if denied is not None:
             return denied
         return await proxy_stt_request(request, auth_context, operation=operation)
@@ -5023,7 +5023,7 @@ async def proxy_stt_request(
         decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
         if decision is not None and decision.denied:
             return _policy_denied_response(decision)
-    unavailable = None if model_unpeeked else _service_availability_response(execution.service_id, service_label=execution.service_id)
+    unavailable = None if model_unpeeked else (await asyncio.to_thread(_service_availability_response, execution.service_id, service_label=execution.service_id))
     if unavailable is not None:
         return unavailable
 
@@ -5109,7 +5109,7 @@ async def proxy_stt_request(
                 )
                 if not_ready is not None:
                     return not_ready
-                unavailable = _service_availability_response(execution.service_id, service_label=execution.service_id)
+                unavailable = (await asyncio.to_thread(_service_availability_response, execution.service_id, service_label=execution.service_id))
                 if unavailable is not None:
                     return unavailable
                 if service_changed:
@@ -8055,10 +8055,8 @@ async def proxy_comfy_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -8492,10 +8490,8 @@ async def proxy_comfy_edit_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -9131,10 +9127,8 @@ async def proxy_comfy_variations_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -10869,10 +10863,8 @@ async def proxy_comfy_video_create(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         return service_response
 
@@ -11852,7 +11844,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
     if not VIDEO_EXTEND_WORKFLOW:
@@ -12260,7 +12252,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -12422,7 +12414,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -12670,7 +12662,7 @@ async def proxy_comfy_video_remix(
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
 
@@ -12724,7 +12716,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
 
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = _service_availability_response("comfyui", service_label="ComfyUI")
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui", service_label="ComfyUI"))
     if service_response is not None:
         return service_response
     try:
@@ -13671,7 +13663,7 @@ async def _filter_model_list_for_profile(
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
-    registry = ADMIN_STORE.get_service_registry()
+    registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
     remote_models = provider_execution.litellm_provider_model_lookup(registry)
     profile = _profile_for_auth_context(auth_context)
     provider_refs = providers.provider_refs(registry)
@@ -13778,17 +13770,25 @@ def _capability_for_profile(
     auth_context: AuthContext,
     *,
     protocol: str | None = None,
+    registry: Mapping[str, Any] | None = None,
+    provider_admin_state: Callable[[], Mapping[str, Any]] | None = None,
 ) -> Capability:
+    """Evaluate one capability for a profile.
+
+    Batch callers pass ``registry`` (and a memoized ``provider_admin_state``)
+    so a request reads each once instead of once per capability.
+    """
     profile = _profile_for_auth_context(auth_context)
     if "alias" in capability.tags and capability.backend == "gateway":
         return replace(capability, policy_available=False)
     remote_provider_id = None
-    provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+    provider = provider_lookup(registry if registry is not None else ADMIN_STORE.get_service_registry(), capability.backend)
     if "remote" in capability.tags or (provider is not None and service_registry.is_remote_provider_config(provider.config)):
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
         remote_provider_id = provider.id
-        provider_policy = ADMIN_STORE.get_provider_admin_state().get("providers", {}).get(provider.id, {})
+        admin_state = provider_admin_state() if provider_admin_state else ADMIN_STORE.get_provider_admin_state()
+        provider_policy = admin_state.get("providers", {}).get(provider.id, {})
         if "allowed_plans" in provider_policy and profile.id not in (provider_policy["allowed_plans"] or []):
             return replace(capability, policy_available=False, policy_reasons=("Provider is not allowed by this access plan.",))
     return capability_with_policy_view(
@@ -13841,7 +13841,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities.extend(decision_capabilities)
 
     for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
-        provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), model.id)
+        provider = decision_provider_execution.systemone_provider_for_model(live_registry, model.id)
         if provider:
             capabilities.append(decision_provider_execution.capability_for(provider, model.id))
 
@@ -13874,8 +13874,18 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         )
     ]
 
+    admin_state: dict[str, Mapping[str, Any]] = {}
+
+    def provider_admin_state() -> Mapping[str, Any]:
+        if "value" not in admin_state:
+            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
+        return admin_state["value"]
+
     return [
-        _capability_for_profile(capability, auth_context)
+        _capability_for_profile(
+            capability, auth_context,
+            registry=live_registry, provider_admin_state=provider_admin_state,
+        )
         for capability in capabilities
     ]
 
@@ -13935,7 +13945,7 @@ async def _status_payload_with_service_rows(
 
 
 async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
-    capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
+    capabilities = (await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request)))
     try:
         service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
         return project_capabilities(
@@ -13999,15 +14009,26 @@ def _runtime_availability_evidence(
 async def _status_payload_with_availability() -> Mapping[str, Any]:
     payload = await status_endpoint.get_cached_status(config)
     try:
-        service_records = ADMIN_STORE.get_service_registry()
+        # Registry and capability resolution read SQLite; keep them off the loop.
+        service_records, no_auth_capabilities = await asyncio.to_thread(
+            lambda: (ADMIN_STORE.get_service_registry(), _gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)))
         execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
+        # Composed workflow engines (the face sidecar) are checked read-only
+        # for evidence; the engine grid itself is unchanged.
+        service_rows = await _status_payload_with_service_rows(
+            payload, _workflow_availability_services(service_records),
+            _composed_dependency_service_ids(no_auth_capabilities),
+        )
+        availability_evidence = await asyncio.to_thread(
+            _runtime_availability_evidence, service_records,
+            status_payload=service_rows, health_evidence=health_evidence)
         return {
             **payload,
             "_relied_on_service_ids": relied_on_service_ids(
                 registry=service_records,
                 runtime_config=config,
-                capabilities=_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT),
+                capabilities=no_auth_capabilities,
                 selected_execution_dependencies=[execution_runtime.service_id]
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
@@ -14019,16 +14040,7 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
                    for route in provider_execution.litellm_provider_model_lookup(service_records).values()
                    if route.get("service_id")],
             ),
-            "_availability_evidence": _runtime_availability_evidence(
-                service_records,
-                # Composed workflow engines (the face sidecar) are checked
-                # read-only for evidence; the engine grid itself is unchanged.
-                status_payload=await _status_payload_with_service_rows(
-                    payload, _workflow_availability_services(service_records),
-                    _composed_dependency_service_ids(_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)),
-                ),
-                health_evidence=health_evidence,
-            ),
+            "_availability_evidence": availability_evidence,
         }
     except Exception:  # noqa: BLE001
         return payload
@@ -14160,7 +14172,7 @@ async def _security_headers_middleware(request: Request, call_next):
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs behind the proxy key layer."""
     if request.url.path.startswith("/gateway/v1"):
-        auth_context = authenticate_request(request, request.url.path)
+        auth_context = (await asyncio.to_thread(authenticate_request, request, request.url.path))
         if isinstance(auth_context, Response):
             return auth_context
         request.scope["auth_context"] = auth_context
@@ -15391,16 +15403,16 @@ class _LiveLiteLLMKeyClient:
         return LiteLLMKeyAdminClient(_litellm_runtime_config()).enabled
 
     async def list_keys(self, **kwargs):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).list_keys(**kwargs)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).list_keys(**kwargs)
 
     async def generate_key(self, spec):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).generate_key(spec)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).generate_key(spec)
 
     async def key_info(self, key):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).key_info(key)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).key_info(key)
 
     async def delete_keys(self, **kwargs):
-        return await LiteLLMKeyAdminClient(_litellm_runtime_config()).delete_keys(**kwargs)
+        return await LiteLLMKeyAdminClient((await asyncio.to_thread(_litellm_runtime_config))).delete_keys(**kwargs)
 
 
 _LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
@@ -15581,7 +15593,7 @@ async def _account_session_revocation(request: Request, call_next):
     except SessionError:
         # Another gateway on the same host may own it; cookies are not port-scoped.
         return response
-    if accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+    if await asyncio.to_thread(accounts.session_allowed, session.subject, session.session_id, path=ADMIN_STORE.path):
         return response
     # A sign-in response sets the new session; deleting after it would undo it.
     if any(value.startswith(f"{cookie.name}=") for value in response.headers.getlist("set-cookie")):
@@ -15614,11 +15626,11 @@ app.include_router(create_home_router(
 
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     snapshot = build_user_portal_snapshot(
         session,
         default_profile_id=(
-            _default_profile_id_for_session(session) if session else None
+            (await asyncio.to_thread(_default_profile_id_for_session, session)) if session else None
         ),
         path=ADMIN_STORE.path,
     )
@@ -15668,15 +15680,16 @@ async def _models_catalog_health_evidence(
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the models catalog",
             status_code=401,
         )
-    default_profile_id = _default_profile_id_for_session(session)
-    user_snapshot = build_user_portal_snapshot(
+    default_profile_id = (await asyncio.to_thread(_default_profile_id_for_session, session))
+    user_snapshot = await asyncio.to_thread(
+        build_user_portal_snapshot,
         session,
         default_profile_id=default_profile_id,
         path=ADMIN_STORE.path,
@@ -15687,7 +15700,10 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the models catalog",
             status_code=401,
         )
-    auth_contexts = auth_contexts_from_user_snapshot(
+    # Blocking SQLite and file work runs on a worker thread so a slow disk
+    # cannot stall every other request on the event loop.
+    auth_contexts = await asyncio.to_thread(
+        auth_contexts_from_user_snapshot,
         user_snapshot,
         default_profile_id=default_profile_id,
         profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
@@ -15695,21 +15711,25 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     )
     if not auth_contexts:
         return build_models_catalog(alias_views={}, capabilities=[])
-    activity = build_user_activity_snapshot(
-        session,
-        limit=50,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
-    try:
-        service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
-    except Exception:  # noqa: BLE001
-        service_records = {}
-    service_records = _workflow_availability_services(service_records)
-    capability_sets = [
-        _gateway_capabilities_for_auth_context(auth_context)
-        for auth_context in auth_contexts
-    ]
+
+    def load_catalog_inputs() -> tuple[dict[str, Any], Mapping[str, Any], list[list[Any]]]:
+        activity = build_user_activity_snapshot(
+            session,
+            limit=50,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+        try:
+            records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
+        except Exception:  # noqa: BLE001
+            records = {}
+        records = _workflow_availability_services(records)
+        return activity, records, [
+            _gateway_capabilities_for_auth_context(auth_context)
+            for auth_context in auth_contexts
+        ]
+
+    activity, service_records, capability_sets = await asyncio.to_thread(load_catalog_inputs)
     visible_service_ids = {
         str(capability.backend)
         for capabilities in capability_sets
@@ -15734,35 +15754,38 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         pass
-    availability_evidence = _runtime_availability_evidence(
-        service_records,
-        status_payload=status_payload,
-        health_evidence=health_evidence,
-    )
-    capability_sets = [
-        project_capabilities(group, service_records=service_records,
-                             evidence=availability_evidence,
-                             workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
-        for group in capability_sets
-    ]
-    model_entries = [
-        *_stable_alias_model_entries(),
-        *_build_workflow_model_entries(),
-        *_current_loaded_model_entries(),
-    ]
-    catalog = build_models_catalog(
-        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
-        alias_views=_gateway_aliases_provider(),
-        capability_sets=capability_sets,
-        model_entries=model_entries,
-        service_records=service_records,
-        recent_receipts=activity.get("receipts") or (),
-        health_evidence=availability_evidence,
-        workflow_records=[
-            {"id": record.id, "manifest": record.manifest}
-            for record in GATEWAY_WORKFLOW_REGISTRY.records()
-        ],
-    )
+    def assemble_catalog() -> dict[str, Any]:
+        availability_evidence = _runtime_availability_evidence(
+            service_records,
+            status_payload=status_payload,
+            health_evidence=health_evidence,
+        )
+        projected_sets = [
+            project_capabilities(group, service_records=service_records,
+                                 evidence=availability_evidence,
+                                 workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
+            for group in capability_sets
+        ]
+        model_entries = [
+            *_stable_alias_model_entries(),
+            *_build_workflow_model_entries(),
+            *_current_loaded_model_entries(),
+        ]
+        return build_models_catalog(
+            model_metadata=_catalog_model_metadata(model_entries, service_records, projected_sets),
+            alias_views=_gateway_aliases_provider(),
+            capability_sets=projected_sets,
+            model_entries=model_entries,
+            service_records=service_records,
+            recent_receipts=activity.get("receipts") or (),
+            health_evidence=availability_evidence,
+            workflow_records=[
+                {"id": record.id, "manifest": record.manifest}
+                for record in GATEWAY_WORKFLOW_REGISTRY.records()
+            ],
+        )
+
+    catalog = await asyncio.to_thread(assemble_catalog)
     # The browser has a session, not a public API key. Carry the configured
     # voice contract on each already-authorized speech row so it can choose
     # a voice before creating its temporary Try key.
@@ -15808,14 +15831,14 @@ app.include_router(create_models_catalog_router(_user_models_catalog_payload))
 
 
 async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    default_profile_id = _default_profile_id_for_session(session)
+    default_profile_id = (await asyncio.to_thread(_default_profile_id_for_session, session))
     user_snapshot = build_user_portal_snapshot(
         session,
         default_profile_id=default_profile_id,
@@ -15834,7 +15857,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         context_for_profile=_catalog_auth_context_for_profile,
     )
     capability_sets = [
-        _gateway_capabilities_for_auth_context(auth_context)
+        (await asyncio.to_thread(_gateway_capabilities_for_auth_context, auth_context))
         for auth_context in auth_contexts
     ]
     capabilities = [
@@ -15891,7 +15914,7 @@ async def user_portal_activity(request: Request):
     unauthenticated request returns an empty (unauthenticated) snapshot rather
     than leaking anyone's activity.
     """
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
@@ -15917,7 +15940,7 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
     "why did this call fail" URL. Ownership is verified server-side; a receipt
     the caller doesn't own is reported as not found, never 403.
     """
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
         receipt = get_user_receipt(
             session,
@@ -15937,7 +15960,7 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
 @app.post("/me/api/apps", include_in_schema=False)
 async def user_portal_create_app(request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
@@ -15953,7 +15976,7 @@ async def user_portal_create_app(request: Request):
         payload = create_user_app(
             session,
             name=str(name or ""),
-            default_profile_id=_default_profile_id_for_session(session),
+            default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -15968,7 +15991,7 @@ async def user_portal_create_app(request: Request):
 @app.delete("/me/api/apps/{app_id}", include_in_schema=False)
 async def user_portal_delete_app(app_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
@@ -15993,7 +16016,7 @@ async def user_portal_delete_app(app_id: str, request: Request):
 @app.post("/me/api/apps/{app_id}/keys", include_in_schema=False)
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
@@ -16010,7 +16033,7 @@ async def user_portal_mint_key(app_id: str, request: Request):
             session,
             app_id,
             label=str(label).strip() if label else None,
-            default_profile_id=_default_profile_id_for_session(session),
+            default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16026,7 +16049,7 @@ async def user_portal_mint_key(app_id: str, request: Request):
 async def user_portal_try_key(request: Request):
     """Reuse or mint the Try page's key for this sign-in session."""
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
@@ -16042,7 +16065,7 @@ async def user_portal_try_key(request: Request):
         credential = ensure_try_session_key(
             session,
             reuse_id=str(reuse_id) if reuse_id else None,
-            default_profile_id=_default_profile_id_for_session(session),
+            default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16057,7 +16080,7 @@ async def user_portal_try_key(request: Request):
 @app.post("/me/api/access-request", include_in_schema=False)
 async def user_portal_request_access(request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
@@ -16067,7 +16090,7 @@ async def user_portal_request_access(request: Request):
     try:
         payload = request_user_access(
             session,
-            default_profile_id=_default_profile_id_for_session(session),
+            default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16082,7 +16105,7 @@ async def user_portal_request_access(request: Request):
 @app.get("/me/api/credentials/{credential_id}/access", include_in_schema=False)
 async def user_portal_credential_access(credential_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
         credential = get_user_app_credential(
             session,
             credential_id,
@@ -16103,7 +16126,7 @@ async def user_portal_credential_access(credential_id: str, request: Request):
                 status_code=404,
             )
         )
-    catalog = _user_access_catalog_for_auth_context(AuthContext(identity=identity))
+    catalog = (await asyncio.to_thread(_user_access_catalog_for_auth_context, AuthContext(identity=identity)))
     return JSONResponse(
         status_code=200,
         content={
@@ -16123,7 +16146,7 @@ async def user_portal_credential_access(credential_id: str, request: Request):
 @app.post("/me/api/credentials/{credential_id}/revoke", include_in_schema=False)
 async def user_portal_revoke_key(credential_id: str, request: Request):
     try:
-        session = _require_user_session(request)
+        session = (await asyncio.to_thread(_require_user_session, request))
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -16519,7 +16542,7 @@ async def _setup_page_response(
     one_time_key: Mapping[str, Any] | None = None,
     status_code: int = 200,
 ) -> Response:
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     is_admin_signed_in = False
     actor_label: str | None = None
     if session is not None and session.role in {"owner", "admin", "superadmin"}:
@@ -17034,7 +17057,7 @@ async def setup_local_login(request: Request):
 @app.post("/setup/first-app", include_in_schema=False)
 async def setup_create_first_app(request: Request):
     actor = _setup_admin_context(request)
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if actor is None or actor.auth_method != "session":
         return await _setup_page_response(
             request,
@@ -17071,7 +17094,7 @@ async def setup_create_first_app(request: Request):
             if app_record is None:
                 payload = request_user_access(
                     session,
-                    default_profile_id=_default_profile_id_for_session(session),
+                    default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
                     path=ADMIN_STORE.path,
                 )
                 app_record = payload["app"]
@@ -17079,7 +17102,7 @@ async def setup_create_first_app(request: Request):
                 session,
                 str(app_record["id"]),
                 label=key_label,
-                default_profile_id=_default_profile_id_for_session(session),
+                default_profile_id=(await asyncio.to_thread(_default_profile_id_for_session, session)),
                 path=ADMIN_STORE.path,
             )
             admin_store.record_audit(
@@ -17296,7 +17319,7 @@ async def admin_oidc_callback(request: Request):
 
 @app.get("/auth/logout-confirm", include_in_schema=False)
 async def logout_confirmation(request: Request):
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         return RedirectResponse("/sign-in/", status_code=303)
     csrf = _csrf_token_for_oidc_session(session)
@@ -17311,7 +17334,7 @@ async def logout_confirmation(request: Request):
 
 @app.post("/logout", include_in_schema=False)
 async def admin_logout(request: Request):
-    session = _oidc_session_from_request(request)
+    session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
         return JSONResponse({"error": {"code": "login_required", "message": "Sign in first."}}, status_code=401)
     supplied = request.headers.get("x-azizam-csrf") or ""
@@ -17608,7 +17631,7 @@ async def admin_config_export(request: Request):
     Admin-auth required (same guard as all /admin/api/* routes).
     """
     try:
-        ADMIN_AUTH(request)
+        (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
@@ -17696,7 +17719,8 @@ async def _firehose_request_counter(request: Request, call_next):
                 if AUTH_ENABLED:
                     raw = get_client_api_key_from_headers(request.headers)
                     if raw:
-                        ident = runtime_identity_for_app_credential_hash(
+                        ident = await asyncio.to_thread(
+                            runtime_identity_for_app_credential_hash,
                             hash_api_key(raw),
                             inherited_profile_id_for_app=_inherited_profile_id_for_app,
                             path=ADMIN_STORE.path,
@@ -17816,6 +17840,7 @@ async def well_known_azizam(request: Request):
     metadata = build_gateway_discovery_metadata(
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
+        mcp_tools=mcp_server.TOOLS,
     )
     metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {
@@ -17897,10 +17922,10 @@ def _speech_engine_voices() -> dict[str, Any]:
 async def list_voices(request: Request):
     """Return available TTS voices (OpenAI-compatible names)."""
     canonical_path = "/v1/audio/voices" if request.url.path.endswith("/audio/voices") else "/v1/voices"
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, canonical_path)
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, canonical_path))
     if policy_response is not None:
         return policy_response
 
@@ -17938,10 +17963,10 @@ async def list_voices(request: Request):
 @app.post("/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
 async def audio_speech(request: Request):
     """OpenAI-compatible TTS endpoint - routes to TTS backend with voice mapping."""
-    auth_context = authenticate_request(request, "/v1/audio/speech")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/speech"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/speech")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/speech"))
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
@@ -17958,7 +17983,7 @@ async def audio_speech(request: Request):
 @app.post("/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
 async def audio_transcriptions(request: Request):
     """OpenAI-compatible STT endpoint - routes to STT backend."""
-    auth_context = authenticate_request(request, "/v1/audio/transcriptions")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/transcriptions"))
     if isinstance(auth_context, Response):
         return auth_context
     return await _dispatch_selected_stt_route(request, auth_context, operation="transcriptions")
@@ -17968,7 +17993,7 @@ async def audio_transcriptions(request: Request):
 @app.post("/v1/audio/translations", openapi_extra=AUDIO_TRANSLATIONS_OPENAPI)
 async def audio_translations(request: Request):
     """OpenAI-compatible audio translation endpoint, if the STT backend supports it."""
-    auth_context = authenticate_request(request, "/v1/audio/translations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/translations"))
     if isinstance(auth_context, Response):
         return auth_context
     return await _dispatch_selected_stt_route(request, auth_context, operation="translations")
@@ -18011,14 +18036,12 @@ def _rerank_error(
 
 
 async def _handle_rerank(request: Request, path: str) -> Response:
-    auth_context = authenticate_request(request, path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, path))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         _RERANK_POLICY_PATH,
-        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,
-    )
+        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,))
     if policy_response is not None:
         return policy_response
     try:
@@ -18148,7 +18171,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
         headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
         caller = HTTPConnection({**websocket.scope, "headers": headers})
-    auth_context = authenticate_request(caller, "/v1/realtime")
+    auth_context = (await asyncio.to_thread(authenticate_request, caller, "/v1/realtime"))
     if isinstance(auth_context, Response):
         return await _deny_realtime(websocket, auth_context)
     denied = _realtime_policy_denial(auth_context)
@@ -21596,11 +21619,9 @@ async def _submit_audio_media_job(
     if isinstance(auth_context, Response):
         return auth_context
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/gateway/v1/media/jobs",
-        policy=_audio_media_job_policy(),
-    )
+        policy=_audio_media_job_policy(),))
     if policy_response is not None:
         return policy_response
 
@@ -22172,11 +22193,9 @@ async def _submit_video_media_job(
     if isinstance(auth_context, Response):
         return auth_context
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/gateway/v1/media/jobs",
-        policy=_video_media_job_policy(),
-    )
+        policy=_video_media_job_policy(),))
     if policy_response is not None:
         return policy_response
 
@@ -22560,11 +22579,9 @@ async def gateway_media_job_content(job_id: str, request: Request):
         )
     route_policy = _media_job_content_route_policy(job)
     if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
+        policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
             "/gateway/v1/media/jobs/{job_id}/content",
-            policy=route_policy,
-        )
+            policy=route_policy,))
         if policy_response is not None:
             return policy_response
     status_value = str(job.get("status") or "")
@@ -22629,7 +22646,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
 @app.post("/v1/images/generations", openapi_extra=IMAGES_GENERATIONS_OPENAPI)
 async def images_generations(request: Request):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
-    auth_context = authenticate_request(request, "/v1/images/generations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/generations"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/generations", auth_context)
@@ -22652,7 +22669,7 @@ async def images_variations(request: Request):
     in proxy_config.yml) with a fixed generic prompt -- see
     proxy_comfy_variations_request for why.
     """
-    auth_context = authenticate_request(request, "/v1/images/variations")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/variations"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/variations", auth_context)
@@ -22670,7 +22687,7 @@ async def images_variations(request: Request):
 @app.post("/v1/images/edits", openapi_extra=IMAGES_EDITS_OPENAPI)
 async def images_edits(request: Request):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
-    auth_context = authenticate_request(request, "/v1/images/edits")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/edits"))
     if isinstance(auth_context, Response):
         return auth_context
     receipt = start_image_route_receipt("/v1/images/edits", auth_context)
@@ -22736,11 +22753,9 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
         )
     route_policy = _asset_content_route_policy(asset_id)
     if route_policy is not None:
-        policy_response = _enforce_runtime_route_policy(
-            auth_context,
+        policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
             "/gateway/v1/assets/{asset_id}",
-            policy=route_policy,
-        )
+            policy=route_policy,))
         if policy_response is not None:
             return policy_response
     cache_path = asset_cache_path(asset_id)
@@ -23107,7 +23122,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
         return auth_context
     if not COMFY_ENABLED:
         return Response(status_code=503, content=json.dumps({"error": {"message": "ComfyUI media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
-    policy_response = _enforce_runtime_route_policy(auth_context, "/gateway/v1/workflows/{workflow_id}/run")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
     record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
@@ -23134,10 +23149,10 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
 @app.post("/v1/videos", openapi_extra=VIDEOS_CREATE_OPENAPI)
 async def videos_create(request: Request):
     """Sora-shaped video generation submit. Returns {id, status: queued}."""
-    auth_context = authenticate_request(request, "/v1/videos")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_create(request, auth_context)
@@ -23147,12 +23162,10 @@ async def videos_create(request: Request):
 @app.get("/v1/videos/{video_id}", openapi_extra=VIDEOS_STATUS_OPENAPI)
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_status(video_id, auth_context)
@@ -23162,12 +23175,10 @@ async def videos_status(video_id: str, request: Request):
 @app.get("/v1/videos/{video_id}/content", openapi_extra=VIDEOS_CONTENT_OPENAPI, response_class=Response)
 async def videos_content(video_id: str, request: Request):
     """Download the rendered mp4 once status=succeeded."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}/content")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/content"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}/content"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}/content"))
     if policy_response is not None:
         return policy_response
     _begin_media_delivery(auth_context)
@@ -23188,15 +23199,13 @@ async def videos_content(video_id: str, request: Request):
 @app.get("/v1/videos", openapi_extra=VIDEOS_LIST_OPENAPI)
 async def videos_list(request: Request):
     """List video jobs submitted via this route (limit/after/order)."""
-    auth_context = authenticate_request(request, "/v1/videos")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
     if isinstance(auth_context, Response):
         return auth_context
     # In-handler policy enforcement, not a registry entry -- see
     # _video_route_policy's own docstring for why (this path already carries
     # POST's registry-keyed policy).
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos", policy=_video_route_policy()
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_list(request, auth_context)
@@ -23206,15 +23215,13 @@ async def videos_list(request: Request):
 @app.delete("/v1/videos/{video_id}", openapi_extra=VIDEOS_DELETE_OPENAPI)
 async def videos_delete(video_id: str, request: Request):
     """Delete a previously-submitted video job."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
     if isinstance(auth_context, Response):
         return auth_context
     # In-handler policy enforcement, not a registry entry -- same reason as
     # the list route above (this path already carries GET's registry-keyed
     # policy).
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_delete(video_id, auth_context)
@@ -23224,12 +23231,10 @@ async def videos_delete(video_id: str, request: Request):
 @app.post("/v1/videos/{video_id}/remix", openapi_extra=VIDEOS_REMIX_OPENAPI)
 async def videos_remix(video_id: str, request: Request):
     """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
-    auth_context = authenticate_request(request, "/v1/videos/{video_id}/remix")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(
-        auth_context, "/v1/videos/{video_id}/remix"
-    )
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}/remix"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_remix(video_id, auth_context, request)
@@ -23239,10 +23244,10 @@ async def videos_remix(video_id: str, request: Request):
 @app.post("/v1/videos/edits", openapi_extra=VIDEOS_EDIT_OPENAPI)
 async def videos_edit(request: Request):
     """OpenAI video edit: prompt + uploaded or existing video -> new video job."""
-    auth_context = authenticate_request(request, "/v1/videos/edits")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/edits"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/edits")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/edits"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_edit(request, auth_context)
@@ -23252,10 +23257,10 @@ async def videos_edit(request: Request):
 @app.post("/v1/videos/extensions", openapi_extra=VIDEOS_EXTEND_OPENAPI)
 async def videos_extend(request: Request):
     """Sora-shaped video extension: source video + prompt -> source plus new footage."""
-    auth_context = authenticate_request(request, "/v1/videos/extensions")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/extensions"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/videos/extensions")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/extensions"))
     if policy_response is not None:
         return policy_response
     return await proxy_comfy_video_extend(request, auth_context)
@@ -23431,10 +23436,8 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             status_code=503,
             media_type="application/json"
         )
-    service_response = _service_availability_response(
-        "comfyui",
-        service_label="ComfyUI",
-    )
+    service_response = (await asyncio.to_thread(_service_availability_response, "comfyui",
+        service_label="ComfyUI",))
     if service_response is not None:
         return service_response
     try:
@@ -23797,10 +23800,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
 @app.post("/v1/audio/generate", openapi_extra=AUDIO_GENERATE_OPENAPI)
 async def audio_generate(request: Request):
     """OpenAI-compatible audio generation endpoint."""
-    auth_context = authenticate_request(request, "/v1/audio/generate")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/generate"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/generate")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/generate"))
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
@@ -23817,10 +23820,10 @@ async def audio_generate(request: Request):
 @app.get("/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
 async def audio_models(request: Request):
     """List available audio generation models."""
-    auth_context = authenticate_request(request, "/v1/audio/models")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/models"))
     if isinstance(auth_context, Response):
         return auth_context
-    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/models")
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/audio/models"))
     if policy_response is not None:
         return policy_response
     models = []
@@ -24403,7 +24406,7 @@ async def _anthropic_model_info_list(
     auth_context: AuthContext,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled:
         payload = await _litellm_models_payload(
             request,
@@ -24589,15 +24592,13 @@ async def anthropic_model_retrieve(model_id: str, request: Request):
 @app.get("/anthropic/v1/models")
 async def anthropic_models(request: Request):
     """Anthropic-compatible model list projected from the gateway catalog."""
-    auth_context = authenticate_request(request, "/anthropic/v1/models")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/models"))
     if isinstance(auth_context, Response):
         return _anthropic_auth_error(auth_context)
 
-    policy_response = _enforce_runtime_route_policy(
-        auth_context,
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         "/anthropic/v1/models",
-        policy={"protocol": "anthropic.messages", "intent": "models.list"},
-    )
+        policy={"protocol": "anthropic.messages", "intent": "models.list"},))
     if policy_response is not None:
         return _anthropic_error_response(
             _response_error_message(policy_response, "request denied by app profile"),
@@ -24631,26 +24632,22 @@ async def list_models(request: Request):
     """
     if _is_anthropic_sdk_request(request):
         return await anthropic_models(request)
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/v1/models",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
     if not route_auth.delegated_to_litellm:
-        policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
+        policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/models"))
         if policy_response is not None:
             return policy_response
 
     upstream_payload: dict = {"object": "list", "data": []}
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled:
-        service_response = _service_availability_response(
-            litellm_runtime.service_id or "litellm",
-            service_label="LiteLLM",
-        )
+        service_response = (await asyncio.to_thread(_service_availability_response, litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",))
         if service_response is not None:
             return service_response
         payload = await _litellm_models_payload(
@@ -24786,7 +24783,7 @@ async def list_models(request: Request):
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), metadata_ids)
+    sources, inherited_windows = _with_loaded_model_inheritance((await asyncio.to_thread(_model_metadata_sources, origins)), metadata_ids)
     # A live-observed context window is more exact than a declared one.
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:
@@ -24824,7 +24821,7 @@ async def list_models(request: Request):
 async def v1_status(request: Request):
     """Consolidated admin-only status JSON for the dashboard."""
     try:
-        ADMIN_AUTH(request)
+        (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return Response(
             content=json.dumps({
@@ -24878,7 +24875,7 @@ async def v1_status(request: Request):
 async def _render_status_html(request: Request) -> Response:
     """Build a payload from /v1/status and render the dashboard HTML."""
     try:
-        actor = ADMIN_AUTH(request)
+        actor = (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         if (
             exc.status_code == 401
@@ -25493,7 +25490,7 @@ async def _read_json_object(request: Request) -> dict[str, Any] | Response:
 @app.post("/v1/messages/count_tokens")
 async def anthropic_count_tokens(request: Request):
     """Anthropic Messages count_tokens-compatible estimator."""
-    auth_context = authenticate_request(request, "/anthropic/v1/messages/count_tokens")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/anthropic/v1/messages/count_tokens"))
     if isinstance(auth_context, Response):
         return _anthropic_auth_error(auth_context)
 
@@ -25532,11 +25529,9 @@ async def anthropic_count_tokens(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/v1/messages",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _anthropic_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25862,7 +25857,7 @@ async def _ollama_model_catalog_summaries(
     delegated_litellm_api_key: str = "",
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     if litellm_runtime.enabled and request is not None:
         payload = await _litellm_models_payload(
             request,
@@ -25906,7 +25901,7 @@ def _ollama_summary_matches_model(summary: Mapping[str, Any], model: str) -> boo
 async def _ollama_loaded_model_summaries(
     auth_context: AuthContext,
 ) -> list[dict[str, Any]]:
-    if _litellm_runtime_config().enabled:
+    if (await asyncio.to_thread(_litellm_runtime_config)).enabled:
         return []
 
     try:
@@ -25990,11 +25985,9 @@ async def _ollama_load_response(
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/api/chat",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26050,11 +26043,9 @@ async def ollama_chat(request: Request):
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/api/generate",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26112,11 +26103,9 @@ async def ollama_generate(request: Request):
 @app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/api/embed",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26151,11 +26140,9 @@ async def ollama_embed(request: Request):
 @app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/api/embeddings",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26190,11 +26177,9 @@ async def ollama_embeddings(request: Request):
 @app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/api/tags",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26225,7 +26210,7 @@ async def ollama_tags(request: Request):
 @app.post("/api/show")
 async def ollama_show(request: Request):
     """Ollama `/api/show` projected from the gateway's visible LLM catalog."""
-    auth_context = authenticate_request(request, "/api/show")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/show"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
 
@@ -26257,7 +26242,7 @@ async def ollama_show(request: Request):
 @app.get("/api/ps")
 async def ollama_ps(request: Request):
     """Ollama `/api/ps` projected from the gateway's currently loaded LLM."""
-    auth_context = authenticate_request(request, "/api/ps")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/ps"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
@@ -26278,7 +26263,7 @@ async def ollama_ps(request: Request):
 @app.get("/api/version")
 async def ollama_version(request: Request):
     """Ollama `/api/version` compatibility response."""
-    auth_context = authenticate_request(request, "/api/version")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/api/version"))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(
@@ -26299,7 +26284,7 @@ async def _ollama_unsupported_model_mutation(
     canonical_path: str,
     intent: str,
 ) -> Response:
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return _ollama_auth_error(auth_context)
     policy_error = _ollama_model_policy_response(auth_context, intent=intent)
@@ -26385,11 +26370,9 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         "/v1/responses",
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -26679,7 +26662,7 @@ async def create_response(request: Request):
 @app.get("/openai/v1/responses/{response_id}")
 @app.get("/v1/responses/{response_id}")
 async def retrieve_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -26711,7 +26694,7 @@ async def retrieve_response(response_id: str, request: Request):
 @app.get("/openai/v1/responses/{response_id}/input_items")
 @app.get("/v1/responses/{response_id}/input_items")
 async def list_response_input_items(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -26765,7 +26748,7 @@ async def list_response_input_items(response_id: str, request: Request):
 @app.post("/openai/v1/responses/input_tokens")
 @app.post("/v1/responses/input_tokens")
 async def count_response_input_tokens(request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     return _responses_error(
@@ -26778,7 +26761,7 @@ async def count_response_input_tokens(request: Request):
 @app.post("/openai/v1/responses/{response_id}/cancel")
 @app.post("/v1/responses/{response_id}/cancel")
 async def cancel_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -26798,7 +26781,7 @@ async def cancel_response(response_id: str, request: Request):
 @app.delete("/openai/v1/responses/{response_id}")
 @app.delete("/v1/responses/{response_id}")
 async def delete_response(response_id: str, request: Request):
-    auth_context = authenticate_request(request, "/v1/responses")
+    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/responses"))
     if isinstance(auth_context, Response):
         return auth_context
     decision = _protocol_policy_decision(
@@ -28211,11 +28194,9 @@ async def _handle_openai_litellm_request(
     request_path: str,
 ) -> Response:
     """Try only fallback targets explicitly listed in the requested alias."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
+    route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
         request_path,
-        allow_litellm_delegation=True,
-    )
+        allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return route_auth
     body, parse_error = parse_openai_json_body(await request.body())
@@ -28278,11 +28259,9 @@ async def _handle_openai_litellm_request_once(
     route_auth: RuntimeRouteAuth | None = None,
 ) -> Response:
     if route_auth is None:
-        route_auth = authenticate_runtime_or_litellm_request(
-            request,
+        route_auth = (await asyncio.to_thread(authenticate_runtime_or_litellm_request, request,
             request_path,
-            allow_litellm_delegation=True,
-        )
+            allow_litellm_delegation=True,))
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -28355,15 +28334,13 @@ async def _handle_openai_litellm_request_once(
             request_id=trusted_parent_request_id,
         )
 
-    litellm_runtime = _litellm_runtime_config()
+    litellm_runtime = (await asyncio.to_thread(_litellm_runtime_config))
     litellm_body: Mapping[str, Any] = parsed_body
     prepared_local_llm = False
     remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), parsed_body.get("model"))
     if litellm_runtime.enabled and remote_provider is None:
-        litellm_service_response = _service_availability_response(
-            litellm_runtime.service_id or "litellm",
-            service_label="LiteLLM",
-        )
+        litellm_service_response = (await asyncio.to_thread(_service_availability_response, litellm_runtime.service_id or "litellm",
+            service_label="LiteLLM",))
         if litellm_service_response is None and request_path in {
             "/v1/chat/completions",
             "/v1/completions",
@@ -28432,7 +28409,7 @@ async def _forward_internal_litellm_local_chat_completions(
         target_model,
     )
 
-    availability = _service_availability_response(backend, service_label=backend)
+    availability = (await asyncio.to_thread(_service_availability_response, backend, service_label=backend))
     if availability is not None:
         return availability
     # This hop forwards to the engine, so it (not the outer route) holds the
@@ -28753,7 +28730,7 @@ def _openai_unsupported_api_response(api_name: str) -> Response:
 
 
 async def _openai_unsupported_api(request: Request, canonical_path: str, api_name: str) -> Response:
-    auth_context = authenticate_request(request, canonical_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, canonical_path))
     if isinstance(auth_context, Response):
         return auth_context
     return _openai_unsupported_api_response(api_name)
@@ -29288,7 +29265,7 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
     """Admin pages and their payloads need an admin-control role."""
     return_to = _path_with_query(request) if ui_routes.is_page_path(request.url.path) else f"/{name}/"
     try:
-        actor = ADMIN_AUTH(request)
+        actor = (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
         return _admin_auth_failure_response(request, exc, return_to=return_to)
     if not ADMIN_CONTROL_ROLES & set(actor.roles):
@@ -29328,7 +29305,7 @@ async def unmatched_route(request: Request, path: str):
 
     # Authenticate first, against the original path, so unauthenticated
     # callers get 401 and a path-prefix token is still visible to the check.
-    auth_context = authenticate_request(request, request_path)
+    auth_context = (await asyncio.to_thread(authenticate_request, request, request_path))
     if isinstance(auth_context, Response):
         return auth_context
 

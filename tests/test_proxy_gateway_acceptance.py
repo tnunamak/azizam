@@ -2323,11 +2323,12 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
         seen: list[Any] = []
         original_project = proxy._capability_for_profile
 
-        def spy_project(capability, auth_context, *, protocol=None):
+        def spy_project(capability, auth_context, *, protocol=None, **batch):
             projected = original_project(
                 capability,
                 auth_context,
                 protocol=protocol,
+                **batch,
             )
             seen.append(projected)
             return projected

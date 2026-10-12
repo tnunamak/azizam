@@ -22,6 +22,8 @@ responses.
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import hmac
 import re
@@ -1802,7 +1804,7 @@ def create_admin_router(
 
     @router.get("/overview")
     async def overview(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         users = store.list_users()
@@ -1877,7 +1879,7 @@ def create_admin_router(
         ``/v1/status`` stays a runtime API route. This endpoint gives the
         browser-session admin UI the same data through the admin API namespace.
         """
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         payload: Mapping[str, Any] = {}
@@ -1887,15 +1889,19 @@ def create_admin_router(
                 payload = await status_provider()
             except Exception:  # noqa: BLE001
                 available = False
-        registry = store.get_service_registry()
         projected = {key: value for key, value in dict(payload).items() if not str(key).startswith("_")}
         projected["backends"] = _normalize_status_backends(payload)
-        projected["current_health"] = derive_admin_health_projection(
-            registry,
-            payload,
-            observation_available=available,
-            availability_evidence=payload.get("_availability_evidence") if isinstance(payload.get("_availability_evidence"), Mapping) else None,
-        )
+
+        def project_health() -> Any:
+            # Reads the registry and receipt store: blocking SQLite work.
+            return derive_admin_health_projection(
+                store.get_service_registry(),
+                payload,
+                observation_available=available,
+                availability_evidence=payload.get("_availability_evidence") if isinstance(payload.get("_availability_evidence"), Mapping) else None,
+            )
+
+        projected["current_health"] = await asyncio.to_thread(project_health)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"status": projected},
@@ -1924,7 +1930,7 @@ def create_admin_router(
 
     @router.post("/apps")
     async def create_app(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -1952,7 +1958,7 @@ def create_admin_router(
 
     @router.patch("/apps/{app_id}")
     async def update_app(app_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2071,7 +2077,7 @@ def create_admin_router(
 
     @router.post("/profiles")
     async def create_profile(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2122,7 +2128,7 @@ def create_admin_router(
 
     @router.patch("/profiles/{profile_id}")
     async def update_profile(profile_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2200,7 +2206,7 @@ def create_admin_router(
 
     @router.post("/runtime-profile-mappings")
     async def create_runtime_profile_mapping(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2250,7 +2256,7 @@ def create_admin_router(
 
     @router.post("/apps/{app_id}/keys")
     async def create_key(app_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2279,7 +2285,7 @@ def create_admin_router(
 
     @router.post("/admin-keys")
     async def create_admin_key(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2396,7 +2402,7 @@ def create_admin_router(
 
     @router.put("/operator/user-access-defaults")
     async def update_user_access_defaults(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2420,7 +2426,7 @@ def create_admin_router(
     async def update_service_availability_overrides(
         request: Request,
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2513,7 +2519,7 @@ def create_admin_router(
 
     @router.put("/operator/service-registry")
     async def update_service_registry(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2590,7 +2596,7 @@ def create_admin_router(
 
     @router.post("/operator/services")
     async def add_service(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2612,7 +2618,7 @@ def create_admin_router(
 
     @router.patch("/operator/services/{service_id}")
     async def update_service(service_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2660,7 +2666,7 @@ def create_admin_router(
 
     @router.post("/operator/services/{service_id}/enabled")
     async def set_service_enabled(service_id: str, request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2683,7 +2689,7 @@ def create_admin_router(
 
     @router.post("/operator/services/test")
     async def test_service_connection(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         if service_probe is None:
@@ -2710,7 +2716,7 @@ def create_admin_router(
 
     @router.post("/operator/services/detect-models")
     async def detect_service_models(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         if service_probe is None:
@@ -2815,7 +2821,7 @@ def create_admin_router(
 
     @router.get("/operator/litellm/keys")
     async def list_litellm_keys(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         client = _key_client_or_unavailable()
@@ -2832,7 +2838,7 @@ def create_admin_router(
 
     @router.post("/operator/litellm/keys")
     async def create_litellm_key(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         client = _key_client_or_unavailable()
@@ -2860,7 +2866,7 @@ def create_admin_router(
 
     @router.post("/operator/litellm/keys/delete")
     async def delete_litellm_keys(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         client = _key_client_or_unavailable()
@@ -2891,7 +2897,7 @@ def create_admin_router(
 
     @router.post("/extensions/validate")
     async def validate_extension_package(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2910,7 +2916,7 @@ def create_admin_router(
 
     @router.post("/extensions/enable")
     async def enable_extension_package(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2971,7 +2977,7 @@ def create_admin_router(
     async def remove_extension_package(
         request: Request, package_id: str
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -2999,7 +3005,7 @@ def create_admin_router(
     async def update_media_job_admission_overrides(
         request: Request,
     ) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
@@ -3058,7 +3064,7 @@ def create_admin_router(
 
     @router.put("/oidc-config")
     async def update_oidc_config(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         if "owner" not in ctx.roles:
@@ -3192,7 +3198,7 @@ def create_admin_router(
 
     @router.post("/policy/simulate")
     async def simulate(request: Request) -> JSONResponse:
-        ctx = _guard(request)
+        ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:

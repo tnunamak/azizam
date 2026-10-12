@@ -65,6 +65,11 @@ const destinationList = [
     answer: "Which apps can use my account?",
   },
   {
+    title: "Connect",
+    href: "/connect",
+    answer: "How do I use this gateway from another app?",
+  },
+  {
     title: "Models",
     href: "/models",
     answer: "What can I use, and which one should I pick?",
