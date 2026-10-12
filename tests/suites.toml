@@ -1,0 +1,188 @@
+# What the gate does not run, each entry checked by scripts/ci/policy.py
+# (docs/design/TEST_STRATEGY.md 3.2, 6, 7 T0.4). An entry that no longer
+# matches the run (the file now runs, the case no longer skips) fails the
+# policy too, so these lists only shrink. Measured on 2026-10-12 (seed 4242).
+
+# Test files that no gate step runs. Each needs an expires_on; after it the
+# gate fails until the file runs in a gate step or is deleted.
+[[orphan]]
+path = "integrations/pi/test/catalog.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/gateway.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/live.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/pi-rpc.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/provider.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/runtime-isolation.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "integrations/pi/test/store-repair.test.ts"
+expires_on = 2026-11-12
+reason = "Pi integration tests; its package runs them with `npm test` (node --test), no gate step does"
+
+[[orphan]]
+path = "tests/compat/node/anthropic.test.mjs"
+expires_on = 2026-11-12
+reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
+
+[[orphan]]
+path = "tests/compat/node/ollama.test.mjs"
+expires_on = 2026-11-12
+reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
+
+[[orphan]]
+path = "tests/compat/node/openai.test.mjs"
+expires_on = 2026-11-12
+reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
+
+[[orphan]]
+path = "tests/compat/node/vercel-ai-sdk.test.mjs"
+expires_on = 2026-11-12
+reason = "Node SDK compatibility probes against a live gateway; TEST_STRATEGY.md 5 moves them to the scheduled tier"
+
+[[orphan]]
+path = "tests/showcase/core.test.mjs"
+expires_on = 2026-11-12
+reason = "Run by tests/test_showcase.py, which skips in the sandbox because node is not on its PATH"
+
+[[orphan]]
+path = "web/e2e/sweep/sweep.spec.ts"
+expires_on = 2026-11-12
+reason = "Only playwright.sweep.config.ts runs it (npm run sweep); no gate step does"
+
+[[orphan]]
+path = "web/src/app/_home/audit-tests/home.audit.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/_home/audit-tests/public-url.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/activity/activity-copy.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/engines/detect-apply-gate.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/engines/engine-gate.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/engines/owner-enabled.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/library/library-copy.e2e.spec.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/library/library.batch-j.e2e.spec.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/library/live-data-audio.e2e.spec.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/models/catalog.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/providers/gate-owner.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/status/member-status.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/status/owner-status.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/status/real-data-status.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/try/gate-owner.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/usage/usage-copy.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/app/workflows/workflows-copy.e2e.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/src/components/shell/app-shell.playwright.spec.ts"
+expires_on = 2026-11-12
+reason = "Area Playwright config wired to no gate step; slice S13 moves its assertions into a gated spec"
+
+[[orphan]]
+path = "web/tests/ux/services-route.spec.mjs"
+expires_on = 2026-11-12
+reason = "node:test source check (.mjs) outside every vitest and Playwright include pattern; slice S13"
+
+# Gate cases that skip. A new skip fails the gate.
+[[skip]]
+case = "tests/test_admin_api.py::AdminProfileTests::test_update_profile_name_conflict_returns_409"
+reason = "the fixture has fewer than 2 profiles, so the body skips"
+
+[[skip]]
+case = "tests/test_decisions_api.py::test_official_typesafe_sdk_works_offline_against_facade"
+reason = "typesafe_sdk is not in the hermetic lock"
+
+[[skip]]
+case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
+reason = "the sandbox hides the live database by design"
+
+[[skip]]
+case = "tests/test_showcase.py::ShowcaseCoreJsTests::test_node_suite_passes"
+reason = "node is not on the sandbox PATH"
+
+# Gate cases that xfail. A new xfail fails the gate.
+[[xfail]]
+case = "tests/test_comfy_workflow_metadata_catalog.py::test_workflow_derives_a_complete_ui_graph[workflows/audio/tangoflux.json]"
+reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when the gap closes"
