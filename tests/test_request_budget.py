@@ -73,7 +73,7 @@ def test_endpoint_budget(gateway, path, auth):  # noqa: F811
     slow, _ = asyncio.run(_measure(path, headers, cookies, 0.1))
     p50, p95, slow_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
     if os.environ.get("PERF_REPORT"):
-        print(f"PERF {path} opens={max(warm)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms")
+        print(f"PERF {path} opens={max(warm)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms slow_p95={slow_p95*1000:.0f}ms", flush=True)
     assert max(warm) <= MAX_OPENS, f"{path} opened {max(warm)} SQLite connections per request"
     assert p95 <= P95_LIMIT_S, f"{path} p95 {p95*1000:.0f} ms"
     assert slow_p95 <= P95_SLOW_LIMIT_S, f"{path} p95 with 100 ms opens {slow_p95*1000:.0f} ms"
