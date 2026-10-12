@@ -43,14 +43,26 @@ def test_get_person_prompts_batches_visible_rows(tmp_path):
     assert records["img_a"]["prompt_text"] == "first"
 
 
-def test_safe_put_fails_closed_without_logging_prompt(monkeypatch):
-    def fail(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+def test_safe_put_fails_closed_without_logging_prompt(monkeypatch, caplog, capsys):
+    import logging
+
+    prompt = "private-prompt-log-canary-519b"
+    metadata = "private-workflow-log-canary-708c"
+
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("locked: " + prompt + " " + metadata)
 
     monkeypatch.setattr(prompt_memory, "put", fail)
-    assert not prompt_memory.safe_put(
-        "img_failed", "person-a", "private prompt", kept_until=None,
-    )
+    with caplog.at_level(logging.DEBUG):
+        result = prompt_memory.safe_put(
+            "img_failed", "person-a", prompt, kept_until=None,
+            metadata={"workflow": metadata},
+        )
+    assert result is False
+    captured = capsys.readouterr()
+    observed = captured.out + captured.err + caplog.text
+    assert prompt not in observed
+    assert metadata not in observed
 
 
 def test_forget_decision_is_enforced_by_storage_route(tmp_path):
