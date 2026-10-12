@@ -66,6 +66,7 @@ def _copy_runner_source(repo: Path) -> tuple[Path, Path, Path]:
     preflight = repo / "scripts" / PREFLIGHT.name
     shutil.copy2(RUNNER, runner)
     shutil.copy2(PREFLIGHT, preflight)
+    shutil.copy2(ROOT / "scripts" / "low-priority", repo / "scripts" / "low-priority")
     req = repo / "requirements.txt"
     inp = repo / "tests" / "requirements-hermetic.in"
     lock = repo / "tests" / "requirements-hermetic.lock"
