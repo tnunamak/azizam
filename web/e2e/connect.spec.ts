@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // Sign in, open Connect from the navigation, copy the MCP config.
 test("owner signs in, opens Connect and copies the MCP config", async ({
