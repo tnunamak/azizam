@@ -28031,10 +28031,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "LiteLLM execution timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()
@@ -28148,10 +28149,11 @@ async def _forward_litellm_proxy_request(
             await cancellation_span.aclose()
             receipt.add_warning("LiteLLM execution timed out")
             owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
+            return openai_error_response(
+                "LiteLLM execution timed out.",
                 status_code=504,
-                media_type="application/json",
+                error_type="api_error",
+                code="timeout",
             )
         except httpx.ConnectError:
             await cancellation_span.aclose()

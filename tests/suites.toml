@@ -201,16 +201,6 @@ reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when t
 # The fix is on fix/fk-upstream-faults; the release that merges it removes these entries and the markers.
 [[xfail]]
 framework = "pytest"
-case = "tests/test_upstream_faults_openai_compatible.py::test_first_byte_past_the_read_budget_gives_a_504_error_envelope[text]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_openai_compatible.py::test_first_byte_past_the_read_budget_gives_a_504_error_envelope[stream]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_upstream_faults_protocol_frontends.py::test_rate_limit_keeps_status_retry_after_and_message[anthropic-text]"
 reason = "FK-B6: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
 
@@ -228,26 +218,6 @@ reason = "FK-B6: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-sco
 framework = "pytest"
 case = "tests/test_upstream_faults_protocol_frontends.py::test_rate_limit_keeps_status_retry_after_and_message[ollama-stream]"
 reason = "FK-B6: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_first_byte_past_the_read_budget_gives_a_504[anthropic-text]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_first_byte_past_the_read_budget_gives_a_504[anthropic-stream]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_first_byte_past_the_read_budget_gives_a_504[ollama-text]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_upstream_faults_protocol_frontends.py::test_first_byte_past_the_read_budget_gives_a_504[ollama-stream]"
-reason = "FK-B3: fix on fix/fk-upstream-faults; strict xfail with a KnownBug-scoped oracle"
 
 [[xfail]]
 framework = "pytest"

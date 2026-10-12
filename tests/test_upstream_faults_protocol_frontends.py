@@ -241,7 +241,6 @@ def test_rate_limit_keeps_status_retry_after_and_message(frontend_gateway, fake_
     expect_fixed("FK-B6", response.headers.get("retry-after"), "7")
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B3: the LLM substrate read timeout answers {'detail': ...}, which the frontends pass on as the message (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 @pytest.mark.parametrize("frontend", list(FRONTENDS))
 def test_first_byte_past_the_read_budget_gives_a_504(frontend_gateway, fake_upstreams, monkeypatch, frontend, stream) -> None:

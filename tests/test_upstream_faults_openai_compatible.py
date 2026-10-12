@@ -188,7 +188,6 @@ def test_rate_limit_keeps_status_retry_after_and_error_body(fake_upstreams, monk
     assert forwarded.json == {"model": MODEL, "messages": MESSAGES, "stream": stream}
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B3: the LLM substrate read timeout answers {'detail': ...}, not the OpenAI error envelope (fix/fk-upstream-faults)")
 @pytest.mark.parametrize("stream", [False, True], ids=["text", "stream"])
 def test_first_byte_past_the_read_budget_gives_a_504_error_envelope(fake_upstreams, monkeypatch, tmp_path, stream: bool) -> None:
     """One real-clock wiring case: the read budget is the gateway's own setting, shortened."""
