@@ -230,7 +230,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
     from starlette.requests import Request
 
     from gateway import stt_chunking
-    from tests.support.access import authenticated
+    from tests.support.access import access_context
     from tests.voice_test_audio import speechlike
 
     audio = speechlike(1)
@@ -289,7 +289,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
             stack.enter_context(patch.object(stt_chunking, "extract_segment", extract))
             stack.enter_context(patch.object(proxy.receipt_store, "begin"))
             stack.enter_context(patch.object(proxy.receipt_store, "finalize", return_value=True))
-            response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+            response = await proxy.proxy_stt_request(request, access_context())
         out[f"{service_id} {kind} x{chunks}"] = {
             "response": {"status": response.status_code, "body": bytes(response.body).decode("utf-8", "replace")},
             "upstream": upstream.take(),
