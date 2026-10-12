@@ -738,6 +738,34 @@ test("choosing a source sends it as the source filter of the usage summary", asy
   );
 });
 
+test("choosing a source keeps the selected person in the usage summary request", async () => {
+  renderUsage({
+    people: [{ id: "person-a", label: "Mira" }],
+    sources: [{ id: "app-a", label: "Open WebUI" }],
+  });
+  const user = userEvent.setup();
+  await screen.findByText("Requests");
+  screen.getByRole("combobox", { name: "Person" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => {
+      const params = new URL(String(url), "https://azizam.test").searchParams;
+      return params.get("person") === "person-a" && params.get("source") === null;
+    })).toBe(true),
+  );
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("option", { name: "Open WebUI" }));
+  await waitFor(() =>
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => {
+      const params = new URL(String(url), "https://azizam.test").searchParams;
+      return params.get("person") === "person-a" && params.get("source") === "app-a"
+        && params.get("period") === "month";
+    })).toBe(true),
+  );
+});
+
 test.each([undefined, "provider", "opaque_stage"])("COPY-08 usage failure uncertainty (%s)", async (stage) => {
   renderUsage({
     receipts: [{ request_id: "failed", capability: "chat", status: "failed", metadata: { stage, error_code: "opaque_code" } }],
