@@ -34,6 +34,8 @@ from gateway.compat import get_env
 
 import argparse
 import base64
+import hashlib
+from datetime import datetime, timezone
 import json
 import os
 import shutil
@@ -139,13 +141,45 @@ class IdleGuard:
 # ------------------------------------------------------------------------ client
 
 class Gateway:
-    def __init__(self, base: str):
+    def __init__(self, base: str, guard: IdleGuard | None = None):
         self.base = base.rstrip("/")
+        self.guard = guard
+        self.recorded_requests: list[dict] = []
         key = get_env("AZIZAM_API_KEY")
         self.headers = {"Authorization": f"Bearer {key}"} if key else {}
         self.http = httpx.Client(timeout=httpx.Timeout(1800, connect=10), headers=self.headers)
 
     def request(self, method: str, path: str, **kw: Any) -> httpx.Response:
+        if method.upper() == "POST":
+            # The idle wait and catalog lookups are bookkeeping, not the request:
+            # timed() subtracts them so a published run time measures the request.
+            prep_started = time.monotonic()
+            if self.guard is not None:
+                self.guard.wait(path)
+            body = kw.get("json", kw.get("data", {}))
+            model = body.get("model") if isinstance(body, dict) else None
+            operation = {
+                "/v1/embeddings": "embeddings", "/v1/audio/speech": "speech",
+                "/v1/audio/transcriptions": "transcriptions",
+                "/v1/chat/completions": "chat", "/v1/responses": "chat",
+                "/anthropic/v1/messages": "chat", "/ollama/api/chat": "chat",
+                "/v1/images/generations": "images", "/v1/images/edits": "image_edits",
+            }.get(path)
+            resolved = self.resolve(operation, model) if operation and model else None
+            display_name = self.display_name(resolved or model)
+            request = {
+                "method": "POST", "path": path, "body": public_input(body),
+                "requested_model": model, "resolved_model": resolved,
+                "model_display_name": display_name,
+                "model_display_name_status": "catalog" if display_name else "UNVERIFIED",
+            }
+            request["files"] = {
+                field: {"filename": value[0], "sha256": hashlib.sha256(value[1]).hexdigest(),
+                        "content_type": value[2]}
+                for field, value in kw.get("files", {}).items()
+            }
+            self.recorded_requests.append(request)
+            _UNTIMED[0] += time.monotonic() - prep_started
         r = self.http.request(method, self.base + path, **kw)
         if r.status_code >= 400:
             raise RuntimeError(f"{method} {path} -> {r.status_code}: {r.text[:400]}")
@@ -153,6 +187,20 @@ class Gateway:
 
     def json(self, method: str, path: str, **kw: Any) -> Any:
         return self.request(method, path, **kw).json()
+
+    def display_name(self, model: str | None) -> str | None:
+        """Copy only a display label from discovery; never invent one from an alias."""
+        if not model:
+            return None
+        try:
+            catalog = self.json("GET", "/v1/models")
+            for item in catalog.get("data", []):
+                if isinstance(item, dict) and item.get("id") == model:
+                    name = item.get("display_name") or item.get("name")
+                    return name if isinstance(name, str) and name.strip() else None
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     def resolve(self, operation: str, model: str) -> str | None:
         try:
@@ -174,10 +222,31 @@ class Gateway:
 
 # ---------------------------------------------------------------------- example io
 
+def public_input(value: Any) -> Any:
+    """Keep recipe inputs verbatim; represent inline media by its content hash.
+
+    Capture request bodies only, never authentication headers, catalog objects,
+    backend responses, job IDs, owner details or member history.
+    """
+    if isinstance(value, dict):
+        return {k: public_input(v) for k, v in value.items()
+                if k.lower() not in {"authorization", "api_key", "access_token",
+                                     "password", "secret", "cookie", "token"}}
+    if isinstance(value, list):
+        return [public_input(v) for v in value]
+    if isinstance(value, str) and value.startswith("data:") and ";base64," in value:
+        header, data = value.split(",", 1)
+        content = base64.b64decode(data, validate=True)
+        return {"content_type": header[5:].split(";")[0],
+                "sha256": hashlib.sha256(content).hexdigest()}
+    return value
+
+
 class Ctx:
     def __init__(self, gw: Gateway, out: Path):
         self.gw, self.out = gw, out
         self.group = ""
+        self.started_at: float | None = None
 
     def path(self, ex_id: str, name: str) -> Path:
         return self.out / ex_id / name
@@ -189,8 +258,37 @@ class Ctx:
         return p.read_bytes()
 
     def save(self, ex: dict, files: dict[str, bytes]) -> None:
+        # Publish only the curated schema, not arbitrary backend metadata.
+        ex = {k: v for k, v in ex.items() if k in {
+            "id", "card", "order", "title", "seconds", "model",
+            "chips", "inputs", "outputs",
+        }}
+        requests = list(self.gw.recorded_requests) if self.gw else []
+        ex["requests"] = requests
+        primary = requests[-1] if requests else {}
+        ex["model"] = primary.get("requested_model") or ex.get("model")
+        ex["resolves_to"] = primary.get("resolved_model")
+        ex["model_display_name"] = primary.get("model_display_name")
+        ex["model_display_name_status"] = primary.get("model_display_name_status", "UNVERIFIED")
+        ex["seconds_scope"] = "timed request wall time, excluding idle waits and discovery lookups"
+        ex["schema_version"] = 2
+        ex["recorded_at"] = datetime.now(timezone.utc).isoformat()
+        ex["wall_time_seconds"] = (
+            round(time.monotonic() - self.started_at, 2) if self.started_at is not None else None
+        )
+        ex["wall_time_scope"] = "whole example, including input preparation, discovery and idle waits"
+        ex["media_sha256"] = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
         d = self.out / ex["id"]
         d.mkdir(parents=True, exist_ok=True)
+        previous_media: set[str] = set()
+        try:
+            previous = json.loads((d / "example.json").read_text(encoding="utf-8"))
+            for item in previous.get("inputs", []) + previous.get("outputs", []):
+                name = item.get("file")
+                if isinstance(name, str) and Path(name).name == name:
+                    previous_media.add(name)
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass
         for name, data in files.items():
             (d / name).write_bytes(data)
         ex["card"] = workflow_card_id(self.group, ex["card"])
@@ -198,6 +296,11 @@ class Ctx:
         tmp = d / "example.json.tmp"
         tmp.write_text(json.dumps(ex, indent=2), encoding="utf-8")
         tmp.replace(d / "example.json")  # example.json last: its presence marks success
+        # A forced re-record must not leave old published voice samples accessible.
+        for name in previous_media - files.keys() - {"example.json", "example.json.tmp"}:
+            old = d / name
+            if old.is_file():
+                old.unlink()
 
 
 def workflow_card_id(group: str, card: str) -> str:
@@ -215,10 +318,14 @@ def workflow_card_id(group: str, card: str) -> str:
     return card
 
 
+# Seconds spent in Gateway.request bookkeeping (idle waits, discovery lookups).
+_UNTIMED = [0.0]
+
+
 def timed(fn: Callable[[], Any]) -> tuple[Any, float]:
-    t0 = time.monotonic()
+    t0, untimed0 = time.monotonic(), _UNTIMED[0]
     value = fn()
-    return value, round(time.monotonic() - t0, 2)
+    return value, round(time.monotonic() - t0 - (_UNTIMED[0] - untimed0), 2)
 
 
 # -------------------------------------------------------------------- synthetic input
@@ -300,7 +407,7 @@ def _(c: Ctx):
         import math
         return sum(x * y for x, y in zip(a, b)) / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
     lines = [f"{len(vecs)} vectors, {len(vecs[0])} dimensions", f"cos(1,2) = {cos(vecs[0], vecs[1]):.2f}  (similar sentences)", f"cos(1,3) = {cos(vecs[0], vecs[2]):.2f}  (unrelated)"]
-    c.save({"id": "embeddings-basic", "card": "embeddings", "title": "Similar sentences score high", "seconds": s, "model": "embed", "resolves_to": c.gw.resolve("embeddings", "embed"),
+    c.save({"id": "embeddings-basic", "card": "embeddings", "title": "Compare three sentence embeddings", "seconds": s, "model": "embed", "resolves_to": c.gw.resolve("embeddings", "embed"),
             "inputs": [{"kind": "text", "label": "Texts", "name": "text", "value": "\n".join(texts)}],
             "outputs": [{"kind": "text", "text": "\n".join(lines)}]}, {})
 
@@ -321,20 +428,20 @@ for _i, _t in enumerate(["tts", "tts-fast", "tts-quality"]):
 
 @example("voices-gallery", "cheap", "voices")
 def _(c: Ctx):
-    voices = c.gw.json("GET", "/v1/voices")["voices"]
-    outs, files, total = [], {}, 0.0
-    for v in voices:
-        vid = v["voice_id"]
-        try:
-            r, s = timed(lambda: c.gw.request("POST", "/v1/audio/speech", json={"model": "tts-fast", "voice": vid, "input": f"Hello, I am the {v.get('name') or vid} voice.", "response_format": "mp3"}))
-        except Exception as e:  # noqa: BLE001
-            print(f"    voice {vid} skipped: {e}", file=sys.stderr)
-            continue
+    # Do not enumerate /v1/voices: that catalog may contain members' custom voices.
+    # Use only the two generic IDs already used by the synthetic dialogue.
+    outs, inputs, files, total = [], [], {}, 0.0
+    for vid in ("alloy", "onyx"):
+        text = f"Hello, this is a sample of the {vid} voice."
+        r, s = timed(lambda: c.gw.request("POST", "/v1/audio/speech", json={
+            "model": "tts-fast", "voice": vid, "input": text, "response_format": "mp3"}))
         total += s
         files[f"{vid}.mp3"] = r.content
-        outs.append({"kind": "audio", "label": f"{vid} ({v.get('language', '')} {v.get('gender', '')})".strip(), "file": f"{vid}.mp3"})
-    c.save({"id": "voices-gallery", "card": "voices", "title": f"{len(outs)} built-in voices on tts-fast", "seconds": round(total, 1), "model": "tts-fast",
-            "inputs": [{"kind": "text", "label": "Text", "value": "Hello, I am the <voice name> voice."}], "outputs": outs}, files)
+        inputs.append({"kind": "text", "label": f"Text for {vid}", "value": text})
+        outs.append({"kind": "audio", "label": vid, "file": f"{vid}.mp3"})
+    c.save({"id": "voices-gallery", "card": "voices", "title": "Two voice samples",
+            "seconds": round(total, 2), "model": "tts-fast",
+            "inputs": inputs, "outputs": outs}, files)
 
 
 def _speech_input(c: Ctx) -> bytes:
@@ -360,7 +467,7 @@ def _(c: Ctx):
     audio = ffmpeg_concat_audio([a, b])
     r, s = timed(lambda: c.gw.json("POST", "/v1/audio/transcriptions", data={"model": "stt-diarize", "response_format": "diarized_json", "chunking_strategy": "auto"}, files={"file": ("dialogue.wav", audio, "audio/wav")}))
     text = "\n".join(f"Speaker {x.get('speaker')} [{x.get('start', 0):.1f}-{x.get('end', 0):.1f} s]: {x.get('text', '').strip()}" for x in r.get("segments", []))
-    c.save({"id": "stt-diarize", "card": "stt-diarize", "title": "Two voices, two speakers", "seconds": s, "model": "stt-diarize", "resolves_to": c.gw.resolve("transcriptions", "stt-diarize"),
+    c.save({"id": "stt-diarize", "card": "stt-diarize", "title": "Transcribe a synthetic two-voice dialogue", "seconds": s, "model": "stt-diarize", "resolves_to": c.gw.resolve("transcriptions", "stt-diarize"),
             "inputs": [{"kind": "audio", "label": "Dialogue (alloy then onyx)", "name": "audio", "file": "dialogue.wav", "type": "audio/wav"}],
             "outputs": [{"kind": "text", "text": text}]}, {"dialogue.wav": audio})
 
@@ -392,7 +499,7 @@ def _(c: Ctx):
             "outputs": [{"kind": "text", "text": _clean_chat(r["choices"][0]["message"])}]}, {"input.png": img})
 
 
-PROTO_PROMPT = "Reply with one short sentence saying which protocol you arrived on."
+PROTO_PROMPT = "Write one short sentence about a lighthouse at sunrise."
 
 
 def _proto(ex_id, flavor, path, body, extract, headers=None, order=0):
@@ -454,7 +561,7 @@ def _edit(ex_id, card, alias, prompt, group="edits", extra_files=None, order=0, 
         out_files = {"source.png": src, "output.png": b64_image(r)}
         inputs = [{"kind": "image", "label": "Source image", "name": "source_image", "file": "source.png", "type": "image/png"}]
         for k, v in (extra_files or {}).items():
-            out_files[k + ".png"] = v(c) if callable(v) else v
+            out_files[k + ".png"] = files[k][1]
             inputs.append({"kind": "image", "label": k.replace("_", " "), "name": k, "file": k + ".png", "type": "image/png"})
         inputs.append({"kind": "text", "label": "Instruction", "name": "prompt", "value": prompt})
         c.save({"id": ex_id, "card": card, "order": order, "title": title, "seconds": s, "model": alias, "resolves_to": c.gw.resolve("image_edits", alias),
@@ -486,11 +593,11 @@ def _audio(ex_id, group, card, model, body, alias, ext=None, title=None, order=0
                 "inputs": inputs, "outputs": [{"kind": "audio", "file": f"output.{suffix}"}]}, {f"output.{suffix}": r.content})
 
 
-_audio("sfx-sa3", "audio", "sa3-small-sfx", "sa3-small-sfx", {"prompt": "glass bottle breaking on concrete", "duration": 4, "seed": 7}, "sfx", title="Alias sfx")
+_audio("sfx-sa3", "audio", "sa3-small-sfx", "sa3-small-sfx", {"prompt": "glass bottle breaking on concrete", "duration": 4, "seed": 7}, "sfx", title="Sound effect sample")
 _audio("sfx-tangoflux", "audio", "tangoflux", "tangoflux", {"prompt": "short analog synth riser", "duration": 6, "seed": 7}, None, title="TangoFlux")
-_audio("music-ace-xl", "audio", "ace-step-1.5-xl-turbo", "ace-step-1.5-xl-turbo", {"tags": "dream pop, warm piano, soft drums, mellow", "lyrics": "[instrumental]", "duration": 20, "seed": 1234}, "music", title="Alias music")
+_audio("music-ace-xl", "audio", "ace-step-1.5-xl-turbo", "ace-step-1.5-xl-turbo", {"tags": "dream pop, warm piano, soft drums, mellow", "lyrics": "[instrumental]", "duration": 20, "seed": 1234}, "music", title="Instrumental music sample")
 _audio("music-ace-2b", "audio", "ace-step-1.5-2b-base", "ace-step-1.5-2b-base", {"tags": "lofi hip hop, vinyl crackle, relaxed beat", "lyrics": "[instrumental]", "duration": 20, "seed": 1234}, None, title="ACE-Step 2B base")
-_audio("song-yue2", "audio", "yue2-song", "yue2-song", {"tags": "indie folk pop, warm female vocals, fingerpicked acoustic guitar", "lyrics": "[Verse 1]\nMorning light on the window sill\nCoffee warm and the world is still\n\n[Chorus]\nRun with me into the sunlight\nEverything will be alright", "duration": 40, "seed": 42}, "song", title="Alias song")
+_audio("song-yue2", "audio", "yue2-song", "yue2-song", {"tags": "indie folk pop, warm female vocals, fingerpicked acoustic guitar", "lyrics": "[Verse 1]\nMorning light on the window sill\nCoffee warm and the world is still\n\n[Chorus]\nRun with me into the sunlight\nEverything will be alright", "duration": 40, "seed": 42}, "song", title="Song sample")
 
 
 # ---- video (last)
@@ -508,7 +615,7 @@ def _video_save(c, ex_id, card, alias, resolves, s, body_prompt, content, inputs
 def _(c: Ctx):
     prompt = "a lighthouse at dusk, waves crashing against the rocks, gulls flying past"
     (content, job), s = timed(lambda: c.gw.video({"model": "video", "prompt": prompt, "seconds": 4, "size": LTX_SIZE, "seed": 11}))
-    _video_save(c, "video-ltx-t2v", "ltx-2.5-t2v", "video", "video-ltx-2.5-t2v", s, prompt, content, [{"kind": "text", "label": "Prompt", "name": "prompt", "value": prompt}], chips=[f"{LTX_SIZE}, 4 s, with audio"], title="Alias video")
+    _video_save(c, "video-ltx-t2v", "ltx-2.5-t2v", "video", "video-ltx-2.5-t2v", s, prompt, content, [{"kind": "text", "label": "Prompt", "name": "prompt", "value": prompt}], chips=[f"Requested {LTX_SIZE}, 4 s"], title="Alias video")
 
 
 @example("video-ltx-i2v", "video", "ltx-2.5-i2v")
@@ -540,7 +647,7 @@ def _(c: Ctx):
     src = c.read("video-ltx-t2v", "output.mp4")
     r, s = timed(lambda: c.gw.request("POST", "/gateway/v1/workflows/rife-interpolate/run", data={"multiplier": "2"}, files={"source_video": ("input.mp4", src, "video/mp4")}))
     _video_save(c, "video-rife", "rife-interpolate", "rife-interpolate", "rife-interpolate", s, "", r.content,
-                [{"kind": "video", "label": "Source clip (24 fps)", "name": "source_video", "file": "source.mp4", "type": "video/mp4"}], chips=["2x frame rate"], title="2x interpolation", extra_files={"source.mp4": src})
+                [{"kind": "video", "label": "Source clip", "name": "source_video", "file": "source.mp4", "type": "video/mp4"}], chips=["2x frame rate"], title="2x interpolation", extra_files={"source.mp4": src})
 
 
 @example("video-remix", "video", "bernini-r-remix")
@@ -604,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
         print(time.strftime("%H:%M:%S"), msg, flush=True)
 
     guard = IdleGuard(args.comfy, args.llm, args.idle_minutes, not args.no_idle_check, log)
-    gw = Gateway(args.base)
+    gw = Gateway(args.base, guard=guard)
     ctx = Ctx(gw, out)
     failures: list[str] = []
     for e in todo:
@@ -613,6 +720,8 @@ def main(argv: list[str] | None = None) -> int:
             continue
         guard.wait(e["id"])
         ctx.group = e["group"]
+        ctx.started_at = time.monotonic()
+        gw.recorded_requests = []
         log(f"run  {e['id']} [{e['group']}]")
         try:
             e["fn"](ctx)

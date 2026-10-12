@@ -10,9 +10,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
+import httpx
 import yaml
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
@@ -246,6 +248,23 @@ class ExampleScriptTests(unittest.TestCase):
             self.assertEqual(meta["card"], "audio.generate.tangoflux")
             self.assertTrue((Path(tmp) / "x" / "output.flac").is_file())
             self.assertFalse(list((Path(tmp) / "x").glob("*.tmp")))
+
+    def test_published_run_time_excludes_idle_wait_and_lookups(self) -> None:
+        class SlowGuard:
+            def wait(self, label: str) -> None:
+                time.sleep(0.3)
+
+        class Http:
+            def request(self, method, url, **kw):
+                return httpx.Response(200, json={}, request=httpx.Request(method, url))
+
+        gw = self.mod.Gateway("http://127.0.0.1:9", guard=SlowGuard())
+        gw.http = Http()
+        gw.resolve = lambda operation, model: None
+        gw.display_name = lambda model: time.sleep(0.2)
+        _, seconds = self.mod.timed(lambda: gw.request("POST", "/v1/embeddings", json={"model": "embed"}))
+        self.assertLess(seconds, 0.1)
+        self.assertEqual(gw.recorded_requests[0]["requested_model"], "embed")
 
     def test_main_skips_present_examples_without_calling_the_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
