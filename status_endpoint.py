@@ -37,7 +37,7 @@ import yaml
 
 from gateway import lifecycle_drivers
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
-from gateway.model_presentation import declared_health_success, service_health_endpoint
+from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -259,6 +259,8 @@ async def _probe(
             "last_error": f"HTTP {r.status_code}",
         }
     except httpx.ConnectError:
+        if starts_on_demand(service or {}):
+            return {**base, "status": "stopped", "live_status": "stopped", "latency_ms": None, "last_error": None, "kind": "process"}
         return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
     except httpx.TimeoutException:
         return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}

@@ -47,6 +47,19 @@ class ProbeTruthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_error"], "connect refused")
         self.assertEqual(row["live_status"], "down")
 
+    async def test_on_demand_service_that_is_not_running_is_idle(self):
+        row = await _probe(_raising(httpx.ConnectError("refused")), {"residency": "on_demand"})
+        self.assertEqual(row["live_status"], "stopped")
+        self.assertIsNone(row["last_error"])
+
+    async def test_on_demand_declared_in_config_is_idle(self):
+        row = await _probe(_raising(httpx.ConnectError("refused")), {"config": {"residency": "on_demand"}})
+        self.assertEqual(row["live_status"], "stopped")
+
+    async def test_on_demand_service_that_times_out_is_still_a_fault(self):
+        row = await _probe(_raising(httpx.ReadTimeout("hung")), {"residency": "on_demand"})
+        self.assertEqual(row["live_status"], "degraded")
+
 
 if __name__ == "__main__":
     unittest.main()

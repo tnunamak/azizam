@@ -17,6 +17,7 @@ from typing import Any
 from gateway import sqlite_startup
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
+from gateway.model_presentation import starts_on_demand
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
 STARTING_STATUSES = frozenset({"starting", "warming"})
@@ -514,6 +515,8 @@ def _is_idle_startable(service: Mapping[str, Any]) -> bool:
             return True
         if lifecycle.get("managed") is True or lifecycle.get("service_name"):
             return True
+    if starts_on_demand(service):
+        return True
     return any(config.get(flag) is True for flag in ("gateway_lifecycle", "local_lifecycle", "lifecycle_backed"))
 
 
