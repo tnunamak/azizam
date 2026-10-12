@@ -24,12 +24,14 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any, Mapping
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import lifecycle_drivers
 from gateway.lifecycle_drivers import (
     CommandDriver,
     DockerDriver,
@@ -52,6 +54,25 @@ def _run(coro):
     prior tests that close the default loop do not break us.
     """
     return asyncio.run(coro)
+
+
+class _PollingClock:
+    """Advance only the driver's clock, leaving the real event loop untouched."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.delays = []
+
+    def time(self):
+        return self.now
+
+    async def sleep(self, delay):
+        # Bound a missing-deadline mutant instead of hanging the test runner.
+        if len(self.delays) >= 10:
+            raise AssertionError("health polling did not stop at its deadline")
+        self.delays.append(delay)
+        self.now += delay
+        await asyncio.sleep(0)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +219,12 @@ class TestExternalDriver(unittest.TestCase):
         async def _fake_get(*args, **kwargs):
             raise _httpx.ConnectError("connection refused")
 
-        with patch("httpx.AsyncClient") as mock_cls:
+        clock = _PollingClock()
+        # Replace the module's clock/sleep namespace, never loop.time or the
+        # shared asyncio module: HTTP and the test runner keep their real loop.
+        polling = SimpleNamespace(get_running_loop=lambda: clock, sleep=clock.sleep)
+        with patch("httpx.AsyncClient") as mock_cls, \
+             patch.object(lifecycle_drivers, "asyncio", polling):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=_httpx.ConnectError("refused"))
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -207,6 +233,11 @@ class TestExternalDriver(unittest.TestCase):
             result = _run(self.driver.ensure_ready(self.svc, timeout_s=0.1))
 
         self.assertFalse(result)
+        self.assertEqual(clock.delays, [0.5])
+        self.assertEqual(mock_client.get.await_args_list, [
+            call("http://127.0.0.1:8080/health", timeout=1.0),
+            call("http://127.0.0.1:8080/health", timeout=1.0),
+        ])
 
     # -- stop is a no-op — must never spawn a process -----------------------
 
@@ -385,6 +416,14 @@ class TestDockerDriver(unittest.TestCase):
 
         self.assertTrue(result)
 
+        mock_run.assert_called_once_with(
+            ["docker", "start", "my-container"],
+            timeout=30.0, check=False, capture_output=True,
+        )
+        mock_client.get.assert_awaited_once_with(
+            "http://127.0.0.1:8090/health", timeout=1.0,
+        )
+
         # Extract all subprocess.run calls and their first positional arg (the command)
         all_cmds = [str(c) for c in mock_run.call_args_list]
         cmd_strs = " ".join(all_cmds)
@@ -449,6 +488,10 @@ class TestDockerDriver(unittest.TestCase):
             warning = _run(self.driver.preflight(self.svc))
 
         self.assertIsNone(warning)
+        mock_run.assert_called_once_with(
+            ["docker", "inspect", "--format", "{{.Name}}", "my-container"],
+            capture_output=True, timeout=30.0, check=False,
+        )
         # All subprocess calls must be docker inspect
         for c in mock_run.call_args_list:
             args = c.args[0] if c.args else c.kwargs.get("args", [])
