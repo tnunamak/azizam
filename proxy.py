@@ -14190,7 +14190,7 @@ _SECURITY_HEADERS = {
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
+        "img-src 'self' data: blob:; "
         "media-src 'self' blob: data:; "
         "frame-ancestors 'none'"
     ),
