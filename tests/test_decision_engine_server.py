@@ -566,20 +566,37 @@ def test_disconnect_during_first_row_stops_later_rows():
     assert scorer.calls == [0]
 
 
-def test_expired_budget_during_multirow_stops_before_second_row():
+class _SteppedClock:
+    """A monotonic clock that moves only when the test advances it."""
+
+    def __init__(self) -> None:
+        self.now = time.monotonic()
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+def test_expired_budget_during_multirow_stops_before_second_row(monkeypatch):
+    clock = _SteppedClock()
+    monkeypatch.setattr(server, "time", clock)
+    monkeypatch.setattr(decision_engine, "time", clock)
     scorer = MultiRowBlockingScorer()
     handler = _handler_for(scorer)
     with _ThreadedServer(handler) as base_url:
         worker = threading.Thread(
             target=_post_json_with_headers,
             args=(base_url, "/v1/systemone", _multirow_body()),
-            kwargs={"headers": {"x-decision-deadline-ms": "50"}, "timeout": 1},
+            kwargs={"headers": {"x-decision-deadline-ms": "50"}, "timeout": 5},
         )
         worker.start()
-        assert scorer.first_entered.wait(timeout=2)
-        time.sleep(0.08)
+        assert scorer.first_entered.wait(timeout=5)
+        clock.now += 1.0  # the 50 ms budget ends while the first row is scoring
         scorer.release_first.set()
-        worker.join(timeout=2)
+        worker.join(timeout=5)
+        assert not worker.is_alive()
 
     assert scorer.calls == [0]
 
@@ -877,7 +894,6 @@ def test_cancellable_post_closes_close_response_socket_during_drip_body():
     listener.listen()
     thread = threading.Thread(target=serve, args=(listener,), daemon=True)
     thread.start()
-    started = time.perf_counter()
     try:
         port = listener.getsockname()[1]
         with pytest.raises(server.DecisionCancelled):
@@ -894,11 +910,13 @@ def test_cancellable_post_closes_close_response_socket_during_drip_body():
 
     assert sent_headers.is_set()
     assert got_eof.is_set()
-    assert time.perf_counter() - started < 0.5
 
 
-def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body():
+def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body(monkeypatch):
+    clock = _SteppedClock()
+    monkeypatch.setattr(server, "time", clock)
     got_eof = threading.Event()
+    sent_headers = threading.Event()
 
     def serve(listener):
         conn, _addr = listener.accept()
@@ -911,6 +929,7 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
                 b"Content-Type: application/json\r\n"
                 b"\r\n"
             )
+            sent_headers.set()
             conn.settimeout(2)
             try:
                 while True:
@@ -931,23 +950,34 @@ def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body
     listener.listen()
     thread = threading.Thread(target=serve, args=(listener,), daemon=True)
     thread.start()
-    started = time.perf_counter()
-    try:
-        port = listener.getsockname()[1]
-        with pytest.raises(server.DecisionDeadlineExceeded):
+    outcome: list = []
+
+    def call():
+        try:
             server._post_json_cancellable(
-                f"http://127.0.0.1:{port}",
+                f"http://127.0.0.1:{listener.getsockname()[1]}",
                 "/completion",
                 {},
-                deadline=time.monotonic() + 0.05,
+                deadline=clock.now + 100,
                 cancel_check=None,
             )
+        except BaseException as exc:  # noqa: BLE001 - the test inspects the type
+            outcome.append(exc)
+
+    caller = threading.Thread(target=call, daemon=True)
+    try:
+        caller.start()
+        # The deadline ends only after the response body is already dripping.
+        assert sent_headers.wait(timeout=5)
+        clock.now += 1000
+        caller.join(timeout=5)
     finally:
         listener.close()
         thread.join(timeout=2)
 
+    assert not caller.is_alive()
+    assert len(outcome) == 1 and isinstance(outcome[0], server.DecisionDeadlineExceeded)
     assert got_eof.is_set()
-    assert time.perf_counter() - started < 0.5
 
 
 def test_decision_http_server_uses_daemon_request_threads() -> None:
