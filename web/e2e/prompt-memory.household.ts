@@ -134,6 +134,8 @@ test.describe("Accessibility of the prompt screens", () => {
               )
               .first(),
           ).toBeVisible();
+          // Scan the loaded page, not its loading placeholders.
+          await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
           const violations = (
             await new AxeBuilder({ page }).analyze()
           ).violations

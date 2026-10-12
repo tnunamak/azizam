@@ -435,6 +435,8 @@ def test_simultaneous_first_queue_writes_upgrade_schema_once(hh, legacy_schema):
         thread.start()
     for thread in threads:
         thread.join(30)
+    # A live worker would outlast the restored paths of this test.
+    assert not any(thread.is_alive() for thread in threads)
     assert errors == []
     expected = set(people) | ({"usr_legacy"} if legacy_schema else set())
     assert set(proxy._pending_prompt_purges()) == expected
