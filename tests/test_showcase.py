@@ -10,9 +10,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import yaml
@@ -251,20 +251,36 @@ class ExampleScriptTests(unittest.TestCase):
             self.assertFalse(list((Path(tmp) / "x").glob("*.tmp")))
 
     def test_published_run_time_excludes_idle_wait_and_lookups(self) -> None:
+        class Clock:
+            """A virtual clock: sleeping advances it, nothing else does."""
+
+            def __init__(self) -> None:
+                self.now = 1000.0
+
+            def monotonic(self) -> float:
+                return self.now
+
+            def sleep(self, seconds: float) -> None:
+                self.now += seconds
+
+        clock = Clock()
+
         class SlowGuard:
             def wait(self, label: str) -> None:
-                time.sleep(0.3)
+                clock.sleep(0.3)
 
         class Http:
             def request(self, method, url, **kw):
+                clock.sleep(0.05)  # the only time the published run should include
                 return httpx.Response(200, json={}, request=httpx.Request(method, url))
 
-        gw = self.mod.Gateway("http://127.0.0.1:9", guard=SlowGuard())
-        gw.http = Http()
-        gw.resolve = lambda operation, model: None
-        gw.display_name = lambda model: time.sleep(0.2)
-        _, seconds = self.mod.timed(lambda: gw.request("POST", "/v1/embeddings", json={"model": "embed"}))
-        self.assertLess(seconds, 0.1)
+        with patch.object(self.mod, "time", clock):
+            gw = self.mod.Gateway("http://127.0.0.1:9", guard=SlowGuard())
+            gw.http = Http()
+            gw.resolve = lambda operation, model: None
+            gw.display_name = lambda model: clock.sleep(0.2)
+            _, seconds = self.mod.timed(lambda: gw.request("POST", "/v1/embeddings", json={"model": "embed"}))
+        self.assertEqual(seconds, 0.05)
         self.assertEqual(gw.recorded_requests[0]["requested_model"], "embed")
 
     def test_main_skips_present_examples_without_calling_the_gateway(self) -> None:
