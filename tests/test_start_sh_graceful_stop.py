@@ -84,6 +84,7 @@ HARNESS = textwrap.dedent(
       grep -q "proxy started" "$FAKE_LOG" 2>/dev/null && grep -q "litellm started" "$FAKE_LOG" 2>/dev/null && break
       sleep 0.1
     done
+    grep -q "litellm started" "$FAKE_LOG" 2>/dev/null || { echo "startup markers never appeared" >&2; kill -TERM "$pid"; exit 97; }
     kill -TERM "$pid"
     wait "$pid"
     echo "start.sh exit=$?" >> "$FAKE_LOG"
@@ -162,10 +163,15 @@ class StartScriptGracefulStopTests(unittest.TestCase):
             awk.write_text("#!/bin/bash\nexec cut -d' ' -f1\n")
             awk.chmod(awk.stat().st_mode | stat.S_IXUSR)
             log = work / "log.txt"
+            # Without a registry the sidecar never launches LiteLLM, so the
+            # harness would wait out its whole startup loop on ambient state.
+            db_path = work / "data" / "admin.db"
+            _write_registry_json(db_path, {"services": {}})
             env = {
                 **os.environ,
                 "FAKE_LOG": str(log),
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+                "AZIZAM_ADMIN_DB": str(db_path),
                 "AZIZAM_LITELLM_RELOAD_INTERVAL": "1",
                 "DATABASE_URL": "",
             }
