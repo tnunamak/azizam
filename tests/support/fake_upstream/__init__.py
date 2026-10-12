@@ -9,6 +9,7 @@ unconsumed required exchange, even when the gateway absorbed the 599.
 
 from .app import VIOLATION_STATUS, FakeUpstream, RecordedRequest
 from .clock import VirtualClock
+from .deadline import Deadlines, module_deadline, read_deadline
 from .fixtures import FakeUpstreams, fake_upstreams, verify
 from .known_bug import KnownBug, expect_fixed
 from .protocols import PROTOCOLS
@@ -18,6 +19,7 @@ from .transport import HostRouter, StreamingASGITransport
 __all__ = [
     "PROTOCOLS",
     "VIOLATION_STATUS",
+    "Deadlines",
     "FakeUpstream",
     "FakeUpstreams",
     "HostRouter",
@@ -30,6 +32,8 @@ __all__ = [
     "expect_fixed",
     "fake_upstreams",
     "load_scenario",
+    "module_deadline",
+    "read_deadline",
     "scenario_from_data",
     "verify",
 ]

@@ -350,7 +350,13 @@ for ((i=1; i<=lanes; i++)); do
   fi
 done
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
-step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl"
+# Ratchets may only fall: compare with the target branch's budgets when it has them.
+policy_args=()
+if [[ -n ${target_tip:-} ]] && git cat-file -e "$target_tip:tests/budgets.toml" 2>/dev/null; then
+  git show "$target_tip:tests/budgets.toml" > "$receipts/base-budgets.toml"
+  policy_args=(--base-budgets "$receipts/base-budgets.toml")
+fi
+step policy "$run/python/scripts/ci/policy.py" --root "$run/python" --cases "$receipts/cases.jsonl" "${policy_args[@]}"
 
 cat "$receipts"/steps/*.tsv > "$receipts/steps.tsv"
 # Missing/truncated receipts or skipped/nonzero steps can never produce PASS.

@@ -21,8 +21,7 @@ import pytest
 
 from gateway import decision_provider_execution as execution
 from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-from tests.support.gateway import READ_BUDGET_SECONDS
-from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario  # noqa: F401
+from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, module_deadline  # noqa: F401
 
 MODEL = "typesafe/jev-latest"
 API_KEY = "ts-fk-key"
@@ -118,17 +117,40 @@ def test_rate_limit_keeps_retry_after_and_releases_the_reservation(fake_upstream
     _forwarded(fake)
 
 
+_DEADLINE_BODY = {"error": {"message": "Remote decision provider timed out.", "type": "invalid_request_error", "code": "deadline_exceeded"}}
+
+
 def test_first_byte_past_the_deadline_gives_a_504_and_leaves_the_charge_for_reconciliation(fake_upstreams, monkeypatch, tmp_path) -> None:
+    """The decision deadline passes once the fake has logged the request and holds the response."""
     fake, registry = _serve(fake_upstreams, monkeypatch, "slow-first-byte", wire=True)
-    monkeypatch.setattr(execution, "DEFAULT_DECISION_TIMEOUT_S", READ_BUDGET_SECONDS)
+    deadline = module_deadline(monkeypatch, execution, fake_upstreams.clock)
+    ledger = tmp_path / "ledger.db"
+
+    result = _decide(registry, ledger)
+
+    assert deadline.timeout_fired == 1
+    assert result.status_code == 504
+    assert result.body == _DEADLINE_BODY
+    assert [row[0] for row in _spend(ledger)] == ["needs_reconciliation"]
+    _forwarded(fake)
+
+
+def test_decision_deadline_wiring_on_the_real_clock_gives_a_504(fake_upstreams, monkeypatch, tmp_path) -> None:
+    """The one real-clock case: the module's own deadline, shortened.
+
+    The deadline may pass before the fake logged the request, so only the
+    envelope and the ledger state are asserted.
+    """
+    fake, registry = _serve(fake_upstreams, monkeypatch, "slow-first-byte", wire=True)
+    fake.waive("decide")
+    monkeypatch.setattr(execution, "DEFAULT_DECISION_TIMEOUT_S", 0.2)
     ledger = tmp_path / "ledger.db"
 
     result = _decide(registry, ledger)
 
     assert result.status_code == 504
-    assert result.body == {"error": {"message": "Remote decision provider timed out.", "type": "invalid_request_error", "code": "deadline_exceeded"}}
+    assert result.body == _DEADLINE_BODY
     assert [row[0] for row in _spend(ledger)] == ["needs_reconciliation"]
-    _forwarded(fake)
 
 
 def test_answer_cut_by_the_upstream_is_a_502_and_leaves_the_charge_for_reconciliation(fake_upstreams, monkeypatch, tmp_path) -> None:

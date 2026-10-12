@@ -10,7 +10,7 @@
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8208
+pytest = 8216
 vitest = 1631
 playwright = 759
 node = 5

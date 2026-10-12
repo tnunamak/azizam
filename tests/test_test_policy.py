@@ -82,11 +82,16 @@ class Tree:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(text)
 
-    def run(self, today: datetime.date = TODAY) -> subprocess.CompletedProcess[str]:
+    def run(self, today: datetime.date = TODAY, base_budgets: str | None = None) -> subprocess.CompletedProcess[str]:
         cases = self.root / "cases.jsonl"
         cases.write_text("".join(json.dumps(row) + "\n" for row in self.cases), encoding="utf-8")
+        extra: list[str] = []
+        if base_budgets is not None:
+            base = self.root / "base-budgets.toml"
+            base.write_text(base_budgets, encoding="utf-8")
+            extra = ["--base-budgets", str(base)]
         return subprocess.run([sys.executable, str(POLICY), "--root", str(self.root), "--cases", str(cases),
-                               "--today", today.isoformat()], text=True, capture_output=True)
+                               "--today", today.isoformat(), *extra], text=True, capture_output=True)
 
 
 @pytest.fixture
@@ -254,3 +259,36 @@ def test_a_second_run_into_the_same_receipts_fails(tree: Tree) -> None:
     result = tree.run()
     assert result.returncode == 1, result.stdout
     assert f"retries: vitest {file} > t ran attempt 1" in result.stdout
+
+
+def _ratchet_now(tree: Tree) -> int:
+    return tomllib.loads((tree.root / "tests/budgets.toml").read_text(encoding="utf-8"))["ratchets"]["ad_hoc_upstream_fake_files"]
+
+
+def _base(value: int | None) -> str:
+    return "[ceilings]\npytest = 1\n" + ("" if value is None else f"[ratchets]\nad_hoc_upstream_fake_files = {value}\n")
+
+
+def test_a_ratchet_above_the_target_branch_fails(tree: Tree) -> None:
+    """The ad-hoc fake count rose: the ceiling was raised to hide new fakes."""
+    result = tree.run(base_budgets=_base(_ratchet_now(tree) - 1))
+    print(result.stdout)
+    assert result.returncode == 1, result.stdout
+    assert f"ratchets: ad_hoc_upstream_fake_files is {_ratchet_now(tree)}, above {_ratchet_now(tree) - 1} on the target branch" in result.stdout
+
+
+def test_a_removed_ratchet_fails(tree: Tree) -> None:
+    tree.edit("tests/budgets.toml", "ad_hoc_upstream_fake_files", "renamed_ratchet")
+    result = tree.run(base_budgets=_base(5))
+    assert result.returncode == 1, result.stdout
+    assert "ratchets: ad_hoc_upstream_fake_files was removed from tests/budgets.toml" in result.stdout
+
+
+@pytest.mark.parametrize("delta", [0, 1], ids=["equal", "fell"])
+def test_a_ratchet_at_or_below_the_target_branch_passes(tree: Tree, delta: int) -> None:
+    result = tree.run(base_budgets=_base(_ratchet_now(tree) + delta))
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_target_branch_without_ratchets_imposes_none(tree: Tree) -> None:
+    assert tree.run(base_budgets=_base(None)).returncode == 0
