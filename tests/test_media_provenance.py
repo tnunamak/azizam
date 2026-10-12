@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import plan_for, access  # noqa: E402
+from tests.support.access import plan_for, access, access_context  # noqa: E402
 from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
@@ -127,7 +127,7 @@ class PlanBoundTests(unittest.TestCase):
         self.assertEqual(proxy._media_metadata_bound(owner), "full")
         self.assertEqual(proxy._media_metadata_bound(plain), "none")
         self.assertEqual(proxy._media_metadata_bound(mixed), "none")
-        self.assertEqual(proxy._media_metadata_bound(proxy.NO_AUTH_CONTEXT), "none")
+        self.assertEqual(proxy._media_metadata_bound(access_context()), "none")
 
 
 class ControlParsingTests(unittest.TestCase):

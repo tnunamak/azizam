@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import proxy
-from tests.support.access import plan_for, access  # noqa: E402
+from tests.support.access import plan_for, access, access_context  # noqa: E402
 def _request(path: str, payload: dict) -> Request:
     sent = False
 
@@ -176,7 +176,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                     async def failing_forward(*_args, **_kwargs):
                         raise error
 
-                    route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
+                    route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
                     with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
                         proxy, "_forward_chat_completions", failing_forward
                     ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
@@ -215,7 +215,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                     raise error
                     yield b"unreachable"
 
-                route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
+                route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
                 with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
                     proxy, "_forward_chat_completions", forward
                 ), patch.object(proxy, "iter_llm_response_bytes", failing_iter), patch.object(
@@ -239,7 +239,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             entered.set()
             await asyncio.Future()
 
-        route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT, delegated_to_litellm=True)
+        route_auth = SimpleNamespace(auth_context=access_context(), delegated_to_litellm=True)
         with patch.object(proxy, "authenticate_runtime_request", return_value=route_auth), patch.object(
             proxy, "_forward_chat_completions", delayed_forward
         ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
@@ -273,7 +273,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
         target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-            proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+            proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
             proxy.httpx, "AsyncClient", return_value=DelayedClient()
         ), patch.object(proxy.receipt_store, "begin", side_effect=lambda r: began.append(r)), patch.object(
@@ -307,7 +307,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
 
         target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
         with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-            proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+            proxy, "_auth_context_from_scope", return_value=access_context()
         ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
             proxy.httpx, "AsyncClient", return_value=Client()
         ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
@@ -359,7 +359,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
                 target = {"backend": "test", "service": "test", "host": "http://test", "enabled": True}
                 client = Client()
                 with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"test": target}), patch.object(
-                    proxy, "_auth_context_from_scope", return_value=proxy.NO_AUTH_CONTEXT
+                    proxy, "_auth_context_from_scope", return_value=access_context()
                 ), patch.object(proxy, "evaluate_and_apply", return_value=SimpleNamespace(denied=False)), patch.object(
                     proxy.httpx, "AsyncClient", return_value=client
                 ), patch.object(proxy.receipt_store, "begin", side_effect=began.append), patch.object(
@@ -394,7 +394,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
             response = await proxy._forward_current_loaded_openai_request(
                 _request("/v1/chat/completions", {"model": "current", "messages": []}),
                 request_path="/v1/chat/completions",
-                auth_context=proxy.NO_AUTH_CONTEXT,
+                auth_context=access_context(),
                 body_json={"model": "current", "messages": []},
             )
 
@@ -423,7 +423,7 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         ):
             task = asyncio.create_task(proxy._forward_current_loaded_openai_request(
                 _request("/v1/chat/completions", {"model": "current", "messages": []}),
-                request_path="/v1/chat/completions", auth_context=proxy.NO_AUTH_CONTEXT,
+                request_path="/v1/chat/completions", auth_context=access_context(),
                 body_json={"model": "current", "messages": []},
             ))
             await asyncio.wait_for(entered.wait(), 1)

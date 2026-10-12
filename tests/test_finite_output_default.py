@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 import proxy
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 import responses_translator
 from gateway import service_registry
 from gateway.transforms import run_request_pipeline
@@ -515,7 +515,7 @@ def test_unknown_remote_litellm_body_and_existing_only_path_remain_unchanged() -
     with _local_model_config(), patch.object(proxy, "_profile_target_activation", return_value="existing_only"):
         error, prepared = asyncio.run(
             proxy._prepare_litellm_local_llm_request(
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 request_path="/v1/chat/completions",
                 body_json=remote_body,
             )

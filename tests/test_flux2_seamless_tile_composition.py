@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.extension_catalog import summarize_extensions  # noqa: E402
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE as NS  # noqa: E402
@@ -252,7 +253,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
     async def test_transparent_background_is_rejected_for_tile_composition(self) -> None:
         receipt = proxy.start_image_route_receipt(
             "/v1/images/generations",
-            proxy.NO_AUTH_CONTEXT,
+            access_context(),
         )
         body = {
             "model": "flux2-klein-4b-seamless-tile",
@@ -268,7 +269,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
         ):
             response = await proxy.proxy_comfy_request(
                 _JsonRequest(body),  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 receipt=receipt,
             )
 
@@ -300,7 +301,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
         }
         receipt = proxy.start_image_route_receipt(
             "/v1/images/generations",
-            proxy.NO_AUTH_CONTEXT,
+            access_context(),
         )
         run_calls: list[dict[str, Any]] = []
         # Odd dimensions with a distinct value in every pixel make both offset
@@ -378,7 +379,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
             ):
                 response = await proxy.proxy_comfy_request(
                     _JsonRequest(body),  # type: ignore[arg-type]
-                    proxy.NO_AUTH_CONTEXT,
+                    access_context(),
                     receipt=receipt,
                 )
 

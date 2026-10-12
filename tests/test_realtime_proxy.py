@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import realtime_proxy
 
 
@@ -173,7 +173,7 @@ class RefusalTests(RealtimeRouteCase):
             "/v1/audio/speech",
         )
         with patch.object(proxy, "_enforce_runtime_route_policy", return_value=None) as enforce:
-            self.assertIsNone(proxy._realtime_policy_denial(proxy.NO_AUTH_CONTEXT))
+            self.assertIsNone(proxy._realtime_policy_denial(access_context()))
         self.assertEqual([call.args[1] for call in enforce.call_args_list], list(required))
 
         for index, denied_path in enumerate(required):

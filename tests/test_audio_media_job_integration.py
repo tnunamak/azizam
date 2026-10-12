@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs  # noqa: E402
 
 
@@ -351,7 +351,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             job.job_id,
             body=body,
             request=_StubJsonRequest(body),  # type: ignore[arg-type]
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
         )
         scheduled: list[str] = []
 
@@ -427,7 +427,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     job.job_id,
                     body=body,
                     request=_StubJsonRequest(body),
-                    auth_context=proxy.NO_AUTH_CONTEXT,
+                    auth_context=access_context(),
                 )
                 self.assertIsNotNone(
                     proxy._load_audio_media_job_payload(job.job_id)

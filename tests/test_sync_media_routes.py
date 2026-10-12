@@ -16,7 +16,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
@@ -220,7 +220,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             [_png_bytes()],
             "url",
             {},
-            proxy.NO_AUTH_CONTEXT,
+            access_context(),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -320,7 +320,7 @@ class SyncMediaRouteTests(unittest.TestCase):
                 created.job_id,
                 body=body,
                 request=PayloadRequest(),  # type: ignore[arg-type]
-                auth_context=proxy.NO_AUTH_CONTEXT,
+                auth_context=access_context(),
             )
             anyio.run(proxy._run_image_media_job, created.job_id)
 
@@ -521,7 +521,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         async def begin(intent: str):
             return await media_ingestion.start_receipt(
                 request,  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 intent=intent,
                 profile="owner-default",
             )

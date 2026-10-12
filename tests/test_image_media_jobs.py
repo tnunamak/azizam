@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs  # noqa: E402
 
 
@@ -110,13 +110,13 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         first, digest, kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_one",
         )
         second, _, second_kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_two",
         )
@@ -133,7 +133,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         request_id, digest, kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_unique",
         )
@@ -230,7 +230,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             job.job_id,
             body=body,
             request=request,  # type: ignore[arg-type]
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
         )
         return job.job_id
 

@@ -14,6 +14,7 @@ import pytest
 from PIL import Image
 
 import proxy
+from tests.support.access import access_context  # noqa: E402
 from gateway import media_fetch
 from tests.media_test_bytes import mp4_bytes
 
@@ -83,7 +84,7 @@ def test_public_media_reference_uses_safe_fetch_boundary(monkeypatch, redirect):
     ))
     url = "https://media.example/source.png" if redirect else "http://127.0.0.1/private.png"
     with pytest.raises(proxy._InputReferenceError, match="blocked network"):
-        asyncio.run(proxy._resolve_input_reference(url, proxy.NO_AUTH_CONTEXT))
+        asyncio.run(proxy._resolve_input_reference(url, access_context()))
     assert len(contacted) == (1 if redirect else 0)
 
 
@@ -202,7 +203,7 @@ def test_video_create_rejects_existing_filesystem_path_with_400(tmp_path):
     )
     with patch.object(proxy, "_service_availability_response", return_value=None):
         with patch.object(proxy.httpx, "AsyncClient", side_effect=AssertionError("must not upload a local file")):
-            response = asyncio.run(proxy.proxy_comfy_video_create(request, proxy.NO_AUTH_CONTEXT))
+            response = asyncio.run(proxy.proxy_comfy_video_create(request, access_context()))
     assert response.status_code == 400
     message = json.loads(response.body)["error"]["message"]
     assert "multipart upload" in message

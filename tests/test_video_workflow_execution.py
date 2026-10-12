@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 
 
 class _Upload:
@@ -97,7 +98,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self_outer = self
         with patch.object(proxy.httpx, "AsyncClient", FakeClient), patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
-                _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]
             )
 
         self.assertIsInstance(response, Response)
