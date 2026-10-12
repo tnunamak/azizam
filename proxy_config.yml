@@ -1599,6 +1599,10 @@ auth:
   # honored ONLY from proxies you list here (rightmost-first, spoof-resistant).
   # It decides throttling and first-run setup, never access.
   trusted_proxies: ["192.168.1.4"]
+  # First-run setup (claiming the owner account) is allowed only from these
+  # client networks. They grant no other access.
+  #   Env override: AZIZAM_SETUP_ALLOWED_CIDRS
+  setup_allowed_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
   #
   # Cloudflare Tunnel: honor CF-Connecting-IP, but ONLY when the connection comes
   # from a verified Cloudflare edge IP (ranges fetched at startup; fail-closed).

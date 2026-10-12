@@ -36,7 +36,7 @@ def isolated_admin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "store", proxy.ADMIN_STORE)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", SIGNING_KEY)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", CookieConfig(secure=False))
-    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [])
+    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("192.168.0.0/16")])
     monkeypatch.setattr(proxy, "TRUSTED_PROXIES", [])
     monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", False)
     monkeypatch.setattr(proxy, "_CF_IP_NETWORKS", None)
