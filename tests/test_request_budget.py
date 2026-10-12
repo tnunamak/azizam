@@ -39,8 +39,10 @@ ENDPOINTS = (
 def _counting_connect(real, delay, counter, opened):
     def connect(*args, **kwargs):
         counter[0] += 1
-        frames = [f for f in traceback.extract_stack()[:-1] if "/gateway/" in f.filename or f.filename.endswith("proxy.py")]
-        opened.append(f"{Path(str(args[0])).name}@{frames[-1].name if frames else '?'}")
+        frames = [f for f in traceback.extract_stack()[:-1] if ("/gateway/" in f.filename or f.filename.endswith("proxy.py"))
+                  and not f.filename.endswith(("sqlite_startup.py", "request_connections.py"))]
+        where = " < ".join(f"{Path(f.filename).stem}.{f.name}" for f in reversed(frames[-3:]))
+        opened.append(f"{Path(str(args[0])).name}@{where}")
         if delay:
             time.sleep(delay)
         return real(*args, **kwargs)
