@@ -1,5 +1,9 @@
 # Product UI cutover
 
+> **Historical: superseded by the move to `/` after release 18; see docs/design/CONNECT_ROOT_MAIL.md §2 on the `design/connect-root-mail` branch.**
+> The web app is now served at `/`, no `/ui` URL works, and no redirects exist.
+> The text below describes the earlier `/ui` cutover and is kept for the record.
+
 The browser front door is the single React app under `/ui/`. The gateway
 serves the existing Next.js static export from `web/out`; production does
 not need a Node server. Build with `cd web && npm run build`. Retain

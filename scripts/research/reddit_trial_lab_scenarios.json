@@ -12,7 +12,7 @@
       {"id": "health", "type": "http", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200], "required": true},
       {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200], "required": true},
       {"id": "setup_page", "type": "http", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302], "required": true},
-      {"id": "admin_login", "type": "http", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501], "required": true},
+      {"id": "admin_login", "type": "http", "method": "GET", "path": "/login", "auth": "none", "expect_status": [200, 302, 501], "required": true},
       {"id": "admin_overview", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200], "required": false}
     ],
     "reddit_angles": [

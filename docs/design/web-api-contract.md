@@ -81,11 +81,11 @@ stored configuration name. A server migration may emit a separately named
 legacy parameter if compatibility is required; it must not overload the
 canonical target parameter.
 
-`/admin/status` and `/admin/status/` require admin browser authentication.
-Both redirect to `/ui/admin/status/` while preserving the full query string
-(for example, `/admin/status/?service=svc_1` redirects to
-`/ui/admin/status/?service=svc_1`); the same query-preserving trailing-slash
-canonicalization applies to every admin section route.
+Historical: earlier releases redirected `/admin/status` to `/ui/admin/status/`
+with the query string preserved. Both routes are gone. The Status page is now
+`/status/` (for example, `/status/?service=svc_1`), and `/admin/<section>`
+browser aliases no longer exist. The JSON routes under `/admin/api/*` are
+unchanged.
 
 ---
 

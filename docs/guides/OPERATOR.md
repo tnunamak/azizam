@@ -15,10 +15,10 @@ docker compose up -d
 Then open:
 
 ```text
-http://127.0.0.1:5000/setup
+http://127.0.0.1:5000/setup/
 ```
 
-`/setup` creates or claims the first owner account. Continue to Home, choose an app, and use **Create key for** that app. Save the runtime key when it appears; it starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
+`/setup/` creates or claims the first owner account. Continue to Home, choose an app, and use **Create key for** that app. Save the runtime key when it appears; it starts with `opk_` and is shown once. Use it in clients, and keep admin keys for administration.
 
 Compose starts:
 
@@ -51,7 +51,7 @@ and protocol fields.
 
 ## Add local engines
 
-Open `/ui/engines/` to manage local services. A service record should describe
+Open `/engines/` to manage local services. A service record should describe
 an engine that already exists and is reachable by the gateway.
 
 For a generic OpenAI-compatible chat engine:
@@ -77,7 +77,7 @@ branches for an engine.
 Remote providers are paid or externally hosted backends. They are service
 registry records with provider-shaped config.
 
-Open **Gateway → Providers → Add provider** at `/ui/providers/`. Select a
+Open **Gateway → Providers → Add provider** at `/providers/`. Select a
 preset or generic endpoint, enter a write-only key or an environment-variable
 name, and run **Gateway check**. Choose models, review prices, set caps, and
 select allowed access plans before saving. The page also supports provider
@@ -130,7 +130,7 @@ For example, set an OpenRouter key credit limit that matches the gateway cap.
 
 ## Manage people and access plans
 
-Open `/ui/people/`.
+Open `/people/`.
 
 Use the People tab to:
 
@@ -147,6 +147,12 @@ Use the Invites tab to:
 - choose an expiry of 1 day, 7 days, or 30 days;
 - copy a pending invite link again;
 - revoke a pending invite.
+
+Invite links look like `/invite/#token=...` and password reset links like
+`/sign-in/#reset=...`. Links copied from an earlier release that served the app
+under `/ui` stop working after the move to `/`. Copy pending invites again and
+reissue pending resets, then tell the household that bookmarks to `/ui/...`
+pages no longer work: the app is now at the site root, for example `/library/`.
 
 Use the Access plans tab to:
 
@@ -167,7 +173,7 @@ keys stay revoked.
 
 ## Manage apps and keys
 
-Members can manage their own app keys at `/ui/apps/` when their account allows
+Members can manage their own app keys at `/apps/` when their account allows
 it. Owners can also manage runtime access from the admin surfaces.
 
 Use one App key per app. This keeps rotation and revocation small. App keys
@@ -204,7 +210,9 @@ directory as the backup artifact for the current implementation.
 Before an upgrade, back up the runtime state directory and review the release
 notes or diff for changes to config, database state, provider behavior, and UI.
 Build and deploy the Python gateway and the web UI together so the static UI
-matches the JSON APIs it calls.
+matches the JSON APIs it calls. If a reverse proxy checks gateway health, point
+it at `GET /health` (see [Reverse proxy](../REVERSE_PROXY.md)), not `HEAD /admin`
+or `HEAD /`.
 
 For Docker Compose deployments, preserve the data volume. Do not remove it with
 `docker compose down -v` unless you intentionally want to delete gateway state.
@@ -227,7 +235,7 @@ session key, env secrets, or deployment shape can need a restart.
 
 ## Troubleshooting
 
-### `/setup` says an owner already exists
+### `/setup/` says an owner already exists
 
 Sign in with the owner account. If you lost the browser session or OIDC is
 down, use the recovery admin-key path documented in

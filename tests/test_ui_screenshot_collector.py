@@ -26,5 +26,5 @@ def test_collector_excludes_retired_and_pre_run_captures(tmp_path, monkeypatch):
     index = (destination / "INDEX.md").read_text()
     assert "admin-status-seeded" not in index
     assert "p1v-fixture" not in index
-    assert "| `/admin/status` | missing | `status` |" in index
+    assert "/admin/status" not in index
     assert "status:empty:light:390" in index

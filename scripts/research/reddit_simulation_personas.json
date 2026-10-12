@@ -15,7 +15,7 @@
       {"id": "public_health", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200]},
       {"id": "public_discovery", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200]},
       {"id": "setup_page", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302]},
-      {"id": "admin_login", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501]},
+      {"id": "admin_login", "method": "GET", "path": "/login", "auth": "none", "expect_status": [200, 302, 501]},
       {"id": "admin_overview", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200]}
     ],
     "comment_angles": [

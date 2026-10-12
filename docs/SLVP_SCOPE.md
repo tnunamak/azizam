@@ -27,10 +27,10 @@ Status on `main`:
 - Pure app-profile policy module exists in `gateway/policy.py`.
 - A pure app-profile loader for existing key-entry config exists in
   `gateway/profiles.py`.
-- `/admin` provides the thin operator loop for Apps, Profiles, runtime keys,
-  credential revocation, access-issue previews, and policy simulation.
-- `/` provides the thin normal-user account portal; `/me` is a legacy browser
-  alias that redirects to `/`. Signed-in users can create and delete their own
+- The web app at `/` provides the operator loop for Apps, Profiles, runtime
+  keys, credential revocation, access-issue previews, and policy simulation
+  (`/apps/`, `/people/`); the old `/admin` and `/me` browser pages are gone.
+- `/` is also the thin normal-user home. Signed-in users can create and delete their own
   Personal Apps, mint/revoke their own App keys, inspect an owned key's
   effective access, paste an `opk_...` key locally for setup help, and copy SDK
   settings. Media jobs remain on the gateway-native `/gateway/v1/media/jobs`

@@ -33,9 +33,9 @@ that layer structural.
   `x-azizam-csrf: <token>` headers on writes. NO new server rendering of
   HTML in Python for these surfaces. If an API gap blocks a surface, extend
   `gateway/admin_api.py` (JSON), never the HTML renderers.
-- **Cutover**: strangler. New surfaces mount under `/ui/` (gateway
-  `StaticFiles`) until parity, then take over the canonical routes. Python
-  renderers are not deleted in this phase.
+- **Cutover** (historical): this was a strangler under `/ui/`. It is done: the
+  web app is served at `/` and the Python HTML renderers are deleted. No `/ui`
+  URL works any more.
 - **Brand**: tokens are local to Azizam. The external `@vivid-fish/brand`
   dependency and import instructions are superseded. Keep shared tokens as
   the source of color, type, radius, shadow and animation decisions.
@@ -236,7 +236,7 @@ Eight flat, noun-named sections (Tailscale-calm; no nesting, no Title Case).
 **Status is first and read-first**: it answers the operational question before
 an operator enters a configuration surface.
 
-| Route (`/ui/admin/…`) | Nav label | One job |
+| Route (historical `/ui/admin/…`; now top-level, for example `/status/`) | Nav label | One job |
 |---|---|---|
 | `/status` | Status | "What is true now, and what needs diagnosis?" |
 | `/` (overview) | Overview | "What needs my attention next?" |
@@ -262,13 +262,10 @@ starts with `SectionHeader`. Rhythm remains section gap-8 and intra-card gap-4;
 tables use `small` text with relaxed row height. Prefer spacing and single
 hairline rules (`vf-border`) over card borders everywhere.
 
-**Canonical route and link contract:** `/admin/status` and
-`/admin/status/` are authenticated browser routes. Each redirects to the
-canonical React Status route (`/ui/admin/status/`) while preserving the
-complete query string (for example,
-`/admin/status/?service=svc_1` → `/ui/admin/status/?service=svc_1`). The same
-query-preserving canonicalization applies to every trailing-slash admin section
-route. `adminStatusHref(serviceId?)` is the diagnostic link builder and
+**Canonical route and link contract:** the Status route is `/status/`
+(historical: it was `/ui/admin/status/`, reached by redirect from
+`/admin/status`; those routes are gone). A service focus is the query string,
+for example `/status/?service=svc_1`. `adminStatusHref(serviceId?)` is the diagnostic link builder and
 produces the Status route, optionally focused on a service.
 `adminServiceHref(serviceId)` is the configuration link builder and produces
 the Services route. `adminTargetHref(targetKind, targetId)` is the one shared
@@ -355,8 +352,5 @@ is frozen during a fan-out.
 Historical plans included portal surfaces, absorbing legacy status rendering
 into `web/`, and deleting Python renderers. Promotion of `ui/` to
 `@vivid-fish/brand/react` is superseded; tokens stay local. The following
-cutover plan is historical:
-
-canonical-route cutover (per-area flips: `/admin` first, then
-`/me`; `basePath` `''` + gateway serves export at canonical routes +
-`/ui/*` redirects).
+cutover plan is historical and complete: the export is served at `/` and no
+`/ui/*` redirects exist (see `docs/design/UI_CUTOVER.md`).

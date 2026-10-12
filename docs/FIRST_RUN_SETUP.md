@@ -3,16 +3,21 @@
 The first-run contract is web-first. A new self-hoster should be able to:
 
 1. Start the gateway with near-zero `.env`.
-2. Open `/setup` in a browser.
+2. Open `/setup/` in a browser.
 3. Claim or create the first local owner.
 4. Let the app seed sane defaults and mint the first App + `opk_...` runtime key.
 5. Manage the service/provider registry, OIDC, users, Apps, Profiles, keys,
-   limits, and service availability from `/admin`.
+   limits, and service availability from the web app (`/settings/`,
+   `/people/`, `/apps/`, `/engines/`, `/providers/`).
 
-`/setup` is intentionally small. It does not configure backends, edit OIDC, or
+`/setup/` is intentionally small. It does not configure backends, edit OIDC, or
 create policy abstractions. It only answers: "Can this browser administer the
 gateway, and does this operator have one working `opk_...` key to test a
 client?"
+
+The server-rendered operator setup console (the old `/setup?operator=1`) is at
+`/setup/console`. The setup forms post to `/setup/claim`, `/setup/local-owner`,
+`/setup/local-login` and `/setup/first-app`.
 
 ## Docker Compose Quick Start
 
@@ -22,7 +27,7 @@ The fastest path for a self-hosted deployment:
 docker compose up -d
 ```
 
-Then open `http://127.0.0.1:5000/setup` to claim the first owner account and
+Then open `http://127.0.0.1:5000/setup/` to claim the first owner account and
 mint a runtime key. No `.env` file is required.
 
 Docker Compose starts two containers:
@@ -111,11 +116,11 @@ If you just want a working gateway, in order:
    ./start.sh
    ```
 
-2. Open `http://127.0.0.1:5000/setup`.
+2. Open `http://127.0.0.1:5000/setup/`.
 3. Claim or create the first owner (see [Setup States](#setup-states)).
 4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
-5. Add a chat engine from Gateway → Engines (`/ui/engines/`). Use the engine's
+5. Add a chat engine from Gateway → Engines (`/engines/`). Use the engine's
    OpenAI-compatible base URL as seen by the gateway and add at least one model
    mapping. For generic OpenAI-compatible engines, set health endpoint
    `/v1/models`. Example: public model `my-llama` -> upstream model
@@ -131,7 +136,7 @@ If you just want a working gateway, in order:
 
 Everything else — Profiles, identity/Profile mappings, role/model bindings,
 service/provider records, admission caps, OIDC details, additional Apps and
-keys — is dashboard work at `/admin`. Restart is only required for deployment
+keys — is work in the web app. Restart is only required for deployment
 bootstrap changes such as listener/TLS settings or secret/env changes.
 
 For headless automation, first fetch the current service-registry generation,
@@ -167,7 +172,7 @@ key, set the key in the process environment and send its variable name as
 The executable first-run check is `scripts/e2e/fresh_instance.sh`. It uses only
 HTTP APIs:
 
-1. `GET /setup` confirms the local-owner form exists.
+1. `GET /setup/` confirms the local-owner form exists.
 2. `POST /setup/local-owner` creates the first owner and browser session.
 3. `GET /admin/api/session` reads the signed-in actor and CSRF token.
 4. `POST /setup/first-app` mints the first `opk_...` runtime key.
@@ -201,7 +206,7 @@ safely:
   `data/admin_session_key` file next to `admin.db`,
 - optional bootstrap `admin.oidc` issuer/client/trust configuration when you
   want OIDC before the first local owner login. Otherwise configure OIDC from
-  `/admin` after setup,
+  the web app after setup,
 - service/provider seed or provisioning input, model directories, and
   provider secret references,
 - optional `admin.user_defaults` or user-access env flags as a one-time
@@ -211,7 +216,7 @@ Everything that can change after boot belongs in `admin.db` and the dashboard.
 The DB/UI service registry is the product source of truth for providers and
 services. `proxy_config.yml` can seed or provision records, but it is not the
 normal live operator surface. After the one-time seed, every non-managed
-registry service can be edited, enabled or disabled, and removed in `/admin`
+registry service can be edited, enabled or disabled, and removed in the web app
 regardless of its `source`; source is provenance, not permission. The managed
 LiteLLM substrate separately locks its endpoint/protocol fields and removal,
 while allowing its name, enabled state, and note to be changed.
@@ -228,17 +233,17 @@ owner row, Apps, and Profiles survive `docker compose down`.
 
 ### OIDC Configured, No Owner
 
-`/setup` shows one primary action: sign in with OIDC.
+`/setup/` shows one primary action: sign in with OIDC.
 
 The first allowed OIDC login becomes `owner` when no owner/admin exists yet.
-After the callback, the browser lands back on `/setup`, shows the signed-in
+After the callback, the browser lands back on `/setup/`, shows the signed-in
 account, and can mint the first key for the user's Personal App.
 
 ### No OIDC, No Owner
 
-`/setup` shows a short local owner form: email, password, confirmation. That
+`/setup/` shows a short local owner form: email, password, confirmation. That
 creates a local `owner` user, stores a password verifier in `admin.db`, issues
-the browser admin session, and redirects back to `/setup`.
+the browser admin session, and redirects back to `/setup/`.
 
 The host-side `generate-admin-key owner-cli` command remains in a recovery
 disclosure on the page. It is not the happy path.
@@ -249,7 +254,7 @@ gateway.
 
 ### Signed-In Owner/Admin
 
-`/setup` shows:
+`/setup/` shows:
 
 - links to the account portal, admin dashboard, and operator status;
 - a compact "Connect a client" card that creates or reuses the signed-in
@@ -264,7 +269,7 @@ policy.
 
 ### Owner Exists, Viewer Not Signed In
 
-`/setup` remains a thin handoff page:
+`/setup/` remains a thin handoff page:
 
 - unsigned operators with OIDC configured can sign in;
 - unsigned operators without OIDC can sign in with the local owner account;
@@ -281,21 +286,21 @@ policy.
 - an existing browser session was lost,
 - a previously claimed owner needs to be re-issued from the host.
 
-Admin keys are never runtime keys. Use `oak_...` only for `/admin`,
-`/admin/api/*`, `/status`, `/v1/status`, or `/setup/claim`.
+Admin keys are never runtime keys. Use `oak_...` only for
+`/admin/api/*`, `/status/raw`, `/v1/status`, or `/setup/claim`.
 
 ## What Lives Where After First Run
 
 | Concern                                             | Edited via       | Restart? |
 |-----------------------------------------------------|------------------|----------|
 | Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes |
-| OIDC provider settings                              | `/admin` (optional bootstrap fallback in `proxy_config.yml`) | no |
-| Service/provider registry                           | `/admin`; `source` (`ui`, `provisioned`, `builtin`, `discovered`) is provenance | no for non-managed records |
+| OIDC provider settings                              | the web app (optional bootstrap fallback in `proxy_config.yml`) | no |
+| Service/provider registry                           | the web app; `source` (`ui`, `provisioned`, `builtin`, `discovered`) is provenance | no for non-managed records |
 | Provider seed/provisioning input, model directories, secret references | `proxy_config.yml` / env / Docker secrets | yes |
-| Owner/admin roles, Apps, Profiles, App API keys     | `/setup`, `/`, `/admin`                  | no  |
-| Identity → Profile mappings, role/model bindings    | `/admin`                                 | no  |
-| Admission caps, throttles, runtime routing toggles  | `/admin`                                 | no  |
-| Provider/service enablement                         | `/admin` for every non-managed registry record; LiteLLM remains a managed substrate | no  |
+| Owner/admin roles, Apps, Profiles, App API keys     | `/setup/`, `/apps/`, `/people/`           | no  |
+| Identity → Profile mappings, role/model bindings    | the web app                                 | no  |
+| Admission caps, throttles, runtime routing toggles  | the web app                                 | no  |
+| Provider/service enablement                         | the web app for every non-managed registry record; LiteLLM remains a managed substrate | no  |
 | Service-registry export                             | Authenticated `GET /admin/api/config/export`; read-only download of service records | no |
 
 First-run does not require the shipped service-registry export. Full
@@ -305,7 +310,7 @@ on startup; once seeded, dashboard state is authoritative.
 
 ## What Not To Build Here
 
-Do not turn `/setup` into a second dashboard or YAML editor:
+Do not turn `/setup/` into a second dashboard or YAML editor:
 
 - no backend-specific wizards,
 - no Profile picker before the first App key,

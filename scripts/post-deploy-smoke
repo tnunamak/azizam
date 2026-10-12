@@ -30,5 +30,24 @@ done
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${AUTH[@]}" "$BASE/sdapi/v1/sd-models"); check "a1111 models" "$([ "$code" = 200 ] && echo ok || echo "HTTP $code")"
 size=$(curl -s --max-time 60 "${AUTH[@]}" "$BASE/v1/audio/speech" -H 'Content-Type: application/json' -d '{"model":"tts-fast","input":"Smoke test.","voice":"alloy","response_format":"wav"}' | wc -c)
 check "tts-fast" "$([ "$size" -gt 1000 ] && echo ok || echo "only $size bytes")"
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$BASE/ui/"); check "ui" "$([ "$code" = 200 ] && echo ok || echo "HTTP $code")"
+# Web app at the root (CONNECT_ROOT_MAIL.md section 2.5 step 4, design/connect-root-mail branch).
+home=$(mktemp); trap 'rm -f "$home"' EXIT
+code=$(curl -s -o "$home" -w '%{http_code} %{content_type}' --max-time 30 "$BASE/")
+check "home /" "$(case "$code" in "200 text/html"*) echo ok;; *) echo "got $code";; esac)"
+loc=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 30 "$BASE/library")
+check "library slash redirect" "$([ "$loc" = "308 $BASE/library/" ] || [ "$loc" = "308 /library/" ] && echo ok || echo "got $loc")"
+chunk=$(grep -oE '/_next/static/[^"'"'"' )]+\.(js|css)' "$home" | head -1)
+if [ -z "$chunk" ]; then check "static chunk" "no /_next/static/ asset found in GET /"; else
+  hdr=$(curl -s -D - -o /dev/null --max-time 30 "$BASE$chunk" | tr -d '\r')
+  ok=ok; printf '%s\n' "$hdr" | head -1 | grep -q ' 200' || ok="not 200: $(printf '%s' "$hdr" | head -1)"
+  [ "$ok" = ok ] && { printf '%s\n' "$hdr" | grep -qi '^cache-control:.*immutable' || ok="not immutable ($chunk)"; }
+  check "static chunk immutable" "$ok"
+fi
+out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 "$BASE/v1/models")
+check "models without key" "$(case "$out" in *$'\n'"401 application/json"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "$BASE/v1/models"); check "HEAD models" "$([ "$code" = 405 ] && echo ok || echo "HTTP $code")"
+hdr=$(curl -s -D - -o /dev/null --max-time 30 "$BASE/mcp" | tr -d '\r')
+check "GET /mcp" "$(printf '%s\n' "$hdr" | head -1 | grep -q ' 405' && printf '%s\n' "$hdr" | grep -qi '^allow:.*POST' && echo ok || echo "got $(printf '%s' "$hdr" | head -1)")"
+out=$(curl -s -w '\n%{http_code} %{content_type}' --max-time 30 -H 'Accept: text/html' "$BASE/ui/home/")
+check "old /ui/home/ is 404 HTML" "$(case "$out" in *$'\n'"404 text/html"*) echo ok;; *) echo "got ${out##*$'\n'}";; esac)"
 exit $fail
