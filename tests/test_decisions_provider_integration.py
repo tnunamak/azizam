@@ -507,27 +507,124 @@ def test_openai_decisions_is_501_without_explicit_decisions_capability(tmp_path,
 
 def test_openai_decisions_forwards_opaque_bytes_when_explicit_capability_configured_and_records_receipt(tmp_path):
     calls = []
+    begin_ids = []
+    finalize_ids = []
+    finalize_results = []
+    legacy_record_ids = []
+    in_flight = []
+    receipts_db = tmp_path / "openai-receipts.db"
+    receipt_store.init_db(receipts_db)
+
+    real_begin = receipt_store.begin
+    real_finalize = receipt_store.finalize
+    real_record = receipt_store.record
+    real_checkpoint = receipt_store.update_phases
+
+    def begin(receipt, *args, **kwargs):
+        begin_ids.append(receipt.request_id)
+        return real_begin(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    def finalize(receipt, *args, **kwargs):
+        finalize_ids.append(receipt.request_id)
+        result = real_finalize(receipt, *args, **{**kwargs, "path": receipts_db})
+        finalize_results.append(result)
+        return result
+
+    def record(receipt, *args, **kwargs):
+        legacy_record_ids.append(receipt.request_id)
+        return real_record(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    def checkpoint(receipt, *args, **kwargs):
+        return real_checkpoint(receipt, *args, **{**kwargs, "path": receipts_db})
+
+    payload = {
+        "id": "dec_123",
+        "object": "decision",
+        "status": "completed",
+        "usage": {"input_tokens": 1000, "output_tokens": 1, "cost": "0.004"},
+    }
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((str(request.url), request.content, request.headers.get("authorization")))
-        return httpx.Response(200, json={"id": "dec_123", "object": "decision", "status": "completed", "usage": {"input_tokens": 1000, "output_tokens": 1, "cost": "0.004"}})
+        calls.append((
+            str(request.url), request.content,
+            request.headers.get("authorization"),
+        ))
+        assert len(begin_ids) == 1
+        accepted = receipt_store.get(begin_ids[0], path=receipts_db)
+        assert accepted is not None
+        assert accepted["status"] == "in_progress"
+        assert accepted["app_id"] == "app-123"
+        in_flight.append(accepted)
+        return httpx.Response(200, json=payload)
 
-    registry = _provider_registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}])
+    registry = _provider_registry(
+        provider_id="openai",
+        protocols=("openai-compatible", "decisions"),
+        models=[{"id": "gpt-5"}],
+    )
     raw = b'{"model":"gpt-5","input":"future","opaque":true}'
-    with _authenticated(_profile(max_usd_per_request=None, budget_usd_per_day=None, budget_usd_per_month=None)) as (_identity, mp):
+    profile = _profile(
+        max_usd_per_request=None,
+        budget_usd_per_day=None,
+        budget_usd_per_month=None,
+    )
+    with _authenticated(profile) as (_identity, mp):
         _install_registry(mp, tmp_path, registry)
-        receipts = _capture_receipts(mp)
+        mp.setattr(proxy.receipt_store, "begin", begin)
+        mp.setattr(proxy.receipt_store, "finalize", finalize)
+        mp.setattr(proxy.receipt_store, "record", record)
+        mp.setattr(proxy.receipt_store, "update_phases", checkpoint)
         with _mock_openai_http(handler):
-            response = TestClient(proxy.app).post("/v1/decisions", content=raw, headers={**AUTH_HEADERS, "content-type": "application/json"})
+            response = TestClient(proxy.app).post(
+                "/v1/decisions",
+                content=raw,
+                headers={**AUTH_HEADERS, "content-type": "application/json"},
+            )
 
     assert response.status_code == 200, response.text
+    assert response.json() == payload
     assert response.headers["x-azizam-remote"] == "1"
     assert response.headers["x-azizam-provider"] == "openai"
     assert response.headers["x-azizam-cost-usd"] == "0.004000000"
-    assert calls == [("https://openai.test/v1/decisions", raw, "Bearer oa_secret_test_key")]
-    assert _ledger_rows(tmp_path / "provider_spend.db") == [("openai", "paid-plan", "settled", "0E-9", "0.004000000")]
-    assert receipts
-    projected = receipts[-1].to_dict(audience="client")
+    assert calls == [
+        ("https://openai.test/v1/decisions", raw, "Bearer oa_secret_test_key")
+    ]
+
+    request_id = response.headers["x-azizam-request-id"]
+    assert begin_ids == [request_id]
+    assert finalize_ids == [request_id]
+    assert finalize_results == [True]
+    assert legacy_record_ids == []
+    assert len(in_flight) == 1
+    assert receipt_store.count(receipts_db, outer_only=False) == 1
+
+    stored = receipt_store.get(request_id, path=receipts_db)
+    assert stored["status"] == "succeeded"
+    assert stored["app_id"] == "app-123"
+    assert stored["api_key_name"] == "provider-test"
+    assert stored["requested_model"] == "gpt-5"
+    assert stored["accepted_at_ms"] == in_flight[0]["accepted_at_ms"]
+    assert stored["cost"]["usd"] == "0.004000000"
+    assert stored["cost"]["reconciliation_status"] == "settled"
+    assert _ledger_rows(tmp_path / "provider_spend.db") == [
+        ("openai", "paid-plan", "settled", "0E-9", "0.004000000")
+    ]
+    with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
+        linked = conn.execute(
+            "SELECT id, request_id, status, actual_usd FROM provider_spend"
+        ).fetchall()
+    assert linked == [
+        (stored["cost"]["reservation_id"], request_id, "settled", "0.004000000")
+    ]
+    projected = receipt_store.get(
+        request_id, path=receipts_db, audience="client"
+    )
     assert projected["remote"] is True
-    assert projected["cost"] == {"usd": "0.004000000", "source": "provider-reported", "cost_class": "paid-remote", "reconciliation_status": "settled"}
-    assert "oa_secret_test_key" not in str(projected)
+    assert projected["cost"] == {
+        "usd": "0.004000000",
+        "source": "provider-reported",
+        "cost_class": "paid-remote",
+        "reconciliation_status": "settled",
+    }
+    assert "oa_secret_test_key" not in json.dumps(stored)
+    assert "oa_secret_test_key" not in json.dumps(projected)

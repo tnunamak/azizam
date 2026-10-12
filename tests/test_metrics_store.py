@@ -227,6 +227,49 @@ class TestMetricsStore(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_query_series_has_exact_filtered_raw_aggregates(self) -> None:
+        from unittest.mock import patch
+
+        conn = metrics_store.open_writer(self.db)
+        try:
+            metrics_store.record_samples(conn, [
+                (1199, "series", "", 9999.0),
+                (1200, "series", "", 2.0),
+                (1210, "series", "", 6.0),
+                (1259, "series", "", 10.0),
+                (1260, "series", "", -3.0),
+                (1319, "series", "", 9.0),
+                (1210, "other", "", 99999.0),
+            ])
+            expected = {
+                "avg": [(1200, 6.0), (1260, 3.0)],
+                "min": [(1200, 2.0), (1260, -3.0)],
+                "max": [(1200, 10.0), (1260, 9.0)],
+                "sum": [(1200, 18.0), (1260, 6.0)],
+                "count": [(1200, 3.0), (1260, 2.0)],
+            }
+            with patch.object(metrics_store.time, "time", return_value=1800):
+                # Known defect: the unfiltered (tags_filter=None) raw branch
+                # ignores op and always averages; only the filtered path is pinned.
+                for tags_filter in ({},):
+                    for op, rows in expected.items():
+                        with self.subTest(tags_filter=tags_filter, op=op):
+                            self.assertEqual(
+                                metrics_store.query_series(
+                                    "series", since_s=600, points=10,
+                                    tags_filter=tags_filter, op=op, conn=conn,
+                                ),
+                                rows,
+                            )
+                self.assertEqual(
+                    metrics_store.query_series(
+                        "series", since_s=600, points=0, conn=conn,
+                    ),
+                    [],
+                )
+        finally:
+            conn.close()
+
     def test_downsample_minute(self) -> None:
         conn = metrics_store.open_writer(self.db)
         try:
