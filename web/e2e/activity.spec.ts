@@ -1,34 +1,64 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-test("requests refresh on focus and keep metadata on one line", async ({
-  page,
-}) => {
+test("requests refresh visible content on focus and keep metadata on one line", async ({ page }) => {
+  let refreshed = false;
   let loads = 0;
+  await page.clock.setFixedTime(new Date("2026-10-12T12:00:00Z"));
   await page.route("**/admin/api/activity/requests?*", (route) => {
     loads += 1;
-    return route.continue();
+    return route.fulfill({
+      json: {
+        records: [{
+          person_label: refreshed ? "After focus" : "Before focus",
+          app_label: refreshed ? "Fresh notebook" : "Original notebook",
+          created_at: 1_791_806_400,
+          receipt: {
+            request_id: refreshed ? "focus-new-receipt" : "focus-old-receipt",
+            intent: "chat",
+            requested_model: "demo-chat",
+            resolved_model: "demo-chat",
+            status: refreshed ? "failed" : "succeeded",
+            latency_ms: refreshed ? 250 : 100,
+          },
+        }],
+        people: [],
+        next_cursor: null,
+      },
+    });
   });
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/activity/");
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
-  const row = page.getByRole("button", { name: /Request details:/ }).first();
-  await expect(row).toBeVisible();
-  await expect(
-    page.getByRole("combobox", { name: "Person", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Refresh", exact: true }),
-  ).toHaveCount(0);
-  const meta = row.locator("p").nth(1);
-  // One line of text-meta (14 px, 20 px leading); it truncates, never wraps.
-  expect(
-    await meta.evaluate((element) => element.clientHeight),
-  ).toBeLessThanOrEqual(20);
+  const oldRow = page.getByRole("button", { name: "Request details: Chat by Before focus", exact: true });
+  await expect(oldRow).toBeVisible();
+  await expect(oldRow).toContainText("Completed");
+  await expect(oldRow).toContainText("Original notebook");
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+
   const before = loads;
+  refreshed = true;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect.poll(() => loads).toBeGreaterThan(before);
-  await expect(row).toBeVisible();
+  const freshRow = page.getByRole("button", { name: "Request details: Chat by After focus", exact: true });
+  await expect(freshRow).toBeVisible();
+  await expect(freshRow).toContainText("Failed");
+  await expect(freshRow).toContainText("Fresh notebook");
+  await expect(oldRow).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Request details:/ })).toHaveCount(1);
+  expect(loads).toBeGreaterThan(before);
+  expect(await freshRow.locator("p").nth(1).evaluate((element) => element.clientHeight))
+    .toBeLessThanOrEqual(20);
+
+  await freshRow.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("After focus");
+  await expect(dialog).toContainText("Failed");
+  const technical = page.getByLabel("Technical request details");
+  await dialog.getByText("Technical details", { exact: true }).click();
+  await expect(technical).toContainText("focus-new-receipt");
+  await expect(technical).not.toContainText("focus-old-receipt");
 });
 
 test("owner access audit rows stay hidden until the filter is enabled", async ({

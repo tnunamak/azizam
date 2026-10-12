@@ -68,27 +68,43 @@ function readContext() {
 // Real data loads slowly on a busy harness; a page probed mid-load hides its defects.
 const SETTLE_MS = Number(process.env.SWEEP_SETTLE_MS ?? (target.name === "copy" ? "45000" : "15000"));
 
-/** Wait until the page stops loading. Returns false if it was still busy at the deadline. */
-async function settle(page: Page): Promise<boolean> {
+/** Wait until the page stops loading. A surface still busy at the deadline is an error, never a checked state. */
+async function settle(page: Page, timeoutMs = SETTLE_MS): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForLoadState("networkidle", { timeout: SETTLE_MS / 2 }).catch(() => {});
-  const settled = await page
-    .waitForFunction(
-      () => {
-        const shown = (el: Element) => {
-          const style = getComputedStyle(el);
-          return style.display !== "none" && style.visibility !== "hidden" && el.getBoundingClientRect().width > 0;
-        };
-        return ![...document.querySelectorAll('[aria-busy="true"], [data-slot="skeleton"]')].some(shown);
-      },
-      null,
-      { timeout: SETTLE_MS },
-    )
-    .then(() => true, () => false);
+  await page.waitForLoadState("networkidle", { timeout: timeoutMs / 2 }).catch(() => {});
+  await page.waitForFunction(
+    () => {
+      const shown = (el: Element) => {
+        const style = getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden" && el.getBoundingClientRect().width > 0;
+      };
+      return ![...document.querySelectorAll('[aria-busy="true"], [data-slot="skeleton"]')].some(shown);
+    },
+    null,
+    { timeout: timeoutMs },
+  );
   await page.evaluate(() => document.fonts.ready).catch(() => {});
   await page.waitForTimeout(300);
-  return settled;
+  return true;
 }
+
+test("sweep rejects a surface that never finishes loading", async ({ page }) => {
+  await page.setContent(
+    '<main><h1>Library</h1><section aria-busy="true">' +
+      '<div data-slot="skeleton">Loading library</div></section></main>',
+  );
+
+  let rejected = false;
+  try {
+    await settle(page, 100);
+  } catch {
+    rejected = true;
+  }
+  expect(rejected, "a loading timeout must be an error, never checked=true").toBe(true);
+
+  await page.locator('[aria-busy="true"]').evaluate((element) => element.remove());
+  expect(await settle(page, 1_000)).toBe(true);
+});
 
 const stateRoles = (route: SweepRoute, state: SweepState) =>
   (state.roles ?? route.roles).filter((role) => route.roles.includes(role));
