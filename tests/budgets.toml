@@ -17,9 +17,7 @@
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
 pytest = 8489  # +3: FLAKE (isolation pair in test_isolation_between_tests.py; module-bindings test in test_host_telemetry_isolation.py). +7: S0-REVFIX (stale tmpfs sweep 3; host_disk_dir non-RAM split 1; namespace-denial classifier 3). +1: S0-FIN runner prewarm (bytecode found by a full xdist run). +6: S0-FIN speed (the route live-outcome item split per HTTP method; the speech listing and identity items merge, 13 -> 13). +10: S0 (host_disk_dir fixture 2 tests; guard negative tests and loopback-address check 8). +46: FK-NEXT (the four held azgap files on FK: 33; speech and OOM/RMBG wire faults: 9; FK self-tests: 2; video workflow upload-failure and OOM: 2). +12: BX (ci-local browser-section and policy hygiene/fixture self-tests); +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
-=======
 vitest = 1876  # +2: FLAKE (web/tests/test-isolation.spec.ts). +1: BX (test-priority case for the isolation-proof config); +165: VT moves from the browser. Before that, +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
->>>>>>> 91492f0d (test(flake): raise budgets for the isolation pairs)
 playwright = 425
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
