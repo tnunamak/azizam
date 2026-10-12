@@ -13,11 +13,13 @@ of blocking the request.
 """
 from __future__ import annotations
 
+import contextvars
 import sqlite3
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 LOCK_WAIT_S = 2.0
 _SCOPE: ContextVar["_Scope | None"] = ContextVar("azizam_request_connections", default=None)
@@ -100,3 +102,15 @@ class RequestConnectionsMiddleware:
             return await self.app(scope, receive, send)
         with request_scope():
             await self.app(scope, receive, send)
+
+
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="request-io")
+
+
+def submit(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+    """Run ``fn`` on a helper thread inside the caller's request scope.
+
+    Use it to overlap two independent store reads in one request: each store
+    has its own shared connection, so their opens no longer add up.
+    """
+    return _EXECUTOR.submit(contextvars.copy_context().run, lambda: fn(*args, **kwargs))
