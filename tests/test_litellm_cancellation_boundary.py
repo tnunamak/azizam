@@ -100,7 +100,9 @@ def _free_port() -> int:
 # ---------------------------------------------------------------------------
 
 _PRODUCTION_IGNORED_FILES = [
-    Path(__file__).resolve().parent.parent / "cache" / "key_activity.jsonl",
+    # The persistence path the real lifespan would write (conftest points it
+    # at this pytest process's private state, so parallel workers stay apart).
+    firehose_metrics._DEFAULT_CACHE_PATH,
     Path(__file__).resolve().parent.parent / "cache" / "drift_status.json",
 ]
 
