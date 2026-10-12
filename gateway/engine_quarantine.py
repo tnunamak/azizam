@@ -46,12 +46,6 @@ from __future__ import annotations
 # and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
-# Backends that are vision-capable only when an mmproj/aux is loaded at runtime
-# (as opposed to statically vision-capable via their `capabilities` list). The
-# caller still checks the runtime mmproj presence; this just says "this backend
-# gains vision dynamically via its aux".
-_VISION_VIA_AUX: frozenset[str] = frozenset({"kobold"})
-
 # Backends whose context-window size is read from a live probe of the backend
 # (the /v1/models endpoint) rather than a plain config field. The caller still
 # owns the probe call; this only flags which backends need that special path.
@@ -62,15 +56,6 @@ _CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
 # Predicates. proxy.py calls these instead of inlining `if backend == "..."`.
 # Each is a one-line lookup; the engine knowledge is the table it reads.
 # ---------------------------------------------------------------------------
-
-def vision_via_aux(backend: str) -> bool:
-    """True if `backend` becomes vision-capable via a runtime-loaded aux/mmproj.
-
-    The caller is still responsible for checking that the aux is actually
-    present right now; this only identifies which backends gain vision that way.
-    """
-    return backend in _VISION_VIA_AUX
-
 
 def context_window_from_live_probe(backend: str) -> bool:
     """True if `backend`'s context window is read from a live backend probe."""

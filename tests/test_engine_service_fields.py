@@ -8,7 +8,8 @@ changes. The field, never the name, selects the behaviour.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -154,3 +155,69 @@ class TestAuxProbe:
         for broken in ({**AUX_FIELD, "process": ""}, {**AUX_FIELD, "flag": ""}):
             aux, _pgrep = self._run(service_id, aux=broken)
             assert aux is None
+
+
+IMAGE_BODY = {
+    "model": "vision-model",
+    "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "describe"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+    ]}],
+}
+
+
+def _vision_service(**fields) -> dict:
+    return {
+        "host": "127.0.0.1", "port": 5051, "capabilities": ["chat"],
+        "model_policy_schema_version": 1,
+        "models": [{"id": "vision-model", "model_group": "vision-model", "upstream_model": "vision-model",
+                    "activation_model": "/models/m.gguf", "activation_mmproj": "/models/p.gguf"}],
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "x.service"}},
+        **fields,
+    }
+
+
+@pytest.mark.parametrize("service_id", SERVICE_IDS)
+class TestVisionViaAux:
+    """`aux.grants_input_modalities: [image]` lets a loaded aux file add image input."""
+
+    def _prepare(self, service_id: str, *, aux_loaded: bool | None, **fields):
+        with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), patch.object(
+            proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
+        ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
+            proxy, "loaded_aux_present", return_value=aux_loaded
+        ), patch.object(proxy, "vision_capable_llm_backends", return_value=[]):
+            return asyncio.run(proxy._prepare_litellm_local_llm_request(
+                proxy.NO_AUTH_CONTEXT, request_path="/v1/chat/completions",
+                body_json=IMAGE_BODY, activate_target=False,
+            ))
+
+    def test_a_target_with_an_aux_file_takes_images_when_the_field_grants_image(self, service_id):
+        error, _body = self._prepare(
+            service_id, aux_loaded=None, aux={"grants_input_modalities": ["image"]})
+        assert error is None
+
+    def test_a_target_with_an_aux_file_is_refused_images_without_the_grant(self, service_id):
+        error, _body = self._prepare(service_id, aux_loaded=None)
+        assert error.status_code == 400
+        assert json.loads(error.body)["error"]["code"] == "vision_unsupported"
+
+    def test_an_unrelated_aux_grant_is_not_image_input(self, service_id):
+        error, _body = self._prepare(service_id, aux_loaded=None, aux={"grants_input_modalities": ["audio"]})
+        assert error.status_code == 400
+
+    def test_the_active_service_is_asked_for_its_loaded_aux_only_when_the_field_grants_image(self, service_id):
+        body = {**IMAGE_BODY, "model": "not-a-local-model"}
+        for aux, asked in (({"grants_input_modalities": ["image"]}, True), (None, False)):
+            fields = {"aux": aux} if aux else {}
+            loaded = patch.object(proxy, "loaded_aux_present", return_value=True)
+            with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), patch.object(
+                proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
+            ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
+                proxy, "vision_capable_llm_backends", return_value=[]
+            ), patch.object(proxy, "profile_allows_backend", return_value=True), loaded as present:
+                asyncio.run(proxy._prepare_litellm_local_llm_request(
+                    proxy.NO_AUTH_CONTEXT, request_path="/v1/chat/completions",
+                    body_json=body, activate_target=False,
+                ))
+            assert present.called is asked, aux

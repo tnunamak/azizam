@@ -52,6 +52,8 @@ backends:
       probe: process-cmdline
       process: llama-server
       flag: --mmproj
+      # A loaded aux file lets this service take image input.
+      grants_input_modalities: [image]
     health_endpoint: /v1/models
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.

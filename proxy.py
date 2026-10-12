@@ -1174,6 +1174,17 @@ def _aux_probe_config(backend: str) -> Mapping[str, Any] | None:
     return aux if isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline" else None
 
 
+def _aux_grants_vision(backend: str) -> bool:
+    """True if the service's ``aux`` field says a loaded aux file adds image input.
+
+    The caller still checks that an aux file is loaded right now.
+    """
+    cfg = (config.get("backends") or {}).get(backend)
+    aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
+    grants = aux.get("grants_input_modalities") if isinstance(aux, Mapping) else None
+    return isinstance(grants, (list, tuple)) and "image" in grants
+
+
 def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
     """Read the aux file path from the command line of the backend's server process.
 
@@ -3260,7 +3271,7 @@ async def _prepare_litellm_local_llm_request(
             active in _vision_members
             and profile_allows_backend(auth_context, active)
         ) or (
-            engine_quarantine.vision_via_aux(active)
+            _aux_grants_vision(active)
             and profile_allows_backend(auth_context, active)
             and loaded_aux_present(active) is True
         )
@@ -3272,7 +3283,7 @@ async def _prepare_litellm_local_llm_request(
         target_can_serve_vision = (
             target_backend in _vision_members
         ) or (
-            engine_quarantine.vision_via_aux(target_backend)
+            _aux_grants_vision(target_backend)
             and bool(target_mmproj)
         )
         if not target_can_serve_vision:

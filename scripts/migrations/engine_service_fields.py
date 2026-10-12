@@ -78,10 +78,11 @@ def seed_loaded_model_identity(registry: dict) -> list[str]:
 
 def seed_aux_probe(registry: dict) -> list[str]:
     service = _services(registry).get(OWNER_LOCAL_SERVICE_ID)
-    aux = {"probe": "process-cmdline", "process": "llama-server", "flag": "--mmproj"}
+    aux = {"probe": "process-cmdline", "process": "llama-server", "flag": "--mmproj",
+           "grants_input_modalities": ["image"]}
     if service is None or not _set_config(service, "aux", aux):
         return []
-    return [f"{OWNER_LOCAL_SERVICE_ID}: config.aux = process-cmdline probe of llama-server --mmproj"]
+    return [f"{OWNER_LOCAL_SERVICE_ID}: config.aux = process-cmdline probe of llama-server --mmproj, grants image input"]
 
 
 def seed_activation_absolute_path(registry: dict) -> list[str]:

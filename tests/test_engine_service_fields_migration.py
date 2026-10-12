@@ -101,7 +101,8 @@ class EngineServiceFieldsMigrationTests(unittest.TestCase):
         registry["services"]["kobold"] = {"id": "kobold", "enabled": True, "config": {"port": 5051}}
         migration.migrate_registry(registry)
         self.assertEqual(registry["services"]["kobold"]["config"]["aux"], {
-            "probe": "process-cmdline", "process": "llama-server", "flag": "--mmproj"})
+            "probe": "process-cmdline", "process": "llama-server", "flag": "--mmproj",
+            "grants_input_modalities": ["image"]})
         self.assertNotIn("aux", registry["services"]["llm"]["config"])
         self.assertEqual(migration.migrate_registry(registry), [])
 
