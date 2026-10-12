@@ -78,7 +78,7 @@ declare -a bwrap_args=(
   --setenv TMPDIR "$state_dir/tmp" --setenv TMP "$state_dir/tmp" --setenv TEMP "$state_dir/tmp"
   --setenv XDG_CACHE_HOME "$state_dir/cache" --setenv XDG_CONFIG_HOME "$state_dir/home/.config" --setenv XDG_RUNTIME_DIR /run/user/0
   --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
-  --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv HERMETIC_HOST_DISK_DIR "$state_dir/disk" --setenv AZIZAM_PYTEST_TMPFS_FALLBACK "$tmpfs_fallback" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
+  --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv HERMETIC_HOST_DISK_DIR "$state_dir/disk" --setenv HERMETIC_TMPDIR_ON_DISK "$tmpfs_fallback" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
   --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
   --setenv HYPOTHESIS_PROFILE "${HYPOTHESIS_PROFILE:-gate}"
   --setenv HERMETIC_TEST_NAMESPACE 1 --setenv HERMETIC_STATE_DIR "$state_dir"
