@@ -575,6 +575,20 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(deleted.json()["key_status"]["state"], "missing")
         self.assertNotIn("sk-test", first.text + second.text + deleted.text)
 
+    def test_removing_a_provider_removes_it_from_every_plans_paid_providers(self) -> None:
+        store = FakeProviderAdminStore()
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        app = FastAPI()
+        app.include_router(create_provider_admin_router(
+            store, auth=_auth, ledger_path=Path(tmpdir.name) / "absent-ledger.db",
+            spending_provider=lambda: {}))
+        response = TestClient(app).delete(
+            "/admin/api/providers/typesafe", headers={"authorization": "Bearer admin"})
+        self.assertEqual(response.status_code, 200, response.text)
+        paid = {row["id"]: row["plan"]["paid_providers"] for row in store.access_plans}
+        self.assertEqual(paid, {"plan_local": [], "plan_paid": ["openrouter", "openrouter-canonical"]})
+
     def test_provider_test_requires_configured_key_and_reports_model_listing_only(self) -> None:
         store = FakeProviderAdminStore()
         client = _client(store)
