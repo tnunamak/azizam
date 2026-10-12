@@ -32,7 +32,7 @@ from gateway.category_store import CategoryStore
 from gateway.policy import ALLOWED, DENIED as POLICY_DENIED, PolicyRequest
 from gateway import runtime_auth
 from gateway.user_runtime import mint_user_app_key
-from tests.support.access import store_plan
+from tests.support.access import access_context, store_plan
 
 
 DENIED = {401, 403, 404, 405}
@@ -1522,7 +1522,8 @@ def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway
     auth = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models")
     filtered, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], auth)
     assert filtered == []
-    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], proxy.NO_AUTH_CONTEXT)
+    # An App and person the snapshot does not list are not governed by it.
+    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], access_context())
     assert ungoverned == [entry]
 
 
