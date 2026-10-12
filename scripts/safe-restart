@@ -255,6 +255,9 @@ class Restarter:
         self._out = out or (lambda text: print(text, flush=True))
         self.drain_set_by_us = False
         self.web_dir = web_dir if web_dir is not None else Path(__file__).resolve().parents[1] / "web"
+        # A built export waits here, beside web/, until the drain is done.
+        self.staged_export: Path | None = None
+        self.published = False
 
     # -- output -------------------------------------------------------------
 
@@ -468,10 +471,39 @@ class Restarter:
                         stamp.write_text(json.dumps(build_sources))
                         # Keep edits during compilation newer than this marker.
                         os.utime(stamp, (build_started_at, build_started_at))
-                        publish_web_export(staged_out, self.web_dir / "out")
+                        # The running process keeps serving the old export
+                        # until the drain is done (see _publish_staged_export).
+                        holder = Path(tempfile.mkdtemp(prefix=".azizam-web-export-", dir=self.web_dir.parent))
+                        self.staged_export = holder
+                        os.replace(staged_out, holder / "out")
                 except OSError as exc:
-                    self.say(f"web build or publication failed: {exc}; NOT draining or restarting {target}")
+                    self.say(f"web build failed: {exc}; NOT draining or restarting {target}")
+                    self._discard_staged_export()
                     return EXIT_WEB_BUILD
+        try:
+            return self._drain_and_restart(target)
+        finally:
+            if not self.published:
+                self._discard_staged_export()
+
+    def _discard_staged_export(self) -> None:
+        if self.staged_export is not None:
+            shutil.rmtree(self.staged_export, ignore_errors=True)
+            self.staged_export = None
+
+    def _publish_staged_export(self) -> Path | None:
+        """Swap the staged export in; return where the previous one now is."""
+        assert self.staged_export is not None
+        served = self.web_dir / "out"
+        had_previous = served.exists()
+        publish_web_export(self.staged_export / "out", served)
+        self.published = True
+        self.say("published the new web export")
+        # renameat2 exchanged the two trees: the holder now has the old export.
+        return self.staged_export / "out" if had_previous else None
+
+    def _drain_and_restart(self, target: str) -> int:
+        args = self.args
         snapshot: dict[str, Any] | None = None
         try:
             snapshot = self.get_drain()
@@ -607,6 +639,28 @@ class Restarter:
     def _restart_and_verify(self, *, drained: bool) -> int:
         args = self.args
         target = self._unit()
+        previous_export = None
+        if self.staged_export is not None:
+            # Publish only now: a page of the new build must never be served
+            # by the old process, which cannot serve that build's assets.
+            try:
+                previous_export = self._publish_staged_export()
+            except OSError as exc:
+                self.say(f"web publication failed: {exc}; NOT restarting {target}")
+                self._undrain_quietly()
+                return EXIT_WEB_BUILD
+        status = self._restart_and_check(target, drained=drained)
+        if previous_export is not None:
+            if status == EXIT_OK:
+                self._discard_staged_export()
+            else:
+                served = self.web_dir / "out"
+                self.say(f"the previous web export is kept at {previous_export}")
+                self.say(f"to serve it again: rm -rf -- {served} && mv -- {previous_export} {served}")
+        return status
+
+    def _restart_and_check(self, target: str, *, drained: bool) -> int:
+        args = self.args
         self.say(f"restarting {target}")
         code = self.run(["systemctl", "--user", "restart", target], args.systemctl_timeout)
         if code != 0:
