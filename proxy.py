@@ -27693,6 +27693,8 @@ async def _forward_current_loaded_openai_request(
                 # concurrently with StreamingResponse's receive loop.
                 await cancellation_span.stop_watcher_for_streaming_handoff()
 
+                sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
                 async def stream_response():
                     try:
                         async for chunk in _tc_detector.wrap(
@@ -27703,9 +27705,12 @@ async def _forward_current_loaded_openai_request(
                                 on_signal=cancellation_span._signal,
                             )
                         ):
-                            if request_path == "/v1/chat/completions":
-                                chunk = _normalize_chat_completion_sse_chunk(chunk)
-                            yield chunk
+                            if sse_repair is not None:
+                                chunk = sse_repair.feed(chunk)
+                            if chunk:
+                                yield chunk
+                        if sse_repair is not None and (rest := sse_repair.flush()):
+                            yield rest
                     except asyncio.CancelledError:
                         cancellation_span.mark_stream_cancelled()
                         raise
@@ -28068,6 +28073,8 @@ async def _forward_litellm_proxy_request(
             # concurrently with StreamingResponse's receive loop.
             await cancellation_span.stop_watcher_for_streaming_handoff()
 
+            sse_repair = _ChatCompletionSseRepair() if request_path == "/v1/chat/completions" else None
+
             async def stream_response():
                 try:
                     async for chunk in _tc_detector.wrap(
@@ -28078,9 +28085,12 @@ async def _forward_litellm_proxy_request(
                             on_signal=cancellation_span._signal,
                         )
                     ):
-                        if request_path == "/v1/chat/completions":
-                            chunk = _normalize_chat_completion_sse_chunk(chunk)
-                        yield chunk
+                        if sse_repair is not None:
+                            chunk = sse_repair.feed(chunk)
+                        if chunk:
+                            yield chunk
+                    if sse_repair is not None and (rest := sse_repair.flush()):
+                        yield rest
                 except asyncio.CancelledError:
                     cancellation_span.mark_stream_cancelled()
                     raise
@@ -28834,6 +28844,33 @@ async def openai_fine_tuning_unsupported(request: Request, rest: str = "") -> Re
 async def openai_realtime_unsupported(request: Request, rest: str = "") -> Response:
     """OpenAI Realtime compatibility surface - explicitly unsupported."""
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
+
+
+_SSE_EVENT_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+class _ChatCompletionSseRepair:
+    """Run the chat spec repair on whole SSE events.
+
+    A wire chunk can end anywhere, also inside an event or a UTF-8 character.
+    Bytes after the last complete event wait for the next chunk, so the repair
+    never sees a cut event. ``flush`` returns what is left at the end.
+    """
+
+    def __init__(self) -> None:
+        self._pending = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        data = self._pending + chunk
+        end = 0
+        for match in _SSE_EVENT_BOUNDARY.finditer(data):
+            end = match.end()
+        self._pending = data[end:]
+        return _normalize_chat_completion_sse_chunk(data[:end]) if end else b""
+
+    def flush(self) -> bytes:
+        rest, self._pending = self._pending, b""
+        return rest
 
 
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:

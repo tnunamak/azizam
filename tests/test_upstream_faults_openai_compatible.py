@@ -132,7 +132,6 @@ def _forwarded_stream(fake: FakeUpstream) -> dict:
     return forwarded.json
 
 
-@pytest.mark.xfail(strict=True, raises=KnownBug, reason="FK-B1: the stream repair of leaked <think> tags runs per wire chunk, so a cut event is not repaired (fix/fk-upstream-faults)")
 def test_think_leak_cut_across_wire_chunks_is_repaired_like_an_uncut_event(fake_upstreams, monkeypatch, tmp_path) -> None:
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "stream-split-think", wire=True)
 
