@@ -681,11 +681,16 @@ UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cf
 # registry backend) — never to a specific model file for unmanaged backends.
 ROLES = config.get("roles", {})
 
-# Local-swap backends require a GGUF file path to hot-swap the model on disk.
-# The engine literals live in the quarantine (gateway/engine_quarantine.py) —
-# this is an alias so existing call sites keep working. Any backend whose role
-# entry carries a "path" key is also treated as local-swap.
-_LOCAL_SWAP_BACKENDS: frozenset[str] = engine_quarantine.LOCAL_SWAP_BACKENDS
+# A local-swap backend is one whose lifecycle driver swaps models (driver data on
+# the service record). Any backend whose role entry carries a "path" key is also
+# treated as local-swap.
+def _is_local_swap_backend(backend: str | None) -> bool:
+    from gateway.lifecycle_drivers import driver_for_service, supports_swap
+
+    if not backend:
+        return False
+    return supports_swap(driver_for_service(backend, config.get("backends")))
+
 
 # Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
@@ -696,14 +701,11 @@ _LOCAL_SWAP_BACKENDS: frozenset[str] = engine_quarantine.LOCAL_SWAP_BACKENDS
 def _normalize_models_catalog(raw) -> dict:
     """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend).  All entries in this catalog MUST supply a local file
+    Accepts any backend that is known in config["backends"].  All entries in this catalog MUST supply a local file
     path — it is a GGUF-alias catalog by design.  Entries without a path are
     skipped.
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     out: dict = {}
     if not isinstance(raw, list):
         return out
@@ -6530,7 +6532,7 @@ async def decide_image_background_removal(
     active = await get_active_backend()
     # Generic: any local-swap LLM backend resolves its host from LLM_BACKEND_HOSTS.
     target_host = LLM_BACKEND_HOSTS.get(active) if active else None
-    if active and engine_quarantine.is_local_swap_backend(active) and target_host:
+    if active and _is_local_swap_backend(active) and target_host:
         service = active
     else:
         return _background_removal_fallback("llm_unavailable", "no active LLM backend")
@@ -23909,9 +23911,8 @@ def _with_loaded_model_inheritance(
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured LLM role handles for admin inventory and policy checks.
 
-    Accepts any backend that is known in config["backends"] (or is a legacy
-    local-swap backend).  Unknown backends are silently
-    skipped so that a typo in the config does not crash the listing.
+    Accepts any backend that is known in config["backends"].  Unknown backends
+    are silently skipped so that a typo in the config does not crash the listing.
 
     For local-swap backends (or any role entry with a ``path``
     key), ``model`` is a GGUF file path and is surfaced as
@@ -23919,9 +23920,7 @@ def _build_role_catalog_entries() -> list[dict]:
     is the upstream model name and is surfaced as ``azizam_model``.  Remote
     role entries that omit ``model`` entirely are skipped (malformed).
     """
-    known_backends: frozenset[str] = frozenset(
-        (config.get("backends") or {}).keys()
-    ) | _LOCAL_SWAP_BACKENDS
+    known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     entries: list[dict] = []
 
     if isinstance(ROLES, dict):
@@ -23932,7 +23931,7 @@ def _build_role_catalog_entries() -> list[dict]:
             # Skip entries whose backend is not known in the registry.
             if not backend or backend not in known_backends:
                 continue
-            is_local_swap = backend in _LOCAL_SWAP_BACKENDS or bool(role_def.get("path"))
+            is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
             model_value = role_def.get("model")
             if is_local_swap:
                 # Local-swap: model is a GGUF path.

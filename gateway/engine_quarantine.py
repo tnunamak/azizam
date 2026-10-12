@@ -46,10 +46,6 @@ from __future__ import annotations
 # and remove its table entry together with the consumer migration.
 # ---------------------------------------------------------------------------
 
-# Backends whose lifecycle is local + model-swap-managed (vs always-on external).
-# Mirrors proxy._LOCAL_SWAP_BACKENDS; kept here so the literal lives in one place.
-LOCAL_SWAP_BACKENDS: frozenset[str] = frozenset({"kobold"})
-
 # Backends whose activation model MUST be an absolute on-disk path (a GGUF file);
 # a non-absolute value is rejected (cleared) before activation.
 _ACTIVATION_REQUIRES_ABS_PATH: frozenset[str] = frozenset({"kobold"})
@@ -79,11 +75,6 @@ _CONTEXT_WINDOW_FROM_LIVE_PROBE: frozenset[str] = frozenset({"kobold"})
 # Predicates. proxy.py calls these instead of inlining `if backend == "..."`.
 # Each is a one-line lookup; the engine knowledge is the table it reads.
 # ---------------------------------------------------------------------------
-
-def is_local_swap_backend(backend: str) -> bool:
-    """True if `backend` is a local, model-swap-managed LLM (not always-on)."""
-    return backend in LOCAL_SWAP_BACKENDS
-
 
 def activation_requires_abs_path(backend: str) -> bool:
     """True if the activation model must be an absolute on-disk path."""

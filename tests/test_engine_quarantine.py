@@ -18,13 +18,6 @@ sys.path.insert(0, str(ROOT))
 from gateway import engine_quarantine as eq  # noqa: E402
 
 
-def test_local_swap_backends_are_exactly_kobold():
-    assert eq.LOCAL_SWAP_BACKENDS == frozenset({"kobold"})
-    assert eq.is_local_swap_backend("kobold")
-    assert not eq.is_local_swap_backend("vllm")
-    assert not eq.is_local_swap_backend("")
-
-
 def test_activation_requires_abs_path_kobold_only():
     assert eq.activation_requires_abs_path("kobold")
     assert not eq.activation_requires_abs_path("vllm")
@@ -61,7 +54,6 @@ def test_unknown_backend_is_false_everywhere():
     # (False) from every predicate — so an added engine inherits no hidden
     # behaviour until explicitly given a property here (or a config field).
     for pred in (
-        eq.is_local_swap_backend,
         eq.activation_requires_abs_path,
         eq.has_aux_mmproj,
         eq.loaded_model_is_path,
