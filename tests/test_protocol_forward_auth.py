@@ -83,6 +83,7 @@ def test_protocol_loopback_authenticates_as_the_member(gateway, monkeypatch, for
 
     response = _post(path, body, headers=headers, params=params)
 
+    print("REQS", [(r.path, dict(r.headers), r.body[:200]) for r in litellm.requests], hash_api_key(member_key)[:18])
     assert response.status_code == 200, response.text
     if forwarder == "chat":
         assert response.json()["content"] == [{"type": "text", "text": "hello member"}]
@@ -135,6 +136,7 @@ def test_frontend_chat_reaches_chat_through_the_loopback_once(gateway):
 
     response = _post(path, body, headers=[("authorization", f"Bearer {key}")])
 
+    print("REQS", [(r.path, dict(r.headers), r.body[:200]) for r in litellm.requests], hash_api_key(member_key)[:18])
     assert response.status_code == 200, response.text
     assert response.json()["content"] == [{"type": "text", "text": "hello member"}]
     assert len(litellm.calls("chat")) == 1
