@@ -195,7 +195,6 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
 
 def test_startup_initializes_the_stores_in_parallel_off_the_loop():
     slow = 0.2
-    names = ("ADMIN_STORE.init_db", "responses_store.init_db", "receipt_store.init_db", "media_jobs.init_db")
 
     def sleeper(*args, **kwargs):
         time.sleep(slow)
