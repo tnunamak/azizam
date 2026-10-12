@@ -167,8 +167,7 @@ def test_signed_full_metadata_checks_creator_on_same_app(tmp_path, monkeypatch):
         else:
             assert b"full-metadata-secret" not in response.content
     monkeypatch.setattr(proxy, "_oidc_session_from_request", lambda *_a: SimpleNamespace(subject=member["id"]))
-    for auth, expected in ((proxy.AuthContext(identity=proxy._identity_for("lan-bypass", "lan")), 200),
-                           (owner_auth, 403), (unknown_auth, 403)):
+    for auth, expected in ((owner_auth, 403), (unknown_auth, 403)):
         monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, _auth=auth, **_kw: _auth)
         response = client.get(f"/v1/assets/{asset_id}/content?expires={expires}&md=full&sig={sig}")
         assert response.status_code == expected

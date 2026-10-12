@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 from tests.support.access import authenticated  # noqa: E402
 
 CALL = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
@@ -107,8 +108,8 @@ class ProxyWiringTests(unittest.TestCase):
 
         request = Request({"type": "http", "method": "POST", "path": "/mcp", "query_string": b"", "scheme": "https",
                            "headers": [(b"host", b"gw.example"), (b"x-forwarded-proto", b"https")], "client": ("127.0.0.1", 1)})
-        owner = proxy.AuthContext(identity=proxy._identity_for("owner-a", "test"))
-        other = proxy.AuthContext(identity=proxy._identity_for("owner-b", "test"))
+        owner = access_context(name="owner-a", key_hash="sha256:owner-a", app_id="app_a")
+        other = access_context(name="owner-b", key_hash="sha256:owner-b", app_id="app_b")
         output = io.BytesIO()
         Image.new("RGB", (1, 1), (1, 2, 3)).save(output, format="PNG")
         png = output.getvalue()

@@ -231,23 +231,21 @@ def test_response_reads_delete_and_continuation_use_person_and_app(responses_gat
     assert response.status_code == expected, response.text
 
 
-@pytest.mark.parametrize("scope", ["service_app", "legacy_key", "lan", "no_auth"])
+@pytest.mark.parametrize("scope", ["service_app", "legacy_key"])
 @pytest.mark.parametrize("explicit_store", [False, True])
 def test_no_person_requires_explicit_store_and_durable_scope(responses_gateway, monkeypatch, scope, explicit_store):
     identity = responses_gateway["identity"]
     candidate = replace(identity, person_id=None)
     if scope == "legacy_key":
         candidate = replace(candidate, app_id=None)
-    elif scope == "lan":
-        candidate = proxy._identity_for("lan-bypass", "lan")
-    auth = proxy.NO_AUTH_CONTEXT if scope == "no_auth" else proxy.AuthContext(identity=candidate)
+    auth = proxy.AuthContext(identity=candidate)
     monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, **_kw: auth)
     body = {"input": "no-person-response-prompt"}
     if explicit_store:
         body["store"] = True
     response = _post_response(responses_gateway, body)
     assert response.status_code == 200, response.text
-    stored = explicit_store and scope in {"service_app", "legacy_key"}
+    stored = explicit_store
     row = proxy.responses_store.get(response.json()["id"], path=responses_gateway["responses_db"])
     assert (row is not None) == stored
     assert response.json()["store"] is stored
