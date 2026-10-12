@@ -352,30 +352,54 @@ test("a cold-start models.json !command key runs at most twice (prefetch + Pi's 
 	assert.ok(runs >= 1 && runs <= 2, `ran ${runs} times`);
 });
 
-test("models.json baseUrl drives discovery and chat; conflicting env URL sends no credentials", { skip: !piAvailable }, async () => {
-	const agentDir = freshAgentDir();
-	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
-	const session = startPi({ agentDir, env: { AZIZAM_BASE_URL: "", AZIZAM_API_KEY: "" }, args: ["--provider", "azizam", "--model", "coder"] });
-	try {
-		const state = await session.send({ type: "get_state" });
-		assert.equal(state.data.model?.baseUrl, gateway.baseUrl, session.stderr());
-		const started = await session.send({ type: "prompt", message: "Say hello" });
-		assert.equal(started.success, true);
-		await session.waitFor((e) => e.type === "agent_settled" || e.type === "agent_end");
-		assert.ok(gateway.requests.some((r) => r.url === "/v1/chat/completions"));
-	} finally { await session.close(); }
-
+test("models.json URL handles this prompt and conflicting URLs receive no requests", { skip: !piAvailable }, async () => {
+	const ownGateway = await startMockGateway({ apiKey: KEY });
 	const decoy = await startMockGateway();
-	const before = gateway.requests.length;
-	const conflictDir = freshAgentDir();
-	writeFileSync(join(conflictDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
-	const blocked = startPi({ agentDir: conflictDir, env: { AZIZAM_BASE_URL: decoy.baseUrl, AZIZAM_API_KEY: "" } });
 	try {
-		await blocked.send({ type: "get_state" });
-		await new Promise((r) => setTimeout(r, 300));
+		const agentDir = freshAgentDir();
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: ownGateway.baseUrl, apiKey: KEY } } }));
+		const session = startPi({
+			agentDir,
+			env: { AZIZAM_BASE_URL: "", AZIZAM_API_KEY: "", PI_OFFLINE: "" },
+			args: ["--provider", "azizam", "--model", "coder"],
+		});
+		try {
+			const state = await session.send({ type: "get_state" });
+			assert.equal(state.success, true, JSON.stringify(state));
+			assert.equal(state.data.model?.baseUrl, ownGateway.baseUrl);
+			const eventStart = session.events.length;
+			const started = await session.send({ type: "prompt", message: "Configured URL audit prompt" });
+			assert.equal(started.success, true, JSON.stringify(started));
+			await session.waitFor((event) => session.events.indexOf(event) >= eventStart && (event.type === "agent_settled" || event.type === "agent_end"));
+			const updates = session.events.slice(eventStart).filter((event) => event.type === "message_update").map((event) => event.assistantMessageEvent);
+			assert.equal(updates.filter((event) => event.type === "text_delta").map((event) => event.delta).join(""), "Hello from Azizam", session.stderr());
+			const chats = ownGateway.requests.filter((request) => request.method === "POST" && request.url === "/v1/chat/completions");
+			assert.equal(chats.length, 1, "this session must issue its own chat request");
+			assert.equal(chats[0].authorization, `Bearer ${KEY}`);
+			const body = JSON.parse(chats[0].body!);
+			assert.equal(body.model, "coder");
+			assert.equal(body.stream, true);
+			assert.ok(body.messages.some((message: any) => message.role === "user" && JSON.stringify(message.content).includes("Configured URL audit prompt")));
+			assert.ok(!session.stderr().includes(KEY));
+		} finally {
+			await session.close();
+		}
+
+		const before = ownGateway.requests.length;
+		const conflictDir = freshAgentDir();
+		writeFileSync(join(conflictDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: ownGateway.baseUrl, apiKey: KEY } } }));
+		const blocked = startPi({ agentDir: conflictDir, env: { AZIZAM_BASE_URL: decoy.baseUrl, AZIZAM_API_KEY: "", PI_OFFLINE: "" } });
+		try {
+			const state = await blocked.send({ type: "get_state" });
+			assert.equal(state.success, true, JSON.stringify(state));
+		} finally {
+			await blocked.close();
+		}
 		assert.equal(decoy.requests.length, 0);
-		assert.equal(gateway.requests.length, before);
+		assert.equal(ownGateway.requests.length, before);
 		assert.match(blocked.stderr(), /AZIZAM_BASE_URL.*models.json.*conflict/);
 		assert.ok(!blocked.stderr().includes(KEY));
-	} finally { await blocked.close(); await decoy.close(); }
+	} finally {
+		await Promise.all([ownGateway.close(), decoy.close()]);
+	}
 });
