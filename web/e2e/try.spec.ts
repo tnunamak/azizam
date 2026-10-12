@@ -218,6 +218,21 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     page.getByText("Decisions not enabled on this gateway", { exact: true }),
   ).toBeVisible();
   await page.unroute("**/v1/systemone");
+  // A 403 is a refusal with its own reason, not a missing feature.
+  await page.route("**/v1/systemone", (route) =>
+    route.fulfill({
+      status: 403,
+      json: { error: { message: "Your access plan does not allow decisions." } },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByText("Your access plan does not allow decisions.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Decisions not enabled on this gateway", { exact: true }),
+  ).toHaveCount(0);
+  await page.unroute("**/v1/systemone");
   await page.route("**/v1/systemone", (route) =>
     route.fulfill({
       headers: { "x-azizam-request-id": "req_decide_try" },
@@ -235,6 +250,19 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
+  // demo-decide is a local model, so its result says there was no provider charge.
+  await expect(
+    page.getByText("Local · no provider charge", { exact: true }),
+  ).toBeVisible();
+  // The decision result table passes axe and fits the viewport.
+  expect(
+    (await new AxeBuilder({ page }).analyze()).violations
+      .filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))
+      .map((violation) => violation.id),
+  ).toEqual([]);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
 
   await page.getByRole("tab", { name: "Turn text into numbers" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>

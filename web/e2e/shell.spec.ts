@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -424,4 +425,81 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
     const box = await target.boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
+});
+
+// The ordinary axe pass skips experimental rules. A control whose accessible
+// name leaves out its visible words breaks voice control (WCAG 2.5.3).
+async function seriousAxeViolations(page: Page) {
+  const wcag = await new AxeBuilder({ page }).analyze();
+  const labelInName = await new AxeBuilder({ page })
+    .withRules(["label-content-name-mismatch"])
+    .analyze();
+  return [
+    ...wcag.violations.filter((violation) =>
+      ["serious", "critical"].includes(violation.impact ?? ""),
+    ),
+    ...labelInName.violations,
+  ];
+}
+
+test("tablet rail returns focus to its opener when it closes", async ({
+  page,
+}) => {
+  // Motion on: the sheet leaves with an exit animation, which is when focus can get lost.
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 768, height: 1000 });
+  await page.goto("/");
+  const expand = page.getByRole("button", { name: "Expand navigation" });
+  expect(await seriousAxeViolations(page)).toEqual([]);
+
+  await expand.click();
+  const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).not.toBeVisible();
+  await expect(expand).toBeFocused();
+
+  await expand.click();
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(expand).toBeFocused();
+});
+
+test("phone More returns keyboard focus, and Go to hands focus to its own dialog", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet).toBeVisible();
+  expect(await seriousAxeViolations(page)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(sheet).not.toBeVisible();
+  await expect(more).toBeFocused();
+
+  await more.click();
+  await sheet.getByRole("button", { name: "Close" }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(more).toBeFocused();
+
+  await more.click();
+  await sheet.getByRole("button", { name: /^Go to/ }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Go to" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Go to" })).toBeFocused();
+});
+
+test("owner shell names every control by its visible words at desktop width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Go to", exact: true }).first(),
+  ).toBeVisible();
+  expect(await seriousAxeViolations(page)).toEqual([]);
 });

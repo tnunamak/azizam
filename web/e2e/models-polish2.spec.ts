@@ -278,3 +278,45 @@ test("aliases keep alternatives within their server-classified capability", asyn
     imageGroup.getByRole("button", { name: "Copy model name chat-peer" }),
   ).toHaveCount(0);
 });
+
+test("opened alternatives and the details sheet stay accessible and inside a dark phone viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("theme", "dark"));
+  const peer = {
+    ...measured,
+    id: "chat-peer",
+    display_name: "chat-peer",
+    title: "chat-peer",
+    use_names: ["chat-peer"],
+  };
+  await catalog(page, [measured, peer]);
+  const check = async () => {
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    const result = await new AxeBuilder({ page }).analyze();
+    expect(
+      result.violations
+        .filter((violation) =>
+          ["serious", "critical"].includes(violation.impact ?? ""),
+        )
+        .map((violation) => violation.id),
+    ).toEqual([]);
+  };
+  await page.getByText("1 more", { exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Copy model name chat-peer" }),
+  ).toBeVisible();
+  await check();
+  await page
+    .getByRole("button", { name: "Copy model name chat-peer" })
+    .locator("xpath=ancestor::tr")
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await check();
+});
