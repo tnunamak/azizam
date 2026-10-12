@@ -243,6 +243,7 @@ it("discards an obsolete candidate after a local edit or a reason change", async
   expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
 });
 
+// Types three fields key by key: 1.6-2.3 s alone, 5.3 s on a loaded host.
 it("rebuilds a stale candidate on fresh active rules without losing unrelated changes", async () => {
   let previews = 0;
   const latest = rules(); latest.categories.audience.label = "Latest audience";
@@ -267,7 +268,7 @@ it("rebuilds a stale candidate on fresh active rules without losing unrelated ch
   expect(calls).toHaveLength(2);
   expect(calls[1][1]!.body).toMatchObject({ base_revision: 4, reason: "Local change" });
   expect(fetch.mock.calls.some(([path]) => path.endsWith("/activate"))).toBe(false);
-});
+}, 15000);
 
 it("invalidates stale activation without retrying it and offers a rebuild", async () => {
   const { user, fetch } = mount(rules(), (path, init) => {

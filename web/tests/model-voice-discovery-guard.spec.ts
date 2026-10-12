@@ -185,13 +185,15 @@ function hardcodedSelections(source: string, file: string): string[] {
   return findings;
 }
 
+// Parses every source file, so its time grows with the tree: 2.8-4.8 s alone,
+// and past the 5 s default beside the release gate's web build.
 it("checks known model/voice sinks with a limited local syntactic guard", () => {
   const findings = sourceFiles(sourceRoot).flatMap((path) => {
     const file = relative(sourceRoot, path);
     return hardcodedSelections(readFileSync(path, "utf8"), file);
   });
   expect(findings).toEqual([]);
-});
+}, 15000);
 
 it("catches new model and voice literals without an ID denylist", () => {
   const findings = hardcodedSelections(`
