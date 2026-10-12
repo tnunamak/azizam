@@ -684,7 +684,7 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
 });
 
 test("successive video runs poll their own jobs and never reuse old output", async ({ page }) => {
-  const clip = await readFile("src/app/library/preview-test.mp4");
+  const clip = await readFile("e2e/fixtures/preview-test.mp4");
   const firstId = "job_async_try";
   const secondId = "job_async_failed";
   const firstPrompt = "First recorded video.";
