@@ -255,8 +255,6 @@ def _known_path(segment):
 def test_registered_namespaces_never_answer_html_outside_the_allowlist(segment, export, monkeypatch):
     # Bound side effects: an unauthenticated remote caller, so no handler
     # below reaches a backend.
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
     monkeypatch.setattr(proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False)
     monkeypatch.setattr(proxy, "_setup_page_response", _fake_setup_page)

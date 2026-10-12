@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from gateway import admin_store, receipt_store
+from tests.support.access import access, plan_for, service_app  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_oidc import AdminSession
 from gateway.capabilities import Capability, capability_with_policy_view
@@ -33,7 +34,7 @@ def home_case(tmp_path):
     session = AdminSession(subject=user["id"], email=user["email"], role="owner", issued_at=1, expires_at=4_000_000_000)
     personal = admin_store.ensure_personal_app_for_user(user["id"], path=db)
     client_app = create_user_app(session, name="Open WebUI", path=db)["app"]
-    outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], path=db)
+    outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], access_plan="person", path=db)
     def credential(app, key, **kwargs):
         return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs)
     key = "test-home-key"
@@ -124,7 +125,7 @@ def test_home_owner_recent_defaults_to_instance_activity(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "succeeded"}, created_at=10, path=c.receipts)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "api_key_name": "Daisy", "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
@@ -145,7 +146,7 @@ def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
 
@@ -306,7 +307,7 @@ def test_setup_explicit_first_app_use_does_not_prove_external_client(home_case):
 
 def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
     c = home_case
-    named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], path=c.db)
+    named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
     admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
     cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db)
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
@@ -351,7 +352,7 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_setup_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
@@ -452,7 +453,7 @@ def test_setup_receipt_success_is_not_limited_to_last_five(home_case):
 
 def test_real_alias_discovery_uses_concrete_policy_and_health_target():
     profile = load_profile({"id": "restricted", "protocols": ["openai"], "models": ["demo-chat"], "backends": ["local-service"]})
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=profile)
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(profile))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     concrete = Capability(intent="chat.completions", backend="local-service", model="demo-chat", health="healthy")
     raw = [capability_with_policy_view(cap, profile, request=make_policy_request(protocol="openai.chat", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in [concrete, *aliases]]
@@ -472,8 +473,8 @@ def test_alias_ambiguous_backends_fail_closed():
     assert not fast.policy_available
 
 
-def test_alias_cannot_use_a_forbidden_resolved_backend():
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=load_profile({"id": "denied", "backends": ["different-service"]}))
+def test_alias_of_a_model_outside_the_plan_is_not_available():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for(models=["other-chat"])))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     raw = [Capability(intent="chat.completions", backend="forbidden-service", model="demo-chat", health="healthy"), *aliases]
     fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
@@ -488,7 +489,7 @@ def test_declared_healthy_capability_without_measured_service_is_unknown():
 
 
 def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=load_profile({"id": "restricted", "models": ["demo-chat"], "backends": ["capture-engine"]}))
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(load_profile({"id": "restricted"), "models": ["demo-chat"], "backends": ["capture-engine"]}))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     raw = [Capability(intent="chat.completions", backend="capture-engine"), *aliases]
     registry = {"services": {"capture-engine": {"enabled": True, "config": {"models": [{"id": "demo-chat", "upstream_model": "demo-chat", "local_lifecycle": True}]}}}}
@@ -530,7 +531,7 @@ def test_workflow_and_service_aliases_preserve_permissions():
     aliases = {cap.model: cap for cap in caps if "alias" in cap.tags}
     assert aliases["image"].policy_available and aliases["image"].backend == "image-service"
     assert aliases["tts"].policy_available and aliases["tts"].backend == "voice-service"
-    denied = RuntimeIdentity(name="Denied", key_hash="", profile=load_profile({"id": "deny", "backends": []}))
+    denied = RuntimeIdentity(name="Denied", key_hash="", access=access(load_profile({"id": "deny"), "backends": []}))
     denied_raw = [capability_with_policy_view(cap, denied.profile, request=make_policy_request(protocol="openai.audio", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in raw]
     assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
 
@@ -563,8 +564,6 @@ def test_capability_union_includes_available_new_app_default(home_case):
 
 def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
     import proxy
-    from gateway.policy import DEFAULT_PROFILE
-
     receipt_db = tmp_path / "public-header-receipts.db"
     receipt_store.init_db(receipt_db)
     original_begin, original_finalize = receipt_store.begin, receipt_store.finalize
@@ -577,8 +576,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_ups
     async def prepare(_auth_context, **kwargs):
         return None, kwargs["body_json"]
 
-    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), profile=DEFAULT_PROFILE, app_id="header-app")
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
+    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), profile=plan_for("default-local"), app_id="header-app")
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lambda *_args, **_kwargs: identity)
     monkeypatch.setattr(proxy, "_prepare_litellm_local_llm_request", prepare)
     monkeypatch.setitem(proxy.config, "model_aliases", {})
@@ -636,7 +634,7 @@ def test_disabled_service_is_unavailable_even_when_probe_endpoint_answers(home_c
 
 
 def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "fast-only", "models": ["fast"]}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(load_profile({"id": "fast-only"), "models": ["fast"]}))
     views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
     raw = [Capability(intent="chat.completions", backend="local"),
            Capability(intent="chat.completions", backend="remote", model="paid-model"),
@@ -645,7 +643,7 @@ def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
                              "remote": {"config": {"models": [{"id": "paid-model"}]}}}}
     caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
     assert not next(cap for cap in caps if cap.backend == "local").policy_available
-    allowed = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "plain-only", "models": ["plain"]}))
+    allowed = RuntimeIdentity(name="Scoped", key_hash="", access=access(load_profile({"id": "plain-only"), "models": ["plain"]}))
     registry["services"]["local"]["config"]["models"] = [{"id": "plain"}]
     caps = _resolved_capabilities(allowed, lambda _identity: raw[:1], registry)
     assert caps[0].policy_available  # A real permitted registry target is sufficient.
@@ -709,20 +707,20 @@ def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(hom
     resolved = resolve_capability_targets([*concrete, *aliases], c.registry)
     assert resolved[0].backend == "gateway"
     profile = load_profile({"id": "no-remote"})
-    identity = RuntimeIdentity(name="No remote", key_hash="", profile=profile)
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(profile))
     home_caps = _resolved_capabilities(identity, lambda _: aliases, c.registry)
     assert home_caps[0].policy_available is False
 
 
 def test_disabled_registry_model_does_not_prove_generic_endpoint_usable():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "disabled-only", "models": ["disabled"]}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(load_profile({"id": "disabled-only"), "models": ["disabled"]}))
     registry = {"services": {"service": {"config": {"models": [{"id": "disabled", "enabled": False}]}}}}
     caps = _resolved_capabilities(identity, lambda _: [Capability(intent="chat.completions", backend="service")], registry)
     assert caps[0].policy_available is False
 
 
 def test_bound_remote_alias_cannot_override_denied_concrete_target():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "no-remote"}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(load_profile({"id": "no-remote"})))
     raw = [Capability(intent="chat.completions", backend="cloud-service", model="provider/model",
                       tags=("remote",), policy_available=False),
            Capability(intent="chat.completions", backend="cloud-service", model="fast",
@@ -744,7 +742,7 @@ def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capabilit
     }}}
     assert registered_model_capabilities(registry) == []
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "typesafe/jev"}]}})
-    identity = RuntimeIdentity(name="No remote", key_hash="", profile=load_profile({"id": "no-remote"}))
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(load_profile({"id": "no-remote"})))
     if surface == "home":
         home_caps = _resolved_capabilities(identity, lambda _: aliases, registry)
         assert home_caps[0].policy_available is False
@@ -784,7 +782,7 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
     assert aliases[0].backend == "voice-cloud"
     assert "engine:provider-option" in aliases[0].tags
     assert "remote" not in aliases[0].tags
-    identity = RuntimeIdentity(name="Service policy", key_hash="", profile=load_profile(profile_document))
+    identity = RuntimeIdentity(name="Service policy", key_hash="", access=access(load_profile(profile_document)))
     expected = permission == "allowed_canonical_grant"
     assert proxy._capability_for_profile(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
     c.capabilities_override = lambda caller: [proxy._capability_for_profile(cap, proxy.AuthContext(identity=caller)) for cap in aliases]

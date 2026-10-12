@@ -28,7 +28,7 @@ def household(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, 'IMAGE_MEDIA_JOB_PAYLOAD_DIR', tmp_path / 'payloads')
     monkeypatch.setattr(proxy, '_EPHEMERAL_MEDIA_JOB_PAYLOADS', {})
     people = [admin_store.upsert_oidc_user('test', name, path=admin) for name in ('owner', 'robin', 'other')]
-    apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], path=admin)
+    apps = [admin_store.create_app(name, kind='personal', owner_user_id=user['id'], access_plan="person", path=admin)
             for name, user in zip(('owner', 'robin', 'other'), people)]
     auth = proxy.AuthContext(identity=proxy.AuthIdentity(name='Robin', key_hash='sha256:robin',
         app_id=apps[1]['id'], person_id=people[1]['id']))

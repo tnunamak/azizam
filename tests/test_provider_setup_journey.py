@@ -12,10 +12,11 @@ from gateway import admin_store, providers
 from gateway.admin_api import AdminContext
 from gateway.admin_runtime import AdminSQLiteStore
 from gateway.litellm_substrate import compile_litellm_config_from_registry
-from gateway.profiles import load_profile
+from gateway.access_plans import plan_from_document
 from gateway.provider_admin import create_provider_admin_router
 from gateway.provider_sidecar import build_sidecar_env
 from gateway.secret_store import get_provider_secret
+from tests.support.access import identity, plan_document
 
 
 OWNER = AdminContext(subject="test-owner", roles=frozenset({"owner"}))
@@ -25,6 +26,17 @@ def _owner(_request: Request) -> AdminContext:
     return OWNER
 
 
+def _app_on(store: AdminSQLiteStore, plan_id: str):
+    """An App whose two plans are the stored plan, as the runtime reads it."""
+    record = store.get_access_plan(plan_id)
+    assert record is not None
+    return identity(plan_from_document(record["plan"], plan_id=plan_id))
+
+
+def _paid(store: AdminSQLiteStore, plan_id: str) -> list[str]:
+    return store.get_access_plan(plan_id)["plan"]["paid_providers"]
+
+
 def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -32,12 +44,8 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     monkeypatch.setattr(admin_store, "DB_PATH", db)
     store = AdminSQLiteStore(db)
     store.init_db()
-    profile_doc = {
-        "id": "family",
-        "protocols": ["openai"],
-        "remote": {"providers": [], "budget_usd_per_day": "2.00"},
-    }
-    plan = store.create_profile(data={"name": "Family", "profile": profile_doc}, actor=OWNER)
+    family = plan_document("Family", caps=("chat",))
+    plan = store.create_access_plan(data=family, actor=OWNER)
     app = FastAPI()
     app.include_router(create_provider_admin_router(store, auth=_owner))
     client = TestClient(app)
@@ -57,7 +65,6 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
                 "dimensions": {"cache_control": True},
             },
         }],
-        "allowed_plans": [],
         "caps": {"daily_usd": 5, "monthly_usd": 50},
     })
     assert created.status_code == 201, created.json()
@@ -80,7 +87,7 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     assert child_env[entry["litellm_params"]["api_key"].removeprefix("os.environ/")] == "synthetic-provider-key-4f2a"
     provider = providers.provider_lookup(registry, "cloud-test")
     assert provider is not None
-    denied_plan = load_profile(profile_doc)
+    denied_app = _app_on(store, plan["id"])
     estimate = providers.estimate_chat_cost(provider, {
         "model": "cloud-test/test/model",
         "messages": [{"role": "user", "content": "Check paid admission."}],
@@ -89,15 +96,13 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     assert estimate.usd is not None and estimate.usd > 0
     ledger = tmp_path / "spend.db"
     with pytest.raises(providers.RemoteProviderNotAllowed):
-        providers.reserve_provider_spend(denied_plan, provider, estimate, path=ledger, admin_db_path=db)
-    allowed = client.put("/admin/api/providers/cloud-test/allowed-plans", json={"allowed_plans": [plan["id"]]})
-    assert allowed.status_code == 200, allowed.json()
-    persisted = store.get_profile(plan["id"])
-    assert persisted is not None
-    allowed_plan = load_profile(persisted["profile"])
-    assert "cloud-test" in allowed_plan.remote.providers
-    assert allowed_plan.remote.budget_usd_per_day == Decimal("2.00")
-    reservation = providers.reserve_provider_spend(allowed_plan, provider, estimate, path=ledger, admin_db_path=db)
+        providers.reserve_provider_spend(denied_app, provider, estimate, path=ledger, admin_db_path=db)
+    # The provider page lists plans read-only; the plan editor adds a paid provider.
+    store.update_access_plan(plan_id=plan["id"], data={**family, "paid_providers": ["cloud-test"]}, actor=OWNER)
+    listed = client.get("/admin/api/providers/cloud-test").json()["provider"]["access_plans"]
+    assert [row["id"] for row in listed] == [plan["id"]]
+    allowed_app = _app_on(store, plan["id"])
+    reservation = providers.reserve_provider_spend(allowed_app, provider, estimate, path=ledger, admin_db_path=db)
     assert reservation.estimated_usd == estimate.usd
     assert reservation.provider == "cloud-test"
     deleted = client.delete("/admin/api/providers/cloud-test/key")
@@ -105,7 +110,7 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     provider = providers.provider_lookup(store.get_service_registry(), "cloud-test")
     assert provider is not None
     with pytest.raises(providers.ProviderKeyMissing):
-        providers.require_remote_allowed(allowed_plan, provider)
+        providers.require_remote_allowed(allowed_app, provider)
     # Exercise the real keyword-only store update/remove contracts, including
     # disabled models and lossless preservation of credential references.
     updated = client.put("/admin/api/providers/cloud-test/models", json={"models": [{
@@ -122,7 +127,7 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     removed = client.delete("/admin/api/providers/cloud-test")
     assert removed.status_code == 200, removed.json()
     assert client.get("/admin/api/providers/cloud-test").status_code == 404
-    assert "cloud-test" not in store.get_profile(plan["id"])["profile"]["remote"]["providers"]
+    assert "cloud-test" not in _paid(store, plan["id"])
 
 
 def test_setup_and_removal_share_the_paid_admission_ledger(
@@ -133,17 +138,7 @@ def test_setup_and_removal_share_the_paid_admission_ledger(
     monkeypatch.setattr(admin_store, "DB_PATH", db)
     store = AdminSQLiteStore(db)
     store.init_db()
-    plan = store.create_profile(
-        data={
-            "name": "Journey",
-            "profile": {
-                "id": "journey-plan",
-                "protocols": ["openai"],
-                "remote": {"providers": [], "budget_usd_per_day": "2.00"},
-            },
-        },
-        actor=OWNER,
-    )
+    plan = store.create_access_plan(data=plan_document("Journey", caps=("chat",), paid=["journey-cloud"]), actor=OWNER)
     app = FastAPI()
     app.include_router(create_provider_admin_router(
         store, auth=_owner, ledger_path=ledger, receipts_path=tmp_path / "receipts.db",
@@ -163,15 +158,12 @@ def test_setup_and_removal_share_the_paid_admission_ledger(
                     "output_usd_per_million_tokens": "1",
                 },
             }],
-            "allowed_plans": [plan["id"]],
         })
         assert created.status_code == 201, created.json()
         provider = providers.provider_lookup(store.get_service_registry(), "journey-cloud")
         assert provider is not None
-        saved_plan = store.get_profile(plan["id"])
-        assert saved_plan is not None
         reservation = providers.reserve_provider_spend(
-            load_profile(saved_plan["profile"]), provider,
+            _app_on(store, plan["id"]), provider,
             providers.Cost(Decimal("0.001"), "price-table", provider.id),
             path=ledger, admin_db_path=db,
         )
@@ -185,7 +177,7 @@ def test_setup_and_removal_share_the_paid_admission_ledger(
         removed = client.delete("/admin/api/providers/journey-cloud")
         assert removed.status_code == 200, removed.json()
         assert client.get("/admin/api/providers/journey-cloud").status_code == 404
-        assert "journey-cloud" not in store.get_profile(plan["id"])["profile"]["remote"]["providers"]
+        assert "journey-cloud" not in _paid(store, plan["id"])
 
 
 @pytest.mark.parametrize("rate", ["NaN", "Infinity", "-1", True, ""])
@@ -197,7 +189,7 @@ def test_invalid_paid_prices_fail_before_secret_or_registry_writes(tmp_path: Pat
     app.include_router(create_provider_admin_router(store, auth=_owner))
     with TestClient(app) as client:
         result = client.post("/admin/api/providers", json={
-            "preset_id": "openai", "api_key": "synthetic-price-key", "allowed_plans": [],
+            "preset_id": "openai", "api_key": "synthetic-price-key",
             "models": [{"id": "test-model", "enabled": True, "price": {
                 "input_usd_per_million_tokens": rate, "output_usd_per_million_tokens": "1",
             }}],
@@ -218,7 +210,7 @@ def test_concurrent_provider_creates_cannot_delete_the_winning_key(tmp_path: Pat
         with TestClient(app) as client:
             return index, client.post("/admin/api/providers", json={
                 "preset_id": "openai", "provider_id": "same-provider", "models": [],
-                "api_key": f"synthetic-concurrent-key-{index}", "allowed_plans": [],
+                "api_key": f"synthetic-concurrent-key-{index}",
             })
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(create, range(2)))
@@ -236,7 +228,7 @@ def test_existing_canonical_provider_under_legacy_row_cannot_be_replaced(tmp_pat
     app.include_router(create_provider_admin_router(store, auth=_owner))
     with TestClient(app) as client:
         body = {"preset_id": "openai", "provider_id": "acme", "models": [],
-                "api_key": "synthetic-original-key", "allowed_plans": []}
+                "api_key": "synthetic-original-key"}
         original = client.post("/admin/api/providers", json=body)
         assert original.status_code == 201, original.json()
         record = admin_store.get_service_registry_with_generation(path=db)

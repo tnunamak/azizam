@@ -43,7 +43,7 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
     robin = admin_store.upsert_oidc_user("issuer", "robin", email="robin@example.test", path=admin)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], access_plan="person", path=admin)
     (tmp_path / "cache").mkdir()
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, robin=robin, app=app)
 

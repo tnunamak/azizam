@@ -36,7 +36,7 @@ it("shows exact provider model ids and discloses provider identity", () => {
         models: [
           { id: "openai/gpt-4.1-nano", name: "Gpt 4.1 Nano", enabled: true },
         ],
-        allowed_plans: [],
+        access_plans: [],
       },
     ],
   });
@@ -69,7 +69,7 @@ it("shows exact provider model ids and discloses provider identity", () => {
     screen.getByRole("button", { name: "Check provider connection" }),
   ).toBeVisible();
   expect(
-    screen.getByText("No access plans can use this provider"),
+    screen.getByText("No access plan includes OpenAI."),
   ).toBeVisible();
   expect(screen.queryByText("Gateway check")).not.toBeInTheDocument();
 });
@@ -82,7 +82,7 @@ it.each([
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   client.setQueryData(["providers"], {
     providers: [{
-      id: "cost-provider", name: "Cost provider", models: [], allowed_plans: [],
+      id: "cost-provider", name: "Cost provider", models: [], access_plans: [],
       spend: { daily_usd: spent, monthly_usd: spent },
       caps: { daily_usd: cap, monthly_usd: cap },
     }],
@@ -99,7 +99,7 @@ it("SE-25 distinguishes positive spend over a zero cap from recorded zero spend"
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   client.setQueryData(["providers"], {
     providers: [{
-      id: "cost-provider", name: "Cost provider", models: [], allowed_plans: [],
+      id: "cost-provider", name: "Cost provider", models: [], access_plans: [],
       spend: { daily_usd: 0, monthly_usd: 1 },
       caps: { daily_usd: 0, monthly_usd: 0 },
     }],
@@ -156,7 +156,7 @@ const savedProvider = {
   reachable: null,
   key_status: { state: "set", source: "secret", suffix: "ab12" },
   models: [{ id: "saved-model", price_input: "1", price_output: "2" }],
-  allowed_plans: [],
+  access_plans: [],
   caps: { daily_usd: 5, monthly_usd: 50 },
 };
 
@@ -234,7 +234,7 @@ const twoPresets = [
   { ...preset, id: "second", name: "Second preset", baseUrl: "https://second.example" },
 ];
 
-it("PF-102 does not carry a chosen access plan across cancel or provider change", async () => {
+it("PF-102 adds a provider without choosing access plans (plans choose providers)", async () => {
   adminFetchMock.mockResolvedValue({
     ok: true,
     models: [{ id: "m", price_input: "1", price_output: "2" }],
@@ -244,23 +244,10 @@ it("PF-102 does not carry a chosen access plan across cancel or provider change"
     plans: [{ id: "family", name: "Family" }],
   });
   fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
-  let dialog = await checkAddProvider(/First preset/);
+  const dialog = await checkAddProvider(/First preset/);
   fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
-  fireEvent.click(dialog.getByRole("switch", { name: "Allow Family" }));
-  expect(dialog.getByRole("switch", { name: "Allow Family" })).toBeChecked();
-  // Choosing another provider in the same flow starts with no plan.
-  fireEvent.click(dialog.getByRole("button", { name: "1. Provider" }));
-  dialog = await checkAddProvider(/Second preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
-  expect(dialog.getByRole("switch", { name: "Allow Family" })).not.toBeChecked();
-  fireEvent.click(dialog.getByRole("switch", { name: "Allow Family" }));
-  fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
-  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
-  dialog = within(screen.getByRole("dialog"));
-  expect(dialog.getByLabelText("Search providers")).toBeInTheDocument();
-  dialog = await checkAddProvider(/Second preset/);
-  fireEvent.click(dialog.getByRole("button", { name: "4. Access and caps" }));
-  expect(dialog.getByRole("switch", { name: "Allow Family" })).not.toBeChecked();
+  expect(dialog.queryByRole("switch", { name: "Allow Family" })).toBeNull();
+  expect(dialog.getByText(/No access plan includes a new provider/)).toBeVisible();
 });
 
 it("PF-103 refreshes clean cap drafts and holds a dirty draft as a conflict", async () => {
@@ -431,11 +418,11 @@ it("PF-107 keeps env names, provider model ids, protocol and billing enums out o
     expect(dialog.getByRole("button", { name })).toBeInTheDocument();
 });
 
-it("PF-107 shows a charge's kind and plan name, not raw enums and ids", async () => {
+it("PF-107 shows a charge's kind and app name, not raw enums and ids", async () => {
   adminFetchMock.mockResolvedValue({
     reconciliations: [
-      { id: 7, profile_id: "family-plan", cost_source: "price-table", estimated_usd: "0.01" },
-      { id: 8, profile_id: "family-plan", cost_source: "provider-reported", estimated_usd: "0.02" },
+      { id: 7, app_id: "app_family", app_name: "Family", cost_source: "price-table", estimated_usd: "0.01" },
+      { id: 8, app_id: "app_family", app_name: "Family", cost_source: "provider-reported", estimated_usd: "0.02" },
     ],
   });
   renderProviders(
@@ -449,7 +436,7 @@ it("PF-107 shows a charge's kind and plan name, not raw enums and ids", async ()
   expect(dialog.getByText("Verified provider charge")).toBeVisible();
   expect(dialog.getAllByText("Family")).toHaveLength(2);
   expect(dialog.queryByText("price-table")).toBeNull();
-  expect(dialog.queryByText("family-plan")).toBeNull();
+  expect(dialog.queryByText("app_family")).toBeNull();
 });
 
 it("PF-108 does not prefill or hint a provider-specific key variable", async () => {

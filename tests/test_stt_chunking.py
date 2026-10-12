@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import asyncio
 import json
 import os
@@ -1326,7 +1328,7 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
     def test_snapshot_backend_auth_uses_the_capability_selected_service(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
             os.environ, {"STT_TEST_KEY": "configured-only-for-test"}, clear=False
-        ), patch.object(proxy, "AUTH_ENABLED", True):
+        ), nullcontext():
             snapshot = _config(Path(temp_dir))
             snapshot = replace(
                 snapshot,

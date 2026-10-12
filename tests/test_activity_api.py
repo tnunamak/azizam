@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from gateway import admin_store, receipt_store
 from gateway.activity_api import create_activity_router
 from gateway.admin_api import AdminAuthError, AdminContext
+from tests.support.access import service_app
 
 
 @pytest.fixture
@@ -18,10 +19,10 @@ def activity(tmp_path):
     receipt_store.init_db(receipts)
     people = [admin_store.upsert_oidc_user('test', name, display_name=name, path=admin)
               for name in ('Alice', 'Bob')]
-    apps = [admin_store.create_app(name, kind='personal', owner_user_id=person['id'], path=admin)
+    apps = [admin_store.create_app(name, kind='personal', owner_user_id=person['id'], access_plan="person", path=admin)
             for name, person in zip(('Desktop', 'Phone'), people)]
     service_account = admin_store.ensure_service_account("svc_daisy", path=admin)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=admin)
+    service = service_app("Daisy", path=admin)
     def auth(request):
         role = request.headers.get('test-role', 'owner')
         if role == 'anonymous':

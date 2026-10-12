@@ -23,8 +23,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import plan_for, access  # noqa: E402
 from gateway import admin_store, decision_provider_execution, providers, receipt_store
-from gateway.policy import AppProfile, CapabilitySelector, RemoteProviderPolicy
 from gateway.runtime_auth import RuntimeIdentity
 
 RAW_KEY = "opk_decisions_provider_integration"
@@ -67,30 +67,21 @@ def _provider_registry(*, provider_id="typesafe", protocols=("typesafe-systemone
     }
 
 
-def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> AppProfile:
-    return AppProfile(
-        id="paid-plan",
-        allow=CapabilitySelector(tags=frozenset(tags) if tags is not None else None),
-        models=frozenset(models) if models is not None else None,
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_usd_per_request,
-            budget_usd_per_day=budget_usd_per_day,
-            budget_usd_per_month=budget_usd_per_month,
-        ),
-    )
+def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> "AccessPlan":
+    # Plan caps and capability tags are not access-plan parts; only providers
+    # and listed models remain (design v4 §2.1).
+    return plan_for("paid-plan", models=list(models) if models is not None else None, paid=sorted(providers))
 
 
 @contextmanager
-def _authenticated(profile: AppProfile):
+def _authenticated(profile: "AccessPlan"):
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", profile=profile)
+    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", access=access(profile))
 
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(proxy, "AUTH_ENABLED", True)
         mp.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
         yield identity, mp
 

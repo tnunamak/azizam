@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import sys
 import io
 import unittest
@@ -15,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 
 CALL = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
 
@@ -30,7 +33,7 @@ class ProxyWiringTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
 
     def test_mcp_and_sdapi_need_a_key_when_auth_is_on(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(proxy, "LAN_BYPASS_ENABLED", False):
+        with nullcontext():
             resp = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
             self.assertEqual(resp.status_code, 401)
             self.assertIn("resource_metadata=", resp.headers["www-authenticate"])
@@ -38,7 +41,7 @@ class ProxyWiringTests(unittest.TestCase):
             self.assertEqual(self.client.get("/.well-known/oauth-protected-resource/mcp").status_code, 200)
 
     def test_tools_and_catalog_come_from_the_real_manifests(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
             self.assertEqual([t["name"] for t in tools], ["capabilities", "run", "job"])
             rows = _tool(self.client, "capabilities", {})["structuredContent"]["workflows"]
@@ -69,7 +72,7 @@ class ProxyWiringTests(unittest.TestCase):
 
         route = APIRoute("/v1/images/generations", core_refusal, methods=["POST"])
         with (
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy.app.router, "routes", [route, *proxy.app.router.routes]),
         ):
             result = _tool(
@@ -91,7 +94,7 @@ class ProxyWiringTests(unittest.TestCase):
         self.assertEqual(result["structuredContent"]["code"], "fixture_core_refusal")
 
     def test_sdapi_lists_the_real_image_models(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             titles = [m["title"] for m in self.client.get("/sdapi/v1/sd-models").json()]
             self.assertEqual(titles[:2], ["image", "image-fast"])
             self.assertIn("krea2-turbo", titles)

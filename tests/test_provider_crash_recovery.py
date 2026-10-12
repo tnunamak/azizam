@@ -10,9 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gateway import admin_store, providers
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
+from tests.support.access import plan_for  # noqa: E402
 def _provider(**overrides: object) -> providers.ProviderRef:
     data = {
         "id": "openrouter",
@@ -28,13 +26,7 @@ def _provider(**overrides: object) -> providers.ProviderRef:
 
 
 def _profile(**remote_overrides: object):
-    return DEFAULT_PROFILE.with_overrides(
-        id="paid-plan",
-        remote=RemoteProviderPolicy(
-            providers=frozenset({"openrouter"}),
-            **remote_overrides,
-        ),
-    )
+    return plan_for("paid-plan", paid=sorted({"openrouter"}))
 
 
 class ProviderCrashRecoveryTests(unittest.TestCase):

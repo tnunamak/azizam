@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gateway import admin_store
-from gateway.policy import AppProfile, RemoteProviderPolicy
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.providers import BudgetExceeded, Cost, ProviderNeedsReconciliation, ProviderRef, ensure_ledger, reserve_provider_spend
 from gateway.receipts import RouteReceipt, serialize_receipt_for_audience
 
@@ -27,8 +27,9 @@ def _provider(**config) -> ProviderRef:
                        config={"credential_origin": "https://api.typesafe.test:443", **config})
 
 
-def _profile(**remote) -> AppProfile:
-    return AppProfile(id="family", remote=RemoteProviderPolicy(providers=frozenset({"typesafe"}), **remote))
+def _profile():
+    """An App whose plans list typesafe. Plans have no caps of their own (design v4 §2.11)."""
+    return identity(plan_for("family", paid=["typesafe"]))
 
 
 def _spent(ledger: Path, usd: str, *, profile_id: str = "family", status: str = "settled", at: int = NOW - 60) -> None:
@@ -50,18 +51,6 @@ def _refusal(tmp_path, profile, provider, *, admin=None) -> dict:
     return caught.value.refusal()
 
 
-def test_plan_daily_cap_names_daily_plan(tmp_path):
-    _spent(tmp_path / "ledger.db", "1.00")
-    assert _refusal(tmp_path, _profile(budget_usd_per_day=Decimal("1.00")), _provider()) == {
-        "code": "budget_exceeded", "limit": {"period": "daily", "scope": "plan"}}
-
-
-def test_plan_monthly_cap_names_monthly_plan(tmp_path):
-    _spent(tmp_path / "ledger.db", "3.00")
-    refusal = _refusal(tmp_path, _profile(budget_usd_per_day=Decimal("5.00"), budget_usd_per_month=Decimal("3.00")), _provider())
-    assert refusal == {"code": "budget_exceeded", "limit": {"period": "monthly", "scope": "plan"}}
-
-
 def test_provider_daily_cap_names_daily_provider(tmp_path):
     _spent(tmp_path / "ledger.db", "2.00", profile_id="someone-else")
     refusal = _refusal(tmp_path, _profile(), _provider(spend_caps_usd={"daily": "2.00"}))
@@ -74,14 +63,9 @@ def test_global_monthly_cap_names_monthly_global(tmp_path):
     assert refusal == {"code": "budget_exceeded", "limit": {"period": "monthly", "scope": "global"}}
 
 
-def test_per_request_cap_names_request_plan(tmp_path):
-    refusal = _refusal(tmp_path, _profile(max_usd_per_request=Decimal("0.001")), _provider())
-    assert refusal == {"code": "budget_exceeded", "limit": {"period": "request", "scope": "plan"}}
-
-
 def test_unknown_price_refusal_has_code_but_no_single_limit(tmp_path):
     with pytest.raises(BudgetExceeded) as caught:
-        reserve_provider_spend(_profile(budget_usd_per_day=Decimal("1")), _provider(), Cost(None, "unknown", "typesafe"),
+        reserve_provider_spend(_profile(), _provider(spend_caps_usd={"daily": "1"}), Cost(None, "unknown", "typesafe"),
                                path=tmp_path / "ledger.db", now=NOW)
     assert caught.value.refusal() == {"code": "budget_exceeded", "limit": None}
 
@@ -89,9 +73,9 @@ def test_unknown_price_refusal_has_code_but_no_single_limit(tmp_path):
 def test_unreconciled_spend_refusal_keeps_its_own_code(tmp_path):
     _spent(tmp_path / "ledger.db", "0.10", status="needs_reconciliation")
     with pytest.raises(ProviderNeedsReconciliation) as caught:
-        reserve_provider_spend(_profile(budget_usd_per_day=Decimal("1")), _provider(), Cost(Decimal("0.01"), "price-table", "typesafe"),
+        reserve_provider_spend(_profile(), _provider(spend_caps_usd={"daily": "1"}), Cost(Decimal("0.01"), "price-table", "typesafe"),
                                path=tmp_path / "ledger.db", now=NOW)
-    assert caught.value.refusal() == {"code": "provider_needs_reconciliation", "limit": {"period": "daily", "scope": "plan"}}
+    assert caught.value.refusal() == {"code": "provider_needs_reconciliation", "limit": {"period": "daily", "scope": "provider"}}
 
 
 def test_client_receipt_shows_refusal_codes_only():

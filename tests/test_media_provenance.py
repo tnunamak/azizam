@@ -1,6 +1,6 @@
 """Generated-media provenance and the ``metadata`` delivery control.
 
-Covers: the profile default, the per-request override, the provenance record
+Covers: the access plans' bound, the per-request lowering, the provenance record
 (and that it never holds secrets), lossless stripping at delivery for every
 media type, and that the stored copy stays full.
 """
@@ -28,12 +28,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import plan_for, access  # noqa: E402
 from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
 from gateway.extensions import validate_extension_inputs  # noqa: E402
-from gateway.policy import DEFAULT_PROFILE, MediaMetadataPolicy  # noqa: E402
-from gateway.profiles import ProfileLoadError, load_profile  # noqa: E402
+from gateway.access_plans import PlanError, plan_from_document, plan_to_document  # noqa: E402
 
 NS = "com.azizam.workflow"
 FFMPEG = shutil.which("ffmpeg") is not None
@@ -94,54 +94,40 @@ def idat(content: bytes) -> bytes:
     return out
 
 
+# Callers whose plans keep (FULL_AUTH) or strip (NONE_AUTH) media metadata.
+FULL_AUTH = proxy.AuthContext(identity=proxy.AuthIdentity(
+    name="f", key_hash="sha256:f", access=access(plan_for("keep", metadata="full"))))
+NONE_AUTH = proxy.AuthContext(identity=proxy.AuthIdentity(
+    name="n", key_hash="sha256:n", access=access(plan_for("strip", metadata="none"))))
+
+
 class StubRequest:
     headers: dict[str, str] = {}
     url = SimpleNamespace(scheme="http", netloc="gateway.test")
 
 
-class ProfileDefaultTests(unittest.TestCase):
-    def test_default_profile_strips(self) -> None:
-        self.assertEqual(DEFAULT_PROFILE.media_metadata.default, "none")
-        self.assertEqual(load_profile({}).media_metadata.default, "none")
-        self.assertEqual(load_profile({"id": "x"}).media_metadata.default, "none")
+class PlanBoundTests(unittest.TestCase):
+    def test_plans_strip_metadata_unless_they_keep_it(self) -> None:
+        self.assertEqual(plan_for("local").media_metadata, "none")
+        self.assertEqual(plan_for("owner", metadata="full").media_metadata, "full")
 
-    def test_profile_can_default_to_full(self) -> None:
-        profile = load_profile({"id": "p", "media_metadata": {"default": "full"}})
-        self.assertEqual(profile.media_metadata.default, "full")
+    def test_bad_plan_value_is_rejected(self) -> None:
+        document = plan_to_document(plan_for("p"))
+        for bad in ("maybe", 1, {"default": "full"}):
+            with self.assertRaises(PlanError):
+                plan_from_document({**document, "media_metadata": bad}, plan_id="p")
 
-    def test_bad_profile_value_is_rejected(self) -> None:
-        for bad in ({"default": "maybe"}, {"default": 1}, {"unknown": "x"}, "full"):
-            with self.assertRaises(ProfileLoadError):
-                load_profile({"id": "p", "media_metadata": bad})
-
-    def test_policy_dataclass_validates(self) -> None:
-        with self.assertRaises(ValueError):
-            MediaMetadataPolicy(default="all")
-
-    def test_seeded_owner_profile_is_full(self) -> None:
-        from gateway.default_profiles import DEFAULT_PROFILE_SEEDS
-
-        seeds = {s["profile"]["id"]: s["profile"] for s in DEFAULT_PROFILE_SEEDS}
-        self.assertEqual(seeds["owner-local"]["media_metadata"], {"default": "full"})
-        for pid in ("assistant-chat", "media-creator"):
-            self.assertNotEqual(seeds[pid].get("media_metadata", {}).get("default"), "full")
-
-    def test_runtime_default_by_identity(self) -> None:
-        none_ctx = proxy.AuthContext(identity=proxy._identity_for("some-path-token", "path-token"))
-        lan_ctx = proxy.AuthContext(identity=proxy._identity_for("lan-bypass", "lan"))
-        full_profile = load_profile({"id": "owner", "media_metadata": {"default": "full"}})
-        owner = proxy.AuthContext(
-            identity=proxy.AuthIdentity(name="o", key_hash="sha256:o", profile=full_profile)
-        )
+    def test_runtime_bound_by_identity(self) -> None:
+        owner = proxy.AuthContext(identity=proxy.AuthIdentity(
+            name="o", key_hash="sha256:o", access=access(plan_for("owner", metadata="full"))))
         plain = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
-        self.assertEqual(proxy._media_metadata_default(lan_ctx), "full")
-        self.assertEqual(proxy._media_metadata_default(owner), "full")
-        self.assertEqual(proxy._media_metadata_default(none_ctx), "none")
-        self.assertEqual(proxy._media_metadata_default(plain), "none")
-        # auth disabled: personal local run
-        self.assertEqual(proxy._media_metadata_default(proxy.NO_AUTH_CONTEXT), "full")
-        # the LAN profile keeps the default-local id, so receipts do not change
-        self.assertEqual(lan_ctx.identity.profile.id, DEFAULT_PROFILE.id)
+        mixed = proxy.AuthContext(identity=proxy.AuthIdentity(
+            name="m", key_hash="sha256:m",
+            access=access(plan_for("owner", metadata="full"), plan_for("app", metadata="none"))))
+        self.assertEqual(proxy._media_metadata_bound(owner), "full")
+        self.assertEqual(proxy._media_metadata_bound(plain), "none")
+        self.assertEqual(proxy._media_metadata_bound(mixed), "none")
+        self.assertEqual(proxy._media_metadata_bound(proxy.NO_AUTH_CONTEXT), "none")
 
 
 class ControlParsingTests(unittest.TestCase):
@@ -152,7 +138,7 @@ class ControlParsingTests(unittest.TestCase):
             with self.assertRaises(provenance.MetadataModeError):
                 provenance.parse_metadata_mode(bad)
 
-    def test_request_override_beats_profile_default(self) -> None:
+    def test_request_override_beats_plan_bound(self) -> None:
         resolve = provenance.resolve_metadata_mode
         self.assertEqual(resolve("none", "full"), "none")
         self.assertEqual(resolve("full", "none"), "full")
@@ -187,15 +173,15 @@ class ControlParsingTests(unittest.TestCase):
         self.assertIn("metadata", result.rejected)
 
     def test_query_forms(self) -> None:
-        media_delivery.begin(profile_default="full")
+        media_delivery.begin(plan_bound="full")
         self.assertEqual(
             media_delivery.note_query([("extensions[com.azizam.workflow][metadata]", "none")]),
             "none",
         )
         self.assertEqual(media_delivery.current_mode(), "none")
-        media_delivery.begin(profile_default="full")
+        media_delivery.begin(plan_bound="full")
         self.assertEqual(media_delivery.note_query([("metadata", "none")]), "none")
-        media_delivery.begin(profile_default="none")
+        media_delivery.begin(plan_bound="none")
         self.assertIsNone(media_delivery.note_query([("other", "x")]))
         self.assertEqual(media_delivery.current_mode(), "none")
         with self.assertRaises(provenance.MetadataModeError):
@@ -367,12 +353,12 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(patcher.stop)
 
     def _payload(self, *, mode_default: str, requested: str | None, fmt: str = "png", response_format: str = "b64_json", n: int = 1):
-        ctx = media_delivery.begin(profile_default=mode_default)
+        ctx = media_delivery.begin(plan_bound=mode_default)
         ctx.requested_mode = requested
         ctx.seeds.extend([11, 22][:n])
         response = proxy._build_image_response_payload(
             StubRequest(), [comfy_png((i * 40, 20, 30, 255)) for i in range(n)], response_format, {},
-            auth_context=proxy.NO_AUTH_CONTEXT, output_format=fmt, size="8x6", quality="high",
+            auth_context=FULL_AUTH, output_format=fmt, size="8x6", quality="high",
         )
         self.assertEqual(response.status_code, 200)
         return json.loads(response.body)
@@ -395,11 +381,11 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         # only from a maker-scoped prompt record.
         self.assertEqual(media_metadata.png_text_chunks(self._stored(none["data"][0])), {})
 
-    def test_request_overrides_profile_both_ways(self) -> None:
+    def test_request_lowers_the_plan_bound_but_never_raises_it(self) -> None:
         down = self._payload(mode_default="full", requested="none")
         up = self._payload(mode_default="none", requested="full")
         self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(down["data"][0]["b64_json"])), {})
-        self.assertIn("workflow", media_metadata.png_text_chunks(base64.b64decode(up["data"][0]["b64_json"])))
+        self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(up["data"][0]["b64_json"])), {})
 
     def test_signed_url_defaults_to_clean_media_even_for_full_profile(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
@@ -502,18 +488,18 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
             response = await proxy.proxy_comfy_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
         return response, json.loads(response.body)
 
-    async def test_profile_default_and_request_override(self) -> None:
-        none_profile = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
+    async def test_plan_bound_and_request_override(self) -> None:
+        none_profile = NONE_AUTH
         full_profile = proxy.AuthContext(identity=proxy.AuthIdentity(
             name="f", key_hash="sha256:f",
-            profile=load_profile({"id": "owner", "media_metadata": {"default": "full"}}),
+            access=access(plan_for("owner", metadata="full")),
         ))
         cases = [
             (none_profile, None, False),
-            (none_profile, {NS: {"metadata": "full"}}, True),
+            # A request can lower the plans' bound, never raise it.
+            (none_profile, {NS: {"metadata": "full"}}, False),
             (full_profile, None, True),
             (full_profile, {NS: {"metadata": "none"}}, False),
-            (proxy.NO_AUTH_CONTEXT, None, True),
         ]
         for auth, extensions, expect_full in cases:
             with self.subTest(profile=auth.identity.name if auth.identity else "no-auth", ext=extensions):
@@ -530,7 +516,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(chunks, {})
 
     async def test_bad_control_value_is_a_400(self) -> None:
-        response, payload = await self._generate({NS: {"metadata": "partial"}}, proxy.NO_AUTH_CONTEXT)
+        response, payload = await self._generate({NS: {"metadata": "partial"}}, FULL_AUTH)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(payload["error"]["param"], f"extensions.{NS}.metadata")
 
@@ -603,7 +589,7 @@ class AvDeliveryTests(unittest.TestCase):
 
 
 class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
-    """GET /v1/videos/{id}/content: query override, submit-time choice, profile default."""
+    """GET /v1/videos/{id}/content: query control, submit-time choice, the plans' bound."""
 
     async def _fetch(self, *, query: str, record_mode: str | None, auth) -> bytes:
         if not FFMPEG:
@@ -664,20 +650,21 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         return "KSampler" in json.dumps(media_metadata.read_media_tags(content, ".mp4"))
 
     async def test_precedence(self) -> None:
-        none_auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
+        none_auth = NONE_AUTH
         full_auth = proxy.AuthContext(identity=proxy.AuthIdentity(
             name="f", key_hash="sha256:f",
-            profile=load_profile({"id": "owner", "media_metadata": {"default": "full"}}),
+            access=access(plan_for("owner", metadata="full")),
         ))
         # profile default
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=none_auth)))
         self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
-        # choice made at submit time beats the profile
-        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
+        # the choice made at submit time lowers the bound, never raises it
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
-        # the GET's own control beats both
+        # the GET's own control beats the submit-time choice, within the bound
         q = "extensions[com.azizam.workflow][metadata]=full"
-        self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
+        self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=full_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
         q = "metadata=none"
         self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="full", auth=full_auth)))
         # full delivery carries the provenance record
@@ -720,7 +707,7 @@ class SpeechRouteTests(unittest.TestCase):
                 return proxy.httpx.Response(200, content=outer.wav, headers={"content-type": "audio/wav"})
 
         self.client = TestClient(proxy.app)
-        self.auth = proxy.NO_AUTH_CONTEXT
+        self.auth = FULL_AUTH
         for patcher in (
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", Fake),
@@ -748,10 +735,10 @@ class SpeechRouteTests(unittest.TestCase):
         self.assertIn("engine-generated-note", self._tags(self.wav))
         self.assertEqual(self.sent[-1].get("extensions"), None)  # engines never see the envelope
 
-    def test_profile_default_decides_without_a_control(self) -> None:
-        self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
+    def test_plan_bound_decides_without_a_control(self) -> None:
+        self.auth = NONE_AUTH
         self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
-        self.auth = proxy.NO_AUTH_CONTEXT
+        self.auth = FULL_AUTH
         self.assertEqual(self._speak().content, self.wav)
 
     def test_bad_value_is_a_400(self) -> None:
@@ -798,7 +785,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
                         "outputs": {"9": {"audio": [{"filename": "a.flac", "type": "output"}]}}}})
                 return proxy.httpx.Response(200, content=outer.flac, headers={"content-type": "audio/flac"})
 
-        self.auth = proxy.NO_AUTH_CONTEXT
+        self.auth = FULL_AUTH
         self.client = TestClient(proxy.app)
         for patcher in (
             patch.object(proxy, "COMFY_ENABLED", True),
@@ -835,7 +822,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.assertEqual(md5(none.content), md5(self.flac))
 
     def test_store_full_keeps_metadata_for_media_jobs(self) -> None:
-        self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
+        self.auth = NONE_AUTH
         import asyncio
 
         class Req(StubRequest):
@@ -858,10 +845,10 @@ class MediaJobUrlTests(unittest.TestCase):
         asset_id = "vid_" + "a" * 64
         job = {"assets": [{"asset_id": asset_id, "media_type": "video/mp4"}]}
         with patch.object(proxy, "_image_url_signing_secret", b"test-secret"):
-            media_delivery.begin(profile_default="none")
+            media_delivery.begin(plan_bound="none")
             item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
             self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
-            ctx = media_delivery.begin(profile_default="none")
+            ctx = media_delivery.begin(plan_bound="none")
             ctx.requested_mode = "full"
             item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
             self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
@@ -873,7 +860,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
 
     FIELD = f"extensions[{NS}][metadata]"
 
-    async def _run(self, extra: dict[str, str], auth=proxy.NO_AUTH_CONTEXT) -> Any:
+    async def _run(self, extra: dict[str, str], auth=FULL_AUTH) -> Any:
         raw = AvDeliveryTests()._make(".mp4", audio=False)
 
         class Upload:
@@ -937,7 +924,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("KSampler", blob)
         self.assertIn("azizam_provenance", blob)
         self.assertIn("rife-interpolate", blob)
-        none_auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
+        none_auth = NONE_AUTH
         stripped, raw = await self._run({}, none_auth)
         self.assertNotIn("KSampler", self._blob(stripped.body))
         explicit, raw = await self._run({self.FIELD: "none"})
@@ -948,7 +935,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
         up, _ = await self._run({self.FIELD: "full"}, none_auth)
         self.assertEqual(up.status_code, 200, up.body)
-        self.assertIn("azizam_provenance", self._blob(up.body))
+        self.assertNotIn("azizam_provenance", self._blob(up.body))  # a request cannot raise the bound
         self.assertNotIn("vividfish_provenance", self._blob(up.body))
 
     async def test_bad_value_is_a_400(self) -> None:

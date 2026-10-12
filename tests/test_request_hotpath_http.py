@@ -8,25 +8,20 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import admin_store
 from gateway.runtime_auth import hash_api_key
+from tests.support.access import service_app
 
 
 def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    owner = admin_store.create_service_account("chat-test-owner", path=db)
-    profile = admin_store.create_profile("chat-test-profile", {}, path=db)
-    app = admin_store.create_app(
-        "chat-test-app", kind="service", owner_service_account_id=owner["id"], path=db,
-    )
+    app = service_app("chat-test-app", path=db)
     key = "hotpath-http-fixture"
     credential = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"],
-        hash=hash_api_key(key), prefix="fixture", profile_id=profile["id"], path=db,
+        hash=hash_api_key(key), prefix="fixture", path=db,
     )
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"})
     monkeypatch.setattr(proxy, "get_active_backend", AsyncMock(return_value="kobold"))
     monkeypatch.setattr(proxy, "current_llm_model_for_backend", AsyncMock(return_value="fixture-model"))

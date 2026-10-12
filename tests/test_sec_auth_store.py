@@ -17,6 +17,7 @@ from gateway.admin_runtime import (
     AdminAuthenticator, AdminSQLiteStore, create_admin_service_account_key,
     service_account_session_subject,
 )
+from tests.support.access import store_plan
 
 
 @pytest.fixture
@@ -109,14 +110,6 @@ def test_sec08_existing_owner_identity_survives_idempotent_migration_and_login(t
     assert client.get("/admin/api/session").status_code == 200
 
 
-def test_sec07_runtime_mapping_uses_exact_full_group_paths(db):
-    profile = admin_store.create_profile("privileged", {}, path=db)
-    admin_store.create_runtime_profile_mapping(source_kind="oidc_group", source_value="Admins", profile_id=profile["id"], path=db)
-    for rejected in ("/untrusted/Admins", "/admins", "/Admins "):
-        assert admin_store.resolve_runtime_profile_mapping(email="", gateway_role="none", oidc_groups=[rejected], path=db) is None
-    assert admin_store.resolve_runtime_profile_mapping(email="", gateway_role="none", oidc_groups=["/Admins"], path=db) == profile["id"]
-
-
 def test_sec14_db_and_new_sidecars_are_private(db):
     assert db.parent.stat().st_mode & 0o777 == 0o700
     assert db.stat().st_mode & 0o777 == 0o600
@@ -181,25 +174,20 @@ def test_sec10_admin_auth_rejects_revoked_legacy_and_service_sessions(db, servic
 
 def test_sec07_migration_discards_folded_claims_and_keeps_fresh_exact_claims(tmp_path):
     db = tmp_path / "admin.db"
+    schema_v6 = (Path(__file__).resolve().parent / "fixtures" / "admin_db_schema_v6.sql").read_text(encoding="utf-8")
     with sqlite3.connect(db) as conn:
-        conn.executescript(admin_store._SCHEMA.replace("  provenance TEXT NOT NULL DEFAULT 'manual',\n", ""))
+        conn.executescript(schema_v6)
         conn.execute("INSERT INTO schema_version VALUES (3)")
         conn.execute("INSERT INTO users(id,issuer,subject,email,created_at) VALUES ('member','https://idp.test','member-sub','member@example.test',1)")
-        conn.execute("INSERT INTO profiles(id,name,profile_json,created_at) VALUES ('plan','Plan','{}',1)")
         # The old mapper stored both the full group path and its leaf alias.
         conn.executemany("INSERT INTO user_identity_claims VALUES ('member','oidc_group',?,1)",
                          [("untrusted/admins",), ("admins",)])
-        conn.execute("INSERT INTO runtime_profile_mappings(id,source_kind,source_value,profile_id,priority,created_at) VALUES ('map','oidc_group','admins','plan',20,1)")
     admin_store.init_db(db)
-    from gateway import accounts
-    accounts.initialize(db)
     assert admin_store.list_user_identity_claims("member", path=db) == []
-    assert accounts.profile_for_user("member", path=db) is None
     admin_store.replace_user_identity_claims("member", {"oidc_group": ["/untrusted/admins"]}, path=db)
     admin_store.init_db(db)  # A repeated migration must not remove fresh exact claims.
     claims = admin_store.list_user_identity_claims("member", path=db)
     assert [row["claim_value"] for row in claims] == ["/untrusted/admins"]
-    assert admin_store.resolve_runtime_profile_mapping(email="member@example.test", gateway_role="none", oidc_groups=[row["claim_value"] for row in claims], path=db) is None
 
 
 def _grants_table_exists(db):
@@ -230,15 +218,15 @@ def test_empty_identity_profile_grants_table_is_dropped(tmp_path):
     from gateway import accounts
     accounts.initialize(db)
     user = admin_store.upsert_oidc_user("https://idp.test", "member", email="member@example.test", path=db)
-    plan = admin_store.create_profile("Plan", {}, path=db)
-    assert accounts.profile_for_user(user["id"], path=db) is None
-    accounts.change_person(user["id"], "owner", profile_id=plan["id"], path=db)
-    assert accounts.profile_for_user(user["id"], path=db) == plan["id"]
-    assert accounts.people(path=db)[0]["profile_id"] == plan["id"]
+    plan = store_plan("Plan", path=db)
+    assert accounts.plan_for_user(user["id"], path=db) is None
+    accounts.change_person(user["id"], "owner", plan_id=plan["id"], path=db)
+    assert accounts.plan_for_user(user["id"], path=db) == plan["id"]
+    assert accounts.people(path=db)[0]["plan_id"] == plan["id"]
     with pytest.raises(ValueError, match=r"1 person \(member@example.test\)"):
-        admin_store.delete_profile(plan["id"], path=db)
+        admin_store.delete_access_plan(plan["id"], path=db)
     accounts.change_person(user["id"], "owner", remove=True, path=db)
-    assert admin_store.delete_profile(plan["id"], path=db)["id"] == plan["id"]
+    assert admin_store.delete_access_plan(plan["id"], path=db)["id"] == plan["id"]
 
 
 def test_identity_profile_grants_with_rows_stop_startup_and_stay_intact(tmp_path):

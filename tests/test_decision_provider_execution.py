@@ -16,20 +16,10 @@ import httpx
 from starlette.requests import Request
 
 from gateway import admin_store, decision_provider_execution as execution
+from tests.support.access import plan_for  # noqa: E402
 from gateway import receipt_store
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
 def _profile(*, providers=frozenset({"typesafe", "openai"}), max_request=Decimal("1.00"), budget=Decimal("5.00"), monthly=Decimal("20.00")):
-    return DEFAULT_PROFILE.with_overrides(
-        id="paid-decisions",
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_request,
-            budget_usd_per_day=budget,
-            budget_usd_per_month=monthly,
-        ),
-    )
+    return plan_for("paid-decisions", paid=sorted(providers))
 
 
 def _auth(app_id="app_1", *, delegated=False):

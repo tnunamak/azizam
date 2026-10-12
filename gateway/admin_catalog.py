@@ -7,32 +7,17 @@ Live service state, workflows, models, and user data are layered in by
 
 from __future__ import annotations
 
-import copy
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
 
 from gateway import service_registry
-from gateway.policy import (
-    default_profile_id,
-    TARGET_ACTIVATION_MODES,
-    TARGET_VISIBILITY_MODES,
-    VISIBILITY_LEVELS,
-)
-from gateway.plan_vocabulary import canonical_intent, intent_aliases_from_catalog
-from gateway.profiles import serialize_default_profile
-from gateway.admin_store import RUNTIME_PROFILE_MAPPING_SOURCE_SPECS
+from gateway.access_plans import ALL, CAPABILITIES, MEDIA_METADATA_LEVELS, RECEIPT_DETAIL_LEVELS
+from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
 
 _REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
-_PROFILE_POLICY_CATALOG_PATH = _REGISTRY_DIR / "profile_policy_catalog.yml"
 _ADMIN_SURFACES_CATALOG_NAME = "admin_surfaces.yml"
-_PROFILE_POLICY_SECTION_VALIDATORS: dict[str, frozenset[str]] = {
-    "target_visibility": frozenset(TARGET_VISIBILITY_MODES),
-    "target_activation": frozenset(TARGET_ACTIVATION_MODES),
-    "status_visibility": frozenset(VISIBILITY_LEVELS),
-}
 
 
 def admin_api_surfaces(
@@ -132,111 +117,6 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value if str(item).strip()]
 
 
-@lru_cache(maxsize=1)
-def _bundled_profile_policy_catalog() -> dict[str, Any]:
-    return load_profile_policy_catalog(_PROFILE_POLICY_CATALOG_PATH)
-
-
-def load_profile_policy_catalog(path: Path) -> dict[str, Any]:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return _normalize_profile_policy_catalog(raw, source=path)
-
-
-def _normalize_profile_policy_catalog(
-    raw: Any,
-    *,
-    source: object = "profile policy catalog",
-) -> dict[str, Any]:
-    if not isinstance(raw, Mapping):
-        raise ValueError(f"{source} must contain a mapping of catalog sections")
-
-    catalog: dict[str, Any] = {}
-    for section, options in raw.items():
-        if not isinstance(section, str):
-            continue
-        if section == "fallback_profile":
-            if not isinstance(options, Mapping):
-                raise ValueError(f"{source}:fallback_profile must contain a mapping")
-            fallback_id = str(options.get("id") or "").strip()
-            if fallback_id != default_profile_id():
-                raise ValueError(f"{source}:fallback_profile must use {default_profile_id()!r}")
-            catalog[section] = dict(options, id=fallback_id)
-            continue
-        if not isinstance(options, list):
-            raise ValueError(f"{source}:{section} must contain a list of options")
-        catalog[section] = [
-            _normalize_profile_policy_option(section, option, source=source)
-            for option in options
-            if isinstance(option, Mapping) and option.get("id")
-        ]
-    try:
-        intent_aliases_from_catalog(catalog.get("intents") or [])
-    except ValueError as exc:
-        raise ValueError(f"{source}:intents {exc}") from exc
-    return catalog
-
-
-def _normalize_profile_policy_option(
-    section: str,
-    option: Mapping[str, Any],
-    *,
-    source: object,
-) -> dict[str, Any]:
-    option_id = str(option.get("id") or "").strip()
-    valid_ids = _PROFILE_POLICY_SECTION_VALIDATORS.get(section)
-    if valid_ids is not None and option_id not in valid_ids:
-        raise ValueError(f"{source}:{section} contains unsupported id {option_id!r}")
-
-    normalized = dict(option)
-    normalized["id"] = option_id
-    return normalized
-
-
-def profile_policy_catalog(
-    *,
-    catalog_dir: str | Path | None = None,
-) -> dict[str, Any]:
-    if catalog_dir is None:
-        catalog = _bundled_profile_policy_catalog()
-    else:
-        path = Path(catalog_dir) / "profile_policy_catalog.yml"
-        catalog = (
-            load_profile_policy_catalog(path)
-            if path.exists()
-            else _bundled_profile_policy_catalog()
-        )
-    return copy.deepcopy(catalog)
-
-
-def profile_policy_label_map(section: str) -> dict[str, str]:
-    return {
-        str(option["id"]): str(option.get("summary_label") or option.get("label"))
-        for option in _bundled_profile_policy_catalog().get(section, [])
-        if option.get("id")
-    }
-
-
-def coerce_policy_catalog(value: Any) -> dict[str, list[dict[str, Any]]]:
-    if not isinstance(value, Mapping):
-        return profile_policy_catalog()
-    out = profile_policy_catalog()
-    for section, options in value.items():
-        if isinstance(section, str) and isinstance(options, list):
-            out[section] = [
-                dict(option)
-                for option in options
-                if isinstance(option, Mapping) and option.get("id")
-            ]
-    return out
-
-
-def _catalog_option_map(catalog: Mapping[str, Any], section: str) -> dict[str, Mapping[str, Any]]:
-    options = catalog.get(section)
-    if not isinstance(options, list):
-        return {}
-    return {str(option["id"]): option for option in options if isinstance(option, Mapping) and option.get("id")}
-
-
 def _choice(option_id: str, *, available: bool | None, prose: Mapping[str, Any] | None = None, fallback_label: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": option_id,
@@ -248,102 +128,87 @@ def _choice(option_id: str, *, available: bool | None, prose: Mapping[str, Any] 
     return out
 
 
-def _policy_values(record: Mapping[str, Any]) -> list[str]:
-    """Intents the frontend's routes stamp at request time (the enforced ids)."""
-    policies: list[Any] = []
-    for key in ("routes", "registered_routes"):
-        for route in record.get(key) or []:
-            if isinstance(route, Mapping):
-                policies.extend(route.get(name) for name in ("runtime_policy", "azizam_policy"))
-    asset_policies = record.get("asset_content_policies")
-    if isinstance(asset_policies, Mapping):
-        policies.extend(asset_policies.values())
-    return [policy["intent"] for policy in policies if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str)]
+def _service_capabilities(service: Mapping[str, Any]) -> list[str]:
+    config = service.get("config")
+    config = config if isinstance(config, Mapping) else {}
+    raw = service.get("capabilities") or config.get("capabilities") or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    return list(dict.fromkeys(PROTOCOL_CAPABILITIES[str(cap)] for cap in raw if str(cap) in PROTOCOL_CAPABILITIES))
 
 
-def policy_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
-    """Safely join normalized registry facts with presentation-only catalog data."""
+_RECEIPT_DETAIL_LABELS = {
+    "none": "None", "basic": "Basic", "standard": "Standard", "full": "Full",
+}
+_MEDIA_METADATA_LABELS = {"none": "Strip workflow data from files", "full": "Keep workflow data in files"}
+
+
+def access_plan_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
+    """Choices for the access plan editor, read from the service registry.
+
+    Models and workflows are listed per capability; engines are the local
+    services an app could call through their own API; paid providers are the
+    remote services. All of it is data the operator configured.
+    """
     normalized = service_registry.normalize_service_registry(registry)
-    catalog = profile_policy_catalog()
-    dynamic: dict[str, dict[str, bool]] = {key: {} for key in ("protocols", "intents", "workflows", "models")}
-
-    def add(section: str, value: object, available: bool) -> None:
-        option_id = str(value or "").strip()
-        if section == "intents":
-            option_id = canonical_intent(option_id)
-        if option_id:
-            dynamic[section][option_id] = dynamic[section].get(option_id, False) or available
-
-    for frontend in normalized["protocol_frontends"].values():
-        if not isinstance(frontend, Mapping):
-            continue
-        enabled = bool(frontend.get("enabled", True))
-        add("protocols", frontend.get("protocol"), enabled)
-        for intent in frontend.get("intents") or []:
-            add("intents", intent, enabled)
-        for intent in _policy_values(frontend):
-            add("intents", intent, enabled)
-    for workflow in normalized["workflows"].values():
-        if not isinstance(workflow, Mapping):
-            continue
-        enabled = bool(workflow.get("enabled", True))
-        add("workflows", workflow.get("id"), enabled)
-        manifest = workflow.get("manifest")
-        if isinstance(manifest, Mapping):
-            add("intents", manifest.get("intent"), enabled)
-    capability_values: dict[str, set[str]] = {key: set() for key in ("exposure", "trust_tiers", "resource_tiers", "tags")}
-    for capability in normalized["capabilities"].values():
-        if not isinstance(capability, Mapping):
-            continue
-        enabled = bool(capability.get("enabled", True))
-        add("intents", capability.get("intent"), enabled)
-        for key, source_key in (("exposure", "exposure"), ("trust_tiers", "trust_tier"), ("resource_tiers", "resource_tier")):
-            value = str(capability.get(source_key) or "").strip()
-            if value:
-                capability_values[key].add(value)
-        for tag in capability.get("tags") or []:
-            if str(tag).strip():
-                capability_values["tags"].add(str(tag).strip())
-    for service in normalized["services"].values():
+    items: dict[str, dict[tuple[str, str], bool]] = {cap: {} for cap in CAPABILITIES}
+    engines: dict[str, dict[str, Any]] = {}
+    providers: dict[str, dict[str, Any]] = {}
+    for service_id, service in normalized["services"].items():
         if not isinstance(service, Mapping):
             continue
         enabled = bool(service.get("enabled", True))
-        config = service.get("config")
-        if isinstance(config, Mapping):
-            for model in config.get("models") or []:
-                if isinstance(model, Mapping):
-                    add("models", model.get("model_group") or model.get("id"), enabled)
-
-    choices: dict[str, list[dict[str, Any]]] = {}
-    for section in ("protocols", "intents", "workflows", "models"):
-        prose = _catalog_option_map(catalog, section)
-        ids = sorted(dynamic[section])
-        if section == "intents":
-            # Catalog order puts member tasks first; extension ids follow by id.
-            rank = {option_id: index for index, option_id in enumerate(prose)}
-            ids.sort(key=lambda option_id: rank.get(option_id, len(rank)))
-        choices[section] = [_choice(option_id, available=dynamic[section][option_id], prose=prose.get(option_id)) for option_id in ids]
-    # Saved plans may hold a route spelling of an intent; the editor shows it
-    # checked under its plan id.
-    aliases_by_intent: dict[str, list[str]] = {}
-    for alias, intent in sorted(intent_aliases_from_catalog(catalog.get("intents") or []).items()):
-        aliases_by_intent.setdefault(intent, []).append(alias)
-    for choice in choices["intents"]:
-        choice["aliases"] = aliases_by_intent.get(choice["id"], [])
-    for section in ("exposure", "trust_tiers", "resource_tiers", "tags"):
-        prose = _catalog_option_map(catalog, section)
-        ids = capability_values[section] | set(prose)
-        choices[section] = [_choice(option_id, available=None, prose=prose.get(option_id)) for option_id in sorted(ids)]
-    for section in ("status_visibility", "target_visibility", "target_activation"):
-        choices[section] = [_choice(str(option["id"]), available=None, prose=option) for option in catalog.get(section, [])]
-    fallback = catalog.get("fallback_profile")
-    if not isinstance(fallback, Mapping):
-        raise ValueError("profile policy catalog is missing fallback_profile")
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        label = str(service.get("name") or service_id)
+        if service_registry.is_remote_provider_config(config):
+            providers[str(service_id)] = {"id": str(service_id), "label": label, "available": enabled}
+        else:
+            engines[str(service_id)] = {"id": str(service_id), "label": label, "available": enabled}
+        capabilities = _service_capabilities(service)
+        for model in config.get("models") or []:
+            if not isinstance(model, Mapping):
+                continue
+            model_id = str(model.get("model_group") or model.get("id") or "").strip()
+            for capability in capabilities:
+                if model_id:
+                    key = ("model", model_id)
+                    items[capability][key] = items[capability].get(key, False) or enabled
+    for workflow_id, workflow in normalized["workflows"].items():
+        if not isinstance(workflow, Mapping):
+            continue
+        manifest = workflow.get("manifest") if isinstance(workflow.get("manifest"), Mapping) else {}
+        capability = PROTOCOL_CAPABILITIES.get(str(manifest.get("intent") or ""))
+        if capability:
+            key = ("workflow", str(workflow.get("id") or workflow_id))
+            items[capability][key] = items[capability].get(key, False) or bool(workflow.get("enabled", True))
     return {
-        "schema_version": 1,
-        "profile": {"create": {"profile": serialize_default_profile()}, "set_semantics": {"omitted": "no_opinion", "empty": "deny_all"}, "choices": choices},
-        "runtime_mappings": {
-            "source_kinds": [{key: value for key, value in spec.items() if key != "priority"} for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS],
-            "fallback_profile": {"id": default_profile_id(), "label": str(fallback.get("label") or default_profile_id()), "description": str(fallback.get("description") or "") or None, "assignable": True},
+        "schema_version": 2,
+        "capabilities": [
+            {
+                "id": capability,
+                "label": CAPABILITY_LABELS[capability],
+                "items": [
+                    {"kind": kind, "id": item_id, "available": available}
+                    for (kind, item_id), available in sorted(items[capability].items())
+                ],
+            }
+            for capability in CAPABILITIES
+        ],
+        "engines": [engines[key] for key in sorted(engines)],
+        "paid_providers": [providers[key] for key in sorted(providers)],
+        "receipt_detail": [_choice(level, available=None, fallback_label=_RECEIPT_DETAIL_LABELS[level])
+                           for level in RECEIPT_DETAIL_LEVELS],
+        "media_metadata": [_choice(level, available=None, fallback_label=_MEDIA_METADATA_LABELS[level])
+                           for level in MEDIA_METADATA_LEVELS],
+        # The editor starts from this document: every capability, local only.
+        "new_plan": {
+            "name": "",
+            "can_use": {capability: {"items": ALL} for capability in CAPABILITIES},
+            "direct_engine_access": {"engines": [], "operations": []},
+            "paid_providers": [],
+            "provider_fallback": False,
+            "can_load_models": True,
+            "receipt_detail": "basic",
+            "media_metadata": "none",
         },
     }

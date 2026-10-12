@@ -71,7 +71,7 @@ function serve(path: string) {
 }
 function mount(respond: (path: string, init?: AdminFetchInit) => unknown = serve, role: "owner" | "admin" | "member" = "owner") {
   vi.spyOn(api.users, "list").mockResolvedValue([{ id: "sam", issuer: "", subject: "", display_name: "Sam", name: null, email: null, created_at: 0, last_login_at: null, roles: ["owner"] }]);
-  vi.spyOn(api.apps, "list").mockResolvedValue([{ id: "studio", name: "Studio", kind: "personal", owner_user_id: "sam", owner_service_account_id: null, default_profile_id: null, created_at: 0, disabled_at: null, effective_profile_id: "", effective_profile_name: "", effective_profile_source: "fallback" }]);
+  vi.spyOn(api.apps, "list").mockResolvedValue([{ id: "studio", name: "Studio", kind: "personal", owner_user_id: "sam", accountable_person: { id: "sam", name: "Sam" }, access_plan: "person", same_as_person: true, access_plan_name: null, effective_access_plan_id: null, created_at: 0, disabled_at: null }]);
   const fetchCategory = vi.mocked(adminFetch);
   fetchCategory.mockImplementation(async <T,>(path: string, init?: AdminFetchInit): Promise<T> => await respond(path, init) as T);
   render(<ViewerContext.Provider value={{ authenticated: true, name: "Sam", email: null, role, admin: role !== "member" }}>

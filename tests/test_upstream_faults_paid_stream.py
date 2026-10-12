@@ -10,8 +10,8 @@ from decimal import Decimal
 import pytest
 
 from gateway import provider_execution, receipt_store
+from tests.support.access import plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig
-from gateway.policy import AppProfile, RemoteProviderPolicy
 from gateway.providers import ProviderRef
 from starlette.requests import Request
 
@@ -49,10 +49,7 @@ def test_paid_stream_ends_and_settles_at_done_while_the_upstream_stays_open(fake
         price={"input_usd_per_million_tokens": "1.00", "output_usd_per_million_tokens": "2.00"},
         config={"credential_origin": "https://openrouter.ai", "models": [{"id": "openai/gpt-4.1-mini"}]},
     )
-    profile = AppProfile(id="paid-app", remote=RemoteProviderPolicy(
-        providers=frozenset({"openrouter"}), max_usd_per_request=Decimal("1.00"),
-        budget_usd_per_day=Decimal("5.00"), budget_usd_per_month=Decimal("20.00"),
-    ))
+    profile = plan_for("paid-app", paid=['openrouter'])
     runtime = LiteLlmRuntimeConfig(enabled=True, base_url=fake.base_url, api_key="sk-litellm", service_id="litellm")
 
     async def run() -> tuple[bytes, bool]:

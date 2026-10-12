@@ -68,7 +68,6 @@ import responses_translator
 from gateway import (
     admin_store,
     audio_media_jobs,
-    default_profiles,
     media_jobs,
     me_prompt_memory,
     me_make,
@@ -123,7 +122,6 @@ from gateway.admin_api import (
     create_admin_router,
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
-from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
@@ -159,8 +157,9 @@ from gateway.admin_runtime import (
     AdminAuthenticator,
     AdminSQLiteStore,
     OIDC_PROVIDER_FIELDS,
-    USER_ACCESS_DEFAULTS_SETTING_KEY,
+    access_for_person,
     create_admin_service_account_key,
+    identity_from_access_row,
     is_human_user_record,
     runtime_identity_for_app_credential_hash,
     runtime_identity_for_session_app,
@@ -329,12 +328,14 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
-from gateway.policy import DEFAULT_PROFILE, DENIED, MediaMetadataPolicy, PolicyDecision
+from gateway.policy import DENIED, NO_ACCESS, EffectiveAccess, PolicyDecision
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
-    discovery_audience_for_profile,
+    discovery_allows,
+    discovery_audience_for_access,
     evaluate_and_apply,
+    plan_ref,
     hash_api_key as runtime_hash_api_key,
     make_policy_request,
     normalize_key_hash as runtime_normalize_key_hash,
@@ -371,9 +372,6 @@ _bootstrap_config: dict = dict(config)
 
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
-user_defaults_cfg = admin_cfg.get("user_defaults") or {}
-if not isinstance(user_defaults_cfg, Mapping):
-    user_defaults_cfg = {}
 
 ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
@@ -423,9 +421,6 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
 config = _load_effective_runtime_config(config)
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
-user_defaults_cfg = admin_cfg.get("user_defaults") or {}
-if not isinstance(user_defaults_cfg, Mapping):
-    user_defaults_cfg = {}
 
 
 def bool_from_config(value, default: bool) -> bool:
@@ -535,12 +530,6 @@ def configured_backend_capabilities(backend: str) -> set[str]:
 
 def backend_supports(backend: str, capability: str) -> bool:
     return capability.lower() in configured_backend_capabilities(backend)
-
-
-def profile_allows_backend(auth_context: "AuthContext", backend: str) -> bool:
-    profile = getattr(getattr(auth_context, "identity", None), "profile", None)
-    allowed = getattr(profile, "backends", None)
-    return allowed is None or backend in allowed
 
 
 def _highest_priority_chat_backend() -> Optional[str]:
@@ -902,9 +891,6 @@ _pin_mismatch_warned: set = set()
 # Auth
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
-user_defaults_cfg = admin_cfg.get("user_defaults") or {}
-if not isinstance(user_defaults_cfg, Mapping):
-    user_defaults_cfg = {}
 
 # Health
 HEALTH_CHECK_TIMEOUT = 5
@@ -1670,338 +1656,8 @@ ADMIN_AUTH = AdminAuthenticator(
 )
 
 
-def _profile_ref_to_store_id(ref: Any) -> str | None:
-    raw = str(ref or "").strip()
-    if not raw:
-        return None
-    if raw in {"default", "default-local"}:
-        return None
-    if admin_store.get_profile(raw, path=ADMIN_STORE.path) is not None:
-        return raw
-    for profile in admin_store.list_profiles(path=ADMIN_STORE.path):
-        profile_doc = profile.get("profile")
-        policy_id = (
-            str(profile_doc.get("id") or "")
-            if isinstance(profile_doc, Mapping)
-            else ""
-        )
-        if raw in {str(profile.get("id") or ""), str(profile.get("name") or ""), policy_id}:
-            return str(profile.get("id"))
-    return raw
-
-
-def _user_self_service_enabled() -> bool:
-    defaults = _runtime_user_access_defaults()
-    return bool_from_config(defaults.get("self_service_apps"), True)
-
-
-def _auto_create_personal_app_enabled() -> bool:
-    defaults = _runtime_user_access_defaults()
-    return bool_from_config(
-        defaults.get("auto_create_personal_app"),
-        _user_self_service_enabled(),
-    )
-
-
-def _bootstrap_user_access_defaults() -> dict[str, Any]:
-    defaults = dict(user_defaults_cfg) if isinstance(user_defaults_cfg, Mapping) else {}
-    env_self_service = get_env("AZIZAM_USER_SELF_SERVICE")
-    if env_self_service is not None:
-        defaults["self_service_apps"] = bool_from_config(env_self_service, True)
-    env_auto_create = get_env("AZIZAM_AUTO_CREATE_PERSONAL_APP")
-    if env_auto_create is not None:
-        defaults["auto_create_personal_app"] = bool_from_config(
-            env_auto_create,
-            bool_from_config(defaults.get("self_service_apps"), True),
-        )
-    return defaults
-
-
-def _has_bootstrap_user_access_defaults() -> bool:
-    return bool(_bootstrap_user_access_defaults())
-
-
-def _runtime_user_access_defaults() -> dict[str, Any]:
-    try:
-        setting = admin_store.get_operator_setting(
-            USER_ACCESS_DEFAULTS_SETTING_KEY,
-            path=ADMIN_STORE.path,
-        )
-    except Exception:  # noqa: BLE001
-        return _bootstrap_user_access_defaults()
-    value = setting.get("value") if isinstance(setting, Mapping) else None
-    if isinstance(value, Mapping):
-        self_service = bool_from_config(value.get("self_service_apps"), True)
-        return {
-            "self_service_apps": self_service,
-            "auto_create_personal_app": bool_from_config(
-                value.get("auto_create_personal_app"),
-                self_service,
-            ),
-        }
-    return _bootstrap_user_access_defaults()
-
-
-def _user_defaults_seeded_in_admin_db() -> bool:
-    try:
-        return (
-            admin_store.get_operator_setting(
-                USER_ACCESS_DEFAULTS_SETTING_KEY,
-                path=ADMIN_STORE.path,
-            )
-            is not None
-        )
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _mapping_profile_id(ref: Any) -> str | None:
-    if str(ref or "").strip() == "default-local":
-        return "default-local"
-    return _profile_ref_to_store_id(ref)
-
-
-def _seed_runtime_mapping_from_bootstrap(
-    *,
-    source_kind: str,
-    source_value: str | None,
-    profile_id: str,
-) -> bool:
-    # Avoid re-enabling a mapping an operator deliberately disabled.
-    kind = str(source_kind or "").strip().lower()
-    if kind == "all_users":
-        value = "*"
-    else:
-        value = " ".join(str(source_value or "").strip().lower().strip("/").split())
-    if not kind or (kind != "all_users" and not value):
-        return False
-    for row in admin_store.list_runtime_profile_mappings(
-        include_disabled=True,
-        path=ADMIN_STORE.path,
-    ):
-        if (
-            str(row.get("source_kind") or "") == kind
-            and str(row.get("source_value") or "") == value
-            and str(row.get("profile_id") or "") == profile_id
-        ):
-            return False
-    admin_store.create_runtime_profile_mapping(
-        source_kind=source_kind,
-        source_value=source_value,
-        profile_id=profile_id,
-        created_by="bootstrap-config",
-        path=ADMIN_STORE.path,
-    )
-    return True
-
-
-def _seed_user_defaults_from_bootstrap_config() -> dict[str, int]:
-    """Import first-run mutable defaults into admin.db once.
-
-    ``admin.user_defaults`` remains a bootstrap convenience so a fresh host can
-    start, but runtime policy must become admin.db-owned after boot. This
-    seeding path is intentionally idempotent and never re-enables mappings an
-    operator has disabled in the dashboard.
-    """
-    bootstrap_defaults = _bootstrap_user_access_defaults()
-    if not bootstrap_defaults:
-        return {"settings": 0, "mappings": 0}
-
-    seeded_settings = 0
-    setting = admin_store.get_operator_setting(
-        USER_ACCESS_DEFAULTS_SETTING_KEY,
-        path=ADMIN_STORE.path,
-    )
-    if setting is None:
-        defaults = {
-            "self_service_apps": bool_from_config(
-                bootstrap_defaults.get("self_service_apps"),
-                True,
-            ),
-            "auto_create_personal_app": bool_from_config(
-                bootstrap_defaults.get("auto_create_personal_app"),
-                bool_from_config(bootstrap_defaults.get("self_service_apps"), True),
-            ),
-        }
-        admin_store.put_operator_setting(
-            USER_ACCESS_DEFAULTS_SETTING_KEY,
-            defaults,
-            updated_by="bootstrap-config",
-            path=ADMIN_STORE.path,
-        )
-        admin_store.record_audit(
-            "operator.user_access_defaults.seed",
-            actor_kind="system",
-            actor_id="startup",
-            actor_label="System",
-            target_kind="operator_setting",
-            target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
-            metadata={"fields": sorted(defaults)},
-            path=ADMIN_STORE.path,
-        )
-        seeded_settings = 1
-
-    seeded_mappings = 0
-    default_profile_id = _mapping_profile_id(bootstrap_defaults.get("default_profile_id"))
-    if default_profile_id:
-        seeded_mappings += int(
-            _seed_runtime_mapping_from_bootstrap(
-                source_kind="all_users",
-                source_value=None,
-                profile_id=default_profile_id,
-            )
-        )
-
-    for mapping_name, source_kind in (
-        ("role_profile_ids", "gateway_role"),
-        ("domain_profile_ids", "domain"),
-        ("email_profile_ids", "email"),
-    ):
-        mapping = bootstrap_defaults.get(mapping_name)
-        if not isinstance(mapping, Mapping):
-            continue
-        for source_value, profile_ref in mapping.items():
-            profile_id = _mapping_profile_id(profile_ref)
-            if not profile_id:
-                continue
-            seeded_mappings += int(
-                _seed_runtime_mapping_from_bootstrap(
-                    source_kind=source_kind,
-                    source_value=str(source_value),
-                    profile_id=profile_id,
-                )
-            )
-
-    if seeded_mappings:
-        admin_store.record_audit(
-            "runtime_profile_mapping.seed",
-            actor_kind="system",
-            actor_id="startup",
-            actor_label="System",
-            target_kind="runtime_profile_mapping",
-            target_id="bootstrap-user-defaults",
-            metadata={"count": seeded_mappings},
-            path=ADMIN_STORE.path,
-        )
-
-    return {"settings": seeded_settings, "mappings": seeded_mappings}
-
-
-def _profile_from_map(mapping_name: str, key: str) -> str | None:
-    mapping = user_defaults_cfg.get(mapping_name)
-    if not isinstance(mapping, Mapping):
-        return None
-    raw = mapping.get(key) or mapping.get(key.lower())
-    return _profile_ref_to_store_id(raw)
-
-
-def _stored_oidc_access_names_for_user(user_id: str) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {"oidc_group": [], "oidc_role": []}
-    if not user_id:
-        return out
-    for row in admin_store.list_user_identity_claims(
-        user_id,
-        path=ADMIN_STORE.path,
-    ):
-        kind = str(row.get("claim_kind") or "")
-        if kind in out:
-            out[kind].append(str(row.get("claim_value") or ""))
-    return out
-
-
-def _default_plan_for_user(
-    *,
-    email: str,
-    role: str,
-    oidc_groups: Iterable[str] = (),
-    oidc_roles: Iterable[str] = (),
-) -> dict[str, Any]:
-    normalized_email = email.strip().lower()
-    mapping = admin_store.resolve_runtime_profile_mapping_details(
-        email=normalized_email,
-        gateway_role=role,
-        oidc_groups=oidc_groups,
-        oidc_roles=oidc_roles,
-        path=ADMIN_STORE.path,
-    )
-    if mapping:
-        source = {"oidc_group": "group", "oidc_role": "role", "gateway_role": "role",
-                  "all_users": "gateway_default"}.get(mapping["source_kind"], mapping["source_kind"])
-        return {"profile_id": _profile_ref_to_store_id(mapping["profile_id"]), "plan_source": source}
-
-    if _user_defaults_seeded_in_admin_db():
-        return {"profile_id": None, "plan_source": "gateway_default"}
-
-    if normalized_email:
-        profile_id = _profile_from_map("email_profile_ids", normalized_email)
-        if profile_id:
-            return {"profile_id": profile_id, "plan_source": "email"}
-        _, _, domain = normalized_email.partition("@")
-        if domain:
-            profile_id = _profile_from_map("domain_profile_ids", domain)
-            if profile_id:
-                return {"profile_id": profile_id, "plan_source": "domain"}
-
-    normalized_role = (role or "none").strip().lower() or "none"
-    profile_id = _profile_from_map("role_profile_ids", normalized_role)
-    if profile_id:
-        return {"profile_id": profile_id, "plan_source": "role"}
-
-    return {"profile_id": _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id")),
-            "plan_source": "gateway_default"}
-
-
-def _default_profile_id_for_user(**kwargs) -> str | None:
-    return _default_plan_for_user(**kwargs)["profile_id"]
-
-
-def _effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
-    user_id = str(person["id"])
-    assigned = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
-    if assigned:
-        return {"profile_id": _profile_ref_to_store_id(assigned), "plan_source": "assigned"}
-    oidc_access = _stored_oidc_access_names_for_user(user_id)
-    return _default_plan_for_user(
-        email=str(person.get("email") or ""), role=_admin_role_for_user_id(user_id),
-        oidc_groups=oidc_access["oidc_group"], oidc_roles=oidc_access["oidc_role"],
-    )
-
-
-def _admin_role_for_user_id(user_id: str) -> str:
-    roles = {
-        str(role.get("role") or "")
-        for role in admin_store.list_admin_roles(
-            subject_kind="user",
-            subject_id=user_id,
-            path=ADMIN_STORE.path,
-        )
-    }
-    for role in ("owner", "superadmin", "admin"):
-        if role in roles:
-            return role
-    return "none"
-
-
-def _default_profile_id_for_session(session) -> str | None:
-    user_id = str(getattr(session, "subject", "") or "")
-    return _effective_plan_for_person({"id": user_id, "email": getattr(session, "email", "")})["profile_id"]
-
-
-def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
-    if not _user_self_service_enabled():
-        return None
-    owner_user_id = str(app.get("owner_user_id") or "")
-    if not owner_user_id:
-        return None
-    user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
-    if user is None or not is_human_user_record(user):
-        return None
-    return _effective_plan_for_person(user)["profile_id"]
-
-
 def _provision_existing_user_personal_apps() -> int:
-    if not (_user_self_service_enabled() and _auto_create_personal_app_enabled()):
-        return 0
+    """Give every person without one a personal App ("Same as its person")."""
     created = 0
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         if not is_human_user_record(user):
@@ -2013,17 +1669,9 @@ def _provision_existing_user_personal_apps() -> int:
         if any(app.get("kind") == "personal" for app in before):
             continue
         label = user.get("email") or user.get("display_name") or user_id
-        oidc_access = _stored_oidc_access_names_for_user(user_id)
-        default_profile_id = _default_profile_id_for_user(
-            email=str(user.get("email") or ""),
-            role=_admin_role_for_user_id(user_id),
-            oidc_groups=oidc_access["oidc_group"],
-            oidc_roles=oidc_access["oidc_role"],
-        )
         app = admin_store.ensure_personal_app_for_user(
             user_id,
             name=f"{label} personal access",
-            default_profile_id=default_profile_id,
             path=ADMIN_STORE.path,
         )
         admin_store.record_audit(
@@ -2033,11 +1681,8 @@ def _provision_existing_user_personal_apps() -> int:
             actor_label="System",
             target_kind="app",
             target_id=str(app["id"]),
-            metadata={
-                "email": user.get("email"),
-                "via": "startup_auto_provision",
-                "effective_profile_id": default_profile_id or "default-local",
-            },
+            metadata={"email": user.get("email"), "via": "startup_auto_provision",
+                      "access_plan": app.get("access_plan")},
             path=ADMIN_STORE.path,
         )
         created += 1
@@ -2053,26 +1698,16 @@ def _ensure_personal_app_for_owner(
     """Ensure a just-claimed local owner has a personal App.
 
     Parity with the OIDC login path, so the user portal can hand the new owner
-    a working key without a separate "create App" step. No-op (returns None)
-    when self-service or auto-create is disabled.
+    a working key without a separate "create App" step. The App is "Same as
+    its person"; it runs once the owner has an access plan.
     """
-    if not (_user_self_service_enabled() and _auto_create_personal_app_enabled()):
-        return None
     user_id = str(user.get("id") or "")
     if not user_id:
         return None
     label = user.get("email") or user.get("display_name") or user_id
-    oidc_access = _stored_oidc_access_names_for_user(user_id)
-    default_profile_id = _default_profile_id_for_user(
-        email=str(user.get("email") or ""),
-        role=role,
-        oidc_groups=oidc_access["oidc_group"],
-        oidc_roles=oidc_access["oidc_role"],
-    )
     app = admin_store.ensure_personal_app_for_user(
         user_id,
         name=f"{label} personal access",
-        default_profile_id=default_profile_id,
         path=ADMIN_STORE.path,
     )
     admin_store.record_audit(
@@ -2082,11 +1717,8 @@ def _ensure_personal_app_for_owner(
         actor_label=str(user.get("display_name") or user.get("email") or user_id),
         target_kind="app",
         target_id=str(app["id"]),
-        metadata={
-            "email": user.get("email"),
-            "via": via,
-            "effective_profile_id": default_profile_id or "default-local",
-        },
+        metadata={"email": user.get("email"), "via": via, "role": role,
+                  "access_plan": app.get("access_plan")},
         path=ADMIN_STORE.path,
     )
     return app
@@ -2112,11 +1744,6 @@ def _auth_person_id(auth_context: AuthContext | None) -> str | None:
 @dataclass(frozen=True)
 class RuntimeRouteAuth:
     auth_context: AuthContext
-    delegated_litellm_api_key: str | None = None
-
-    @property
-    def delegated_to_litellm(self) -> bool:
-        return bool(self.delegated_litellm_api_key)
 
 
 def hash_api_key(api_key: str) -> str:
@@ -2128,75 +1755,49 @@ def normalize_key_hash(key_hash: str) -> str:
     return runtime_normalize_key_hash(key_hash)
 
 
-def get_client_api_key_from_headers(headers, *, ignored_keys: Sequence[str] = ()) -> str:
+def get_client_api_key_from_headers(headers) -> str:
     """Extract the caller's proxy key from OpenAI-compatible auth headers."""
-    auth_headers = headers.getlist("authorization") if ignored_keys and hasattr(headers, "getlist") else [headers.get("authorization", "")]
-    for auth_header in auth_headers:
-        if auth_header.lower().startswith("bearer "):
-            parts = auth_header.split(None, 1)
-            if len(parts) == 2:
-                key = parts[1].strip()
-                if key not in ignored_keys:
-                    return key
-            else:
-                return ""
-
+    auth_header = headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        parts = auth_header.split(None, 1)
+        return parts[1].strip() if len(parts) == 2 else ""
     for header_name in ("x-api-key", "api-key"):
-        values = headers.getlist(header_name) if ignored_keys and hasattr(headers, "getlist") else [headers.get(header_name, "")]
-        for api_key in values:
-            if api_key and api_key.strip() not in ignored_keys:
-                return api_key.strip()
-
+        api_key = headers.get(header_name, "")
+        if api_key and api_key.strip():
+            return api_key.strip()
     return ""
 
 
-AUTH_ENABLED = bool_from_config(
-    get_env("AZIZAM_AUTH_ENABLED", auth_cfg.get("enabled")),
-    True,
-)
-
-# When enabled, Ollama read-only discovery routes (/api/tags, /api/version and
-# their /ollama/api/* aliases) are served without a bearer token.  This matches
-# how a local Ollama daemon behaves and lets Open WebUI and similar clients
-# auto-discover models without needing explicit token wiring.
-#
-# Safe default is False because this gateway is typically internet-facing.
-# Set auth.ollama_compat_discovery: true in proxy_config.yml or export
-# OLLAMA_COMPAT_DISCOVERY=true to opt in.
-OLLAMA_COMPAT_DISCOVERY_ENABLED = bool_from_config(
-    os.environ.get("OLLAMA_COMPAT_DISCOVERY", auth_cfg.get("ollama_compat_discovery")),
-    False,
-)
-
-_OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
-    "/api/tags",
-    "/ollama/api/tags",
-    "/api/version",
-    "/ollama/api/version",
-})
+# Removed keyless access (design v4 §2.8): every request needs an App key or
+# a browser session. A config that still asks for one of these refuses to
+# start, so nobody believes a device is admitted when it is not.
+REMOVED_AUTH_SETTINGS = {
+    "enabled": "Auth is always on. Remove auth.enabled.",
+    "lan_bypass_enabled": "Keyless LAN access is removed. Give each device an app and a key in Apps.",
+    "lan_bypass_cidrs": "Keyless LAN access is removed. Give each device an app and a key in Apps.",
+    "path_tokens": "Path tokens are removed. Give each device an app and a key in Apps.",
+    "ollama_compat_discovery": "Public Ollama discovery is removed. Ollama clients send an app key.",
+}
+REMOVED_AUTH_ENV = {
+    "AZIZAM_AUTH_ENABLED": "Auth is always on.",
+    "AZIZAM_LAN_BYPASS": "Keyless LAN access is removed.",
+    "OLLAMA_COMPAT_DISCOVERY": "Public Ollama discovery is removed.",
+}
 
 
-# ---------------------------------------------------------------------------
-# Optional frictionless-auth features (see proxy_config.yml auth: block).
-# Missing settings default off; the shipped config enables LAN access.
-# With bypasses off, non-public routes require a Bearer/x-api-key credential.
-#
-# 1. LAN/localhost bypass  — clients in lan_bypass_cidrs skip the key entirely.
-# 2. ?api_key= query param — for clients that cannot set an auth header.
-# 3. path-prefix tokens    — /<token>/v1/... where the path IS the credential.
-#
-# SECURITY: the real client IP is, by default, the raw TCP socket peer. We only
-# consult X-Forwarded-For when the operator has named their reverse proxy in
-# trusted_proxies (rightmost-first walk — the leftmost XFF entry is attacker-
-# controlled). Cloudflare's CF-Connecting-IP is honored only when the peer is a
-# verified Cloudflare IP. Trusted peers need valid client forwarding metadata;
-# unresolved clients cannot inherit the proxy's LAN access.
-# ---------------------------------------------------------------------------
+def removed_auth_settings(auth_settings: Mapping[str, Any], environ: Mapping[str, str]) -> list[str]:
+    """Name every removed keyless-access setting still present (startup check)."""
+    found = [f"auth.{key}: {message}" for key, message in REMOVED_AUTH_SETTINGS.items()
+             if isinstance(auth_settings, Mapping) and key in auth_settings]
+    found += [f"{name}: {message}" for name, message in REMOVED_AUTH_ENV.items() if name in environ]
+    return found
 
-LAN_BYPASS_ENABLED = bool_from_config(
-    get_env("AZIZAM_LAN_BYPASS", auth_cfg.get("lan_bypass_enabled")),
-    False,
-)
+
+_removed_auth = removed_auth_settings(auth_cfg, os.environ)
+if _removed_auth:
+    raise SystemExit("[proxy] refusing to start: " + " ".join(_removed_auth))
+
+
 ALLOW_QUERY_PARAM_KEY = bool_from_config(
     get_env("AZIZAM_QUERY_PARAM_KEY", auth_cfg.get("allow_query_param_key")),
     False,
@@ -2220,11 +1821,9 @@ def _parse_cidrs(raw) -> list:
     return nets
 
 
-LAN_BYPASS_CIDRS = _parse_cidrs(auth_cfg.get("lan_bypass_cidrs"))
 TRUSTED_PROXIES = _parse_cidrs(auth_cfg.get("trusted_proxies"))
 _setup_cidrs_config = get_env("AZIZAM_SETUP_ALLOWED_CIDRS", auth_cfg.get("setup_allowed_cidrs"))
-SETUP_ALLOWED_CIDRS = None if _setup_cidrs_config is None else _parse_cidrs(_setup_cidrs_config)
-PATH_TOKENS = dict(auth_cfg.get("path_tokens") or {})
+SETUP_ALLOWED_CIDRS = [] if _setup_cidrs_config is None else _parse_cidrs(_setup_cidrs_config)
 
 # Cloudflare edge IP ranges, populated at startup when CLOUDFLARE_MODE is on.
 # None => fetch failed => refuse to honor CF-Connecting-IP (fail closed).
@@ -2262,20 +1861,7 @@ def _init_cloudflare_ip_ranges() -> None:
               "CF-Connecting-IP will be refused (fail closed)", flush=True)
 
 
-def _warn_auth_footguns() -> None:
-    """Surface the common LAN-bypass misconfiguration at startup."""
-    if LAN_BYPASS_ENABLED and not LAN_BYPASS_CIDRS:
-        print("[proxy] WARNING: lan_bypass_enabled but lan_bypass_cidrs is empty; "
-              "LAN bypass will never trigger.", flush=True)
-    if LAN_BYPASS_ENABLED and not TRUSTED_PROXIES:
-        print("[proxy] NOTE: LAN bypass uses the raw TCP socket peer (no trusted_proxies "
-              "set). If you run behind a reverse proxy or in Docker, the peer is the "
-              "proxy/bridge IP, not the real client — set auth.trusted_proxies so "
-              "X-Forwarded-For is honored.", flush=True)
-
-
 _init_cloudflare_ip_ranges()
-_warn_auth_footguns()
 
 
 def _normalize_ip(ip_str: str):
@@ -2347,65 +1933,23 @@ def resolve_real_client_ip(request: Request):
     return peer
 
 
-def _client_is_lan(request: Request) -> bool:
-    if not LAN_BYPASS_ENABLED or not LAN_BYPASS_CIDRS:
-        return False
-    addr = resolve_real_client_ip(request)
-    return addr is not None and _ip_in_any(addr, LAN_BYPASS_CIDRS)
-
-
 def _client_may_claim_first_owner(request: Request) -> bool:
     addr = resolve_real_client_ip(request)
     if addr is None:
         return False
     if addr.is_loopback:
         return True
-    allowed = LAN_BYPASS_CIDRS if SETUP_ALLOWED_CIDRS is None else SETUP_ALLOWED_CIDRS
-    return bool(allowed and _ip_in_any(addr, allowed))
-
-
-def _path_token_from_request(request_path: str) -> str | None:
-    """Return a configured path-prefix token if request_path begins with one."""
-    if not PATH_TOKENS:
-        return None
-    first = request_path.lstrip("/").split("/", 1)[0]
-    for token in PATH_TOKENS:
-        if hmac.compare_digest(first, str(token)):
-            return token
-    return None
-
-
-def _identity_for(name: str, marker: str):
-    """Build a synthetic identity for non-credential auth (LAN / path token)."""
-    # A trusted LAN/localhost client is the owner's own machine: it keeps full
-    # media metadata by default. Other synthetic identities keep the default
-    # profile (metadata stripped on delivery).
-    profile = (
-        DEFAULT_PROFILE.with_overrides(
-            media_metadata=MediaMetadataPolicy(default=provenance.METADATA_FULL)
-        )
-        if marker == "lan"
-        else DEFAULT_PROFILE
-    )
-    return RuntimeIdentity(
-        name=name,
-        key_hash=f"{marker}:{hashlib.sha256(name.encode()).hexdigest()[:16]}",
-        profile=profile,
-    )
+    # First-run owner creation only; it never admits requests (design §2.8).
+    return bool(SETUP_ALLOWED_CIDRS and _ip_in_any(addr, SETUP_ALLOWED_CIDRS))
 
 
 def _resolve_client_api_key(request: Request) -> str:
     """Header Bearer/x-api-key, then optional ?api_key= fallback."""
-    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(request) else ()
-    key = get_client_api_key_from_headers(request.headers, ignored_keys=ignored)
+    key = get_client_api_key_from_headers(request.headers)
     if key:
         return key
     if ALLOW_QUERY_PARAM_KEY:
-        values = request.query_params.getlist("api_key") if ignored else [request.query_params.get("api_key") or ""]
-        for value in values:
-            key = value.strip()
-            if key and key not in ignored:
-                return key
+        return (request.query_params.get("api_key") or "").strip()
     return ""
 
 
@@ -2422,13 +1966,10 @@ def active_app_credential_count() -> int:
 
 
 def is_public_path(path: str) -> bool:
-    """Allow health checks (and optionally Ollama discovery) without client auth."""
+    """Health checks and the showcase only: they never run anything."""
     if is_public_showcase_path(path):
         return True
-    candidates = list(AUTH_PUBLIC_PATHS)
-    if OLLAMA_COMPAT_DISCOVERY_ENABLED:
-        candidates.extend(_OLLAMA_DISCOVERY_PUBLIC_PATHS)
-    for public_path in candidates:
+    for public_path in AUTH_PUBLIC_PATHS:
         public_path = str(public_path)
         if public_path.endswith("*") and path.startswith(public_path[:-1]):
             return True
@@ -2437,95 +1978,56 @@ def is_public_path(path: str) -> bool:
     return False
 
 
-def auth_error(message: str, status_code: int = 401) -> Response:
+# Data-plane access errors (design §3.3). Members see the sentence.
+ACCESS_ERROR_MESSAGES = {
+    "key_required": "This gateway needs an app key. Create one in Apps.",
+    "key_invalid": "This key isn't valid. It may have been revoked. Create a new key in Apps.",
+    "app_disabled": "This app is turned off. Ask the gateway owner to turn it on.",
+    "person_disabled": "The person this app belongs to is turned off or missing. Ask the gateway owner.",
+}
+
+
+def auth_error(message: str, status_code: int = 401, *, code: str | None = None) -> Response:
+    error: dict[str, Any] = {"message": message, "type": "access_error" if code else "authentication_error"}
+    if code:
+        error["code"] = code
     return Response(
-        content=json.dumps({
-            "error": {
-                "message": message,
-                "type": "authentication_error",
-            }
-        }),
+        content=json.dumps({"error": error}),
         status_code=status_code,
         media_type="application/json",
-        headers={"WWW-Authenticate": "Bearer"},
+        headers={"WWW-Authenticate": "Bearer"} if status_code == 401 else {},
     )
+
+
+def access_error(code: str) -> Response:
+    return auth_error(ACCESS_ERROR_MESSAGES[code], 401 if code.startswith("key_") else 403, code=code)
 
 
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
-    """Authenticate a client-facing proxy key when auth is configured.
+    """Resolve the App key of a data-plane request (design §2.5 step 1).
 
-    Decision order: public path -> explicit API key -> LAN bypass ->
-    path-prefix token -> 401. Missing bypass settings default off; the
-    shipped config opts into shared anonymous LAN access.
+    Public paths (health, showcase) return an empty context that can run
+    nothing. Every other request needs a key of an enabled App whose
+    accountable person exists and is enabled; there is no keyless access.
     """
-    if not AUTH_ENABLED or is_public_path(request_path):
+    if is_public_path(request_path):
         return NO_AUTH_CONTEXT
-
-    # 1. Header Bearer / x-api-key, then optional ?api_key= query fallback.
-    # Configured LAN placeholders are absent during credential resolution.
-    # Every other supplied key retains its identity and revocation checks.
     api_key = _resolve_client_api_key(request)
-    if api_key:
-        key_hash = hash_api_key(api_key)
-        identity = runtime_identity_for_app_credential_hash(
-            key_hash,
-            inherited_profile_id_for_app=_inherited_profile_id_for_app,
-            path=ADMIN_STORE.path,
-        )
-        if not identity:
-            return auth_error("Invalid API key.")
-
-        return AuthContext(identity=identity)
-
-    # 2. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
-    if _client_is_lan(request):
-        return AuthContext(identity=_identity_for("lan-bypass", "lan"))
-
-    # 3. Per-device path-prefix token (opt-in via auth.path_tokens).
-    token = _path_token_from_request(request_path)
-    if token is not None:
-        return AuthContext(identity=_identity_for(str(PATH_TOKENS[token]), "path-token"))
-
-    return auth_error("Missing API key.")
+    if not api_key:
+        return access_error("key_required")
+    identity = runtime_identity_for_app_credential_hash(hash_api_key(api_key), path=ADMIN_STORE.path)
+    if identity is None:
+        return access_error("key_invalid")
+    if identity.denial:
+        return access_error(identity.denial)
+    return AuthContext(identity=identity)
 
 
-def _is_delegatable_litellm_key(api_key: str) -> bool:
-    """Only unknown, non-placeholder sk- credentials belong to the delegate."""
-    return (
-        api_key.startswith("sk-")
-        and api_key not in DEFAULT_LAN_PLACEHOLDER_KEYS
-        and api_key not in lan_placeholder_keys(ADMIN_STORE.path)
-        and admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path) is None
-    )
-
-
-def _request_uses_litellm_virtual_key(request: Request) -> bool:
-    api_key = _resolve_client_api_key(request)
-    return bool(api_key and _is_delegatable_litellm_key(api_key))
-
-
-def authenticate_runtime_or_litellm_request(
-    request: Request,
-    request_path: str,
-    *,
-    allow_litellm_delegation: bool,
-) -> RuntimeRouteAuth | Response:
+def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
     auth_context = authenticate_request(request, request_path)
-    if not isinstance(auth_context, Response):
-        return RuntimeRouteAuth(auth_context=auth_context)
-
-    if allow_litellm_delegation and AUTH_ENABLED:
-        api_key = _resolve_client_api_key(request)
-        # Public placeholders never become delegated credentials, including
-        # sk-local when the operator removes it from LAN exemptions.
-        # A denial for a known gateway credential is also authoritative.
-        if api_key and _is_delegatable_litellm_key(api_key):
-            return RuntimeRouteAuth(
-                auth_context=NO_AUTH_CONTEXT,
-                delegated_litellm_api_key=api_key,
-            )
-
-    return auth_context
+    if isinstance(auth_context, Response):
+        return auth_context
+    return RuntimeRouteAuth(auth_context=auth_context)
 
 
 def pop_header(headers: dict, header_name: str):
@@ -3278,11 +2780,6 @@ async def _ensure_litellm_local_backend_target(
 ) -> Response | None:
     if not backend:
         return None
-    if enforce_gateway_policy and not profile_allows_backend(auth_context, backend):
-        return _policy_denied_response(PolicyDecision(
-            decision=DENIED,
-            reasons=(f"backend {backend!r} not permitted by profile",),
-        ))
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
@@ -3368,10 +2865,8 @@ async def _prepare_litellm_local_llm_request(
         _vision_members = vision_capable_llm_backends()
         active_can_serve_vision = (
             active in _vision_members
-            and profile_allows_backend(auth_context, active)
         ) or (
             engine_quarantine.vision_via_aux(active)
-            and profile_allows_backend(auth_context, active)
             and kobold_has_mmproj() is True
         )
         if active_can_serve_vision:
@@ -3421,7 +2916,7 @@ async def _prepare_litellm_local_llm_request(
         return policy_error, body
 
     if not activate_target or not target_backend or (
-        enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
+        enforce_gateway_policy and _target_activation(auth_context) == "existing_only"
     ):
         return None, body
 
@@ -3457,7 +2952,7 @@ async def _activate_prepared_litellm_local_target(
     target_mmproj = local_activation.mmproj if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if not target_backend or (
-        enforce_gateway_policy and _profile_target_activation(auth_context) == "existing_only"
+        enforce_gateway_policy and _target_activation(auth_context) == "existing_only"
     ):
         return None
     return await _ensure_litellm_local_backend_target(
@@ -3584,11 +3079,6 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    if enforce_gateway_policy and not profile_allows_backend(auth_context, active):
-        return None, _policy_denied_response(PolicyDecision(
-            decision=DENIED,
-            reasons=(f"backend {active!r} not permitted by profile",),
-        ))
     availability = _service_availability_response(active, service_label=active)
     if availability is not None:
         return None, availability
@@ -4933,17 +4423,17 @@ def _stt_receipt(
     operation: str,
     service_id: str,
 ) -> RouteReceipt:
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     return RouteReceipt(
         protocol="openai.audio",
         path=request.url.path,
         intent=f"audio.{operation}",
         backend=service_id,
-        app_profile=profile.id,
+        app_profile=plan_ref(auth_context.identity),
         app_id=auth_context.identity.app_id if auth_context.identity else None,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
-        visibility=profile.status_visibility.level,
+        visibility=access.receipt_detail,
     )
 
 
@@ -7567,7 +7057,7 @@ def _build_image_response_payload(
     owner_key_hash = _asset_owner_key(auth_context)
     suffix = f".{output_format}" if output_format != "jpeg" else ".jpg"
     delivery = media_delivery.current()
-    mode = delivery.mode if delivery is not None else _media_metadata_default(auth_context)
+    mode = delivery.mode if delivery is not None else _media_metadata_bound(auth_context)
     for index, raw in enumerate(images):
         # Keep the in-memory response copy for the requester's profile mode.
         # store_asset_bytes strips the cache copy and writes the sole prompt row.
@@ -10777,7 +10267,7 @@ async def _submit_video_graph(
                         **(record_extra or {}),
                         # Owner scoping for GET/list/DELETE/content -- mirrors
                         # _asset_owner_key's existing image/audio asset model.
-                        "app_profile": (_profile_for_auth_context(auth_context).id if _profile_for_auth_context(auth_context) else None),
+                        "app_profile": plan_ref(auth_context.identity),
                         "app_id": auth_context.identity.app_id if auth_context.identity else None,
                         "person_id": _auth_person_id(auth_context),
                         "api_key_name": auth_context.identity.name if auth_context.identity else None,
@@ -12953,16 +12443,6 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
-    print(f"[proxy] Proxy auth: {'enabled' if AUTH_ENABLED else 'disabled'}", flush=True)
-    if not AUTH_ENABLED and PROXY_HOST not in ("127.0.0.1", "::1", "localhost"):
-        print(
-            f"[proxy] WARNING: auth is disabled and the gateway is bound to "
-            f"{PROXY_HOST!r} (non-loopback). Any client that can reach this "
-            f"host:port has unauthenticated access to all API endpoints and the "
-            f"admin UI. Set auth.enabled=true or bind to 127.0.0.1 unless this "
-            f"is intentional and the network is trusted.",
-            flush=True,
-        )
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
@@ -13082,28 +12562,10 @@ async def lifespan(app: FastAPI):
             f"[proxy] Runtime App credentials: {app_key_count} active",
             flush=True,
         )
-        if AUTH_ENABLED and not app_key_count:
+        if not app_key_count:
             print(
                 "[proxy] WARNING: No active App credentials in admin.db; "
                 "proxied requests will be rejected",
-                flush=True,
-            )
-        seeded_profiles = default_profiles.seed_default_profiles(
-            path=ADMIN_STORE.path
-        )
-        if seeded_profiles:
-            print(
-                f"[proxy] Seeded {len(seeded_profiles)} default profile(s) "
-                f"into admin.db: "
-                f"{', '.join(row['name'] for row in seeded_profiles)}",
-                flush=True,
-            )
-        seeded_defaults = _seed_user_defaults_from_bootstrap_config()
-        if seeded_defaults["settings"] or seeded_defaults["mappings"]:
-            print(
-                "[proxy] Seeded admin.user_defaults into admin.db: "
-                f"settings={seeded_defaults['settings']} "
-                f"mappings={seeded_defaults['mappings']}",
                 flush=True,
             )
         provisioned = _provision_existing_user_personal_apps()
@@ -13248,29 +12710,21 @@ def _auth_context_from_scope(request: Request) -> AuthContext:
     return NO_AUTH_CONTEXT
 
 
-def _profile_for_auth_context(auth_context: AuthContext):
-    if auth_context.identity is None:
-        return DEFAULT_PROFILE
-    return auth_context.identity.profile
-
-
-def _media_metadata_default(auth_context: AuthContext | None) -> str:
-    """Profile default for delivered media metadata (``full`` or ``none``).
-
-    No identity means auth is off: a personal local run, so ``full``. A
-    caller with an identity gets ``profile.media_metadata.default``.
-    """
+def _access_for_auth_context(auth_context: AuthContext | None) -> EffectiveAccess:
+    """The two access plans a request runs under; none without an identity."""
     identity = getattr(auth_context, "identity", None) if auth_context else None
-    if identity is None:
-        return provenance.METADATA_FULL
-    policy = getattr(identity.profile, "media_metadata", None)
-    return getattr(policy, "default", provenance.METADATA_NONE)
+    return identity.access if identity is not None else NO_ACCESS
+
+
+def _media_metadata_bound(auth_context: AuthContext | None) -> str:
+    """The plans' bound for delivered media metadata (``full`` or ``none``)."""
+    return _access_for_auth_context(auth_context).media_metadata
 
 
 def _begin_media_delivery(auth_context: AuthContext | None, receipt: Any = None) -> media_delivery.DeliveryContext:
-    """Open the per-request media delivery context (profile default, receipt)."""
+    """Open the per-request media delivery context (plan bound, receipt)."""
     ctx = media_delivery.begin(
-        profile_default=_media_metadata_default(auth_context), receipt=receipt
+        plan_bound=_media_metadata_bound(auth_context), receipt=receipt
     )
     identity = getattr(auth_context, "identity", None)
     ctx.app_id = getattr(identity, "app_id", None)
@@ -13329,41 +12783,13 @@ def _note_media_metadata_query(request: Request) -> Response | None:
     return None
 
 
-def _profile_source_id(auth_context: AuthContext) -> str:
-    return getattr(_profile_for_auth_context(auth_context), "id", "default-local")
+def _plan_source_id(auth_context: AuthContext) -> str:
+    return plan_ref(getattr(auth_context, "identity", None)) or "none"
 
 
-def _profile_target_visibility(auth_context: AuthContext) -> str:
-    profile = _profile_for_auth_context(auth_context)
-    target_policy = getattr(profile, "target_policy", None)
-    if target_policy is not None:
-        return str(getattr(target_policy, "visibility", "catalog") or "catalog")
-    model_access = getattr(profile, "model_access", None)
-    legacy_mode = str(getattr(model_access, "mode", "catalog") or "catalog")
-    return "available" if legacy_mode == "current_loaded" else "catalog"
-
-
-def _profile_target_activation(auth_context: AuthContext) -> str:
-    profile = _profile_for_auth_context(auth_context)
-    target_policy = getattr(profile, "target_policy", None)
-    if target_policy is not None:
-        return str(getattr(target_policy, "activation", "may_activate") or "may_activate")
-    model_access = getattr(profile, "model_access", None)
-    legacy_mode = str(getattr(model_access, "mode", "catalog") or "catalog")
-    return "existing_only" if legacy_mode == "current_loaded" else "may_activate"
-
-
-def _profile_model_access_mode(auth_context: AuthContext) -> str:
-    if (
-        _profile_target_visibility(auth_context) == "available"
-        and _profile_target_activation(auth_context) == "existing_only"
-    ):
-        return "current_loaded"
-    return "catalog"
-
-
-def _profile_model_allowlist(auth_context: AuthContext):
-    return getattr(_profile_for_auth_context(auth_context), "models", None)
+def _target_activation(auth_context: AuthContext) -> str:
+    """``may_activate`` when both plans may load models, else ``existing_only``."""
+    return "may_activate" if _access_for_auth_context(auth_context).can_load_models else "existing_only"
 
 
 def _comfy_target_available() -> bool:
@@ -13382,7 +12808,7 @@ def _target_activation_policy_decision(
     available_label: str,
     empty_label: str,
 ) -> PolicyDecision | None:
-    if _profile_target_activation(auth_context) != "existing_only":
+    if _target_activation(auth_context) != "existing_only":
         return None
     requested = str(requested_target or "").strip()
     if not requested:
@@ -13393,23 +12819,22 @@ def _target_activation_policy_decision(
     if normalize_model_id(requested) in normalized_available:
         return None
 
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     visible_ids = sorted(item for item in available if not item.startswith("/"))
+    reason = (
+        f"{requested} isn't running, and your access plan can't start it. "
+        "Try again when it's running, or ask the gateway owner."
+    )
     if visible_ids:
-        reason = (
-            f"target {requested!r} is not one of the {available_label}: "
-            + ", ".join(visible_ids[:20])
-        )
+        reason += f" Running now ({available_label}): " + ", ".join(visible_ids[:20]) + "."
     else:
-        reason = (
-            "existing-only target policy is enabled, but "
-            f"{empty_label}"
-        )
+        reason += f" Nothing is running: {empty_label}."
     return PolicyDecision(
         decision=DENIED,
-        sources=(f"profile:{profile.id}", "policy:target-activation"),
+        sources=(*(f"access_plan:{plan_id}" for plan_id in access.plan_ids), "policy:target-activation"),
         reasons=(reason,),
-        visibility_level=profile.status_visibility.level,
+        visibility_level=access.receipt_detail,
+        code="cannot_start_model",
     )
 
 
@@ -13610,7 +13035,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
         # A nameless row cannot identify a runtime service. An empty request
         # has no category grant, while callers outside category governance
         # retain the original upstream metadata.
-        return category_enforcement.visible(auth_context.identity, make_policy_request())
+        return discovery_allows(auth_context.identity, make_policy_request())
     operations = entry.get("azizam_resolves_to")
     if isinstance(operations, Mapping) and operations:
         return any(_category_entry_visible(auth_context, {"id": model, "operation": op})
@@ -13626,7 +13051,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
         try:
             matching_alias = resolve_stable_alias("chat", model)
         except stable_aliases.AliasUnavailableError:
-            return category_enforcement.visible(auth_context.identity, make_policy_request())
+            return discovery_allows(auth_context.identity, make_policy_request())
         if matching_alias is not None:
             target = matching_alias.target
     if operation:
@@ -13634,7 +13059,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             resolution = resolve_model_for_operation(operation, model)
         except ModelCompatibilityError:
             # No resolved service can be granted; preserve ungoverned metadata.
-            return category_enforcement.visible(auth_context.identity, make_policy_request())
+            return discovery_allows(auth_context.identity, make_policy_request())
         else:
             target = (resolution.alias.target if resolution.alias else resolution.effective_model) or model
         if intent.startswith("image."):
@@ -13652,9 +13077,11 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             name, _ = _resolve_audio_workflow(target)
             if name:
                 workflow = f"audio.generate.{name}"
-    return category_enforcement.visible(auth_context.identity, make_policy_request(
+    # Plans grant the name a client asks for, the same name the request route
+    # evaluates; the resolved target only decides the workflow.
+    return discovery_allows(auth_context.identity, make_policy_request(
         protocol=str(entry.get("azizam_protocol") or _protocol_for_intent(intent)),
-        intent=intent, model=target, workflow=workflow,
+        intent=intent, model=model, workflow=workflow,
     ))
 
 
@@ -13673,14 +13100,14 @@ async def _filter_model_list_for_profile(
     filtered = [item for item in data if isinstance(item, dict)]
     registry = ADMIN_STORE.get_service_registry()
     remote_models = provider_execution.litellm_provider_model_lookup(registry)
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     provider_refs = providers.provider_refs(registry)
     visible = []
     for item in filtered:
         facts = remote_models.get(str(item.get("id") or ""))
         if facts and facts.get("remote"):
             provider_id = facts["provider_id"]
-            if provider_id not in profile.remote.providers:
+            if provider_id not in access.paid_providers:
                 continue
             provider = provider_refs.get(provider_id)
             ready = bool(provider and provider.configured)
@@ -13709,53 +13136,6 @@ async def _filter_model_list_for_profile(
         if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
             filtered.append(item)
 
-    allowlist = _profile_model_allowlist(auth_context)
-    if allowlist is not None:
-        allowed_ids = {normalize_model_id(item) for item in allowlist}
-        filtered = [
-            item
-            for item in filtered
-            if normalize_model_id(str(item.get("id") or "")) in allowed_ids
-        ]
-
-    if _profile_target_visibility(auth_context) == "available":
-        loaded_ids = await _current_loaded_llm_model_ids(metadata_ids=metadata_ids)
-        loaded_norm = {normalize_model_id(item) for item in loaded_ids}
-        comfy_available = _comfy_target_available()
-        filtered = [
-            item
-            for item in filtered
-            if (
-                normalize_model_id(str(item.get("id") or "")) in loaded_norm
-                or (
-                    bool(item.get("azizam_current_loaded"))
-                    and bool(loaded_norm)
-                )
-                or (
-                    bool(item.get("azizam_workflow"))
-                    and str(item.get("azizam_backend") or "") in {"comfyui", "gateway"}
-                    and comfy_available
-                )
-                or (
-                    str(item.get("azizam_backend") or "") == "embeddings"
-                    and EMBEDDINGS_ENABLED
-                )
-            )
-        ]
-        metadata["azizam_target_visibility"] = "available"
-        metadata["azizam_target_activation"] = _profile_target_activation(auth_context)
-        metadata["azizam_model_access"] = "current_loaded"
-        metadata["azizam_current_model_ids"] = sorted({
-            str(item["id"]) for item in filtered
-            if item.get("id") and not str(item["id"]).startswith("/")
-            and normalize_model_id(str(item["id"])) in loaded_norm
-        })
-
-    if allowlist is not None:
-        visible_norm = {normalize_model_id(str(item.get("id") or "")) for item in filtered}
-        metadata["azizam_profile_model_allowlist"] = sorted(
-            item for item in allowlist if normalize_model_id(item) in visible_norm
-        )
     return filtered, metadata
 
 
@@ -13773,13 +13153,13 @@ def _protocol_for_intent(intent: str) -> str:
     return "openai.chat"
 
 
-def _capability_for_profile(
+def _capability_for_access(
     capability: Capability,
     auth_context: AuthContext,
     *,
     protocol: str | None = None,
 ) -> Capability:
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     if "alias" in capability.tags and capability.backend == "gateway":
         return replace(capability, policy_available=False)
     remote_provider_id = None
@@ -13788,12 +13168,9 @@ def _capability_for_profile(
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
         remote_provider_id = provider.id
-        provider_policy = ADMIN_STORE.get_provider_admin_state().get("providers", {}).get(provider.id, {})
-        if "allowed_plans" in provider_policy and profile.id not in (provider_policy["allowed_plans"] or []):
-            return replace(capability, policy_available=False, policy_reasons=("Provider is not allowed by this access plan.",))
     return capability_with_policy_view(
         capability,
-        profile,
+        access,
         request=make_policy_request(
             protocol=protocol or _protocol_for_intent(capability.intent),
             intent=capability.intent,
@@ -13835,12 +13212,9 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities.extend(registered_model_capabilities(live_registry))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
-    decision_capabilities = DECISION_RUNTIME.capabilities()
-    if _profile_target_visibility(auth_context) == "available":
-        decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
-    capabilities.extend(decision_capabilities)
+    capabilities.extend(DECISION_RUNTIME.capabilities())
 
-    for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
+    for model in _remote_decision_models(auth_context):
         provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), model.id)
         if provider:
             capabilities.append(decision_provider_execution.capability_for(provider, model.id))
@@ -13875,7 +13249,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ]
 
     return [
-        _capability_for_profile(capability, auth_context)
+        _capability_for_access(capability, auth_context)
         for capability in capabilities
     ]
 
@@ -14069,14 +13443,12 @@ def _user_access_catalog_for_auth_context(auth_context: AuthContext) -> dict[str
 
 def _gateway_audience_resolver(request: Request) -> str:
     auth_context = _auth_context_from_scope(request)
-    return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
+    return discovery_audience_for_access(_access_for_auth_context(auth_context))
 
 
 def _gateway_record_scope(request: Request) -> dict[str, Any]:
     auth_context = _auth_context_from_scope(request)
     identity = auth_context.identity
-    if not AUTH_ENABLED and identity is None:
-        return {}
     return {"app_ids": [identity.app_id] if identity and identity.app_id else [],
             "owner_key_hashes": list(_asset_read_owner_keys(auth_context))}
 
@@ -14088,7 +13460,7 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     return owns_record(
         kind, record, app_id=identity.app_id if identity else None,
         owner_keys=_asset_read_owner_keys(auth_context),
-        unrestricted=not AUTH_ENABLED and identity is None,
+        unrestricted=False,
     )
 
 
@@ -14422,10 +13794,9 @@ class _SessionMakeRuntime:
             raise me_make.MakeCanceled()
         auth = payload.get("auth") or {}
         identity = runtime_identity_for_session_app(
-            str(auth.get("app_id") or ""), str(auth.get("person_id") or ""),
-            inherited_profile_id_for_app=_inherited_profile_id_for_app, path=ADMIN_STORE.path,
+            str(auth.get("app_id") or ""), str(auth.get("person_id") or ""), path=ADMIN_STORE.path,
         )
-        if identity is None:
+        if identity is None or identity.denial:
             raise me_make.MakeBackendError("This account can no longer make things", http_status=403)
         auth_context = AuthContext(identity=identity)
         body = copy.deepcopy(dict(payload.get("body") or {}))
@@ -14619,19 +13990,14 @@ def _decision_catalog_authorized(auth: AuthContext, model: str, service: str | N
         capability = DECISION_RUNTIME.capability_for(model, service)
     except decisions_api.DecisionsError:
         return False
-    return _capability_for_profile(capability, auth).policy_available is not False
-
-
-def _profile_may_need_decision_engine_probe(auth: AuthContext) -> bool:
-    allowed = getattr(getattr(_profile_for_auth_context(auth), "allow", None), "tags", None)
-    return bool(allowed and ({"engine:gpu", "engine:cpu"} & set(allowed)))
+    return _capability_for_access(capability, auth).policy_available is not False
 
 
 def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
     allowed = _decision_catalog_authorized(auth, model, service)
-    if _profile_target_activation(auth) != "existing_only":
+    if _target_activation(auth) != "existing_only":
         return allowed
-    if not allowed and not _profile_may_need_decision_engine_probe(auth):
+    if not allowed:
         return False
     if not service or DECISION_RUNTIME.observed_engine(service, fresh=True) is None:
         return False
@@ -14706,21 +14072,19 @@ async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -
     return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
 
 
-def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+def _remote_decision_models(auth: AuthContext) -> list[decisions_api.DecisionModel]:
     if not auth.identity or not auth.identity.app_id:
         return []
     registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
     for provider in decision_provider_execution.systemone_providers(registry):
         try:
-            providers.require_remote_allowed(profile, provider)
+            providers.require_remote_allowed(auth.identity, provider)
         except providers.ProviderError:
             continue
         for model in decision_provider_execution.catalog_models(provider):
             cap = decision_provider_execution.capability_for(provider, model)
-            if _capability_for_profile(cap, auth).policy_available is False:
-                continue
-            if _profile_target_visibility(auth) == "available" and not provider.configured:
+            if _capability_for_access(cap, auth).policy_available is False:
                 continue
             rows.append(decisions_api.DecisionModel(
                 id=model, root=model.partition("/")[2], backend=provider.id,
@@ -14732,7 +14096,7 @@ def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_a
 
 
 def _decision_models_for(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
-    return DECISION_RUNTIME.models_for(auth, profile) + _remote_decision_models(auth, profile)
+    return DECISION_RUNTIME.models_for(auth, profile) + _remote_decision_models(auth)
 
 
 def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionReceipt) -> None:
@@ -14741,7 +14105,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
         protocol=result.protocol, intent=result.intent, path=result.path,
         request_id=result.request_id, requested_model=result.requested_model,
         resolved_model=result.resolved_model, backend=result.backend,
-        app_profile=identity.profile.id if identity else None,
+        app_profile=plan_ref(identity),
         app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None,
     )
@@ -14785,7 +14149,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
 decisions_api.register_decision_routes(
     app, decisions_api.DecisionsApiDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
-        profile_for=_profile_for_auth_context,
+        profile_for=_access_for_auth_context,
         models_for=_decision_models_for,
         dispatch=_dispatch_decision,
         record_receipt=_record_decision_receipt,
@@ -14966,13 +14330,12 @@ async def _identity_submit_job(
     )
     if admission is not None:
         return admission
-    profile = _profile_for_auth_context(auth_context)
     job = media_jobs.MediaJob(
         intent=_IDENTITY_JOB_INTENT,
         workflow=IDENTITY_MANIFEST_ID,
         backend="comfyui",
         request_id=f"identity-{uuid.uuid4().hex}",
-        app_profile=profile.id,
+        app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         metadata={"mode": "async_identity", "attempts": req.attempts, "photos": len(req.photos)},
     )
@@ -15364,13 +14727,13 @@ def _require_user_action_header(request: Request, session) -> JSONResponse | Non
     )
 
 
-def _require_user_self_service() -> None:
-    if not _user_self_service_enabled():
-        raise UserPortalError(
-            "self_service_disabled",
-            "App self-service is disabled for this gateway.",
-            status_code=403,
-        )
+def _app_access(app_id: str) -> EffectiveAccess | None:
+    """The plans an App runs under right now (admin Check access)."""
+    with admin_store.runtime_auth_connection(ADMIN_STORE.path) as conn:
+        row = admin_store.runtime_access_row(conn, app_id=app_id)
+    if row is None:
+        return None
+    return identity_from_access_row(row, key_hash="", name="", person_id=None).access
 
 
 class _LiveLiteLLMKeyClient:
@@ -15415,7 +14778,7 @@ app.include_router(
     create_admin_router(
         ADMIN_STORE,
         auth=ADMIN_AUTH,
-        profile_resolver=ADMIN_STORE.profile_for_id,
+        access_resolver=_app_access,
         service_probe=probe_backend,
         status_provider=_status_payload_with_availability,
         litellm_key_client=_LITELLM_KEY_CLIENT,
@@ -15423,7 +14786,6 @@ app.include_router(
             ADMIN_STORE.get_service_registry()
         ),
         effective_oidc_config_provider=lambda: _admin_oidc_config_snapshot(),
-        spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     )
 )
 
@@ -15555,7 +14917,6 @@ app.include_router(create_account_router(
     oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
-    effective_plan_resolver=_effective_plan_for_person,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
 ))
 
@@ -15598,15 +14959,11 @@ app.include_router(create_home_router(
     require_session=_require_user_session,
     require_action=_require_user_action_header,
     csrf_token=_csrf_token_for_oidc_session,
-    default_profile_id=_default_profile_id_for_session,
-    inherited_profile_id_for_app=_inherited_profile_id_for_app,
-    self_service_enabled=_user_self_service_enabled,
     capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
     aliases=_gateway_aliases_provider,
     public_base_url=lambda request: _public_base_url(request),
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
-    spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
 ))
@@ -15615,13 +14972,7 @@ app.include_router(create_home_router(
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = _oidc_session_from_request(request)
-    snapshot = build_user_portal_snapshot(
-        session,
-        default_profile_id=(
-            _default_profile_id_for_session(session) if session else None
-        ),
-        path=ADMIN_STORE.path,
-    )
+    snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     # Members cannot use the admin session endpoint. Supply their CSRF token
     # with the same owner-scoped account snapshot used by the browser UI.
     snapshot["csrf_token"] = (
@@ -15635,14 +14986,27 @@ async def user_portal_session(request: Request):
     )
 
 
-def _catalog_auth_context_for_profile(profile: Any, _profile_id: str) -> AuthContext:
-    identity = AuthIdentity(
-        name="user-session",
-        key_hash="session",
-        downstream={},
-        profile=profile,
+def _session_catalog_auth_contexts(session: Any, snapshot: Mapping[str, Any]) -> list[AuthContext]:
+    """One discovery context per distinct plan pair of the person's Apps."""
+    person_id = str(session.subject)
+
+    def access_for_app(app_id: str):
+        with admin_store.runtime_auth_connection(ADMIN_STORE.path) as conn:
+            row = admin_store.runtime_access_row(conn, app_id=app_id)
+        if row is None:
+            return None
+        identity = identity_from_access_row(row, key_hash="session", name="user-session", person_id=person_id)
+        return None if identity.denial else identity.access
+
+    return auth_contexts_from_user_snapshot(
+        snapshot,
+        access_for_app=access_for_app,
+        person_access=access_for_person(person_id, path=ADMIN_STORE.path),
+        context_for_access=lambda access: AuthContext(identity=AuthIdentity(
+            name="user-session", key_hash="session", downstream={}, access=access,
+            person_id=person_id, accountable_person_id=person_id,
+        )),
     )
-    return AuthContext(identity=identity)
 
 
 async def _models_catalog_health_evidence(
@@ -15675,24 +15039,14 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the models catalog",
             status_code=401,
         )
-    default_profile_id = _default_profile_id_for_session(session)
-    user_snapshot = build_user_portal_snapshot(
-        session,
-        default_profile_id=default_profile_id,
-        path=ADMIN_STORE.path,
-    )
+    user_snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the models catalog",
             status_code=401,
         )
-    auth_contexts = auth_contexts_from_user_snapshot(
-        user_snapshot,
-        default_profile_id=default_profile_id,
-        profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
-        context_for_profile=_catalog_auth_context_for_profile,
-    )
+    auth_contexts = _session_catalog_auth_contexts(session, user_snapshot)
     if not auth_contexts:
         return build_models_catalog(alias_views={}, capabilities=[])
     activity = build_user_activity_snapshot(
@@ -15815,24 +15169,14 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    default_profile_id = _default_profile_id_for_session(session)
-    user_snapshot = build_user_portal_snapshot(
-        session,
-        default_profile_id=default_profile_id,
-        path=ADMIN_STORE.path,
-    )
+    user_snapshot = build_user_portal_snapshot(session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    auth_contexts = auth_contexts_from_user_snapshot(
-        user_snapshot,
-        default_profile_id=default_profile_id,
-        profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
-        context_for_profile=_catalog_auth_context_for_profile,
-    )
+    auth_contexts = _session_catalog_auth_contexts(session, user_snapshot)
     capability_sets = [
         _gateway_capabilities_for_auth_context(auth_context)
         for auth_context in auth_contexts
@@ -15938,7 +15282,6 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
 async def user_portal_create_app(request: Request):
     try:
         session = _require_user_session(request)
-        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15953,7 +15296,6 @@ async def user_portal_create_app(request: Request):
         payload = create_user_app(
             session,
             name=str(name or ""),
-            default_profile_id=_default_profile_id_for_session(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -15969,7 +15311,6 @@ async def user_portal_create_app(request: Request):
 async def user_portal_delete_app(app_id: str, request: Request):
     try:
         session = _require_user_session(request)
-        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -15994,7 +15335,6 @@ async def user_portal_delete_app(app_id: str, request: Request):
 async def user_portal_mint_key(app_id: str, request: Request):
     try:
         session = _require_user_session(request)
-        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -16010,7 +15350,6 @@ async def user_portal_mint_key(app_id: str, request: Request):
             session,
             app_id,
             label=str(label).strip() if label else None,
-            default_profile_id=_default_profile_id_for_session(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16027,7 +15366,6 @@ async def user_portal_try_key(request: Request):
     """Reuse or mint the Try page's key for this sign-in session."""
     try:
         session = _require_user_session(request)
-        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -16042,7 +15380,6 @@ async def user_portal_try_key(request: Request):
         credential = ensure_try_session_key(
             session,
             reuse_id=str(reuse_id) if reuse_id else None,
-            default_profile_id=_default_profile_id_for_session(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16058,7 +15395,6 @@ async def user_portal_try_key(request: Request):
 async def user_portal_request_access(request: Request):
     try:
         session = _require_user_session(request)
-        _require_user_self_service()
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     header_error = _require_user_action_header(request, session)
@@ -16067,7 +15403,6 @@ async def user_portal_request_access(request: Request):
     try:
         payload = request_user_access(
             session,
-            default_profile_id=_default_profile_id_for_session(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16092,7 +15427,6 @@ async def user_portal_credential_access(credential_id: str, request: Request):
         return _user_action_response_error(exc)
     identity = runtime_identity_for_app_credential_hash(
         str(credential.get("hash") or ""),
-        inherited_profile_id_for_app=_inherited_profile_id_for_app,
         path=ADMIN_STORE.path,
     )
     if identity is None:
@@ -16470,32 +15804,10 @@ def _setup_doctor_items(
 
 
 def _setup_config_source_item() -> dict[str, str]:
-    try:
-        access_defaults = admin_store.get_operator_setting(
-            USER_ACCESS_DEFAULTS_SETTING_KEY,
-            path=ADMIN_STORE.path,
-        )
-    except Exception:  # noqa: BLE001
-        access_defaults = None
-    has_bootstrap_defaults = _has_bootstrap_user_access_defaults()
-    if access_defaults is not None:
-        state = "ok"
-        detail = (
-            "Runtime Apps, keys, Profiles, and identity defaults are admin.db-backed."
-        )
-    elif has_bootstrap_defaults:
-        state = "warn"
-        detail = (
-            "Bootstrap user defaults have not been seeded into admin.db yet; restart "
-            "or check the admin store."
-        )
-    else:
-        state = "ok"
-        detail = "Runtime defaults are admin.db-backed."
     return {
         "label": "Config source of truth",
-        "state": state,
-        "detail": detail,
+        "state": "ok",
+        "detail": "Apps, keys, access plans and people are admin.db-backed.",
     }
 
 
@@ -17065,13 +16377,11 @@ async def setup_create_first_app(request: Request):
         if (
             session is not None
             and session_subject_kind == "user"
-            and _user_self_service_enabled()
         ):
             app_record = _setup_personal_app_for_session(session)
             if app_record is None:
                 payload = request_user_access(
                     session,
-                    default_profile_id=_default_profile_id_for_session(session),
                     path=ADMIN_STORE.path,
                 )
                 app_record = payload["app"]
@@ -17079,7 +16389,6 @@ async def setup_create_first_app(request: Request):
                 session,
                 str(app_record["id"]),
                 label=key_label,
-                default_profile_id=_default_profile_id_for_session(session),
                 path=ADMIN_STORE.path,
             )
             admin_store.record_audit(
@@ -17238,29 +16547,23 @@ async def admin_oidc_callback(request: Request):
         )
         effective_roles = {grant["role"] for grant in effective_grants}
         role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
-        if _user_self_service_enabled() and _auto_create_personal_app_enabled():
-            label = user.get("email") or user.get("display_name") or user["id"]
-            default_profile_id = _effective_plan_for_person(user)["profile_id"]
-            app = admin_store.ensure_personal_app_for_user(
-                str(user["id"]),
-                name=f"{label} personal access",
-                default_profile_id=default_profile_id,
-                path=ADMIN_STORE.path,
-            )
-            admin_store.record_audit(
-                "app.self_create",
-                actor_kind="user",
-                actor_id=str(user["id"]),
-                actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-                target_kind="app",
-                target_id=str(app["id"]),
-                metadata={
-                    "email": user.get("email"),
-                    "via": "oidc_login",
-                    "effective_profile_id": default_profile_id or "default-local",
-                },
-                path=ADMIN_STORE.path,
-            )
+        label = user.get("email") or user.get("display_name") or user["id"]
+        app = admin_store.ensure_personal_app_for_user(
+            str(user["id"]),
+            name=f"{label} personal access",
+            path=ADMIN_STORE.path,
+        )
+        admin_store.record_audit(
+            "app.self_create",
+            actor_kind="user",
+            actor_id=str(user["id"]),
+            actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
+            target_kind="app",
+            target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "oidc_login",
+                      "access_plan": app.get("access_plan")},
+            path=ADMIN_STORE.path,
+        )
         session_claims = {
             "sub": user["id"],
             "email": claims.get("email") or "",
@@ -17693,16 +16996,11 @@ async def _firehose_request_counter(request: Request, call_next):
         if not skip:
             try:
                 key_name: Optional[str] = None
-                if AUTH_ENABLED:
-                    raw = get_client_api_key_from_headers(request.headers)
-                    if raw:
-                        ident = runtime_identity_for_app_credential_hash(
-                            hash_api_key(raw),
-                            inherited_profile_id_for_app=_inherited_profile_id_for_app,
-                            path=ADMIN_STORE.path,
-                        )
-                        if ident:
-                            key_name = ident.name
+                raw = get_client_api_key_from_headers(request.headers)
+                if raw:
+                    ident = runtime_identity_for_app_credential_hash(hash_api_key(raw), path=ADMIN_STORE.path)
+                    if ident:
+                        key_name = ident.name
                 latency_ms = (time.monotonic() - t0) * 1000.0
                 status_code = getattr(response, "status_code", 0) or 0
                 firehose_metrics.record_request(key_name, path, status_code, latency_ms)
@@ -17747,7 +17045,6 @@ async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
     return {
         "status": "healthy",
-        "auth_enabled": AUTH_ENABLED,
         "app_credentials_configured": active_app_credential_count(),
     }
 
@@ -17924,7 +17221,7 @@ async def list_voices(request: Request):
     engines = [engine for engine in engines if _category_entry_visible(
         auth_context, {"id": engine, "operation": "speech"},
     )]
-    if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
+    if not engines and not discovery_allows(auth_context.identity, make_policy_request()):
         mine, has_more = [], False
     page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
     if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
@@ -17945,7 +17242,7 @@ async def audio_speech(request: Request):
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
-    receipt = await media_ingestion.start_receipt(request, auth_context, intent="speech.synthesis", profile=_profile_for_auth_context(auth_context))
+    receipt = await media_ingestion.start_receipt(request, auth_context, intent="speech.synthesis")
     try:
         response = await proxy_tts_request(request, auth_context, receipt=receipt)
     except BaseException:
@@ -18140,11 +17437,9 @@ def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
 
 async def _handle_realtime(websocket: WebSocket) -> None:
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
-    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(websocket) else ()
-    placeholder_protocols = {f"{realtime_proxy.KEY_SUBPROTOCOL_PREFIX}{key}" for key in ignored}
-    subprotocol_key = realtime_proxy.key_from_subprotocols([p for p in offered if p not in placeholder_protocols])
+    subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
     caller: HTTPConnection = websocket
-    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers, ignored_keys=ignored):
+    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers):
         headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
         headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
         caller = HTTPConnection({**websocket.scope, "headers": headers})
@@ -18209,7 +17504,7 @@ def start_image_route_receipt(
     intent = _IMAGE_ROUTE_INTENTS.get(path, "image.generate")
     key_name = auth_context.identity.name if auth_context.identity else None
     app_id = auth_context.identity.app_id if auth_context.identity else None
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     receipt = RouteReceipt(
         protocol="openai.images",
         path=path,
@@ -18218,8 +17513,8 @@ def start_image_route_receipt(
         api_key_name=key_name,
         app_id=app_id,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
-        app_profile=profile.id,
-        visibility=profile.status_visibility.level,
+        app_profile=plan_ref(auth_context.identity),
+        visibility=access.receipt_detail,
     )
     _apply_image_route_policy(receipt, auth_context)
     _begin_media_delivery(auth_context, receipt)
@@ -18296,15 +17591,14 @@ def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
 
 
 def _policy_denied_response(decision: PolicyDecision) -> Response:
-    reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+    """403 in the OpenAI error shape with the design §3.3 access code."""
+    reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+    error: dict[str, Any] = {"message": reason, "type": "access_error", "code": decision.code or "policy_denied"}
+    if decision.side:
+        error["details"] = {"side": decision.side, "plans": [s.split(":", 1)[1] for s in decision.sources
+                                                         if s.startswith("access_plan:")]}
     return Response(
-        content=json.dumps({
-            "error": {
-                "message": reason,
-                "type": "permission_error",
-                "code": "policy_denied",
-            }
-        }),
+        content=json.dumps({"error": error}),
         status_code=403,
         media_type="application/json",
     )
@@ -19796,7 +19090,7 @@ class _FormBodyRequestShim(_JsonBodyRequestShim):
 
 def _gateway_auth_context(request: Request, path: str) -> AuthContext | Response:
     auth_context = _auth_context_from_scope(request)
-    if auth_context is not NO_AUTH_CONTEXT or not AUTH_ENABLED:
+    if auth_context is not NO_AUTH_CONTEXT:
         return auth_context
     return authenticate_request(request, path)
 
@@ -20644,24 +19938,26 @@ def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | 
 
 
 def _media_job_content_preflight_response(auth_context: AuthContext) -> Response | None:
-    media_protocols = ("openai.images", "openai.audio", "openai.video")
+    # Before the lookup: the plans must allow some media capability at all.
+    media_intents = ("image.generate", "video.generate", "audio.generate", "music.generate", "sfx.generate")
     decisions = [
         evaluate_and_apply(
             auth_context.identity,
-            make_policy_request(protocol=protocol),
+            make_policy_request(intent=intent),
         )
-        for protocol in media_protocols
+        for intent in media_intents
     ]
     if any(decision.allowed for decision in decisions):
         return None
 
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     return _policy_denied_response(
         PolicyDecision(
             decision=DENIED,
-            sources=(f"profile:{profile.id}", "policy:media-job-content"),
-            reasons=("profile does not permit media job content",),
-            visibility_level=profile.status_visibility.level,
+            sources=(*(f"access_plan:{plan_id}" for plan_id in access.plan_ids), "policy:media-job-content"),
+            reasons=("Media isn't in your access plan.",),
+            code="not_in_access_plan",
+            visibility_level=access.receipt_detail,
         )
     )
 
@@ -20675,10 +19971,9 @@ def _auth_context_from_image_job_payload(payload: Mapping[str, Any]) -> AuthCont
         return NO_AUTH_CONTEXT
     identity = runtime_identity_for_app_credential_hash(
         key_hash,
-        inherited_profile_id_for_app=_inherited_profile_id_for_app,
         path=ADMIN_STORE.path,
     )
-    if identity is None:
+    if identity is None or identity.denial:
         return NO_AUTH_CONTEXT
     return AuthContext(identity=identity)
 
@@ -21604,7 +20899,6 @@ async def _submit_audio_media_job(
     if policy_response is not None:
         return policy_response
 
-    profile = _profile_for_auth_context(auth_context)
     request_id = f"audjob_{uuid.uuid4().hex}"
     workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
     if not workflow_name:
@@ -21649,7 +20943,7 @@ async def _submit_audio_media_job(
         request_id=request_id,
         workflow=f"audio.generate.{workflow_name}",
         backend="comfyui",
-        app_profile=profile.id,
+        app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         parent_request_id=request_id,
     )
@@ -22212,7 +21506,6 @@ async def _submit_video_media_job(
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
 
-    profile = _profile_for_auth_context(auth_context)
     request_id = f"vidjob_{uuid.uuid4().hex}"
     job = video_media_job_http.job_from_openai_video_request(
         body,
@@ -22221,7 +21514,7 @@ async def _submit_video_media_job(
             backend="comfyui",
             request_id=request_id,
             idempotency_key=request.headers.get("idempotency-key"),
-            app_profile=profile.id,
+            app_profile=plan_ref(auth_context.identity),
             api_key_name=auth_context.identity.name if auth_context.identity else None,
             parent_request_id=request_id,
         ),
@@ -22447,13 +21740,12 @@ async def gateway_image_generations_media_job(request: Request):
         finish_image_route_receipt(receipt, response)
         return response
 
-    profile = _profile_for_auth_context(auth_context)
     job = media_jobs.MediaJob(
         intent="image.generate",
         workflow=f"image.generate.{model}",
         backend="comfyui",
         request_id=request_id,
-        app_profile=profile.id,
+        app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         parent_request_id=receipt.request_id,
         metadata=_safe_image_media_job_metadata(
@@ -23804,7 +23096,7 @@ async def audio_generate(request: Request):
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
-    receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate", profile=_profile_for_auth_context(auth_context))
+    receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate")
     try:
         response = await proxy_audio_generate(request, auth_context, receipt=receipt)
     except BaseException:
@@ -23824,17 +23116,8 @@ async def audio_models(request: Request):
     if policy_response is not None:
         return policy_response
     models = []
-    allowlist = _profile_model_allowlist(auth_context)
-    include_available = (
-        _profile_target_visibility(auth_context) != "available"
-        or _comfy_target_available()
-    )
     for name, cfg in AUDIO_WORKFLOWS_CFG.items():
-        if not include_available:
-            continue
-        if allowlist is not None and name not in allowlist:
-            continue
-        if not category_enforcement.visible(auth_context.identity, make_policy_request(
+        if not discovery_allows(auth_context.identity, make_policy_request(
             protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
             model=name, workflow=f"audio.generate.{name}",
         )):
@@ -23847,9 +23130,6 @@ async def audio_models(request: Request):
             "min_seconds": cfg.get("min_seconds", 1),
         })
     payload = {"data": models}
-    if _profile_target_visibility(auth_context) == "available":
-        payload["azizam_target_visibility"] = "available"
-        payload["azizam_target_activation"] = _profile_target_activation(auth_context)
     return Response(
         content=json.dumps(payload),
         status_code=200,
@@ -24436,7 +23716,6 @@ async def _litellm_models_payload(
     auth_context: AuthContext,
     *,
     runtime_config,
-    delegated_litellm_api_key: str = "",
 ) -> dict[str, Any] | None:
     execution_request = LlmExecutionRequest(
         method="GET",
@@ -24448,9 +23727,7 @@ async def _litellm_models_payload(
                 auth_context,
                 request_path="/v1/models",
                 service_id=runtime_config.service_id,
-                delegated_litellm_api_key=delegated_litellm_api_key,
             ),
-            delegated_api_key=delegated_litellm_api_key,
         ),
         body=b"",
         read_timeout=10.0,
@@ -24600,7 +23877,7 @@ async def anthropic_models(request: Request):
     )
     if policy_response is not None:
         return _anthropic_error_response(
-            _response_error_message(policy_response, "request denied by app profile"),
+            _response_error_message(policy_response, "This isn't in your access plan."),
             status_code=policy_response.status_code,
             error_type="permission_error",
         )
@@ -24631,18 +23908,12 @@ async def list_models(request: Request):
     """
     if _is_anthropic_sdk_request(request):
         return await anthropic_models(request)
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/v1/models",
-        allow_litellm_delegation=True,
-    )
-    if isinstance(route_auth, Response):
-        return route_auth
-    auth_context = route_auth.auth_context
-    if not route_auth.delegated_to_litellm:
-        policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
-        if policy_response is not None:
-            return policy_response
+    auth_context = authenticate_request(request, "/v1/models")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = _enforce_runtime_route_policy(auth_context, "/v1/models")
+    if policy_response is not None:
+        return policy_response
 
     upstream_payload: dict = {"object": "list", "data": []}
     litellm_runtime = _litellm_runtime_config()
@@ -24657,24 +23928,10 @@ async def list_models(request: Request):
             request,
             auth_context,
             runtime_config=litellm_runtime,
-            delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
         )
         if isinstance(payload, dict):
-            if route_auth.delegated_to_litellm:
-                return Response(
-                    content=json.dumps(payload),
-                    status_code=200,
-                    media_type="application/json",
-                )
             upstream_payload = payload
         else:
-            if route_auth.delegated_to_litellm:
-                return openai_error_response(
-                    "LiteLLM model catalog is unavailable.",
-                    status_code=503,
-                    error_type="service_unavailable",
-                    code="litellm_unavailable",
-                )
             upstream_payload["azizam_catalog_warning"] = (
                 "LLM model catalog is temporarily unavailable; gateway-native "
                 "aliases and workflows may still be listed."
@@ -24765,7 +24022,7 @@ async def list_models(request: Request):
             item["description"] = desc
 
     decision_ids: set[str] = set()
-    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
+    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _access_for_auth_context(auth_context)):
         entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
         if not _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
@@ -25518,7 +24775,7 @@ async def anthropic_count_tokens(request: Request):
         model=canonical.get("model"),
     )
     if decision.denied:
-        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
         return _anthropic_error_response(
             reason,
             status_code=403,
@@ -25532,11 +24789,7 @@ async def anthropic_count_tokens(request: Request):
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic Messages-compatible frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/v1/messages",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/v1/messages")
     if isinstance(route_auth, Response):
         return _anthropic_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -25552,20 +24805,19 @@ async def anthropic_messages(request: Request):
             str(e), status_code=e.http_status, error_type=e.error_type
         )
 
-    if not route_auth.delegated_to_litellm:
-        decision = _protocol_policy_decision(
-            auth_context,
-            protocol="anthropic.messages",
-            intent="chat.messages",
-            model=canonical.get("model"),
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="anthropic.messages",
+        intent="chat.messages",
+        model=canonical.get("model"),
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+        return _anthropic_error_response(
+            reason,
+            status_code=403,
+            error_type="permission_error",
         )
-        if decision.denied:
-            reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
-            return _anthropic_error_response(
-                reason,
-                status_code=403,
-                error_type="permission_error",
-            )
 
     admission = _model_dispatch_admission_response(
         auth_context, canonical.get("model"), intent='chat.messages',
@@ -25695,7 +24947,7 @@ def _ollama_policy_error_response(
         model=canonical.get("model"),
     )
     if decision.denied:
-        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
         return _ollama_error_response(reason, status_code=403)
     return None
 
@@ -25708,14 +24960,12 @@ async def _ollama_forward_non_streaming(
     protocol: str,
     intent: str,
 ) -> Response | dict[str, Any]:
-    policy_error = None
-    if not _request_uses_litellm_virtual_key(request):
-        policy_error = _ollama_policy_error_response(
-            auth_context,
-            canonical,
-            protocol=protocol,
-            intent=intent,
-        )
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent=intent,
+    )
     if policy_error is not None:
         return policy_error
 
@@ -25753,14 +25003,12 @@ async def _ollama_forward_streaming(
     intent: str,
     translator: Any,
 ) -> Response:
-    policy_error = None
-    if not _request_uses_litellm_virtual_key(request):
-        policy_error = _ollama_policy_error_response(
-            auth_context,
-            canonical,
-            protocol=protocol,
-            intent=intent,
-        )
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent=intent,
+    )
     if policy_error is not None:
         return policy_error
 
@@ -25824,14 +25072,12 @@ async def _ollama_forward_embeddings(
     *,
     protocol: str,
 ) -> Response | dict[str, Any]:
-    policy_error = None
-    if not _request_uses_litellm_virtual_key(request):
-        policy_error = _ollama_policy_error_response(
-            auth_context,
-            canonical,
-            protocol=protocol,
-            intent="text.embeddings",
-        )
+    policy_error = _ollama_policy_error_response(
+        auth_context,
+        canonical,
+        protocol=protocol,
+        intent="text.embeddings",
+    )
     if policy_error is not None:
         return policy_error
 
@@ -25858,8 +25104,6 @@ async def _ollama_forward_embeddings(
 async def _ollama_model_catalog_summaries(
     request: Request | None,
     auth_context: AuthContext,
-    *,
-    delegated_litellm_api_key: str = "",
 ) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     litellm_runtime = _litellm_runtime_config()
@@ -25868,13 +25112,11 @@ async def _ollama_model_catalog_summaries(
             request,
             auth_context,
             runtime_config=litellm_runtime,
-            delegated_litellm_api_key=delegated_litellm_api_key,
         )
         if isinstance(payload, Mapping):
             entries.extend(_litellm_model_summaries_from_payload(payload))
 
-    if not delegated_litellm_api_key:
-        entries.extend(_current_loaded_model_entries())
+    entries.extend(_current_loaded_model_entries())
     filtered, _ = await _filter_model_list_for_profile(
         entries, auth_context, category_protocols={
             "chat.completions": "ollama.chat", "chat.generate": "ollama.generate",
@@ -25954,7 +25196,7 @@ def _ollama_model_policy_response(
         model=model,
     )
     if decision.denied:
-        reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
         return _ollama_error_response(reason, status_code=403)
     return None
 
@@ -25990,11 +25232,7 @@ async def _ollama_load_response(
 @app.post("/api/chat")
 async def ollama_chat(request: Request):
     """Ollama `/api/chat` frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/api/chat",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/api/chat")
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26050,11 +25288,7 @@ async def ollama_chat(request: Request):
 @app.post("/api/generate")
 async def ollama_generate(request: Request):
     """Ollama `/api/generate` frontend over chat completions."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/api/generate",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/api/generate")
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26112,11 +25346,7 @@ async def ollama_generate(request: Request):
 @app.post("/api/embed")
 async def ollama_embed(request: Request):
     """Ollama current `/api/embed` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/api/embed",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/api/embed")
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26151,11 +25381,7 @@ async def ollama_embed(request: Request):
 @app.post("/api/embeddings")
 async def ollama_embeddings(request: Request):
     """Ollama legacy `/api/embeddings` frontend over OpenAI embeddings."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/api/embeddings",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/api/embeddings")
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
@@ -26190,31 +25416,25 @@ async def ollama_embeddings(request: Request):
 @app.get("/api/tags")
 async def ollama_tags(request: Request):
     """Ollama model-list frontend over the proxy's configured model catalog."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/api/tags",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/api/tags")
     if isinstance(route_auth, Response):
         return _ollama_auth_error(route_auth)
     auth_context = route_auth.auth_context
 
-    if not route_auth.delegated_to_litellm:
-        decision = _protocol_policy_decision(
-            auth_context,
-            protocol="ollama.tags",
-            intent="models.list",
-        )
-        if decision.denied:
-            reason = decision.reasons[0] if decision.reasons else "request denied by app profile"
-            return _ollama_error_response(reason, status_code=403)
+    decision = _protocol_policy_decision(
+        auth_context,
+        protocol="ollama.tags",
+        intent="models.list",
+    )
+    if decision.denied:
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+        return _ollama_error_response(reason, status_code=403)
 
     return _json_error_response(
         ollama_protocol.tags_response_from_model_summaries(
             await _ollama_model_catalog_summaries(
                 request,
                 auth_context,
-                delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
             )
         ),
         status_code=200,
@@ -26385,11 +25605,7 @@ async def ollama_delete(request: Request):
 @app.post("/v1/responses")
 async def create_response(request: Request):
     """Create a Response. Translates to Chat Completions and forwards."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        "/v1/responses",
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, "/v1/responses")
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -26419,15 +25635,14 @@ async def create_response(request: Request):
             if not req_body["extensions"]:
                 req_body.pop("extensions")
 
-        if not route_auth.delegated_to_litellm:
-            decision = _protocol_policy_decision(
-                auth_context,
-                protocol="openai.chat",
-                intent="chat.responses",
-                model=req_body.get("model") if isinstance(req_body.get("model"), str) else None,
-            )
-            if decision.denied:
-                return _policy_denied_response(decision)
+        decision = _protocol_policy_decision(
+            auth_context,
+            protocol="openai.chat",
+            intent="chat.responses",
+            model=req_body.get("model") if isinstance(req_body.get("model"), str) else None,
+        )
+        if decision.denied:
+            return _policy_denied_response(decision)
 
         try:
             extension_result = validate_responses_extensions(req_body)
@@ -26486,18 +25701,18 @@ async def create_response(request: Request):
         if not prompt_decision.keep and prompt_decision.reason != "no_person":
             store = False
         req_body["store"] = bool(store)
-        profile = _profile_for_auth_context(auth_context)
+        access = _access_for_auth_context(auth_context)
         outer_receipt = RouteReceipt(
             protocol="openai.responses",
             path="/v1/responses",
             intent="chat.responses",
-            app_profile=profile.id,
+            app_profile=plan_ref(auth_context.identity),
             app_id=auth_context.identity.app_id if auth_context.identity else None,
             owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity else None,
             requested_model=(str(req_body["model"]) if isinstance(req_body.get("model"), str) else None),
             resolved_model=(str(cc_body["model"]) if isinstance(cc_body.get("model"), str) else None),
-            visibility=profile.status_visibility.level,
+            visibility=access.receipt_detail,
             stream=stream,
             effective_output_limit=effective_output_limit(cc_body),
         )
@@ -27158,19 +26373,14 @@ def _litellm_gateway_metadata(
     *,
     request_path: str,
     service_id: str = "",
-    delegated_litellm_api_key: str = "",
 ) -> dict[str, str]:
     metadata = {
         "execution": "litellm",
         "request-path": request_path,
-        "profile": _profile_source_id(auth_context),
+        "access-plan": _plan_source_id(auth_context),
     }
     if service_id:
         metadata["service-id"] = service_id
-    if delegated_litellm_api_key:
-        metadata["auth-source"] = "litellm"
-        metadata["litellm-key-prefix"] = hash_api_key(delegated_litellm_api_key)[:18]
-        return metadata
     identity = auth_context.identity
     if identity is not None:
         metadata["app"] = str(identity.name)
@@ -27185,7 +26395,6 @@ def _start_litellm_route_receipt(
     requested_model: str,
     protocol: str | None = None,
     intent: str | None = None,
-    delegated_litellm_api_key: str = "",
     parent_request_id: str = "",
 ) -> RouteReceipt:
     if protocol is None or intent is None:
@@ -27193,7 +26402,7 @@ def _start_litellm_route_receipt(
             request_path,
             ("openai.chat", "chat.generate"),
         )
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     if parent_request_id:
         receipt = RouteReceipt(
             protocol=protocol,
@@ -27207,37 +26416,17 @@ def _start_litellm_route_receipt(
         receipt.set_policy_decision("allowed", source="gateway:trusted-loopback")
         receipt.metadata["execution_backend"] = "litellm"
         return receipt
-    if delegated_litellm_api_key:
-        receipt = RouteReceipt(
-            protocol=protocol,
-            path=request_path,
-            intent=intent,
-            backend="litellm",
-            requested_model=requested_model,
-            app_profile="litellm",
-            app_id=None,
-            api_key_name="litellm-virtual-key",
-            visibility=profile.status_visibility.level,
-        )
-        receipt.set_policy_decision("allowed", source="litellm:virtual-key")
-        receipt.metadata.update(
-            {
-                "execution_backend": "litellm",
-                "auth_source": "litellm",
-            }
-        )
-        return receipt
     receipt = RouteReceipt(
         protocol=protocol,
         path=request_path,
         intent=intent,
         backend="litellm",
         requested_model=requested_model,
-        app_profile=profile.id,
+        app_profile=plan_ref(auth_context.identity),
         app_id=auth_context.identity.app_id if auth_context.identity else None,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
-        visibility=profile.status_visibility.level,
+        visibility=access.receipt_detail,
     )
     receipt.set_policy_decision("allowed", source="gateway:profile")
     receipt.metadata.update({"execution_backend": "litellm"})
@@ -27539,7 +26728,7 @@ async def _forward_current_loaded_openai_request(
     # Begin after the pure alias/extension checks but before resolving the
     # active backend: resolution probes the backend and may wait on network I/O.
     is_internal_hop = bool(request_id)
-    profile = _profile_for_auth_context(auth_context)
+    access = _access_for_auth_context(auth_context)
     receipt = RouteReceipt(
         protocol="openai.chat",
         path=request_path,
@@ -27547,11 +26736,11 @@ async def _forward_current_loaded_openai_request(
         requested_model=str(requested_alias) if requested_alias else None,
         resolved_model=logical_target.base_model_id,
         parent_request_id=request_id if is_internal_hop else None,
-        app_profile=None if is_internal_hop else profile.id,
+        app_profile=None if is_internal_hop else plan_ref(auth_context.identity),
         app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
         owner_key_hash=None if is_internal_hop or auth_context.identity is None else auth_context.identity.key_hash,
         api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
-        visibility="internal" if is_internal_hop else profile.status_visibility.level,
+        visibility="internal" if is_internal_hop else access.receipt_detail,
         stream=bool(body_for_backend.get("stream")),
         effective_output_limit=effective_output_limit(body_for_backend),
     )
@@ -27815,7 +27004,6 @@ async def _forward_litellm_proxy_request(
     body_json: Mapping[str, Any],
     runtime_config,
     requested_embedding_dimensions: int | None = None,
-    delegated_litellm_api_key: str = "",
     parent_request_id: str = "",
     activate_local_target: bool = False,
 ) -> Response:
@@ -27840,12 +27028,11 @@ async def _forward_litellm_proxy_request(
         identity = auth_context.identity
         return await provider_execution.execute_paid_litellm(
             request, request_path=request_path, body=body_json,
-            provider=remote_provider, profile=_profile_for_auth_context(auth_context),
+            provider=remote_provider, access=_access_for_auth_context(auth_context),
             runtime=runtime_config, ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
             admin_db_path=ADMIN_DB_PATH,
             app_id=identity.app_id if identity else None,
             app_name=identity.name if identity else None,
-            delegated=bool(delegated_litellm_api_key),
             paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
             requested_model=getattr(request.state, "provider_requested_model", None),
             identity=identity,
@@ -27863,7 +27050,7 @@ async def _forward_litellm_proxy_request(
         except AliasPolicyResolutionError:
             attribution_target = None
 
-    if _profile_target_activation(auth_context) == "existing_only":
+    if _target_activation(auth_context) == "existing_only":
         current_loaded_decision = await _current_loaded_model_policy_decision(
             auth_context,
             requested_model=model_name,
@@ -27890,7 +27077,6 @@ async def _forward_litellm_proxy_request(
         request_path=request_path,
         auth_context=auth_context,
         requested_model=receipt_requested_model,
-        delegated_litellm_api_key=delegated_litellm_api_key,
         parent_request_id=parent_request_id,
     )
     for reason in fallback_reasons:
@@ -27939,7 +27125,6 @@ async def _forward_litellm_proxy_request(
         auth_context,
         request_path=request_path,
         service_id=runtime.service_id,
-        delegated_litellm_api_key=delegated_litellm_api_key,
     )
     gateway_metadata.update(_gateway_request_id_metadata(receipt.request_id))
     read_timeout = (
@@ -27958,7 +27143,6 @@ async def _forward_litellm_proxy_request(
             request.headers,
             api_key=runtime.api_key,
             gateway_metadata=gateway_metadata,
-            delegated_api_key=delegated_litellm_api_key,
         ),
         body=body,
         read_timeout=read_timeout,
@@ -27982,7 +27166,7 @@ async def _forward_litellm_proxy_request(
             activation_error = await _activate_prepared_litellm_local_target(
                 auth_context,
                 requested_model=model_name,
-                enforce_gateway_policy=not bool(delegated_litellm_api_key),
+                enforce_gateway_policy=True,
             )
             if activation_error is not None:
                 owner.report(status="failed", reason="failed")
@@ -28211,11 +27395,7 @@ async def _handle_openai_litellm_request(
     request_path: str,
 ) -> Response:
     """Try only fallback targets explicitly listed in the requested alias."""
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        request_path,
-        allow_litellm_delegation=True,
-    )
+    route_auth = authenticate_runtime_request(request, request_path)
     if isinstance(route_auth, Response):
         return route_auth
     body, parse_error = parse_openai_json_body(await request.body())
@@ -28278,11 +27458,7 @@ async def _handle_openai_litellm_request_once(
     route_auth: RuntimeRouteAuth | None = None,
 ) -> Response:
     if route_auth is None:
-        route_auth = authenticate_runtime_or_litellm_request(
-            request,
-            request_path,
-            allow_litellm_delegation=True,
-        )
+        route_auth = authenticate_runtime_request(request, request_path)
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -28321,10 +27497,7 @@ async def _handle_openai_litellm_request_once(
         if dimensions_error is not None:
             return dimensions_error
 
-    if (
-        not route_auth.delegated_to_litellm
-        and not is_trusted_loopback
-    ):
+    if not is_trusted_loopback:
         policy_decision = _azizam_policy_decision(
             auth_context,
             request_path,
@@ -28342,8 +27515,6 @@ async def _handle_openai_litellm_request_once(
         return admission
 
     if (
-        not route_auth.delegated_to_litellm
-        and
         request_path in {"/v1/chat/completions", "/v1/completions"}
         and _is_use_loaded_model_alias(parsed_body.get("model"))
     ):
@@ -28372,7 +27543,7 @@ async def _handle_openai_litellm_request_once(
                 auth_context,
                 request_path=request_path,
                 body_json=parsed_body,
-                enforce_gateway_policy=not route_auth.delegated_to_litellm,
+                enforce_gateway_policy=True,
                 activate_target=False,
             )
             if activation_error is not None:
@@ -28386,7 +27557,6 @@ async def _handle_openai_litellm_request_once(
         body_json=litellm_body,
         runtime_config=litellm_runtime,
         requested_embedding_dimensions=requested_embedding_dimensions,
-        delegated_litellm_api_key=route_auth.delegated_litellm_api_key or "",
         parent_request_id=trusted_parent_request_id,
         activate_local_target=prepared_local_llm,
     )
@@ -28937,11 +28107,11 @@ def _native_passthrough_receipt(
         backend=provider,
     )
     if auth_context.identity is not None:
-        receipt.app_profile = auth_context.identity.profile.id
+        receipt.app_profile = plan_ref(auth_context.identity)
         receipt.app_id = auth_context.identity.app_id
         receipt.owner_key_hash = auth_context.identity.key_hash
         receipt.api_key_name = auth_context.identity.name
-        receipt.visibility = auth_context.identity.profile.status_visibility.level
+        receipt.visibility = auth_context.identity.access.receipt_detail
     receipt.metadata.update({
         "provider": provider,
         "native_path": f"/{native_path.lstrip('/')}",
@@ -28971,8 +28141,7 @@ def _provider_native_summary(
             native_backend=str(target["backend"]),
         ),
     )
-    profile = auth_context.identity.profile if auth_context.identity else DEFAULT_PROFILE
-    native_policy = profile.native_passthrough
+    access = _access_for_auth_context(auth_context)
     cfg = (config.get("backends") or {}).get(provider, {})
     capabilities = []
     if isinstance(cfg, Mapping):
@@ -29002,8 +28171,12 @@ def _provider_native_summary(
                 "enabled": decision.allowed,
                 "denied": decision.denied,
                 "allowed_backends": [str(target["backend"])],
-                "allowed_operations": sorted(native_policy.allowed_operations) or ["*"],
-                "audit": native_policy.audit,
+                # Both plans must allow an operation; each plan's scopes are listed.
+                "allowed_operations_by_plan": {
+                    plan.id: sorted(plan.direct_engine_access.operations)
+                    for plan in (access.person_plan, access.app_plan) if plan is not None
+                },
+                "audit": True,
             },
         },
         "auth": {
@@ -29320,22 +28493,13 @@ async def unmatched_route(request: Request, path: str):
     This route never reaches a backend. Provider-native APIs are explicitly
     namespaced and policy-gated under /gateway/v1/providers/{provider}/; a
     catch-all must not become a second, ungated passthrough.
-
-    Per-device path-prefix tokens (/<token>/v1/...) authenticate here only;
-    a token-prefixed path is not routed to any handler and gets 404.
     """
     request_path = f"/{path}"
 
-    # Authenticate first, against the original path, so unauthenticated
-    # callers get 401 and a path-prefix token is still visible to the check.
+    # Authenticate first, so unauthenticated callers get 401.
     auth_context = authenticate_request(request, request_path)
     if isinstance(auth_context, Response):
         return auth_context
-
-    # Never echo a path-prefix token back to the caller.
-    path_token = _path_token_from_request(request_path)
-    if path_token is not None:
-        request_path = "/" + request_path.lstrip("/")[len(str(path_token)):].lstrip("/")
 
     return Response(
         content=json.dumps({

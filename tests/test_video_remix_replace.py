@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
@@ -44,7 +45,7 @@ class RemixReplaceBase(unittest.TestCase):
         self.addCleanup(self.stack.close)
         for p in self.comfy.patches(probe=self.probe):
             self.stack.enter_context(p)
-        self.stack.enter_context(patch.object(proxy, "AUTH_ENABLED", False))
+        self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))

@@ -2,8 +2,8 @@
 
 This module separates *durable facts* (who exists, what they have, what was
 done) from *policy decisions* (what they're allowed to do right now). The
-policy evaluator lives in :mod:`gateway.policy`; this store just persists the
-profile JSON that the evaluator later loads.
+policy evaluator lives in :mod:`gateway.policy`; this store persists the
+access-plan documents (:mod:`gateway.access_plans`) and who holds them.
 
 It also separates the *data plane* (apps making API calls, data-plane
 credentials attached to an app) from the *control plane* (humans and service
@@ -20,7 +20,7 @@ Storage invariants
   and pass us the hash + key prefix. We store the hash; the prefix is only
   used to render a non-secret display value (``svc_live_abcd…``).
 * Stable generated IDs use prefixes per entity kind (``usr_``, ``svc_``,
-  ``app_``, ``prof_``, ``cred_``, ``aud_``).
+  ``app_``, ``plan_``, ``cred_``, ``aud_``).
 * OIDC users are unique by ``(issuer, subject)`` — re-logins update profile
   data but preserve the row ID, so anything pointing at the user (apps,
   credentials, role assignments) stays stable.
@@ -46,7 +46,9 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+# Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
+_PRE_ACCESS_PLANS_VERSION = 6
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -56,17 +58,6 @@ OIDC_MOVED_CLIENT_SECRET_ID = "oidc-client-secret"
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
 IDENTITY_CLAIM_KINDS = ("oidc_group", "oidc_role")
-RUNTIME_PROFILE_MAPPING_SOURCE_SPECS = (
-    {"id": "oidc_group", "label": "OIDC group", "description": "Match a configured OIDC group.", "value_mode": "required", "priority": 20},
-    {"id": "oidc_role", "label": "OIDC role", "description": "Match a configured OIDC role.", "value_mode": "required", "priority": 30},
-    {"id": "email", "label": "Email", "description": "Match one normalized email address.", "value_mode": "required", "priority": 10},
-    {"id": "domain", "label": "Domain", "description": "Match one normalized email domain.", "value_mode": "required", "priority": 40},
-    {"id": "gateway_role", "label": "Gateway role", "description": "Match one gateway admin role.", "value_mode": "required", "priority": 50},
-    {"id": "all_users", "label": "All signed-in users", "description": "Match every signed-in user.", "value_mode": "fixed", "fixed_value": "*", "priority": 100},
-)
-RUNTIME_PROFILE_MAPPING_SOURCE_KINDS = tuple(spec["id"] for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS)
-_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID = {spec["id"]: spec for spec in RUNTIME_PROFILE_MAPPING_SOURCE_SPECS}
-
 # Credentials attached to an app are data-plane (a runtime client uses them
 # to call /v1/chat/completions etc.). Credentials attached to a user or
 # service account are control-plane (used to call admin APIs).
@@ -115,21 +106,29 @@ CREATE TABLE IF NOT EXISTS service_accounts (
   disabled_at INTEGER
 );
 
+-- An access plan document (gateway.access_plans). People, apps and
+-- invitations refer to it by its opaque id; the name is only a label.
+CREATE TABLE IF NOT EXISTS access_plans (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  plan_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Every App has an accountable person (owner_user_id) and one assignment:
+-- an access plan id, or 'person' ("Same as its person"). NULL is only the
+-- state after a failed assignment write, and denies every request.
 CREATE TABLE IF NOT EXISTS apps (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
-  owner_user_id TEXT,
-  owner_service_account_id TEXT,
-  default_profile_id TEXT,
+  owner_user_id TEXT NOT NULL,
+  access_plan TEXT,
   created_at INTEGER NOT NULL,
   disabled_at INTEGER,
-  FOREIGN KEY(owner_user_id) REFERENCES users(id),
-  FOREIGN KEY(owner_service_account_id) REFERENCES service_accounts(id),
-  FOREIGN KEY(default_profile_id) REFERENCES profiles(id)
+  FOREIGN KEY(owner_user_id) REFERENCES users(id)
 );
-CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
-CREATE INDEX IF NOT EXISTS apps_owner_service ON apps(owner_service_account_id);
 
 -- The App that attributes a person's own signed-in work (the "Azizam" App).
 -- It holds no credentials: browser sessions act through it without a key.
@@ -140,20 +139,11 @@ CREATE TABLE IF NOT EXISTS session_apps (
   FOREIGN KEY(app_id) REFERENCES apps(id)
 );
 
-CREATE TABLE IF NOT EXISTS profiles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT,
-  profile_json TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS credentials (
   id TEXT PRIMARY KEY,
   subject_kind TEXT NOT NULL,
   subject_id TEXT NOT NULL,
   app_id TEXT,
-  profile_id TEXT,
   hash TEXT NOT NULL UNIQUE,
   prefix TEXT NOT NULL,
   display_name TEXT,
@@ -165,8 +155,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   last_used_at INTEGER,
   -- A key bound to a browser sign-in session; revoked when it signs out.
   session_id TEXT,
-  FOREIGN KEY(app_id) REFERENCES apps(id),
-  FOREIGN KEY(profile_id) REFERENCES profiles(id)
+  FOREIGN KEY(app_id) REFERENCES apps(id)
 );
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject_kind, subject_id);
 CREATE INDEX IF NOT EXISTS credentials_app ON credentials(app_id);
@@ -201,20 +190,6 @@ CREATE TABLE IF NOT EXISTS admin_role_assignments (
 );
 CREATE INDEX IF NOT EXISTS admin_role_subject
   ON admin_role_assignments(subject_kind, subject_id);
-
-CREATE TABLE IF NOT EXISTS runtime_profile_mappings (
-  id TEXT PRIMARY KEY,
-  source_kind TEXT NOT NULL,
-  source_value TEXT NOT NULL,
-  profile_id TEXT NOT NULL,
-  priority INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  created_by TEXT,
-  disabled_at INTEGER,
-  UNIQUE(source_kind, source_value, profile_id)
-);
-CREATE INDEX IF NOT EXISTS runtime_profile_mappings_lookup
-  ON runtime_profile_mappings(source_kind, source_value, disabled_at);
 
 CREATE TABLE IF NOT EXISTS local_password_credentials (
   user_id TEXT PRIMARY KEY,
@@ -267,6 +242,57 @@ CREATE INDEX IF NOT EXISTS audit_target ON audit_events(target_kind, target_id);
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
+# Built-in identities, single-use links and sign-in state (gateway.accounts).
+ACCOUNT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_access (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT REFERENCES access_plans(id),
+ disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS account_sessions (
+ session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_session_revocations (
+ session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_links (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+ plan_id TEXT REFERENCES access_plans(id), user_id TEXT REFERENCES users(id), email TEXT,
+ created_by TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+ used_at INTEGER, revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS account_oidc_verification (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), email_verified INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_login_limits (
+ bucket TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL
+);
+"""
+
+# Run after any migration to schema 7: these name columns only schema 7 has.
+_ACCESS_PLAN_DDL = """
+CREATE INDEX IF NOT EXISTS apps_owner_user ON apps(owner_user_id);
+CREATE TRIGGER IF NOT EXISTS apps_access_plan_exists_insert
+BEFORE INSERT ON apps
+WHEN NEW.access_plan IS NOT NULL AND NEW.access_plan <> 'person'
+  AND NOT EXISTS (SELECT 1 FROM access_plans WHERE id = NEW.access_plan)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan not found');
+END;
+CREATE TRIGGER IF NOT EXISTS apps_access_plan_exists_update
+BEFORE UPDATE OF access_plan ON apps
+WHEN NEW.access_plan IS NOT NULL AND NEW.access_plan <> 'person'
+  AND NOT EXISTS (SELECT 1 FROM access_plans WHERE id = NEW.access_plan)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan not found');
+END;
+CREATE TRIGGER IF NOT EXISTS access_plans_delete_unassigned
+BEFORE DELETE ON access_plans
+WHEN EXISTS (SELECT 1 FROM apps WHERE access_plan = OLD.id)
+BEGIN
+  SELECT RAISE(ABORT, 'access plan is assigned');
+END;
+"""
+
 
 # ---------------------------------------------------------------------------
 # connection plumbing
@@ -281,7 +307,15 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
+    # Refuse a newer database before any DDL can touch it.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'").fetchone():
+        stored = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        if stored is not None and int(stored[0]) > SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"admin_store schema version mismatch: db={stored[0]} code={SCHEMA_VERSION}"
+            )
     conn.executescript(_SCHEMA)
+    conn.executescript(ACCOUNT_SCHEMA)
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
@@ -302,7 +336,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(audit_events)")}
         if "actor_label" not in columns:
             conn.execute("ALTER TABLE audit_events ADD COLUMN actor_label TEXT")
-        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        # Schema 7 rebuilds tables, so it runs in its own transaction below.
+        conn.execute("UPDATE schema_version SET version = ?", (_PRE_ACCESS_PLANS_VERSION,))
     # Grants made before provenance tracking stay manual. This migration is
     # intentionally idempotent even for databases with an inconsistent version.
     columns = {row[1] for row in conn.execute("PRAGMA table_info(admin_role_assignments)")}
@@ -345,6 +380,59 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         stt_chunk_transform_migration.migrate_registry(conn)
     conn.commit()
     _backfill_credential_creators(conn)
+    current = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    if int(current[0]) == _PRE_ACCESS_PLANS_VERSION:
+        _migrate_to_access_plans(conn)
+        # Rebuilt tables lost their indexes and triggers; the schema restores them.
+        conn.executescript(_SCHEMA)
+        conn.execute("CREATE INDEX IF NOT EXISTS credentials_session ON credentials(session_id)")
+    conn.executescript(_ACCESS_PLAN_DDL)
+
+
+def access_plans_backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.bak.pre-access-plans")
+
+
+def _migrate_to_access_plans(conn: sqlite3.Connection) -> None:
+    """Schema 6 -> 7: profiles become access plans (design v4).
+
+    A copy of the database is written beside it first. On any error nothing
+    changes and the gateway refuses to start with the reason.
+    """
+    from gateway import access_plan_migration
+
+    db_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    backup = access_plans_backup_path(db_file)
+    if not backup.exists():
+        target = sqlite3.connect(str(backup))
+        try:
+            conn.backup(target)
+        finally:
+            target.close()
+        backup.chmod(0o600)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        report = access_plan_migration.migrate(conn)
+        problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if problems:
+            raise access_plan_migration.MigrationError(f"rows refer to missing rows: {problems[:5]}")
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        conn.commit()
+    except access_plan_migration.MigrationError as exc:
+        conn.rollback()
+        raise sqlite3.DatabaseError(
+            f"admin.db cannot move to access plans: {exc}. Nothing was changed; "
+            f"a copy is at {backup}."
+        ) from exc
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+    for line in report.lines():
+        print(f"[admin_store] {line}", flush=True)
+    print(f"[admin_store] the database before this change is at {backup}", flush=True)
 
 
 def _backfill_credential_creators(conn: sqlite3.Connection) -> None:
@@ -405,6 +493,12 @@ def _prompt_memory_default(conn: sqlite3.Connection) -> bool:
     except (TypeError, json.JSONDecodeError):
         return True
     return bool(value.get("default_remember", True)) if isinstance(value, Mapping) else True
+
+
+def _insert_account_access(conn: sqlite3.Connection, user_id: str) -> None:
+    """A new person starts with no access plan; the owner chooses one."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+        conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES (?)", (user_id,))
 
 
 def _insert_prompt_memory_preference(
@@ -659,6 +753,7 @@ def upsert_oidc_user(
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
             _insert_prompt_memory_preference(conn, user_id, ts)
+            _insert_account_access(conn, user_id)
         else:
             user_id = row["id"]
             conn.execute(
@@ -667,6 +762,8 @@ def upsert_oidc_user(
                 "WHERE id = ?",
                 (email, display_name, ts, user_id),
             )
+            # A person always has an access row; signing in repairs a missing one.
+            _insert_account_access(conn, user_id)
         conn.commit()
         out = conn.execute(
             "SELECT * FROM users WHERE id = ?", (user_id,)
@@ -811,6 +908,7 @@ def claim_first_local_owner(
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
             _insert_prompt_memory_preference(conn, user_id, ts)
+            _insert_account_access(conn, user_id)
         else:
             user_id = row["id"]
             conn.execute(
@@ -819,6 +917,8 @@ def claim_first_local_owner(
                 "WHERE id = ?",
                 (email, display_name, ts, user_id),
             )
+            # A person always has an access row; signing in repairs a missing one.
+            _insert_account_access(conn, user_id)
 
         conn.execute(
             "INSERT INTO local_password_credentials"
@@ -1030,196 +1130,185 @@ def get_service_account(
 
 
 # ---------------------------------------------------------------------------
-# profiles
+# access plans
 # ---------------------------------------------------------------------------
 
+PERSON_ASSIGNMENT = "person"
 
-def create_profile(
-    name: str,
-    profile_doc: Mapping[str, Any],
-    *,
-    description: str | None = None,
-    now: int | None = None,
-    path: Path = DB_PATH,
+
+def _plan_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    data = {k: row[k] for k in row.keys()}
+    data["plan"] = json.loads(data.pop("plan_json"))
+    return data
+
+
+def _validated_plan_json(plan_id: str, doc: Mapping[str, Any]) -> tuple[str, str]:
+    from gateway.access_plans import plan_from_document, plan_to_document
+
+    plan = plan_from_document({**dict(doc), "id": plan_id})
+    return plan.name, json.dumps(plan_to_document(plan), ensure_ascii=False, sort_keys=True)
+
+
+def create_access_plan(
+    doc: Mapping[str, Any], *, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any]:
-    """Store a profile JSON document.
-
-    The doc shape matches what :func:`gateway.profiles.load_profile` accepts,
-    so the dashboard can hand it straight to the policy evaluator. We don't
-    parse it here — keeping the durable fact (the JSON) separate from the
-    policy interpretation lets the evaluator evolve without migrations.
-    """
-    if not name:
-        raise ValueError("profile name is required")
+    """Store a new plan document. The server assigns the id (design §3.1)."""
+    plan_id = _gen_id("plan")
+    name, payload = _validated_plan_json(plan_id, {k: v for k, v in doc.items() if k != "id"})
     ts = _now() if now is None else int(now)
-    prof_id = _gen_id("prof")
-    payload = json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True)
     try:
         with _conn(path) as conn:
             conn.execute(
-                "INSERT INTO profiles(id, name, description, profile_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (prof_id, name, description, payload, ts),
+                "INSERT INTO access_plans(id, name, plan_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (plan_id, name, payload, ts, ts),
             )
             conn.commit()
-            row = conn.execute(
-                "SELECT * FROM profiles WHERE id = ?", (prof_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
     except sqlite3.IntegrityError as exc:
-        raise ValueError(f"profile name {name!r} is already in use") from exc
-    return _profile_row_to_dict(row)
+        raise ValueError(f"access plan name {name!r} is already in use") from exc
+    return _plan_row_to_dict(row)
 
 
-def get_profile(
-    profile_id: str, *, path: Path = DB_PATH,
-    connection: sqlite3.Connection | None = None,
+def get_access_plan(
+    plan_id: str, *, path: Path = DB_PATH, connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
     with _conn(path) if connection is None else nullcontext(connection) as conn:
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
-    return _profile_row_to_dict(row) if row else None
+        row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
+    return _plan_row_to_dict(row) if row else None
 
 
-def update_profile(
-    profile_id: str,
-    *,
-    name: str | None = None,
-    description: str | None = None,
-    profile_doc: Mapping[str, Any] | None = None,
-    path: Path = DB_PATH,
+def list_access_plans(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+    with _conn(path) as conn:
+        rows = conn.execute("SELECT * FROM access_plans ORDER BY name COLLATE NOCASE, id").fetchall()
+    return [_plan_row_to_dict(row) for row in rows]
+
+
+def update_access_plan(
+    plan_id: str, doc: Mapping[str, Any], *, now: int | None = None, path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    assignments: list[str] = []
-    params: list[Any] = []
-    if name is not None:
-        if not name:
-            raise ValueError("profile name is required")
-        assignments.append("name = ?")
-        params.append(name)
-    if description is not None:
-        assignments.append("description = ?")
-        params.append(description)
-    if profile_doc is not None:
-        assignments.append("profile_json = ?")
-        params.append(json.dumps(dict(profile_doc), ensure_ascii=False, sort_keys=True))
-    if not assignments:
-        return get_profile(profile_id, path=path)
-
-    params.append(profile_id)
+    """Replace a plan's document. The id never changes (design §2.12)."""
+    name, payload = _validated_plan_json(plan_id, {k: v for k, v in doc.items() if k != "id"})
+    ts = _now() if now is None else int(now)
     try:
         with _conn(path) as conn:
             cur = conn.execute(
-                f"UPDATE profiles SET {', '.join(assignments)} WHERE id = ?",
-                params,
+                "UPDATE access_plans SET name = ?, plan_json = ?, updated_at = ? WHERE id = ?",
+                (name, payload, ts, plan_id),
             )
             if cur.rowcount == 0:
                 return None
             conn.commit()
-            row = conn.execute(
-                "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
     except sqlite3.IntegrityError as exc:
-        raise ValueError(f"profile name is already in use") from exc
-    return _profile_row_to_dict(row) if row else None
+        raise ValueError(f"access plan name {name!r} is already in use") from exc
+    return _plan_row_to_dict(row)
 
 
-def list_profiles(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
-    with _conn(path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM profiles ORDER BY created_at ASC"
-        ).fetchall()
-    return [_profile_row_to_dict(r) for r in rows]
+def access_plan_users(conn: sqlite3.Connection, plan_id: str) -> dict[str, list[str] | int]:
+    """Who holds a plan: people, apps (by name) and open invitations."""
+    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
+        "SELECT name, disabled_at FROM apps WHERE access_plan = ? ORDER BY name", (plan_id,),
+    )]
+    people: list[str] = []
+    invites = 0
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+        people = [str(r[0] or r[1]) for r in conn.execute(
+            "SELECT u.display_name, u.email FROM account_access a JOIN users u ON u.id = a.user_id "
+            "WHERE a.plan_id = ? AND a.removed_at IS NULL ORDER BY u.created_at", (plan_id,),
+        )]
+        invites = conn.execute(
+            "SELECT COUNT(*) FROM account_links WHERE plan_id = ? AND kind = 'invite' AND used_at IS NULL "
+            "AND revoked_at IS NULL AND expires_at > ?", (plan_id, _now()),
+        ).fetchone()[0]
+    return {"people": people, "apps": apps, "invites": invites}
 
 
-def delete_profile(
-    profile_id: str, *, path: Path = DB_PATH
-) -> dict[str, Any] | None:
-    """Delete a profile row. Returns the deleted record or None if not found.
-
-    Raises ValueError, naming every user, while an app (enabled or not), a
-    key that is not revoked, an active mapping, a person or a pending invite
-    uses the plan. Revoked keys cannot authenticate and cannot be deleted, so
-    they would block the plan forever; their plan is cleared instead and the
-    record's ``cleared_revoked_credential_ids`` lists them for the audit.
-    """
+def delete_access_plan(plan_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Delete a plan nobody holds. Raises ValueError naming its holders."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM access_plans WHERE id = ?", (plan_id,)).fetchone()
         if row is None:
             conn.rollback()
             return None
-        users = _profile_users(conn, profile_id)
-        if users:
+        users = access_plan_users(conn, plan_id)
+        parts = []
+        if users["people"]:
+            parts.append(f"{len(users['people'])} {'person' if len(users['people']) == 1 else 'people'} "
+                         f"({', '.join(users['people'][:5])})")
+        if users["apps"]:
+            parts.append(f"{len(users['apps'])} app{'' if len(users['apps']) == 1 else 's'} "
+                         f"({', '.join(users['apps'][:5])})")
+        if users["invites"]:
+            parts.append(f"{users['invites']} open invitation{'' if users['invites'] == 1 else 's'}")
+        if parts:
             conn.rollback()
-            raise ValueError(
-                f"Access plan {row['name']!r} is still used by "
-                + "; ".join(users)
-                + ". Move them to another plan, revoke the keys or the invitations, "
-                "or disable the mappings, then delete the plan."
-            )
-        cleared = [r[0] for r in conn.execute(
-            "SELECT id FROM credentials WHERE profile_id = ? AND revoked_at IS NOT NULL "
-            "ORDER BY id", (profile_id,),
-        )]
-        conn.execute(
-            "UPDATE credentials SET profile_id = NULL "
-            "WHERE profile_id = ? AND revoked_at IS NOT NULL", (profile_id,),
-        )
-        conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+            raise ValueError(f"{row['name']} is used by {' and '.join(parts)}. Move them to another plan first.")
+        # Closed invitations and removed people keep no claim on the plan.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone():
+            conn.execute("UPDATE account_links SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+            conn.execute("UPDATE account_access SET plan_id = NULL WHERE plan_id = ?", (plan_id,))
+        conn.execute("DELETE FROM access_plans WHERE id = ?", (plan_id,))
         conn.commit()
-    return {**_profile_row_to_dict(row), "cleared_revoked_credential_ids": cleared}
+    return _plan_row_to_dict(row)
 
 
-def _profile_users(conn: sqlite3.Connection, profile_id: str) -> list[str]:
-    """Describe what still depends on a plan, one phrase per kind of user."""
-    def phrase(noun: str, plural: str, names: list[str]) -> str | None:
-        if not names:
+def instance_owner_id(*, path: Path = DB_PATH) -> str | None:
+    """The first person granted the owner role: the default accountable person."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT r.subject_id FROM admin_role_assignments r JOIN users u ON u.id = r.subject_id "
+            "WHERE r.role = 'owner' AND r.subject_kind = 'user' AND r.revoked_at IS NULL "
+            "ORDER BY r.granted_at, r.id LIMIT 1",
+        ).fetchone()
+    return str(row[0]) if row else None
+
+
+def person_plan_id(user_id: str, *, path: Path = DB_PATH) -> str | None:
+    """A person's access plan id, or None (no plan, or removed)."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT plan_id FROM account_access WHERE user_id = ? AND removed_at IS NULL", (user_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+INVITE_ACCESS_PLAN_SETTING_KEY = "invite_access_plan"
+
+
+def invite_access_plan(*, path: Path = DB_PATH) -> str | None:
+    """The plan preselected for new invitations; None means "Ask each time".
+
+    A stored plan that was deleted reads as "Ask each time".
+    """
+    setting = get_operator_setting(INVITE_ACCESS_PLAN_SETTING_KEY, path=path)
+    plan_id = (setting or {}).get("value", {}).get("plan_id") if isinstance((setting or {}).get("value"), Mapping) else None
+    if plan_id and get_access_plan(str(plan_id), path=path) is not None:
+        return str(plan_id)
+    return None
+
+
+def _check_app_assignment(conn: sqlite3.Connection, access_plan: str | None) -> None:
+    if access_plan is None:
+        raise ValueError("an app needs an access plan: a plan id or 'person'")
+    if access_plan != PERSON_ASSIGNMENT and conn.execute(
+        "SELECT 1 FROM access_plans WHERE id = ?", (access_plan,)
+    ).fetchone() is None:
+        raise ValueError("access plan not found")
+
+
+def set_app_access_plan(app_id: str, access_plan: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Assign an app a plan id or 'person'. No operation clears an assignment."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_app_assignment(conn, access_plan)
+        cur = conn.execute("UPDATE apps SET access_plan = ? WHERE id = ?", (access_plan, app_id))
+        if cur.rowcount == 0:
+            conn.rollback()
             return None
-        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
-        return f"{len(names)} {noun if len(names) == 1 else plural} ({shown})"
-
-    apps = [f"{r[0]} (disabled)" if r[1] is not None else str(r[0]) for r in conn.execute(
-        "SELECT name, disabled_at FROM apps WHERE default_profile_id = ? ORDER BY name",
-        (profile_id,),
-    )]
-    keys = [
-        f"{r[0] or r[1]} on {r[2] or 'an unknown app'}" for r in conn.execute(
-            "SELECT c.display_name, c.prefix, a.name FROM credentials c "
-            "LEFT JOIN apps a ON a.id = COALESCE(c.app_id, c.subject_id) "
-            "WHERE c.profile_id = ? AND c.revoked_at IS NULL ORDER BY c.created_at",
-            (profile_id,),
-        )
-    ]
-    mappings = [f"{r[0]}={r[1]}" for r in conn.execute(
-        "SELECT source_kind, source_value FROM runtime_profile_mappings "
-        "WHERE profile_id = ? AND disabled_at IS NULL ORDER BY priority, created_at",
-        (profile_id,),
-    )]
-    from gateway.accounts import profile_people_and_invites
-    people, invites = profile_people_and_invites(conn, profile_id)
-    found = [
-        phrase("app", "apps", apps),
-        phrase("key", "keys", keys),
-        phrase("active mapping", "active mappings", mappings),
-        phrase("person", "people", people),
-        f"{invites} pending invitation{'' if invites == 1 else 's'}" if invites else None,
-    ]
-    return [item for item in found if item]
-
-
-def _profile_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    data = {k: row[k] for k in row.keys()}
-    raw = data.pop("profile_json", None)
-    if raw:
-        try:
-            data["profile"] = json.loads(raw)
-        except json.JSONDecodeError:
-            data["profile"] = None
-    else:
-        data["profile"] = None
-    return data
+        conn.commit()
+        row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+    return _row_to_dict(row)
 
 
 # ---------------------------------------------------------------------------
@@ -1231,37 +1320,31 @@ def create_app(
     name: str,
     *,
     kind: str,
-    owner_user_id: str | None = None,
-    owner_service_account_id: str | None = None,
-    default_profile_id: str | None = None,
+    owner_user_id: str,
+    access_plan: str,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
+    """Create an App with its accountable person and its assignment.
+
+    ``access_plan`` is a plan id or ``"person"`` ("Same as its person"). The
+    row and its assignment commit together, so an App never exists without
+    one (design §2.4).
+    """
     if kind not in APP_KINDS:
         raise ValueError(f"app kind must be one of {APP_KINDS}, got {kind!r}")
-    if kind == "personal" and not owner_user_id:
-        raise ValueError("personal apps require owner_user_id")
-    if kind == "service" and not owner_service_account_id:
-        raise ValueError("service apps require owner_service_account_id")
-    if owner_user_id and owner_service_account_id:
-        raise ValueError("an app cannot be owned by both a user and a service account")
+    if not owner_user_id:
+        raise ValueError("an app needs an accountable person (owner_user_id)")
 
     ts = _now() if now is None else int(now)
     app_id = _gen_id("app")
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_app_assignment(conn, access_plan)
         conn.execute(
-            "INSERT INTO apps(id, kind, name, owner_user_id, "
-            "owner_service_account_id, default_profile_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                app_id,
-                kind,
-                name,
-                owner_user_id,
-                owner_service_account_id,
-                default_profile_id,
-                ts,
-            ),
+            "INSERT INTO apps(id, kind, name, owner_user_id, access_plan, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (app_id, kind, name, owner_user_id, access_plan, ts),
         )
         conn.commit()
         row = conn.execute(
@@ -1274,15 +1357,14 @@ def ensure_personal_app_for_user(
     user_id: str,
     *,
     name: str | None = None,
-    default_profile_id: str | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Return the user's personal app, creating one if missing.
 
     A user has at most one *personal* app — it's the home for their own
-    data-plane keys ("the key in your editor"). Service apps are separate
-    and created explicitly.
+    data-plane keys ("the key in your editor"). A new one is "Same as its
+    person". Service apps are separate and created explicitly.
     """
     if not user_id:
         raise ValueError("user_id is required")
@@ -1293,22 +1375,13 @@ def ensure_personal_app_for_user(
             "ORDER BY created_at ASC LIMIT 1",
             (user_id,),
         ).fetchone()
-        if row is not None and default_profile_id and not row["default_profile_id"]:
-            conn.execute(
-                "UPDATE apps SET default_profile_id = ? WHERE id = ?",
-                (default_profile_id, row["id"]),
-            )
-            conn.commit()
-            row = conn.execute(
-                "SELECT * FROM apps WHERE id = ?", (row["id"],)
-            ).fetchone()
     if row is not None:
         return _row_to_dict(row)  # type: ignore[return-value]
     return create_app(
         name or f"personal-{user_id}",
         kind="personal",
         owner_user_id=user_id,
-        default_profile_id=default_profile_id,
+        access_plan=PERSON_ASSIGNMENT,
         now=now,
         path=path,
     )
@@ -1339,8 +1412,8 @@ def ensure_session_app_for_user(
         if row is None:
             app_id = _gen_id("app")
             conn.execute(
-                "INSERT INTO apps(id, kind, name, owner_user_id, created_at) "
-                "VALUES (?, 'personal', ?, ?, ?)",
+                "INSERT INTO apps(id, kind, name, owner_user_id, access_plan, created_at) "
+                "VALUES (?, 'personal', ?, ?, 'person', ?)",
                 (app_id, name, user_id, _now() if now is None else int(now)),
             )
             conn.execute(
@@ -1348,6 +1421,11 @@ def ensure_session_app_for_user(
                 (user_id, app_id),
             )
             row = conn.execute("SELECT * FROM apps WHERE id = ?", (app_id,)).fetchone()
+        elif row["access_plan"] is None:
+            # A failed assignment write leaves an App that denies; the next
+            # sign-in repairs it (design §2.4).
+            conn.execute("UPDATE apps SET access_plan = 'person' WHERE id = ?", (row["id"],))
+            row = conn.execute("SELECT * FROM apps WHERE id = ?", (row["id"],)).fetchone()
         conn.commit()
     return _row_to_dict(row)  # type: ignore[return-value]
 
@@ -1387,10 +1465,10 @@ def update_app(
     app_id: str,
     *,
     name: str | None = None,
-    default_profile_id: str | None = None,
-    clear_default_profile: bool = False,
+    access_plan: str | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
+    """Rename an App or change its assignment. An assignment is never cleared."""
     assignments: list[str] = []
     params: list[Any] = []
     if name is not None:
@@ -1398,14 +1476,17 @@ def update_app(
             raise ValueError("app name is required")
         assignments.append("name = ?")
         params.append(name)
-    if clear_default_profile or default_profile_id is not None:
-        assignments.append("default_profile_id = ?")
-        params.append(None if clear_default_profile else default_profile_id)
+    if access_plan is not None:
+        assignments.append("access_plan = ?")
+        params.append(access_plan)
     if not assignments:
         return get_app(app_id, path=path)
 
     params.append(app_id)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if access_plan is not None:
+            _check_app_assignment(conn, access_plan)
         cur = conn.execute(
             f"UPDATE apps SET {', '.join(assignments)} WHERE id = ?",
             params,
@@ -1493,7 +1574,6 @@ def create_credential_hash(
     hash: str,
     prefix: str,
     app_id: str | None = None,
-    profile_id: str | None = None,
     display_name: str | None = None,
     scopes: Iterable[str] | None = None,
     created_by: str | None = None,
@@ -1547,15 +1627,14 @@ def create_credential_hash(
             raise ValueError("this App is a person's signed-in App and cannot hold API keys")
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
-            "profile_id, hash, prefix, display_name, scopes_json, "
+            "hash, prefix, display_name, scopes_json, "
             "created_at, created_by, expires_at, session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 cred_id,
                 subject_kind,
                 subject_id,
                 app_id,
-                profile_id,
                 hash,
                 prefix,
                 display_name,
@@ -1681,6 +1760,51 @@ def find_runtime_credential_by_hash(
     credential = _credential_row_to_dict(row)
     credential["on_session_app"] = bool(credential["on_session_app"])
     return credential
+
+
+# One statement is one snapshot (design §2.13 a): the credential or session
+# App, the App, its accountable person's account state and both plans.
+_RUNTIME_ACCESS_SELECT = """
+SELECT a.id AS app_id, a.name AS app_name, a.kind AS app_kind, a.owner_user_id,
+       a.disabled_at AS app_disabled_at, a.access_plan,
+       u.id AS person_row, u.issuer AS person_issuer,
+       acc.user_id AS access_row, acc.disabled_at AS person_disabled_at,
+       acc.removed_at AS person_removed_at, acc.plan_id AS person_plan_id,
+       pp.plan_json AS person_plan_json,
+       ap.plan_json AS app_plan_json,
+       EXISTS(SELECT 1 FROM session_apps s WHERE s.app_id = a.id) AS on_session_app
+FROM apps a
+LEFT JOIN users u ON u.id = a.owner_user_id
+LEFT JOIN account_access acc ON acc.user_id = a.owner_user_id
+LEFT JOIN access_plans pp ON pp.id = acc.plan_id
+LEFT JOIN access_plans ap ON ap.id = CASE WHEN a.access_plan = 'person' THEN acc.plan_id ELSE a.access_plan END
+"""
+
+
+def runtime_access_row(
+    conn: sqlite3.Connection, *, key_hash: str | None = None, app_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Resolve an App key (by hash) or a session App (by id) in one SELECT.
+
+    For a key the row also carries the credential columns (``cred_*``).
+    """
+    if key_hash is not None:
+        row = conn.execute(
+            "SELECT c.id AS cred_id, c.subject_kind AS cred_subject_kind, c.revoked_at AS cred_revoked_at, "
+            "c.expires_at AS cred_expires_at, c.created_by AS cred_created_by, "
+            "c.display_name AS cred_display_name, q.* FROM credentials c "
+            f"JOIN ({_RUNTIME_ACCESS_SELECT}) q ON q.app_id = COALESCE(NULLIF(c.app_id, ''), c.subject_id) "
+            "WHERE c.hash = ?", (key_hash,),
+        ).fetchone()
+    elif app_id is not None:
+        row = conn.execute(f"SELECT * FROM ({_RUNTIME_ACCESS_SELECT}) WHERE app_id = ?", (app_id,)).fetchone()
+    else:
+        raise ValueError("key_hash or app_id is required")
+    if row is None:
+        return None
+    data = {k: row[k] for k in row.keys()}
+    data["on_session_app"] = bool(data["on_session_app"])
+    return data
 
 
 def list_active_credentials(
@@ -1950,199 +2074,6 @@ def owner_display_name(*, path: Path = DB_PATH) -> str | None:
             continue
         return name
     return None
-
-
-# ---------------------------------------------------------------------------
-# runtime profile mappings
-# ---------------------------------------------------------------------------
-
-
-def _normalize_runtime_mapping(
-    source_kind: str,
-    source_value: str | None,
-) -> tuple[str, str]:
-    kind = str(source_kind or "").strip().lower()
-    spec = _RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID.get(kind)
-    if spec is None:
-        raise ValueError(
-            "source_kind must be one of "
-            f"{RUNTIME_PROFILE_MAPPING_SOURCE_KINDS}"
-        )
-    if spec["value_mode"] == "fixed":
-        return kind, str(spec["fixed_value"])
-    value = (
-        _normalize_identity_value(kind, source_value)
-        if kind in IDENTITY_CLAIM_KINDS else _normalize_access_value(source_value)
-    )
-    if not value:
-        raise ValueError("source_value is required")
-    return kind, value
-
-
-def _default_runtime_mapping_priority(source_kind: str) -> int:
-    return int(_RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID[source_kind]["priority"])
-
-
-def create_runtime_profile_mapping(
-    *,
-    source_kind: str,
-    source_value: str | None,
-    profile_id: str,
-    priority: int | None = None,
-    created_by: str | None = None,
-    now: int | None = None,
-    path: Path = DB_PATH,
-) -> dict[str, Any]:
-    kind, value = _normalize_runtime_mapping(source_kind, source_value)
-    if not profile_id:
-        raise ValueError("profile_id is required")
-    ts = _now() if now is None else int(now)
-    mapping_id = _gen_id("map")
-    prio = (
-        _default_runtime_mapping_priority(kind)
-        if priority is None
-        else int(priority)
-    )
-    with _conn(path) as conn:
-        existing = conn.execute(
-            "SELECT * FROM runtime_profile_mappings "
-            "WHERE source_kind = ? AND source_value = ? AND profile_id = ?",
-            (kind, value, profile_id),
-        ).fetchone()
-        if existing is not None:
-            conn.execute(
-                "UPDATE runtime_profile_mappings SET disabled_at = NULL, "
-                "priority = ?, created_at = ?, created_by = ? WHERE id = ?",
-                (prio, ts, created_by, existing["id"]),
-            )
-            mapping_id = existing["id"]
-        else:
-            conn.execute(
-                "INSERT INTO runtime_profile_mappings"
-                "(id, source_kind, source_value, profile_id, priority, "
-                "created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (mapping_id, kind, value, profile_id, prio, ts, created_by),
-            )
-        conn.commit()
-        row = conn.execute(
-            "SELECT * FROM runtime_profile_mappings WHERE id = ?",
-            (mapping_id,),
-        ).fetchone()
-    return _row_to_dict(row)  # type: ignore[return-value]
-
-
-def disable_runtime_profile_mapping(
-    mapping_id: str,
-    *,
-    now: int | None = None,
-    path: Path = DB_PATH,
-) -> bool:
-    ts = _now() if now is None else int(now)
-    with _conn(path) as conn:
-        cur = conn.execute(
-            "UPDATE runtime_profile_mappings SET disabled_at = ? "
-            "WHERE id = ? AND disabled_at IS NULL",
-            (ts, mapping_id),
-        )
-        conn.commit()
-        return cur.rowcount > 0
-
-
-def list_runtime_profile_mappings(
-    *,
-    include_disabled: bool = False,
-    path: Path = DB_PATH,
-) -> list[dict[str, Any]]:
-    where = "" if include_disabled else "WHERE disabled_at IS NULL"
-    with _conn(path) as conn:
-        rows = conn.execute(
-            f"SELECT * FROM runtime_profile_mappings {where} "
-            "ORDER BY priority ASC, created_at ASC"
-        ).fetchall()
-    return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
-
-
-def replace_default_runtime_profile_mapping(
-    *, profile_id: str | None, actor: Any, path: Path = DB_PATH,
-) -> None:
-    """Atomically replace the universal grant, preserving specific identity mappings."""
-    ts = _now()
-    with _conn(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        if profile_id not in {None, "default", "default-local"} and conn.execute(
-            "SELECT 1 FROM profiles WHERE id = ?", (profile_id,)
-        ).fetchone() is None:
-            raise ValueError("access plan not found")
-        conn.execute(
-            "UPDATE runtime_profile_mappings SET disabled_at = ? WHERE source_kind = 'all_users' AND disabled_at IS NULL",
-            (ts,),
-        )
-        if profile_id is not None:
-            conn.execute(
-                "INSERT INTO runtime_profile_mappings "
-                "(id, source_kind, source_value, profile_id, priority, created_at, created_by) "
-                "VALUES (?, 'all_users', '*', ?, 100, ?, ?) "
-                "ON CONFLICT(source_kind, source_value, profile_id) DO UPDATE SET "
-                "disabled_at = NULL, priority = 100, created_at = excluded.created_at, created_by = excluded.created_by",
-                (_gen_id("map"), profile_id, ts, actor.subject),
-            )
-        _record_audit_in_transaction(
-            conn, "operator.default_access_plan.update", actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id, actor_label=actor.actor_label,
-            target_kind="runtime_profile_mapping", target_id="all_users",
-            metadata={"profile_id": profile_id}, now=ts,
-        )
-        conn.commit()
-
-
-def resolve_runtime_profile_mapping_details(
-    *,
-    email: str,
-    gateway_role: str,
-    oidc_groups: Iterable[str] = (),
-    oidc_roles: Iterable[str] = (),
-    path: Path = DB_PATH,
-) -> dict[str, Any] | None:
-    email_value = _normalize_access_value(email)
-    _, _, domain = email_value.partition("@")
-    candidates: set[tuple[str, str]] = {("all_users", "*")}
-    if email_value:
-        candidates.add(("email", email_value))
-    if domain:
-        candidates.add(("domain", domain))
-    role_value = _normalize_access_value(gateway_role or "none")
-    if role_value:
-        candidates.add(("gateway_role", role_value))
-    for group in oidc_groups:
-        value = _normalize_identity_value("oidc_group", group)
-        if value:
-            candidates.add(("oidc_group", value))
-    for role in oidc_roles:
-        value = _normalize_identity_value("oidc_role", role)
-        if value:
-            candidates.add(("oidc_role", value))
-
-    for row in list_runtime_profile_mappings(path=path):
-        kind = str(row.get("source_kind") or "")
-        value = str(row.get("source_value") or "")
-        # Old short-name mappings remain exact root paths after migration.
-        if kind in IDENTITY_CLAIM_KINDS:
-            value = _normalize_identity_value(kind, value)
-        pair = (kind, value)
-        if pair in candidates:
-            return row
-    return None
-
-
-def resolve_runtime_profile_mapping(
-    *, email: str, gateway_role: str, oidc_groups: Iterable[str] = (),
-    oidc_roles: Iterable[str] = (), path: Path = DB_PATH,
-) -> str | None:
-    mapping = resolve_runtime_profile_mapping_details(
-        email=email, gateway_role=gateway_role, oidc_groups=oidc_groups,
-        oidc_roles=oidc_roles, path=path,
-    )
-    return str(mapping["profile_id"]) if mapping and mapping.get("profile_id") else None
 
 
 # ---------------------------------------------------------------------------
@@ -2779,8 +2710,6 @@ __all__ = [
     "SUBJECT_KINDS",
     "APP_KINDS",
     "IDENTITY_CLAIM_KINDS",
-    "RUNTIME_PROFILE_MAPPING_SOURCE_KINDS",
-    "RUNTIME_PROFILE_MAPPING_SOURCE_SPECS",
     "init_db",
     "secure_state_path",
     "schema_version",
@@ -2797,9 +2726,18 @@ __all__ = [
     "create_service_account",
     "ensure_service_account",
     "get_service_account",
-    "create_profile",
-    "get_profile",
-    "list_profiles",
+    "PERSON_ASSIGNMENT",
+    "access_plan_users",
+    "create_access_plan",
+    "delete_access_plan",
+    "get_access_plan",
+    "list_access_plans",
+    "set_app_access_plan",
+    "person_plan_id",
+    "INVITE_ACCESS_PLAN_SETTING_KEY",
+    "invite_access_plan",
+    "update_access_plan",
+    "runtime_access_row",
     "create_app",
     "ensure_personal_app_for_user",
     "ensure_session_app_for_user",
@@ -2821,10 +2759,6 @@ __all__ = [
     "revoke_admin_role",
     "list_admin_roles",
     "owner_display_name",
-    "create_runtime_profile_mapping",
-    "disable_runtime_profile_mapping",
-    "list_runtime_profile_mappings",
-    "resolve_runtime_profile_mapping",
     "put_operator_setting",
     "put_operator_setting_with_audit",
     "get_service_registry_with_generation",

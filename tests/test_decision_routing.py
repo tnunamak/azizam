@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.capabilities import summarize_capability
+from tests.support.access import plan_for, access  # noqa: E402
 from gateway.decision_routing import DecisionRuntime
 from gateway.decisions_api import DecisionsError
 from gateway.receipts import RouteReceipt
@@ -262,14 +263,11 @@ def test_all_alias_candidates_unavailable_have_retry_hint():
 @pytest.mark.parametrize("model", ["decide", "small", "small-v1", "jev-latest"])
 def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
     from gateway.runtime_auth import RuntimeIdentity
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     auth = proxy.AuthContext(RuntimeIdentity(
-        "restricted", "hash", profile=AppProfile(
-            id="restricted", allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
-        ),
+        "restricted", "hash", access=access(plan_for("restricted")),
     ))
     cap = proxy.DECISION_RUNTIME.capabilities()[0]
     assert proxy._capability_for_profile(cap, auth).policy_available is False
@@ -285,7 +283,6 @@ def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
 
 def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -294,11 +291,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     auth = proxy.AuthContext(RuntimeIdentity(
         "restricted",
         "hash",
-        profile=AppProfile(
-            id="restricted",
-            allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("restricted"), load=False),
     ))
     def observed(_service, *, fresh=False):
         if fresh:
@@ -313,7 +306,6 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
 
 def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -322,11 +314,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
     auth = proxy.AuthContext(RuntimeIdentity(
         "cpu",
         "hash",
-        profile=AppProfile(
-            id="cpu",
-            allow=CapabilitySelector(tags=frozenset({"engine:cpu"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("cpu"), load=False),
     ))
 
     def observed(_service, *, fresh=False):
@@ -345,7 +333,6 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
 def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypatch):
     import time
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -354,11 +341,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     auth = proxy.AuthContext(RuntimeIdentity(
         "gpu",
         "hash",
-        profile=AppProfile(
-            id="gpu",
-            allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("gpu"), load=False),
     ))
     def observed(service, *, fresh=False):
         if fresh:
@@ -453,7 +436,6 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     import gateway.decision_routing as routing
     import gateway.lifecycle_drivers as lifecycle
     import proxy
-    from gateway.policy import AppProfile
     from gateway.runtime_auth import RuntimeIdentity
 
     # Scale seconds down: startup exceeds the default routing deadline, but
@@ -476,8 +458,8 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
             return True
 
     monkeypatch.setattr(lifecycle, "driver_for_service", lambda *args: Driver())
-    profile = AppProfile(id="local")
-    auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", profile=profile)) if app_key else proxy.AuthContext()
+    profile = plan_for("local")
+    auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", access=access(profile))) if app_key else proxy.AuthContext()
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "large-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
         result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, {**BODY, "model": "decide-quality"}, "r"))
@@ -537,12 +519,9 @@ def test_engine_deadline_response_is_retryable_and_preserves_reason():
 
 def test_allowed_local_tag_agrees_for_discovery_and_direct_dispatch(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
     from gateway.runtime_auth import RuntimeIdentity
     monkeypatch.setattr(proxy, "config", config())
-    auth = proxy.AuthContext(RuntimeIdentity("local", "hash", profile=AppProfile(
-        id="local", allow=CapabilitySelector(tags=frozenset({"local"})),
-    )))
+    auth = proxy.AuthContext(RuntimeIdentity("local", "hash", access=access(plan_for("local"))))
     for name in ("decide", "small", "small-v1", "jev-latest"):
         cap = proxy.DECISION_RUNTIME.capability_for(name, "small")
         assert proxy._capability_for_profile(cap, auth).policy_available is True
@@ -551,7 +530,6 @@ def test_allowed_local_tag_agrees_for_discovery_and_direct_dispatch(monkeypatch)
 
 def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
     from gateway.runtime_auth import RuntimeIdentity
     import time
     monkeypatch.setattr(proxy, "config", config())
@@ -559,9 +537,7 @@ def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
     monkeypatch.setattr(rt, "observed", {"large": (time.monotonic(), "gpu"), "small": (time.monotonic(), "cpu")})
     ensure = AsyncMock(return_value=None)
     monkeypatch.setattr(rt, "ensure_ready", ensure)
-    auth = proxy.AuthContext(RuntimeIdentity("gpu", "hash", profile=AppProfile(
-        id="gpu", allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
-    )))
+    auth = proxy.AuthContext(RuntimeIdentity("gpu", "hash", access=access(plan_for("gpu"))))
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"code": "overloaded"}})))):
         with pytest.raises(DecisionsError) as error:

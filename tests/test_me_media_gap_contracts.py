@@ -19,6 +19,7 @@ from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
+from tests.support.access import service_app
 
 
 PNG_1X1 = base64.b64decode(
@@ -54,15 +55,13 @@ class MeMediaGapContractTests(unittest.TestCase):
             role="owner", subject_kind="user", subject_id=self.owner["id"], path=self.admin_db
         )
         self.app_a = admin_store.create_app(
-            "Alice", kind="personal", owner_user_id=self.alice["id"], path=self.admin_db
+            "Alice", kind="personal", owner_user_id=self.alice["id"], access_plan="person", path=self.admin_db
         )
         self.app_b = admin_store.create_app(
-            "Bob", kind="personal", owner_user_id=self.bob["id"], path=self.admin_db
+            "Bob", kind="personal", owner_user_id=self.bob["id"], access_plan="person", path=self.admin_db
         )
         self.service_account = admin_store.ensure_service_account("svc_daisy", path=self.admin_db)
-        self.service_app = admin_store.create_app(
-            "Daisy", kind="service", owner_service_account_id=self.service_account["id"], path=self.admin_db
-        )
+        self.service_app = service_app("Daisy", path=self.admin_db)
         self.cred_a = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app_a["id"],

@@ -72,9 +72,14 @@ def main():
     launcher = state / "launch.py"
     launcher.write_text('''import hashlib, os, sys
 import proxy
-from gateway import admin_store, receipt_store
-owner = admin_store.create_service_account("proof", path=proxy.ADMIN_STORE.path)
-app = admin_store.create_app("proof", kind="service", owner_service_account_id=owner["id"], path=proxy.ADMIN_STORE.path)
+from gateway import accounts, admin_store, receipt_store
+db = proxy.ADMIN_STORE.path
+plan = admin_store.create_access_plan({"name": "Decisions proof", "can_use": {"decision": {"items": "all"}},
+    "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False,
+    "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none"}, path=db)
+owner = admin_store.upsert_oidc_user("https://proof.invalid", "proof", display_name="Proof owner", path=db)
+accounts.change_person(owner["id"], "proof", path=db, plan_id=plan["id"])
+app = admin_store.create_app("proof", kind="service", owner_user_id=owner["id"], access_plan=plan["id"], path=db)
 key = sys.stdin.readline().strip()
 admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:"+hashlib.sha256(key.encode()).hexdigest(), prefix="proof", app_id=app["id"], path=proxy.ADMIN_STORE.path)
 receipt_store.init_db()

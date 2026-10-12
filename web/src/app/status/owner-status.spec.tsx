@@ -742,13 +742,12 @@ it("opens provider spend and cap details and restores focus", async () => {
   expect(trigger).toHaveFocus();
 });
 
-it("does not invent a spending-limit reset time", async () => {
+it("shows a spending-limit refusal without inventing spend or a reset time", async () => {
   activityState.data = [{ created_at: Date.now() / 1000, receipt: { status: "rejected", app_profile: "p", warnings: ["Paid request refused: spending cap reached; daily spending limit exceeded; monthly budget exceeded."] } }];
-  vi.spyOn(api.profiles, "list").mockResolvedValue([{ id: "p", name: "Household", profile: { remote: { budget_usd_per_month: 10 } } }] as unknown as Awaited<ReturnType<typeof api.profiles.list>>);
   mount();
-  expect(await screen.findByText("Reset time not provided")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Edit access plan" })).toBeVisible();
-  expect(document.body.textContent).not.toMatch(/roll off|Monthly: on/);
+  expect(await screen.findByText("Spending limit reached")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open providers" })).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/roll off|Monthly: on|Reset time/);
 });
 
 it.each([new TypeError("Failed to fetch"), new ApiError("failed", "private exception", 503)])("keeps registry errors scoped and retryable: %s", async (error) => {

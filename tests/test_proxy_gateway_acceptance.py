@@ -22,6 +22,8 @@ documents what wiring is missing.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import asyncio
 import copy
 import inspect
@@ -44,9 +46,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway.access_plans import AccessPlan  # noqa: E402
+from tests.support.access import access, authenticated, plan_for  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
-from gateway.policy import AppProfile, StatusVisibilityPolicy  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +483,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             )
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             response = client.get("/gateway/v1/workflows")
             # Unauthenticated → 401. The catch-all would have returned a
             # ProxyError-shaped 401 too, but we additionally verify the body
@@ -509,7 +512,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return _FakeJob()
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.media_jobs, "create", fake_create
         ):
             response = client.post(
@@ -536,7 +539,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             "OpenAI-shaped LLM routes must not activate local backends when LiteLLM is unavailable"
         )
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy, "default_model_for_operation", lambda *_args, **_kwargs: "local-default"
         ), patch.object(
             proxy, "get_active_backend", fake_active
@@ -615,7 +618,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.dict(
             proxy.os.environ, {"TEST_LITELLM_KEY": "sk-litellm-internal"}
@@ -674,7 +677,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("model='current' must not activate or load models")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
             {"kobold": "http://127.0.0.1:5051"},
@@ -733,7 +736,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
             {"kobold": "http://127.0.0.1:5051"},
@@ -779,7 +782,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return tracked_client, _RaisingCloseNonStreamResponse()
 
         client = TestClient(proxy.app, raise_server_exceptions=False)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
             {"kobold": "http://127.0.0.1:5051"},
@@ -825,7 +828,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("model='current-fast' must not activate or load models")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
             {"kobold": "http://127.0.0.1:5051"},
@@ -876,7 +879,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("unloaded current model request must not load")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "LLM_BACKEND_HOSTS",
             {"tabby": "http://127.0.0.1:5050"},
@@ -913,7 +916,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("inactive current model request must not forward")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "get_active_backend",
             AsyncMock(return_value=None),
@@ -991,7 +994,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "ensure_target", fake_ensure_target
@@ -1059,9 +1062,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         default_record["activation_mmproj"] = sentinel_mmproj
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "config", test_config), patch.object(
-            proxy, "AUTH_ENABLED", False
-        ), patch.object(
+        with patch.object(proxy, "config", test_config), authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "ensure_target", fake_ensure_target
@@ -1121,7 +1122,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "_forward_chat_completions", fake_chat_forward
@@ -1156,7 +1157,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return _FakeStreamClient(), upstream
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy, "_forward_chat_completions", fake_chat_forward
         ):
             response = client.post(
@@ -1198,7 +1199,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "_forward_chat_completions", fake_chat_forward
@@ -1236,7 +1237,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1268,7 +1269,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1309,7 +1310,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1358,7 +1359,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1412,7 +1413,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1448,7 +1449,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise httpx.ConnectError("down")
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(proxy, "send_llm_execution_request", fake_connect):
             connect = client.post(
@@ -1482,7 +1483,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return tracked_client, _RaisingCloseNonStreamResponse()
 
         client = TestClient(proxy.app, raise_server_exceptions=False)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(proxy, "send_llm_execution_request", fake_send):
             response = client.post(
@@ -1560,7 +1561,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             }
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -1632,10 +1633,7 @@ class TestGatewayAudienceFromProfile(unittest.TestCase):
             name="ops",
             key_hash="sha256:ops",
             downstream={},
-            profile=AppProfile(
-                id="ops",
-                status_visibility=StatusVisibilityPolicy(level="standard"),
-            ),
+            access=access(plan_for("ops"), receipts='standard'),
         )
 
         result = resolver(_Stub(admin_identity))
@@ -1948,7 +1946,7 @@ class TestAnthropicAndOllamaRoutes(unittest.TestCase):
     def _patch_auth_open(self):
         # Routes under proxy auth would otherwise 401. We disable auth for the
         # duration of the call to focus the assertion on translation wiring.
-        return patch.object(proxy, "AUTH_ENABLED", False)
+        return authenticated()
 
     def _patch_forwarder(self, payload: dict[str, Any]):
         forwarder_name = _find_chat_forwarder()
@@ -2342,9 +2340,9 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
 class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
     """A client must never be told it may use what its profile denies."""
 
-    def _client_listing(self, profile: AppProfile) -> list[dict[str, Any]]:
+    def _client_listing(self, profile: AccessPlan) -> list[dict[str, Any]]:
         identity = proxy.AuthIdentity(
-            name="listing-key", key_hash="sha256:listing", downstream={}, profile=profile,
+            name="listing-key", key_hash="sha256:listing", downstream={}, access=access(profile),
         )
 
         class _Request:
@@ -2361,8 +2359,8 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
         return summarize_capabilities(capabilities, "client")["capabilities"]
 
     def test_denied_profile_sees_nothing_available_while_open_profile_sees_something(self) -> None:
-        open_listing = self._client_listing(AppProfile(id="open"))
-        denied_listing = self._client_listing(AppProfile(id="denied", backends=frozenset()))
+        open_listing = self._client_listing(plan_for("open"))
+        denied_listing = self._client_listing(plan_for("denied"))
 
         # Non-vacuity: the same catalogue offers something to an open profile.
         self.assertTrue(any(row["available"] for row in open_listing))
@@ -2370,7 +2368,7 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
         self.assertEqual([row for row in denied_listing if row["available"]], [])
 
     def test_partial_profile_sees_only_its_own_backend_available(self) -> None:
-        listing = self._client_listing(AppProfile(id="llm-only", backends=frozenset({"llm-a"})))
+        listing = self._client_listing(plan_for("llm-only"))
 
         ours = {row["intent"]: row["available"] for row in listing
                 if row["intent"] in {"chat.completion", "image.generation"}}

@@ -20,22 +20,14 @@ from types import SimpleNamespace
 import pytest
 
 from gateway import decision_provider_execution as execution
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
+from tests.support.access import plan_for  # noqa: E402
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, module_deadline  # noqa: F401
 
 MODEL = "typesafe/jev-latest"
 API_KEY = "ts-fk-key"
 BODY = {"model": MODEL, "state": "x", "questions": {"q": {"type": "noul", "instructions": "ok?"}}}
 HANG_BOUND_SECONDS = 10
-PROFILE = DEFAULT_PROFILE.with_overrides(
-    id="paid-decisions",
-    remote=RemoteProviderPolicy(
-        providers=frozenset({"typesafe"}),
-        max_usd_per_request=Decimal("1.00"),
-        budget_usd_per_day=Decimal("5.00"),
-        budget_usd_per_month=Decimal("20.00"),
-    ),
-)
+PROFILE = plan_for("paid-decisions", paid=sorted({"typesafe"}))
 AUTH = SimpleNamespace(identity=SimpleNamespace(app_id="app_1", name="Decision App", delegated=False))
 
 

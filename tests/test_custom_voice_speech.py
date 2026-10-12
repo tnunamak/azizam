@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated, service_app  # noqa: E402
 from gateway import admin_store, custom_voices as cv, media_jobs, receipt_store
 from gateway.admin_api import AdminContext
 from gateway.admin_runtime import AdminSQLiteStore
@@ -62,7 +63,7 @@ class CustomVoiceRouteCase(unittest.TestCase):
         self.ready = AsyncMock(return_value=None)
         self.client = TestClient(proxy.app)
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", cfg),
             patch.object(proxy.httpx, "AsyncClient", _FakeClient),
@@ -365,7 +366,7 @@ class RevocationOwnershipTests(CustomVoiceRouteCase):
         admin_store.init_db(db)
         store = AdminSQLiteStore(db)
         account = admin_store.ensure_service_account("svc", path=db)
-        app = admin_store.create_app("svc-app", kind="service", owner_service_account_id=account["id"], path=db)
+        app = service_app("svc-app", path=db)
         credential = admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="hash-1", prefix="opk", path=db)
         seen = []
         store.on_credential_revoked = lambda record: seen.append(record.get("hash"))

@@ -18,17 +18,15 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, providers, sqlite_startup
+from gateway import admin_store, sqlite_startup
 from gateway.admin_api import AdminAuthError
-from gateway.admin_runtime import person_for_app_credential
+from gateway.admin_runtime import access_for_person, identity_from_access_row, person_for_app_credential
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
 from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
 from gateway.model_presentation import (product_capability, capability_presentation,
                                         group_product_capabilities, product_status_summary)
-from gateway.policy import DEFAULT_PROFILE
 from gateway.request_source import gateway_ui_request
-from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.service_registry import is_remote_provider_config
 from gateway.user_runtime import (
@@ -46,22 +44,23 @@ def _error(exc: UserPortalError | AdminAuthError) -> JSONResponse:
 
 
 def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
-              default_profile_id: str | None, path: Path, *, person_id: str | None = None) -> RuntimeIdentity | None:
-    """Resolve access without marking a key used by a read-only Home request."""
-    profile_id = (credential or {}).get("profile_id") or app.get("default_profile_id") or default_profile_id
-    profile = DEFAULT_PROFILE
-    if profile_id:
-        record = admin_store.get_profile(str(profile_id), path=path)
-        if record is None:
-            return None
-        try:
-            profile = load_profile(record.get("profile"), default_id=str(profile_id))
-        except ProfileLoadError:
-            return None
-    return RuntimeIdentity(name=str(app.get("name") or "Your access"),
-                           key_hash=str((credential or {}).get("hash") or ""),
-                           profile=profile, app_id=app.get("id"),
-                           person_id=person_for_app_credential(app, credential) if credential is not None else person_id)
+              path: Path, *, person_id: str) -> RuntimeIdentity | None:
+    """Resolve an App's access without marking a key used by a read-only Home request."""
+    with admin_store.runtime_auth_connection(path) as conn:
+        row = admin_store.runtime_access_row(conn, app_id=str(app["id"]))
+    if row is None:
+        return None
+    identity = identity_from_access_row(
+        row, key_hash=str((credential or {}).get("hash") or ""), name=str(app.get("name") or "Your access"),
+        person_id=person_for_app_credential(app, credential) if credential is not None else person_id,
+    )
+    return None if identity.denial else identity
+
+
+def _new_app_identity(path: Path, *, person_id: str) -> RuntimeIdentity:
+    """A new App of this person is "Same as my access plan" (design §2.9)."""
+    return RuntimeIdentity(name="Your access", key_hash="", access=access_for_person(person_id, path=path),
+                           person_id=person_id, accountable_person_id=person_id)
 
 
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
@@ -140,7 +139,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             return replace(resolved, policy_available=upstream.policy_available,
                            policy_sources=upstream.policy_sources,
                            policy_reasons=upstream.policy_reasons)
-        return capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
+        return capability_with_policy_view(resolved, identity.access, request=make_policy_request(
             protocol=_PROTOCOLS.get(product_capability(cap), "openai.chat"),
             intent=cap.intent, model=model, backend=concrete.backend,
             workflow=concrete.workflow, capability_exposure=concrete.exposure,
@@ -153,7 +152,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         if "alias" not in cap.tags or not targets:
             if (cap.intent, cap.model) in alias_names:
                 continue  # Public aliases take precedence over same-named models.
-            if cap.workflow and cap.model is None and identity.profile.models is not None:
+            if cap.workflow and cap.model is None and identity.access.lists_items:
                 cap = target_policy(cap, cap.workflow)
             out.append(cap)
             continue
@@ -191,7 +190,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             continue
         concrete = matches[0]
         out.append(target_policy(cap, target, concrete))
-    if identity.profile.models is not None:
+    if identity.access.lists_items:
         # A model-less endpoint alone cannot prove that a constrained key has
         # any usable target. Require a permitted named capability or a logical
         # model declared by the service's routing data.
@@ -286,10 +285,8 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
 
 
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
-                       require_action, csrf_token, default_profile_id, capabilities,
+                       require_action, csrf_token, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
-                       inherited_profile_id_for_app=None, self_service_enabled=lambda: True,
-                       spend_ledger_path: Callable[[], Path | None] = lambda: None,
                        availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
                        workflow_records: Callable[[], Any] = lambda: ()) -> APIRouter:
     """Register session discovery, connection checks and owner setup evidence.
@@ -297,9 +294,6 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     ``availability_services`` adds engines that only composed workflows use
     (such as the face sidecar) to the registry view availability reads;
     ``workflow_records`` lets those workflows project from their engines.
-
-    ``spend_ledger_path`` returns the provider spend ledger that cap
-    enforcement uses; without it, plan spend is reported as unknown.
     """
     router = APIRouter()
 
@@ -325,8 +319,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     async def home(request: Request):
         try:
             session = require_session(request)
-            inherited = default_profile_id(session)
-            account = build_user_portal_snapshot(session, default_profile_id=inherited, path=store.path)
+            account = build_user_portal_snapshot(session, path=store.path)
             if not account.get("authenticated"):
                 raise UserPortalError("login_required", "Sign in to view Home.", status_code=401)
         except UserPortalError as exc:
@@ -354,8 +347,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 continue
             credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
             for credential in credentials or [None]:
-                app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
-                identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
+                identity = _identity(app, credential, store.path, person_id=session.subject)
                 if identity is None:
                     continue
                 scoped = _resolved_capabilities(identity, capabilities, registry)
@@ -364,8 +356,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
-        new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
+        new_identity = _new_app_identity(store.path, person_id=session.subject)
+        new_caps = _resolved_capabilities(new_identity, capabilities, registry)
         new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
         for cap in new_caps:
             if cap.policy_available:
@@ -377,12 +369,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         base = (public_base_url(request) or "").rstrip("/")
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
         gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
-        # The person's own plan: the access plan their keys inherit. Spend is
-        # the plan's total across everyone on it, because the caps are shared.
-        plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
-        plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
-                      if plan_identity is not None else None)
-        return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
+        return _json({**account, "gateway": gateway, "has_access_plan": new_identity.access.complete,
                       "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                       "aliases": alias_rows, "credential_aliases": credential_aliases,
@@ -477,8 +464,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             if credential.get("expires_at") is not None and int(credential["expires_at"]) <= int(time.time()):
                 raise UserPortalError("credential_not_found", "API key not found for this account", status_code=404)
             app = admin_store.get_app(credential["app_id"], path=store.path)
-            inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else default_profile_id(session)
-            identity = _identity(app, credential, inherited, store.path, person_id=session.subject)
+            identity = _identity(app, credential, store.path, person_id=session.subject)
             if identity is None:
                 raise UserPortalError("credential_unavailable", "This key's access plan is unavailable.", status_code=403)
         except UserPortalError as exc:

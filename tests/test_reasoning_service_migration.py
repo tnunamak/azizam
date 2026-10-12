@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import admin_store, service_registry
 from gateway.transforms import REGISTRY, TransformContext, run_request_pipeline
 
@@ -109,7 +110,7 @@ def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effo
         BEFORE_NAMESPACE["config"] = runtime
         # The frozen function's helper was defined in proxy's module globals;
         # patching config makes it observe this same registry projection.
-        with patch.object(proxy, "config", runtime), patch.object(proxy, "AUTH_ENABLED", False), \
+        with patch.object(proxy, "config", runtime), authenticated(), \
              patch.object(proxy, "_prepare_resolved_openai_request", prepare), \
              patch.object(proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5111"}), \
              patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), \

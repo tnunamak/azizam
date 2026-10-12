@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import litellm_substrate
 
 
@@ -211,7 +212,7 @@ class ProviderRoutingTests(unittest.TestCase):
             service_id="litellm",
         )
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=_registry()),
             patch.object(proxy, "_litellm_runtime_config", return_value=self.runtime),
             patch.object(proxy, "_service_availability_response", return_value=None),

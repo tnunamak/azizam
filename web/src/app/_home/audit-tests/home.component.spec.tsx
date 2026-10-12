@@ -18,7 +18,7 @@ const app = {
   kind: "personal",
   disabled_at: null,
   created_at: 1700000000,
-  profile: null,
+  access_plan: null,
   can_mint_keys: true,
   credentials: [
     {
@@ -26,7 +26,6 @@ const app = {
       subject_kind: "app",
       subject_id: "app-browser",
       app_id: "app-browser",
-      profile_id: null,
       prefix: "opk_test",
       display_name: "Browser key",
       scopes: [],

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gateway import category_enforcement, category_policy as policy
+from tests.support.access import plan_for  # noqa: E402
 from gateway.category_api import snapshot_to_json
 from gateway.category_store import CategoryStore
 from gateway.policy import ALLOWED, DENIED, PolicyDecision, PolicyRequest
@@ -136,20 +137,19 @@ def test_runtime_auth_applies_the_rules(gate):
         person_id: str
         app_id: str
 
-    identity = RuntimeLike(runtime_auth.DEFAULT_PROFILE, "mia", "family-app")
+    identity = RuntimeLike(runtime_auth.plan_for("default-local"), "mia", "family-app")
     decision = runtime_auth.evaluate_and_apply(identity, _request())
     assert decision.decision == DENIED
 
 
 def test_discovery_shows_the_category_decision_for_a_governed_identity(gate):
     from gateway.capabilities import Capability, capability_with_policy_view
-    from gateway.policy import DEFAULT_PROFILE
     _activate(gate, _snapshot(value="adult"))
     flux = Capability(intent="image.generate", backend="comfyui", workflow="flux")
-    governed = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("mia", "family-app"))
+    governed = capability_with_policy_view(flux, plan_for("default-local"), identity=Identity("mia", "family-app"))
     assert governed.policy_available is False
     assert any("category rules: REQUIRE_MISMATCH" in reason for reason in governed.policy_reasons)
-    other = capability_with_policy_view(flux, DEFAULT_PROFILE, identity=Identity("sam", "work-app"))
+    other = capability_with_policy_view(flux, plan_for("default-local"), identity=Identity("sam", "work-app"))
     assert other.policy_available is True
 
 

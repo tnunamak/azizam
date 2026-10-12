@@ -59,7 +59,6 @@ export interface Credential {
   subject_kind: CredentialSubjectKind;
   subject_id: string;
   app_id: string | null;
-  profile_id: string | null;
   /** First 18 chars of the full key — render via <SecretMask> only. */
   prefix: string;
   display_name: string;
@@ -128,14 +127,16 @@ export interface App {
   id: string;
   kind: "service" | "personal";
   name: string;
-  owner_user_id: string | null;
-  owner_service_account_id: string | null;
-  default_profile_id: string | null;
+  /** The accountable person: their plan bounds the app (design §2.4). */
+  owner_user_id: string;
+  accountable_person: { id: string; name: string | null } | null;
+  /** An access plan id, "person" (same as its person), or null: no plan, denies. */
+  access_plan: string | null;
+  same_as_person: boolean;
+  access_plan_name: string | null;
+  effective_access_plan_id: string | null;
   created_at: number;
   disabled_at: number | null;
-  effective_profile_id: string;
-  effective_profile_name: string;
-  effective_profile_source: "app_default" | "fallback";
 }
 
 export interface User {
@@ -150,47 +151,40 @@ export interface User {
   roles: string[];
 }
 
-export interface Profile {
-  id: string;
+export type CapabilityId =
+  | "chat" | "image" | "video" | "speech" | "transcribe" | "music"
+  | "sfx" | "audio" | "decide" | "embed" | "rerank";
+
+export type PlanItem = { model: string } | { workflow: string };
+
+/** An access plan document (design §3.1). Every field is required. */
+export interface AccessPlanDocument {
+  id?: string;
   name: string;
-  description: string | null;
-  created_at: number;
-  profile: ProfilePolicyDocument;
-  protocols: string[];
-  workflows: string[];
-  status_visibility: string;
+  can_use: Partial<Record<CapabilityId, { items: "all" | PlanItem[] }>>;
+  direct_engine_access: { engines: "all" | string[]; operations: string[] };
+  paid_providers: string[];
+  provider_fallback: boolean;
+  can_load_models: boolean;
+  receipt_detail: "none" | "basic" | "standard" | "full";
+  media_metadata: "none" | "full";
 }
 
-export interface ProfilePolicyDocument {
-  id?: string;
-  protocols?: string[];
-  workflows?: string[];
-  models?: string[];
-  backends?: string[];
-  allow?: {
-    intents?: string[];
-    exposure?: string[];
-    trust_tiers?: string[];
-    resource_tiers?: string[];
-    tags?: string[];
-  };
-  fallback?: { cloud_allowed?: boolean };
-  remote?: {
-    providers?: string[];
-    max_usd_per_request?: string | number | null;
-    budget_usd_per_day?: string | number | null;
-    budget_usd_per_month?: string | number | null;
-    allow_paid_fallback?: boolean;
-  };
-  native_passthrough?: {
-    enabled?: boolean;
-    allowed_backends?: string[];
-    allowed_operations?: string[];
-    audit?: boolean;
-  };
-  status_visibility?: { level?: string };
-  target_policy?: { visibility?: string; activation?: string };
-  model_access?: { mode?: string };
+export interface AccessPlan {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  plan: AccessPlanDocument;
+  summary: string | null;
+  used_by?: { people: string[]; apps: string[]; invites: number };
+}
+
+/** A plan as pickers show it. */
+export interface AccessPlanChoice {
+  id: string;
+  name: string;
+  summary: string | null;
 }
 
 export interface PolicyEditorChoice {
@@ -198,44 +192,20 @@ export interface PolicyEditorChoice {
   label: string;
   description: string | null;
   available?: boolean;
-  /** Other saved spellings that mean this choice (capabilities only). */
-  aliases?: string[];
 }
 
-export interface PolicyEditorContract {
-  schema_version: 1;
-  profile: {
-    create: { profile: ProfilePolicyDocument };
-    set_semantics: { omitted: "no_opinion"; empty: "deny_all" };
-    choices: {
-      protocols: PolicyEditorChoice[];
-      intents: PolicyEditorChoice[];
-      workflows: PolicyEditorChoice[];
-      models: PolicyEditorChoice[];
-      exposure: PolicyEditorChoice[];
-      trust_tiers: PolicyEditorChoice[];
-      resource_tiers: PolicyEditorChoice[];
-      tags: PolicyEditorChoice[];
-      status_visibility: PolicyEditorChoice[];
-      target_visibility: PolicyEditorChoice[];
-      target_activation: PolicyEditorChoice[];
-    };
-  };
-  runtime_mappings: {
-    source_kinds: Array<{
-      id: string;
-      label: string;
-      description: string | null;
-      value_mode: "required" | "fixed";
-      fixed_value?: string;
-    }>;
-    fallback_profile: {
-      id: string;
-      label: string;
-      description: string | null;
-      assignable: boolean;
-    };
-  };
+export interface AccessPlanEditorContract {
+  schema_version: 2;
+  capabilities: {
+    id: CapabilityId;
+    label: string;
+    items: { kind: "model" | "workflow"; id: string; available: boolean }[];
+  }[];
+  engines: { id: string; label: string; available: boolean }[];
+  paid_providers: { id: string; label: string; available: boolean }[];
+  receipt_detail: PolicyEditorChoice[];
+  media_metadata: PolicyEditorChoice[];
+  new_plan: AccessPlanDocument;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,44 +298,28 @@ export interface PresetsResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Profiles (full CRUD types)
+// Check access
 
-export interface CreateProfileInput {
-  name: string;
-  description?: string;
-  profile: ProfilePolicyDocument;
-}
-
-export interface UpdateProfileInput {
-  name?: string;
-  description?: string;
-  profile?: ProfilePolicyDocument;
-}
-
-export interface SimulateRequest {
-  profile: string;
+export interface CheckAccessRequest {
+  app?: string;
+  plan?: string;
   request: {
-    protocol?: string | null;
     intent?: string | null;
     model?: string | null;
     workflow?: string | null;
-    backend?: string | null;
-    capability_exposure?: string;
-    capability_trust_tier?: string;
-    capability_resource_tier?: string;
-    capability_tags?: string[];
-    requires_cloud_fallback?: boolean;
     native_passthrough?: boolean;
     native_operation?: string | null;
     native_backend?: string | null;
   };
 }
 
-export interface SimulateResult {
-  profile_id: string;
+export interface CheckAccessResult {
+  plan_ids: string[];
   decision: {
     decision: "allowed" | "denied";
     allowed: boolean;
+    code: string | null;
+    side: "person" | "app" | null;
     sources: string[];
     reasons: string[];
     visibility_level: string;
@@ -374,11 +328,6 @@ export interface SimulateResult {
 
 // ---------------------------------------------------------------------------
 // Users surface
-
-export interface UserAccessDefaults {
-  self_service_apps: boolean;
-  auto_create_personal_app: boolean;
-}
 
 export interface AuditEntry {
   id: string;
@@ -806,49 +755,33 @@ export const api = {
       adminFetch<{ users: User[] }>("/admin/api/users").then((r) => r.users),
   },
 
-  profiles: {
+  accessPlans: {
     list: () =>
-      adminFetch<{ profiles: Profile[] }>("/admin/api/profiles").then(
-        (r) => r.profiles,
+      adminFetch<{ access_plans: AccessPlan[] }>("/admin/api/access-plans").then(
+        (r) => r.access_plans,
       ),
-    create: (input: CreateProfileInput) =>
-      adminFetch<{ profile: Profile }>("/admin/api/profiles", {
+    create: (input: AccessPlanDocument) =>
+      adminFetch<{ access_plan: AccessPlan }>("/admin/api/access-plans", {
         method: "POST",
         body: input,
-      }).then((r) => r.profile),
-    update: (profileId: string, input: UpdateProfileInput) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "PATCH",
-        body: input,
-      }).then((r) => r.profile),
-    delete: (profileId: string) =>
-      adminFetch<{ profile: Profile }>(`/admin/api/profiles/${profileId}`, {
-        method: "DELETE",
-      }).then((r) => r.profile),
-  },
-
-  policyEditor: {
-    get: () => adminFetch<PolicyEditorContract>("/admin/api/policy/editor"),
-  },
-
-  policy: {
-    simulate: (input: SimulateRequest) =>
-      adminFetch<SimulateResult>("/admin/api/policy/simulate", {
+      }).then((r) => r.access_plan),
+    update: (planId: string, input: AccessPlanDocument) =>
+      adminFetch<{ access_plan: AccessPlan }>(
+        `/admin/api/access-plans/${encodeURIComponent(planId)}`,
+        { method: "PUT", body: input },
+      ).then((r) => r.access_plan),
+    delete: (planId: string) =>
+      adminFetch<{ access_plan: AccessPlan }>(
+        `/admin/api/access-plans/${encodeURIComponent(planId)}`,
+        { method: "DELETE" },
+      ).then((r) => r.access_plan),
+    editor: () =>
+      adminFetch<AccessPlanEditorContract>("/admin/api/access-plans/editor"),
+    check: (input: CheckAccessRequest) =>
+      adminFetch<CheckAccessResult>("/admin/api/access/check", {
         method: "POST",
         body: input,
       }),
-  },
-
-  userAccessDefaults: {
-    get: () =>
-      adminFetch<{ overrides: { user_access_defaults: UserAccessDefaults } }>(
-        "/admin/api/operator/overrides",
-      ).then((r) => r.overrides.user_access_defaults),
-    update: (input: Partial<UserAccessDefaults>) =>
-      adminFetch<{ user_access_defaults: UserAccessDefaults }>(
-        "/admin/api/operator/user-access-defaults",
-        { method: "PUT", body: input },
-      ).then((r) => r.user_access_defaults),
   },
 
   services: {
@@ -927,7 +860,7 @@ export const queryKeys = {
   apps: ["apps"] as const,
   users: ["users"] as const,
   credentials: ["credentials"] as const,
-  profiles: ["profiles"] as const,
+  accessPlans: ["access-plans"] as const,
   overview: ["overview"] as const,
   /** Recent audit teaser (3 rows on the overview). */
   auditRecent: ["audit", "recent"] as const,
@@ -942,8 +875,7 @@ export const queryKeys = {
   status: ["status"] as const,
   litellmConfig: ["litellmConfig"] as const,
   operatorOverrides: ["operator", "overrides"] as const,
-  runtimeProfileMappings: ["runtime-profile-mappings"] as const,
-  policyEditor: ["policy-editor"] as const,
+  accessPlanEditor: ["access-plan-editor"] as const,
 };
 
 /** QueryClient with contract-aware retry: 4xx errors are deterministic

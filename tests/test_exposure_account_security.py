@@ -36,14 +36,7 @@ def isolated_admin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "store", proxy.ADMIN_STORE)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", SIGNING_KEY)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", CookieConfig(secure=False))
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
-    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", None)
-    monkeypatch.setattr(
-        proxy,
-        "LAN_BYPASS_CIDRS",
-        [ipaddress.ip_network("192.168.0.0/16")],
-    )
+    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [])
     monkeypatch.setattr(proxy, "TRUSTED_PROXIES", [])
     monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", False)
     monkeypatch.setattr(proxy, "_CF_IP_NETWORKS", None)
@@ -62,8 +55,7 @@ def isolated_admin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     ("203.0.113.10", True, 403),
 ])
 def test_setup_exact_container_host_allowance(isolated_admin, monkeypatch, peer, configured, status):
-    monkeypatch.setattr(proxy, "LAN_BYPASS_CIDRS", [])
-    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("172.30.251.1/32")] if configured else None)
+    monkeypatch.setattr(proxy, "SETUP_ALLOWED_CIDRS", [ipaddress.ip_network("172.30.251.1/32")] if configured else [])
     client = TestClient(proxy.app, base_url="http://localhost", client=(peer, 50000))
     response = client.post("/setup/local-owner", data={
         "email": "owner@example.test", "password": "Container-owner-test", "password_confirm": "Container-owner-test",

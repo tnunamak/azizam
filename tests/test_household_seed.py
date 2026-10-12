@@ -50,13 +50,13 @@ def _receipts(tmp_path):
         ]
 
 
-def _spend(tmp_path, profile_id, since):
+def _spend(tmp_path, provider, since):
     with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
         return sum(
             Decimal(row[0])
             for row in conn.execute(
-                "SELECT actual_usd FROM provider_spend WHERE profile_id=? AND created_at>=?",
-                (profile_id, since),
+                "SELECT actual_usd FROM provider_spend WHERE provider=? AND created_at>=?",
+                (provider, since),
             )
         )
 
@@ -131,7 +131,7 @@ def test_household_consistency(tmp_path):
     assert json.loads((tmp_path / "images" / f"{digest}.meta.json").read_text())["asset_id"] == posters[0]
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert {row[0] for row in conn.execute("SELECT name FROM profiles")} == {
+        assert {row[0] for row in conn.execute("SELECT name FROM access_plans")} == {
             "Everyone",
             "Teen",
             "Builder",
@@ -156,17 +156,17 @@ def test_household_consistency(tmp_path):
         )
         teen = json.loads(
             conn.execute(
-                "SELECT profile_json FROM profiles WHERE name='Teen'"
+                "SELECT plan_json FROM access_plans WHERE name='Teen'"
             ).fetchone()[0]
         )
-        assert "claude-sonnet" not in teen["models"]
-        assert teen["remote"]["providers"] == []
-        from gateway.policy import PolicyRequest, evaluate
-        from gateway.profiles import load_profile_from_entry
+        assert teen["paid_providers"] == []
+        from gateway.access_plans import plan_from_document
+        from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 
+        teen_plan = plan_from_document(teen, plan_id="teen")
         assert evaluate(
-            load_profile_from_entry({"profile": teen}),
-            PolicyRequest(remote_provider="household-remote"),
+            EffectiveAccess(person_plan=teen_plan, app_plan=teen_plan),
+            PolicyRequest(intent="chat.completions", remote_provider="household-remote"),
         ).denied
 
 
@@ -234,12 +234,10 @@ def test_running_scenario(tmp_path):
 def test_budget_exhausted_scenario(tmp_path):
     manifest = _seed(tmp_path, "budget-exhausted")
     details = manifest["scenario_details"]
-    with sqlite3.connect(tmp_path / "admin.db") as conn:
-        profile_id = conn.execute("SELECT id FROM profiles WHERE name='Everyone'").fetchone()[0]
     month_start = int(datetime.fromtimestamp(FIXED_NOW, timezone.utc).replace(day=1, hour=0, minute=0, second=0).timestamp())
     # Both windows the gateway enforces are at or over their cap.
-    assert _spend(tmp_path, profile_id, FIXED_NOW - 86400) >= Decimal(1)
-    assert _spend(tmp_path, profile_id, month_start) >= Decimal(8)
+    assert _spend(tmp_path, "household-remote", FIXED_NOW - 86400) >= Decimal(1)
+    assert _spend(tmp_path, "household-remote", month_start) >= Decimal(8)
     receipts = [r for _, r in _receipts(tmp_path)]
     charged = {
         r["request_id"]: Decimal(r["cost"]["usd"])
@@ -419,10 +417,6 @@ def test_household_model_declarations_override_language_discovery():
 def test_budget_history_respects_every_applicable_cap(tmp_path):
     _seed(tmp_path, "budget-exhausted")
     with sqlite3.connect(tmp_path / "admin.db") as conn:
-        profiles = {
-            ident: json.loads(document)["remote"]
-            for ident, document in conn.execute("SELECT id,profile_json FROM profiles")
-        }
         settings = json.loads(conn.execute(
             "SELECT value_json FROM operator_settings WHERE key='provider_admin'"
         ).fetchone()[0])
@@ -433,13 +427,10 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
             continue
         month = int(datetime.fromtimestamp(ts, timezone.utc).replace(
             day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
-        profile = profiles[receipt["app_profile"]]
         provider = settings["providers"][receipt["backend"]]["caps"]
         global_caps = settings["global_caps"]
         exhausted = False
         for matches, daily, monthly in (
-            (lambda r: r["app_profile"] == receipt["app_profile"],
-             profile["budget_usd_per_day"], profile["budget_usd_per_month"]),
             (lambda r: r["backend"] == receipt["backend"],
              provider["daily_usd"], provider["monthly_usd"]),
             (lambda r: True, global_caps["daily_usd"], global_caps["monthly_usd"]),
@@ -453,9 +444,8 @@ def test_budget_history_respects_every_applicable_cap(tmp_path):
             paid.append((ts, receipt))
         elif receipt["metadata"].get("status_code") == 429:
             rejected += 1
-            # The base household also has an independent per-request rejection.
-            estimate = Decimal(receipt["usage"]["prompt_tokens"]) * Decimal("0.000003")
-            assert exhausted or estimate > Decimal(profile["max_usd_per_request"])
+            # The base household also has one seeded rejection of its own.
+            assert exhausted or not receipt["request_id"].startswith("req_household_budget")
             assert receipt["status"] == "rejected"
             assert receipt["usage"]["completion_tokens"] == 0
             assert Decimal(receipt["cost"]["usd"]) == 0

@@ -32,16 +32,16 @@ export default async function login(browser) {
         const invites = await (
           await owner.request.get("/admin/api/invites")
         ).json();
-        const profile = invites.profiles.find(
+        const plan = invites.access_plans.find(
           (item) => item.name === "Local chat",
         );
-        if (!profile) throw new Error("Seeded Local chat access plan missing");
+        if (!plan) throw new Error("Seeded Local chat access plan missing");
         const invited = await owner.request.post("/admin/api/invites", {
           headers: {
             "x-azizam-csrf": session.actor.csrf_token,
             "x-azizam-admin-action": "1",
           },
-          data: { profile_id: profile.id, email, expires_in: 3600 },
+          data: { access_plan: plan.id, email, expires_in: 3600 },
         });
         if (!invited.ok())
           throw new Error(`Fixture invite returned ${invited.status()}`);

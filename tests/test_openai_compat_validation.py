@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import json
 import subprocess
 import struct
@@ -20,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from tests.voice_test_audio import speechlike  # noqa: E402
 
@@ -120,7 +123,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         _FakeTTSAsyncClient.requests = []
         _FakeSTTAsyncClient.requests = []
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             # tts-1 resolves to an on-demand engine; never start a real unit from a test.
@@ -263,7 +266,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(body["error"]["param"], "prompt")
 
     def test_image_variations_missing_auth_returns_auth_error(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             resp = self.client.post(
                 "/v1/images/variations",
                 files={"image": ("source.png", b"not-used", "image/png")},
@@ -327,7 +330,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             self.assertIn("not implemented", body["error"]["message"])
 
     def test_unsupported_openai_api_stubs_still_require_auth(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             resp = self.client.get("/v1/files")
 
         self.assertEqual(resp.status_code, 401)

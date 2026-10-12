@@ -13,7 +13,6 @@ import {
   api,
   type EffectiveOidcConfig,
   type OidcConfigUpdate,
-  type UserAccessDefaults,
 } from "@/lib/api";
 import { PageHeader } from "@/components/product/page-header";
 import { SettingRow, SettingsSection } from "@/components/product/setting-row";
@@ -70,7 +69,7 @@ interface ExtensionReview {
   object_counts: Record<string, number>;
 }
 interface DefaultsResponse {
-  defaults: { profile_id: string | null };
+  defaults: { invite_access_plan: string | null };
   aliases: Record<string, unknown>;
 }
 type SignInMode = "built-in" | "oidc" | "both";
@@ -86,7 +85,6 @@ const keys = {
   oidc: ["settings", "oidc"],
   signIn: ["settings", "sign-in"],
   defaults: ["settings", "defaults"],
-  accessDefaults: ["settings", "access-defaults"],
   media: ["settings", "media"],
   extensions: ["settings", "extensions"],
   effective: ["settings", "effective"],
@@ -96,9 +94,6 @@ const split = (value: string) =>
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-const LEGACY_ACCESS_PLAN_NAMES = new Set(["legacy simon", "legacy daisy"]);
-const isLegacyAccessPlan = (name: string) =>
-  LEGACY_ACCESS_PLAN_NAMES.has(name.trim().toLowerCase());
 
 function useDraft<T>(initial: T) {
   const source = JSON.stringify(initial);
@@ -815,98 +810,57 @@ function DefaultsSection() {
     queryKey: keys.defaults,
     staleTime: 15_000,
     queryFn: async () => {
-      const [defaults, profiles] = await Promise.all([
+      const [defaults, plans] = await Promise.all([
         adminFetch<DefaultsResponse>("/admin/api/settings/defaults"),
-        api.profiles.list(),
+        api.accessPlans.list(),
       ]);
-      return { ...defaults, profiles };
+      return { ...defaults, plans };
     },
   });
-  const {
-    data: accessData,
-    isPending: accessPending,
-    isError: accessError,
-    error: accessErrorDetails,
-    refetch: refetchAccess,
-  } = useQuery({
-    queryKey: keys.accessDefaults,
-    staleTime: 15_000,
-    queryFn: api.userAccessDefaults.get,
-  });
   return (
-    <>
-      <Section
-        title="Defaults"
-        description="Choose the access plan people use when no personal, email, group or role assignment applies."
-      >
-        {isPending ? (
-          <Loading />
-        ) : !data ? (
-          <SettingsError
-            error={error}
-            message="Default access could not be loaded."
-            onRetry={() => void refetch()}
-          />
-        ) : (
-          <>
-            {isError && (
-              <SettingsError
-                error={error}
-                message="Couldn’t refresh default access. The values below may be out of date; your edits are kept."
-                onRetry={() => void refetch()}
-              />
-            )}
-            <DefaultsForm data={data} />
-          </>
-        )}
-      </Section>
-      <Section
-        title="App creation"
-        description="An app holds the API keys a person uses to connect AI software to this gateway."
-      >
-        {accessPending ? (
-          <Loading />
-        ) : !accessData ? (
-          <SettingsError
-            error={accessErrorDetails}
-            message="App creation settings could not be loaded."
-            onRetry={() => void refetchAccess()}
-          />
-        ) : (
-          <>
-            {accessError && (
-              <SettingsError
-                error={accessErrorDetails}
-                message="Couldn’t refresh app creation settings. The values below may be out of date; your edits are kept."
-                onRetry={() => void refetchAccess()}
-              />
-            )}
-            <AccessDefaultsForm initial={accessData} />
-          </>
-        )}
-      </Section>
-    </>
+    <Section
+      title="People and access"
+      description="People can use only what their access plan allows. Nobody has a plan until you choose one."
+    >
+      {isPending ? (
+        <Loading />
+      ) : !data ? (
+        <SettingsError
+          error={error}
+          message="Access plans couldn't be loaded. Try again."
+          onRetry={() => void refetch()}
+        />
+      ) : (
+        <>
+          {isError && (
+            <SettingsError
+              error={error}
+              message="Couldn’t refresh access settings. The values below may be out of date; your edits are kept."
+              onRetry={() => void refetch()}
+            />
+          )}
+          <DefaultsForm data={data} />
+        </>
+      )}
+    </Section>
   );
 }
+const ASK_EACH_TIME = "ask";
 function DefaultsForm({
   data,
 }: {
   data: DefaultsResponse & {
-    profiles: { id: string; name: string }[];
+    plans: { id: string; name: string }[];
   };
 }) {
   const owner = useViewer().role === "owner";
   const client = useQueryClient();
-  const [plan, setPlan] = useDraft(data.defaults.profile_id ?? "none");
-  const selectedPlan = data.profiles.find((profile) => profile.id === plan);
-  const selectedPlanIsLegacy =
-    selectedPlan !== undefined && isLegacyAccessPlan(selectedPlan.name);
-  // Different authorities have separate saves: a failed app-options write cannot claim a plan was saved.
+  const [plan, setPlan] = useDraft(data.defaults.invite_access_plan ?? ASK_EACH_TIME);
   const planSave = useMutation({
     mutationFn: () =>
       adminFetch("/admin/api/settings/defaults", {
         method: "PUT",
-        body: { profile_id: plan === "none" ? null : plan },
+        body: { invite_access_plan: plan === ASK_EACH_TIME ? null : plan },
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.defaults });
@@ -929,9 +883,9 @@ function DefaultsForm({
         }}
       >
         <Field
-          id="default-plan"
-          label="Default access plan"
-          help="Changes apply to new and existing people who use this default. Apps and keys with their own plan keep it. Household access rules still apply."
+          id="invite-plan"
+          label="Access plan for new invitations"
+          help="Preselected when you invite someone. It changes future invitations only."
         >
           <Select
             value={plan}
@@ -942,50 +896,24 @@ function DefaultsForm({
             }}
           >
             <SelectTrigger
-              id="default-plan"
-              aria-describedby="default-plan-help default-plan-consequence"
+              id="invite-plan"
+              aria-describedby="invite-plan-help"
               className="h-auto! min-h-11 w-full *:data-[slot=select-value]:line-clamp-none *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:whitespace-normal"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="[&_[role=option]]:min-h-11 [&_[role=option]]:whitespace-normal">
               <SelectGroup>
-                <SelectItem value="none">
-                  None — built-in local access
-                </SelectItem>
-                {!data.profiles.some((p) => p.id === "default-local") && (
-                  <SelectItem value="default-local">
-                    Default local (built-in)
+                <SelectItem value={ASK_EACH_TIME}>Ask each time</SelectItem>
+                {data.plans.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
                   </SelectItem>
-                )}
-                {!data.profiles.some((p) => p.id === "default") && (
-                  <SelectItem value="default">Default (built-in)</SelectItem>
-                )}
-                {plan !== "none" &&
-                  !["default", "default-local"].includes(plan) &&
-                  (selectedPlanIsLegacy || !selectedPlan) && (
-                    <SelectItem value={plan}>Current plan</SelectItem>
-                  )}
-                {data.profiles
-                  .filter((p) => !isLegacyAccessPlan(p.name))
-                  .map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
+                ))}
               </SelectGroup>
             </SelectContent>
           </Select>
         </Field>
-        <p
-          id="default-plan-consequence"
-          className="text-body"
-          aria-live="polite"
-        >
-          {plan === "none"
-            ? "A new person can use local models and workflows through the built-in local access plan. Remote providers are not included. Choosing none does not block AI access."
-            : "A new person can use the models and capabilities allowed by this plan, within its limits. Remote providers are available only if the plan allows them."}
-        </p>
         <Link
           href="/people?tab=plans"
           className="text-link inline-flex min-h-11 max-w-full items-center underline underline-offset-4"
@@ -994,12 +922,12 @@ function DefaultsForm({
         </Link>
         <MutationError error={planSave.error} />
         <div className="flex flex-wrap items-center gap-3">
-          <Save pending={planSave.isPending} label="Save default plan" />
+          <Save pending={planSave.isPending} label="Save" />
           <p role="status" className="text-muted-foreground text-meta">
             {planSave.isPending
-              ? "Saving default access…"
+              ? "Saving…"
               : planSave.isSuccess
-                ? "Default access plan saved"
+                ? "Access plan for new invitations saved"
                 : null}
           </p>
         </div>
@@ -1029,70 +957,6 @@ function DefaultsForm({
         )}
       </details>
     </div>
-  );
-}
-function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
-  const client = useQueryClient();
-  const [access, setAccess] = useDraft(initial);
-  const accessSave = useMutation({
-    mutationFn: () => api.userAccessDefaults.update(access),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: keys.accessDefaults });
-      void client.invalidateQueries({ queryKey: keys.effective });
-    },
-  });
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        accessSave.mutate();
-      }}
-    >
-      <fieldset
-        disabled={accessSave.isPending}
-        className="flex min-w-0 flex-col gap-5"
-      >
-        <legend className="sr-only">App creation options</legend>
-        <Toggle
-          id="self-service"
-          label="Let people create their own apps"
-          help="On: people can create apps and API keys themselves. Off: an owner or admin must provide them. Existing apps and keys are kept; apps without their own plan use built-in local access instead of the person’s plan."
-          checked={access.self_service_apps}
-          onChange={(value) => {
-            setAccess({ ...access, self_service_apps: value });
-            accessSave.reset();
-          }}
-        />
-        <Toggle
-          id="personal-app"
-          label="Create a personal app automatically"
-          help="On: create a personal app for people who do not have one when they sign in or open their account. Off: they create an app themselves. Requires people to be allowed to create apps."
-          checked={access.auto_create_personal_app}
-          onChange={(value) => {
-            setAccess({ ...access, auto_create_personal_app: value });
-            accessSave.reset();
-          }}
-        />
-      </fieldset>
-      {!access.self_service_apps && (
-        <p className="text-muted-foreground text-meta">
-          Automatic creation is inactive while people cannot create apps, even
-          if its switch is on.
-        </p>
-      )}
-      <MutationError error={accessSave.error} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Save pending={accessSave.isPending} label="Save app defaults" />
-        <p role="status" className="text-muted-foreground text-meta">
-          {accessSave.isPending
-            ? "Saving app creation…"
-            : accessSave.isSuccess
-              ? "Personal app defaults saved"
-              : null}
-        </p>
-      </div>
-    </form>
   );
 }
 function MediaSection() {

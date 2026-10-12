@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import asyncio
 import time
 import unittest
@@ -11,6 +13,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import realtime_proxy
 
 
@@ -70,7 +73,7 @@ class RealtimeRouteCase(unittest.TestCase):
             patch.object(proxy, "ws_connect", self.connect),
             patch.object(proxy, "_ensure_speech_service_ready", self.ensure),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -134,7 +137,7 @@ class RefusalTests(RealtimeRouteCase):
         return getattr(exc, "status_code", None) or getattr(exc, "code", None)
 
     def test_missing_key_is_a_401_before_any_upstream_connection(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(proxy, "_client_is_lan", return_value=False):
+        with nullcontext():
             self.assertEqual(self._refused(), 401)
 
     def test_a_key_in_the_subprotocol_is_checked_like_a_bearer_header(self) -> None:

@@ -33,6 +33,7 @@ from gateway.admin_runtime import (  # noqa: E402
 )
 from gateway.runtime_auth import hash_api_key  # noqa: E402
 from tests.registry_test_helpers import write_service_registry_for_test  # noqa: E402
+from tests.support.access import service_app  # noqa: E402
 
 
 def _install_registry_writer_test_helpers(store: AdminSQLiteStore, path: Path) -> None:
@@ -497,12 +498,7 @@ class AdminRuntimeTests(unittest.TestCase):
         service_account = admin_store.ensure_service_account(
             "shared-service", path=self.db
         )
-        admin_store.create_app(
-            "shared service",
-            kind="service",
-            owner_service_account_id=service_account["id"],
-            path=self.db,
-        )
+        service_app("shared service", path=self.db)
 
         raw_names = {app["name"] for app in admin_store.list_apps(path=self.db)}
         self.assertIn("local-admin personal access", raw_names)

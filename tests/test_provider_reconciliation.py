@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gateway import providers
-from gateway.policy import AppProfile, RemoteProviderPolicy
+from tests.support.access import plan_for  # noqa: E402
 import test_provider_execution as execution_tests
 from test_provider_execution import _Client, _Response, _body
 
@@ -21,8 +21,7 @@ class ReconciliationExecutionFixture(unittest.IsolatedAsyncioTestCase):
 
 class UnknownChargeExecutionTests(ReconciliationExecutionFixture):
     async def test_malformed_completed_charge_blocks_second_dispatch(self):
-        self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
-            providers=frozenset({'openrouter'}), budget_usd_per_day=Decimal('0.02')))
+        self.profile = plan_for('paid-app', paid=['openrouter'])
         self.body = {**self.body, 'stream': True}
         send = AsyncMock(return_value=(_Client(), _Response(
             headers={'content-type': 'text/event-stream'}, chunks=[
@@ -43,7 +42,7 @@ def test_unknown_charge_blocks_only_affected_caps_until_owner_reconciles(tmp_pat
     ledger = tmp_path / 'spend.db'
     ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'RECON_TEST_KEY',
                                 'paid-remote', {}, {'credential_origin': 'https://provider.test', 'spend_caps_usd': {'daily': '0.02'}})
-    plan = AppProfile(id='one-plan', remote=RemoteProviderPolicy(providers=frozenset({'one','two'})))
+    plan = plan_for('one-plan', paid=['one', 'two'])
     estimate = providers.Cost(Decimal('0.001'), 'price-table', 'one')
     reservation = providers.reserve_provider_spend(plan, ref, estimate, path=ledger)
     providers.settle_provider_spend(reservation, providers.Cost(None, 'unknown', 'one'), path=ledger)
@@ -66,7 +65,7 @@ def test_reconciliation_barrier_does_not_age_out(scope, tmp_path, monkeypatch):
     admin_store.init_db(admin_db)
     ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'RECON_TEST_KEY',
                                 'paid-remote', {}, {'credential_origin': 'https://provider.test'})
-    plan = AppProfile(id='one-plan', remote=RemoteProviderPolicy(providers=frozenset({'one', 'two'})))
+    plan = plan_for('one-plan', paid=['one', 'two'])
     if scope == 'provider':
         ref = replace(ref, config={'credential_origin': 'https://provider.test', 'spend_caps_usd': {'monthly': '0.02'}})
     elif scope == 'plan':
@@ -200,8 +199,7 @@ class RejectedChargeCleanupTests(ReconciliationExecutionFixture):
              'models': [{'id': 'gpt-4.1-mini'}]},
         )
         self.body = {**self.body, 'model': 'openai/gpt-4.1-mini'}
-        self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
-            providers=frozenset({'openai'}), budget_usd_per_day=Decimal('0.02')))
+        self.profile = plan_for('paid-app', paid=['openai'])
         send = AsyncMock(return_value=(_Client(), CancelledClose(status_code=500,
             headers={'content-type':'application/json', 'x-litellm-response-cost':'0.03'})))
         with self.assertRaises(asyncio.CancelledError):

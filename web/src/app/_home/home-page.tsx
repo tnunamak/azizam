@@ -1419,6 +1419,21 @@ export default function HomePage() {
                   {isOwner ? "Open Status" : "See what is happening"}
                   <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
+              ) : home.has_access_plan === false ? (
+                // No plan: nothing can run until the owner chooses one (design §3.4).
+                isOwner ? (
+                  <Link
+                    href="/people?tab=plans"
+                    className="text-link inline-flex items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+                  >
+                    You don&apos;t have an access plan yet. Choose one
+                    <ChevronRight aria-hidden="true" className="size-4" />
+                  </Link>
+                ) : (
+                  <span className="text-muted-foreground">
+                    {`You can't use models yet. Ask ${home.gateway?.owner_name?.trim() || "the gateway owner"} to choose an access plan for you.`}
+                  </span>
+                )
               ) : verdict.tone === "off" && !isOwner ? (
                 // A member cannot turn anything on; say who can.
                 <span className="text-muted-foreground">

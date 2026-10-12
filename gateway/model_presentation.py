@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
+from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
 from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
 
 
@@ -125,28 +126,10 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
     return "unknown"
 
 
-CAPABILITY_LABELS = {
-    "chat": "Chat", "image": "Images", "video": "Video", "speech": "Speech",
-    "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Rerank",
-}
 # Generic audio generation has no honest music/speech subtype. Its neutral
 # waveform glyph shares the sound-effects icon without changing its taxonomy.
 CAPABILITY_ICON_KEYS = {key: key for key in CAPABILITY_LABELS if key != "audio"}
 CAPABILITY_ICON_KEYS["audio"] = "sfx"
-PROTOCOL_CAPABILITIES = {
-    "llm.execution": "chat", "typesafe-systemone": "decide",
-    "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",
-    "speech": "speech", "tts": "speech", "audio.speech": "speech", "speech.synthesis": "speech",
-    "transcriptions": "transcribe", "transcription": "transcribe", "stt": "transcribe",
-    "audio.transcriptions": "transcribe", "speech.transcription": "transcribe",
-    "speech.translation": "transcribe", "images": "image", "image": "image", "generations": "image",
-    "image.generate": "image", "image.edit": "image", "videos": "video", "video": "video",
-    "video.generate": "video", "embeddings": "embed", "text.embeddings": "embed",
-    "rerank": "rerank", "text.rerank": "rerank", "decisions": "decide",
-    "decision.systemone": "decide", "music": "music", "sfx": "sfx", "audio": "audio",
-    "audio.generate": "audio",
-}
 PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
 # Product defaults are stable caller names, independent of catalog order,
 # engine identity, and current health. Operators still control their targets.

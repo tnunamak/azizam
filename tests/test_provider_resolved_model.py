@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 from gateway import provider_execution, receipt_store
+from tests.support.access import plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig
-from gateway.policy import AppProfile, RemoteProviderPolicy
 from gateway.providers import ProviderRef
 
 
@@ -85,15 +85,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
             api_key="sk-litellm",
             service_id="litellm",
         )
-        self.profile = AppProfile(
-            id="paid-app",
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
-                max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            ),
-        )
+        self.profile = plan_for("paid-app", paid=['openrouter'])
         self.receipts = []
         self.env_patch = patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-provider"})
         self.begin_patch = patch.object(receipt_store, "begin", lambda _receipt: None)

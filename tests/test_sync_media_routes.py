@@ -16,6 +16,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
@@ -113,7 +114,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             patch.object(receipt_store, "DB_PATH", self.receipt_db),
             patch.object(proxy, "IMAGE_CACHE_DIR", self.cache),
             patch.object(proxy, "_image_url_signing_secret", b"sync-media-test-secret"),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ]
         for item in patches:
             item.start()
@@ -211,7 +212,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             app_id="app_image",
             owner_key_hash="sha256:owner",
         )
-        proxy.media_delivery.begin(profile_default="full", receipt=receipt)
+        proxy.media_delivery.begin(plan_bound="full", receipt=receipt)
         request = _StubUrlRequest(headers={"host": "gateway.test"})
 
         response = proxy._build_image_response_payload(

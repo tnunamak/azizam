@@ -82,7 +82,7 @@ def test_forget_decision_is_enforced_by_storage_route(tmp_path):
     assert decision.reason == "request_forget"
     png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
     source = media_metadata.embed_png_text(png, {"prompt": sentinel, "workflow": sentinel})
-    context = media_delivery.begin(profile_default="none")
+    context = media_delivery.begin(plan_bound="none")
     context.prompt_decision = decision
     context.prompt_text = sentinel
     with patch.object(proxy, "IMAGE_CACHE_DIR", cache), \
@@ -129,7 +129,7 @@ def test_server_purge_deletes_prompts_for_every_person_but_not_media(tmp_path):
 
 
 def test_anonymous_direct_output_keeps_its_profile_mode_but_forget_is_clean():
-    context = media_delivery.begin(profile_default="full")
+    context = media_delivery.begin(plan_bound="full")
     context.prompt_decision = prompt_memory.decide(person_id=None, member=None, household=None, request_body={"prompt": "hello"})
     assert context.mode == "full"
     context.prompt_decision = prompt_memory.decide(

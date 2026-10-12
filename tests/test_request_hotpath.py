@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from gateway import admin_store, service_registry  # noqa: E402
 from gateway import admin_runtime  # noqa: E402
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash  # noqa: E402
+from tests.support.access import service_app
 
 
 def _profile(name: str, protocols: list[str]) -> dict[str, object]:
@@ -139,9 +140,7 @@ class RequestHotpathTests(unittest.TestCase):
         owner = admin_store.create_service_account(
             f"owner-{threading.get_ident()}-{time.time_ns()}", path=self.db
         ) if owner is None else owner
-        app = admin_store.create_app(
-            "hotpath-app", kind="service", owner_service_account_id=owner["id"], path=self.db
-        )
+        app = service_app("hotpath-app", path=self.db)
         credential = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app["id"],

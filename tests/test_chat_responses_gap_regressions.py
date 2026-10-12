@@ -31,13 +31,9 @@ def _request(body, path="/v1/responses"):
 
 @pytest.fixture
 def isolated_handlers(monkeypatch):
-    route_auth = SimpleNamespace(
-        auth_context=proxy.NO_AUTH_CONTEXT,
-        delegated_to_litellm=True,
-        delegated_litellm_api_key="",
-    )
+    route_auth = SimpleNamespace(auth_context=proxy.NO_AUTH_CONTEXT)
     monkeypatch.setattr(
-        proxy, "authenticate_runtime_or_litellm_request",
+        proxy, "authenticate_runtime_request",
         lambda *args, **kwargs: route_auth,
     )
     monkeypatch.setattr(proxy.state, "update_activity", lambda: None)

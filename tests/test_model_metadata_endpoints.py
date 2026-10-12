@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated, plan_for# noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
@@ -98,7 +99,7 @@ def _strip_contract_fields(payload: dict) -> dict:
 def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: bool = False) -> None:
     """Serve /v1/models from the snapshot's LiteLLM ids, with nothing loaded."""
     patches = [
-        patch.object(proxy, "AUTH_ENABLED", False),
+        authenticated(),
         patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
         patch.object(proxy, "_litellm_runtime_config", return_value=SimpleNamespace(enabled=True, service_id="litellm")),
         patch.object(proxy, "_service_availability_response", return_value=None),
@@ -432,7 +433,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         return {item["id"] for item in payload["data"]}, list(self.requests)
 
     def _route_current(self) -> proxy.CurrentLoadedLlmTarget:
-        context = proxy._catalog_auth_context_for_profile(proxy.DEFAULT_PROFILE, "default-local")
+        context = proxy._catalog_auth_context_for_profile(plan_for("default-local"), "default-local")
         target, error = asyncio.run(proxy._current_loaded_llm_target(
             context, enforce_gateway_policy=False))
         self.assertIsNone(error)
@@ -600,7 +601,7 @@ class ModelsPageAgreesWithModelListTests(unittest.TestCase):
 
     def _catalog_rows(self) -> list[dict]:
         registry = proxy.ADMIN_STORE.get_service_registry()
-        context = proxy._catalog_auth_context_for_profile(proxy.DEFAULT_PROFILE, "default-local")
+        context = proxy._catalog_auth_context_for_profile(plan_for("default-local"), "default-local")
         capability_sets = [proxy._gateway_capabilities_for_auth_context(context)]
         model_entries = [
             *proxy._stable_alias_model_entries(),

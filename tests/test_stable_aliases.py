@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway import stable_aliases as sa  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
@@ -347,7 +348,7 @@ class RouteTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         self.patches = [
             *_media_store_patches(self),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
         ]
@@ -511,7 +512,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         }
         self.patches = [
             *_media_store_patches(self),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", cfg),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSClient),

@@ -10,6 +10,7 @@ from starlette.responses import FileResponse
 
 import proxy
 from gateway.capabilities import Capability
+from tests.support.access import identity, plan_for
 
 
 def _request():
@@ -142,65 +143,30 @@ def test_litellm_catalog_cancellation_closes_both(monkeypatch):
     assert fake.events == ["response.close", "client.close"]
 
 
-# Group C: two callers overlap at the loaded-model await, without fixed sleeps.
-def test_overlapping_model_filters_keep_caller_metadata_separate(monkeypatch):
-    source = [
-        {"id": "a"}, {"id": "b"}, {"id": "/private/path.gguf"},
-        {"id": "category-denied"},
-    ]
+# Group C: two callers with different plans each see only their own models.
+def test_model_filters_follow_each_callers_plan(monkeypatch):
+    source = [{"id": "a"}, {"id": "b"}, {"id": "category-denied"}]
     before = copy.deepcopy(source)
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {})
-    monkeypatch.setattr(
-        proxy.provider_execution, "litellm_provider_model_lookup", lambda reg: {}
-    )
+    monkeypatch.setattr(proxy.provider_execution, "litellm_provider_model_lookup", lambda reg: {})
     monkeypatch.setattr(proxy.providers, "provider_refs", lambda reg: {})
     monkeypatch.setattr(proxy, "registered_model_capabilities", lambda reg: [])
-    monkeypatch.setattr(
-        proxy, "_profile_for_auth_context",
-        lambda auth: SimpleNamespace(remote=SimpleNamespace(providers=set())),
-    )
-    monkeypatch.setattr(proxy, "_profile_model_allowlist", lambda auth: auth.allowed)
-    monkeypatch.setattr(proxy, "_profile_target_visibility", lambda auth: "available")
-    monkeypatch.setattr(proxy, "_profile_target_activation", lambda auth: "existing_only")
-    monkeypatch.setattr(
-        proxy, "_category_entry_visible",
-        lambda auth, entry: entry.get("id") != "category-denied",
-    )
-    monkeypatch.setattr(proxy, "_comfy_target_available", lambda: False)
-    monkeypatch.setattr(proxy, "EMBEDDINGS_ENABLED", False)
+    monkeypatch.setattr(proxy, "resolve_stable_alias", lambda *_a: None)
+
+    def caller(*models):
+        return proxy.AuthContext(identity=identity(plan_for(f"plan_{models[0]}", caps=("chat",), models=list(models))))
 
     async def scenario():
-        both_entered = asyncio.Event()
-        seen_metadata_sets = []
+        return await asyncio.gather(
+            proxy._filter_model_list_for_profile(source, caller("a")),
+            proxy._filter_model_list_for_profile(source, caller("b")),
+            proxy._filter_model_list_for_profile(source, proxy.NO_AUTH_CONTEXT),
+        )
 
-        async def loaded(*, metadata_ids=None):
-            assert metadata_ids is not None
-            seen_metadata_sets.append(metadata_ids)
-            metadata_ids.add("synthetic-observation")
-            if len(seen_metadata_sets) == 2:
-                both_entered.set()
-            await both_entered.wait()
-            return {"a", "b", "/private/path.gguf", "category-denied"}
-
-        monkeypatch.setattr(proxy, "_current_loaded_llm_model_ids", loaded)
-        a_observed, b_observed = set(), set()
-        a = SimpleNamespace(allowed={"a", "category-denied"})
-        b = SimpleNamespace(allowed={"b", "category-denied"})
-        results = await asyncio.wait_for(asyncio.gather(
-            proxy._filter_model_list_for_profile(source, a, metadata_ids=a_observed),
-            proxy._filter_model_list_for_profile(source, b, metadata_ids=b_observed),
-        ), timeout=2)
-        assert len(seen_metadata_sets) == 2
-        assert seen_metadata_sets[0] is not seen_metadata_sets[1]
-        assert a_observed == b_observed == {"synthetic-observation"}
-        for (entries, metadata), expected in zip(results, ("a", "b")):
-            assert entries == [{"id": expected}]
-            assert metadata["azizam_current_model_ids"] == [expected]
-            assert metadata["azizam_profile_model_allowlist"] == [expected]
-            assert metadata["azizam_target_visibility"] == "available"
-            assert metadata["azizam_target_activation"] == "existing_only"
-
-    asyncio.run(scenario())
+    (a, _), (b, _), (none, _) = asyncio.run(scenario())
+    assert a == [{"id": "a"}]
+    assert b == [{"id": "b"}]
+    assert none == []
     assert source == before
 
 

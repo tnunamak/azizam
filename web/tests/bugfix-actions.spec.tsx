@@ -106,8 +106,8 @@ describe("bugfix actions", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-        if (url.endsWith("/admin/api/profiles")) {
-          return new Response(JSON.stringify({ plans: [] }), {
+        if (url.endsWith("/admin/api/access-plans")) {
+          return new Response(JSON.stringify({ access_plans: [] }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });

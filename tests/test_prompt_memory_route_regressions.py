@@ -56,7 +56,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             p.start()
             self.addCleanup(p.stop)
         self.member = admin_store.upsert_oidc_user("iss", "robin", email="robin@example.test", path=self.admin_db)
-        self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], path=self.admin_db)
+        self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], access_plan="person", path=self.admin_db)
         self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
 
     async def _generate(self, extensions):

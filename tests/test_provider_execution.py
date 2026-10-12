@@ -17,8 +17,8 @@ import httpx
 from starlette.requests import Request
 
 from gateway import provider_execution, providers, receipt_store
+from tests.support.access import plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig, sanitize_litellm_execution_request
-from gateway.policy import AppProfile, RemoteProviderPolicy
 from gateway.providers import ProviderRef
 
 
@@ -102,16 +102,11 @@ def _profile(
     *,
     providers: set[str] | None = None,
     allow_paid_fallback: bool = False,
-) -> AppProfile:
-    return AppProfile(
-        id="paid-app",
-        remote=RemoteProviderPolicy(
-            providers=frozenset({"openrouter"} if providers is None else providers),
-            max_usd_per_request=Decimal("1.00"),
-            budget_usd_per_day=Decimal("5.00"),
-            budget_usd_per_month=Decimal("20.00"),
-            allow_paid_fallback=allow_paid_fallback,
-        ),
+) -> "AccessPlan":
+    return plan_for(
+        "paid-app",
+        paid=sorted({"openrouter"} if providers is None else providers),
+        fallback=allow_paid_fallback,
     )
 
 
@@ -394,14 +389,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
-                max_usd_per_request=Decimal("0.0001"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=sorted({"openrouter"}))
         self.body = {
             "model": "openrouter/openai/gpt-4.1-mini",
             "messages": [{"role": "user", "content": "hi"}],
@@ -545,14 +533,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                self.profile = self.profile.with_overrides(
-                    remote=RemoteProviderPolicy(
-                        providers=frozenset({"openrouter"}),
-                        max_usd_per_request=Decimal("0.002"),
-                        budget_usd_per_day=Decimal("5.00"),
-                        budget_usd_per_month=Decimal("20.00"),
-                    )
-                )
+                self.profile = plan_for(self.profile.id, paid=sorted({"openrouter"}))
                 self.body = {
                     "model": option.get("model", "openrouter/openai/gpt-4.1-mini"),
                     "messages": [{"role": "user", "content": "hi"}],
@@ -931,14 +912,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "anthropic/claude-sonnet-4-5-20250929",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"anthropic"}),
-                max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=sorted({"anthropic"}))
         self.body = {
             "model": "anthropic/claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1018,15 +992,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openai"}),
-                max_usd_per_request=Decimal("1.00"),
-                # One SDK-priced search fits; a second needs its full search fee.
-                budget_usd_per_day=Decimal("0.036"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=sorted({"openai"}))
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
@@ -1160,14 +1126,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openai"}),
-                max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=sorted({"openai"}))
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],

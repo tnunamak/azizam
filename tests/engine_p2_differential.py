@@ -230,6 +230,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
     from starlette.requests import Request
 
     from gateway import stt_chunking
+    from tests.support.access import authenticated
     from tests.voice_test_audio import speechlike
 
     audio = speechlike(1)
@@ -305,6 +306,7 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
     from fastapi.testclient import TestClient
 
     from gateway import media_jobs, receipt_store
+    from tests.support.access import authenticated
     from tests.voice_test_audio import speechlike
 
     with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
@@ -322,7 +324,7 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
         merged = _overlaid_config(proxy.config, fixture, str(root / "voices"))
         for patcher in (
             patch.dict(proxy.config, merged, clear=True),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", side_effect=upstream.client),

@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import access, plan_for, service_app  # noqa: E402
 from gateway import admin_store, media_jobs, prompt_memory, receipt_store
-from gateway.policy import DEFAULT_PROFILE
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 from tests.test_anthropic_schema_conformance import chat_completion
 
@@ -46,7 +46,7 @@ def responses_gateway(tmp_path, monkeypatch):
         "local", "maker", email="maker@example.test", path=admin_db
     )
     app = admin_store.create_app(
-        "Maker app", kind="personal", owner_user_id=user["id"], path=admin_db
+        "Maker app", kind="personal", owner_user_id=user["id"], access_plan="person", path=admin_db
     )
     raw_key = "prompt-memory-responses-key"
     key_hash = hash_api_key(raw_key)
@@ -54,7 +54,7 @@ def responses_gateway(tmp_path, monkeypatch):
         name="Maker app key",
         key_hash=key_hash,
         downstream={},
-        profile=DEFAULT_PROFILE,
+        access=access(plan_for("default-local")),
         app_id=app["id"],
         person_id=user["id"],
     )
@@ -71,8 +71,6 @@ def responses_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(media_jobs, "DB_PATH", media_db)
     monkeypatch.setattr(prompt_memory, "DB_PATH", media_db)
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
 
     sent: list[dict] = []
@@ -341,7 +339,7 @@ def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses
     owner = admin_store.upsert_oidc_user("local", "minting-owner", path=path)
     if app_kind == "service":
         sa = admin_store.ensure_service_account("shared-responses", path=path)
-        app = admin_store.create_app("Shared", kind="service", owner_service_account_id=sa["id"], path=path)
+        app = service_app("Shared", path=path)
     else:
         app = admin_store.get_app(gateway["app_id"], path=path)
     key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(

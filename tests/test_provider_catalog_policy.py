@@ -4,9 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.capabilities import Capability
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
+from tests.support.access import plan_for  # noqa: E402
 @pytest.mark.parametrize(("granted", "allowed_plans", "visible"), [
     (True, ["member-plan"], True),
     (False, ["member-plan"], False),
@@ -26,10 +24,7 @@ def test_catalog_uses_canonical_provider_and_both_plan_gates(
             "credential_origin": "http://127.0.0.1:18395",
         },
     }}}
-    profile = DEFAULT_PROFILE.with_overrides(
-        id="member-plan",
-        remote=RemoteProviderPolicy(providers=frozenset({"cloud-canonical"} if granted else set())),
-    )
+    profile = plan_for("member-plan", paid=sorted({"cloud-canonical"} if granted else set())
     monkeypatch.setattr(proxy, "_profile_for_auth_context", lambda _auth: profile)
     monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(
         get_service_registry=lambda: registry,

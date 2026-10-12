@@ -38,7 +38,7 @@ def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_
     receipts_db = data_dir / "receipts.db"
     admin_store.init_db(admin_db)
     person = admin_store.upsert_oidc_user("issuer", "speech-maker", email="maker@example.test", path=admin_db)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=person["id"], path=admin_db)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=person["id"], access_plan="person", path=admin_db)
     auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Try", key_hash="sha256:maker", app_id=app["id"], person_id=person["id"]))
     media_jobs.init_db(jobs_db)
     receipt_store.init_db(receipts_db)

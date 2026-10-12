@@ -1588,36 +1588,16 @@ model_compatibility:
     nomic-embed-text-v1.5.f16.gguf:
       category: embeddings
 auth:
-  enabled: true
+  # Every data-plane request needs an App key (Apps) or a browser sign-in.
+  # There is no keyless access: no LAN bypass, no path tokens, no auth-off
+  # switch and no public Ollama discovery. Startup refuses those settings.
   public_paths:
     - /health
   api_key_env: TABBY_API_KEY
   admin_key_env: TABBY_ADMIN_KEY
-  # Set to true to allow unauthenticated access to Ollama read-only discovery
-  # routes (/api/tags, /api/version and their /ollama/api/* aliases).
-  # Matches how a local Ollama daemon behaves so Open WebUI / LM Studio can
-  # auto-discover models without bearer token wiring.
-  # Default: false — keep off on internet-facing gateways.
-  # Env override: OLLAMA_COMPAT_DISCOVERY=true
-  ollama_compat_discovery: false
-
-  # Optional frictionless-auth settings are listed below.
-  # This checked-in deployment enables LAN bypass.
-  # Cloudflare mode, query-parameter keys and Ollama discovery are disabled.
-  # No path tokens are configured.
-  # Review these values for your own network.
-  # Do not treat this file as an all-features-off baseline.
-  #
-  # 1) LAN / localhost bypass — clients whose REAL IP is in lan_bypass_cidrs skip
-  #    the API key. The public URL still requires it. Real IP defaults to the raw
-  #    TCP socket peer; X-Forwarded-For is honored ONLY from proxies you list in
-  #    trusted_proxies (rightmost-first, spoof-resistant).
-  #      lan_bypass_enabled: true
-  #      lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
-  #      trusted_proxies: ["127.0.0.1"]      # your reverse proxy's IP/CIDR; empty = no proxy
-  #    Env overrides: AZIZAM_LAN_BYPASS=true
-  lan_bypass_enabled: true
-  lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
+  # The real client IP defaults to the raw TCP socket peer. X-Forwarded-For is
+  # honored ONLY from proxies you list here (rightmost-first, spoof-resistant).
+  # It decides throttling and first-run setup, never access.
   trusted_proxies: ["192.168.1.4"]
   #
   # Cloudflare Tunnel: honor CF-Connecting-IP, but ONLY when the connection comes
@@ -1625,19 +1605,10 @@ auth:
   #   Env override: AZIZAM_CF_MODE=true
   cloudflare_mode: false
   #
-  # 2) Query-param key — for clients with no auth-header field (e.g. dictation
-  #    apps): accept ?api_key=<key>. Note: appears in some logs; redact upstream.
-  #    Env override: AZIZAM_QUERY_PARAM_KEY=true
+  # Query-param key — for clients with no auth-header field (e.g. dictation
+  # apps): accept ?api_key=<key>. It is still a key. It appears in some logs;
+  # redact upstream. Env override: AZIZAM_QUERY_PARAM_KEY=true
   allow_query_param_key: false
-  #
-  # 3) Per-device path tokens — the URL path IS the credential, e.g. base URL
-  #    https://host/tok_livingroom/v1 . Each token is independently revocable.
-  #    NOT ROUTED: no public route accepts a token prefix, so every
-  #    /<token>/... request authenticates and then gets 404. Use an App key.
-  #      path_tokens:
-  #        tok_livingroom: living-room-speaker
-  #        tok_workshop: workshop-pi
-  path_tokens: {}
 admin:
   db_path: data/admin.db
   # Deployment brand (data, not product code). A generic install shows only the

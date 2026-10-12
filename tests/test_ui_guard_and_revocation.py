@@ -9,6 +9,7 @@ import test_proxy_admin_integration as admin_integration
 from gateway import accounts, admin_store, ui_routes
 from gateway.admin_oidc import CookieConfig, decode_session_cookie
 from ui_fixtures import ASSET, SIGNING_KEY, Principals, use_export, write_export
+from tests.support.access import store_plan
 
 ADMIN_PAGES = sorted(name for name, access in ui_routes.PAGES.items() if access == "admin")
 PASSWORD = "a sufficiently long password"
@@ -187,8 +188,8 @@ def _assert_one_new_session(response, cookie, old_value):
 
 def test_password_sign_in_with_a_revoked_cookie_keeps_the_new_session(principals, client, monkeypatch):
     monkeypatch.setattr(accounts, "_SCRYPT_N", 2**10)
-    plan = admin_store.create_profile("UI root plan", {"allow": {"model_groups": ["m"]}}, path=principals.case.db)
-    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email="revoked@example.test",
+    plan = store_plan("UI root plan", path=principals.case.db, models=["m"])
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email="revoked@example.test",
                                     path=principals.case.db)
     accounts.accept_invite(token, "revoked@example.test", "Revoked", PASSWORD, path=principals.case.db)
     cookie = _cookie_name(principals)

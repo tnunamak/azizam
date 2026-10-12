@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 import json
 import textwrap
@@ -731,7 +732,6 @@ class WorkflowsCatalogTests(unittest.TestCase):
             )
 
             with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
-                 patch.object(proxy, "_default_profile_id_for_session", return_value="default-local"), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
                  patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
@@ -779,7 +779,6 @@ class WorkflowsCatalogTests(unittest.TestCase):
             )
 
             with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
-                 patch.object(proxy, "_default_profile_id_for_session", return_value="default-local"), \
                  patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
                  patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
                  patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
@@ -804,7 +803,6 @@ class WorkflowsCatalogTests(unittest.TestCase):
         import proxy
 
         with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
-             patch.object(proxy, "_default_profile_id_for_session", return_value="default-local"), \
              patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
              patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
              patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[

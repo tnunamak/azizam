@@ -131,9 +131,6 @@ class DecisionRuntime:
                 continue
             spec = resolved.engine_spec or {}
             engine = capability.engine
-            target_policy = getattr(_profile, "target_policy", None)
-            if getattr(target_policy, "visibility", "catalog") == "available" and engine is None:
-                continue
             rows.append(DecisionModel(
                 id=name, root=resolved.upstream_model, backend=resolved.service, engine=engine,
                 limits=dict(capability.limits),
@@ -206,8 +203,8 @@ class DecisionRuntime:
                         headers=dict(refusal.headers), backend=service_id,
                     )
             try:
-                policy = getattr(_profile, "target_policy", None)
-                if getattr(policy, "activation", "may_activate") == "existing_only":
+                # ``_profile`` is the request's EffectiveAccess (both plans).
+                if not getattr(_profile, "can_load_models", False):
                     readiness = None  # Authorization probed it; never activate a cold service for this plan.
                 else:
                     readiness = await asyncio.wait_for(self.ensure_ready(service_id), max(0.001, deadline - time.monotonic()))

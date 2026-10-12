@@ -30,11 +30,6 @@ def test_concurrency_slot_is_reserved_atomically_without_money_caps(tmp_path, mo
     admin_store.init_db(admin_db)
     ensure_ledger(ledger)
     ref = provider(config={"concurrency_limit": 1})
-    plan = profile(
-        max_usd_per_request=None,
-        budget_usd_per_day=None,
-        budget_usd_per_month=None,
-    )
     original = provider_core._enforce_provider_concurrency
 
     def inside_transaction(conn, provider_id, provider_ref):
@@ -48,7 +43,7 @@ def test_concurrency_slot_is_reserved_atomically_without_money_caps(tmp_path, mo
         barrier.wait()
         try:
             reservation = reserve_provider_spend(
-                plan.with_overrides(id=f"paid-plan-{index}"),
+                profile(app_id=f"app-{index}"),
                 ref, Cost(Decimal("0.001"), "price-table", ref.id),
                 path=ledger, admin_db_path=admin_db,
                 now=1700000000, request_timeout_s=60,
@@ -75,7 +70,7 @@ def test_concurrency_slot_is_reserved_atomically_without_money_caps(tmp_path, mo
     winner = next(reservation for state, reservation in results if state == "allowed")
     release_provider_spend(winner, path=ledger, now=1700000001)
     replacement = reserve_provider_spend(
-        plan, ref, Cost(Decimal("0.001"), "price-table", ref.id),
+        profile(app_id="app-replacement"), ref, Cost(Decimal("0.001"), "price-table", ref.id),
         path=ledger, admin_db_path=admin_db,
         now=1700000001, request_timeout_s=60,
     )

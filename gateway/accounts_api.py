@@ -60,7 +60,7 @@ class Reset(_Body):
 
 
 class Invite(_Body):
-    profile_id: str
+    access_plan: str
     email: str | None = None
     expires_in: StrictInt = 604800
 
@@ -70,12 +70,32 @@ class Expiry(_Body):
 
 
 class Person(_Body):
-    profile_id: str | None = None
+    # A plan id, or null for "No access plan". Omit to leave it unchanged.
+    access_plan: str | None = None
     disabled: StrictBool | None = None
 
 
 class SignInMode(_Body):
     mode: Literal["built-in", "oidc", "both"]
+
+
+def _plan_choice(plan_id, path) -> dict | None:
+    """A plan as pickers show it: name and one-line summary (design §3.4)."""
+    from gateway.access_plans import PlanError, plan_from_document, plan_summary
+
+    record = admin_store.get_access_plan(str(plan_id), path=path) if plan_id else None
+    if record is None:
+        return None
+    try:
+        summary = plan_summary(plan_from_document(record["plan"], plan_id=str(record["id"])))
+    except PlanError:
+        summary = None
+    return {"id": record["id"], "name": record["name"], "summary": summary}
+
+
+def _plan_choices(path) -> list[dict]:
+    return [choice for choice in (_plan_choice(row["id"], path) for row in admin_store.list_access_plans(path=path))
+            if choice is not None]
 
 
 def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
@@ -95,8 +115,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                           signing_key_provider, oidc_provider: Callable,
                           on_person_prompt_purge: Callable | None = None,
                           instance_provider: Callable | None = None,
-                          client_ip_resolver: Callable | None = None,
-                          effective_plan_resolver: Callable | None = None) -> APIRouter:
+                          client_ip_resolver: Callable | None = None) -> APIRouter:
     router = APIRouter(route_class=_AccountRoute, tags=["accounts"])
 
     def client_ip(request: Request) -> str:
@@ -165,8 +184,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     def inspect(request: Request, body: InspectInvite):
         same_origin(request)
         invite = accounts.inspect_invite(body.token, path=path_provider())
-        plan = admin_store.get_profile(invite["profile_id"], path=path_provider())
-        return {"plan": plan, "email": invite["email"], "expires_at": invite["expires_at"],
+        return {"plan": _plan_choice(invite["plan_id"], path_provider()), "email": invite["email"], "expires_at": invite["expires_at"],
                 "owner_name": "The gateway owner", "instance_name": options()["instance_name"]}
 
     @router.post("/auth/api/invite/accept")
@@ -215,16 +233,19 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return {"people": accounts.people(path=path_provider(), effective_plan_resolver=effective_plan_resolver), "profiles": admin_store.list_profiles(path=path_provider())}
+        return {"people": accounts.people(path=path_provider()), "access_plans": _plan_choices(path_provider())}
 
     @router.patch("/admin/api/people/{user_id}")
     def update_person(request: Request, user_id: str, body: Person):
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        if body.profile_id is None and body.disabled is None:
+        fields = body.model_fields_set
+        if "access_plan" not in fields and body.disabled is None:
             raise accounts.AccountError("empty_update", "Choose an access plan or account state.")
-        accounts.change_person(user_id, ctx.audit_actor_id, profile_id=body.profile_id, disabled=body.disabled, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        plan = {"plan_id": body.access_plan} if "access_plan" in fields else {}
+        accounts.change_person(user_id, ctx.audit_actor_id, disabled=body.disabled, path=path_provider(),
+                               actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, **plan)
         return {"ok": True}
 
     @router.delete("/admin/api/people/{user_id}")
@@ -249,7 +270,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return {"invites": accounts.list_invites(path=path_provider()), "profiles": admin_store.list_profiles(path=path_provider())}
+        return {"invites": accounts.list_invites(path=path_provider()), "access_plans": _plan_choices(path_provider()),
+                "invite_access_plan": admin_store.invite_access_plan(path=path_provider())}
 
     @router.post("/admin/api/invites")
     def create_invite(request: Request, body: Invite):
@@ -259,7 +281,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         key = signing_key_provider()
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), profile_id=body.profile_id,
+        invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), plan_id=body.access_plan,
                                              email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"invite": invite, "url": f"/invite/#token={token}"}
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from gateway import receipt_store
+from tests.support.access import identity, plan_for  # noqa: E402
 from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, evidence_from_status_rows, merge_evidence, project_capabilities, project_service
 from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
@@ -1056,14 +1057,14 @@ def test_stopped_lifecycle_is_not_overridden_by_later_connect_failure(reverse):
 def test_workflow_alias_policy_uses_resolved_workflow_without_changing_alias(monkeypatch, allowed, expected):
     import proxy
     from gateway.capabilities import resolve_capability_targets, summarize_capability
-    from gateway.policy import AppProfile
-    monkeypatch.setattr(proxy, "_profile_for_auth_context", lambda context: AppProfile(id="workflow-policy", workflows=allowed))
+    granted = plan_for("workflow-policy", caps=("image",), workflows=sorted(allowed))
+    auth = proxy.AuthContext(identity=identity(granted))
     alias, concrete = resolve_capability_targets([
         Capability(intent="image.generate", backend="gateway", model="image", tags=("alias", "resolves_to:workflow-id")),
         Capability(intent="image.generate", backend="fixture", workflow="workflow-id"),
     ])
-    assert proxy._capability_for_profile(concrete, None).policy_available is expected
-    projected = proxy._capability_for_profile(alias, None)
+    assert proxy._capability_for_access(concrete, auth).policy_available is expected
+    projected = proxy._capability_for_access(alias, auth)
     assert projected.policy_available is expected
     assert projected.model == "image"
     assert projected.workflow is None

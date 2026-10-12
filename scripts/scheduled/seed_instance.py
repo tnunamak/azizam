@@ -1,7 +1,7 @@
 """Seed a fresh disposable gateway the way web/e2e/global-setup.ts does, over HTTP.
 
 `seed(base_url, upstream_port, models)` claims the local owner, registers one
-openai-compatible service at the upstream, grants it to a profile and app, and
+openai-compatible service at the upstream, grants it to an access plan and app, and
 returns an API key for that app. Models are (public, kind) pairs; kind is
 `chat` or `embeddings`.
 """
@@ -64,14 +64,19 @@ def seed(base_url: str, upstream_port: int, models: list[tuple[str, str]]) -> st
         "health_endpoint": "/health", "models": [{"public": name, "upstream": name} for name, _ in models],
         "model_policy_schema_version": 1, "enabled": True, "note": "Scheduled-run fake upstream."})
     api.call("POST", "/admin/api/config/reload", json_body={})
-    _, created = api.call("POST", "/admin/api/profiles", json_body={
-        "name": "Probe profile", "description": "SDK probes through the fake upstream",
-        "profile": {"id": "probe-profile", "protocols": ["openai", "anthropic", "ollama"],
-                    "backends": ["probe-upstream"], "models": [name for name, _ in models],
-                    "status_visibility": {"level": "full"}}})
+    probe_items = [{"model": name} for name, _ in models]
+    _, created = api.call("POST", "/admin/api/access-plans", json_body={
+        "name": "Probe plan",
+        "can_use": {"chat": {"items": probe_items}, "embed": {"items": probe_items}},
+        "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [],
+        "provider_fallback": False, "can_load_models": True, "receipt_detail": "full",
+        "media_metadata": "none"})
     _, listing = api.call("GET", "/admin/api/users")
+    owner_id = listing["users"][0]["id"]
+    # The owner's plan bounds the app (design v4 §2.6), so the owner holds it too.
+    api.call("PATCH", f"/admin/api/people/{owner_id}", json_body={"access_plan": created["access_plan"]["id"]})
     _, app = api.call("POST", "/admin/api/apps", json_body={
-        "name": "Probe app", "kind": "personal", "owner_user_id": listing["users"][0]["id"],
-        "profile_id": created["profile"]["id"]})
+        "name": "Probe app", "kind": "personal", "owner_user_id": owner_id,
+        "access_plan": created["access_plan"]["id"]})
     _, key = api.call("POST", f"/admin/api/apps/{app['app']['id']}/keys", json_body={"label": "probe key"})
     return key["credential"]["api_key"]

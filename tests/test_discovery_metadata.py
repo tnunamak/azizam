@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway.discovery_metadata import (  # noqa: E402
     build_public_protocols,
     build_public_recipes,
@@ -486,7 +489,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
     # in test_protocol_route_aliases.py. (The auth tier above it is exercised
     # separately by test_unauthenticated_unmapped_path_has_no_enumeration_oracle.)
     def test_unmapped_v1_path_returns_404_not_backend_unavailable(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = self.client.get("/v1/capabilities")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
@@ -494,7 +497,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
     def test_unmapped_non_v1_path_returns_404_not_backend_passthrough(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = self.client.get("/tabby/v1/model")
         self.assertEqual(response.status_code, 404, response.text)
         body = response.json()
@@ -502,7 +505,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertNotEqual(body["error"]["type"], "service_unavailable")
 
     def test_unmapped_discovery_probes_return_404(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             for path in ("/v1", "/manifest", "/.well-known/openapi"):
                 with self.subTest(path=path):
                     response = self.client.get(path)
@@ -520,7 +523,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         reintroduce the oracle. The semantic-honesty 404 is for clients that
         HAVE passed auth (LAN bypass / valid key); see the routing tests above.
         """
-        with patch.object(proxy, "AUTH_ENABLED", True):
+        with nullcontext():
             real_gated = self.client.get("/v1/chat/completions")
             unmapped = self.client.get("/v1/capabilities")
         self.assertEqual(real_gated.status_code, 401)

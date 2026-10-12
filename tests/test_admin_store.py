@@ -7,6 +7,7 @@ Uses a temporary SQLite file per test. Covers schema invariants and the
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store  # noqa: E402
+from gateway import accounts, admin_store  # noqa: E402
+from tests.support.access import plan_document, service_app, store_plan
 
 
 def _hash(secret: str) -> str:
@@ -55,8 +57,8 @@ class TestSchema(AdminStoreTestBase):
         svc = admin_store.create_service_account("ci-runner", path=self.db)
         self.assertTrue(svc["id"].startswith("svc_"))
 
-        prof = admin_store.create_profile("p", {"id": "p"}, path=self.db)
-        self.assertTrue(prof["id"].startswith("prof_"))
+        plan = store_plan("p", path=self.db)
+        self.assertTrue(plan["id"].startswith("plan_"))
 
         app = admin_store.ensure_personal_app_for_user(user["id"], path=self.db)
         self.assertTrue(app["id"].startswith("app_"))
@@ -266,99 +268,6 @@ class TestRuntimeProfileMappings(AdminStoreTestBase):
             [("oidc_group", "/family")],
         )
 
-    def test_runtime_mapping_resolution_uses_priority(self) -> None:
-        family = admin_store.create_profile(
-            "Family",
-            {"id": "family"},
-            path=self.db,
-        )
-        friend = admin_store.create_profile(
-            "Friend",
-            {"id": "friend"},
-            path=self.db,
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="all_users",
-            source_value=None,
-            profile_id=family["id"],
-            path=self.db,
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="oidc_group",
-            source_value="/trusted-users",
-            profile_id=friend["id"],
-            path=self.db,
-        )
-
-        resolved = admin_store.resolve_runtime_profile_mapping(
-            email="simon@example.com",
-            gateway_role="none",
-            oidc_groups=["trusted-users"],
-            path=self.db,
-        )
-        self.assertEqual(resolved, friend["id"])
-
-    def test_oidc_group_mapping_beats_broad_domain_mapping(self) -> None:
-        family = admin_store.create_profile(
-            "Family",
-            {"id": "family"},
-            path=self.db,
-        )
-        trusted = admin_store.create_profile(
-            "Trusted",
-            {"id": "trusted"},
-            path=self.db,
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="domain",
-            source_value="example.com",
-            profile_id=family["id"],
-            path=self.db,
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="oidc_group",
-            source_value="trusted-users",
-            profile_id=trusted["id"],
-            path=self.db,
-        )
-
-        resolved = admin_store.resolve_runtime_profile_mapping(
-            email="simon@example.com",
-            gateway_role="none",
-            oidc_groups=["trusted-users"],
-            path=self.db,
-        )
-        self.assertEqual(resolved, trusted["id"])
-
-    def test_runtime_mapping_can_be_disabled(self) -> None:
-        profile = admin_store.create_profile("Family", {"id": "family"}, path=self.db)
-        mapping = admin_store.create_runtime_profile_mapping(
-            source_kind="domain",
-            source_value="example.com",
-            profile_id=profile["id"],
-            path=self.db,
-        )
-
-        self.assertEqual(
-            admin_store.resolve_runtime_profile_mapping(
-                email="person@example.com",
-                gateway_role="none",
-                path=self.db,
-            ),
-            profile["id"],
-        )
-
-        self.assertTrue(
-            admin_store.disable_runtime_profile_mapping(mapping["id"], path=self.db)
-        )
-        self.assertIsNone(
-            admin_store.resolve_runtime_profile_mapping(
-                email="person@example.com",
-                gateway_role="none",
-                path=self.db,
-            )
-        )
-
 
 class TestPersonalApp(AdminStoreTestBase):
     def test_ensure_is_idempotent(self) -> None:
@@ -371,45 +280,33 @@ class TestPersonalApp(AdminStoreTestBase):
 
     def test_personal_app_requires_owner(self) -> None:
         with self.assertRaises(ValueError):
-            admin_store.create_app("orphan", kind="personal", path=self.db)
+            admin_store.create_app("orphan", kind="personal", access_plan="person", path=self.db)
 
     def test_list_apps_returns_all_apps(self) -> None:
         user = admin_store.upsert_oidc_user("iss", "sub", path=self.db)
         personal = admin_store.ensure_personal_app_for_user(
             user["id"], path=self.db
         )
-        svc = admin_store.ensure_service_account("svc", path=self.db)
-        service = admin_store.create_app(
-            "svc-app",
-            kind="service",
-            owner_service_account_id=svc["id"],
-            path=self.db,
-        )
+        service = service_app("svc-app", path=self.db)
         self.assertEqual(
             [app["id"] for app in admin_store.list_apps(path=self.db)],
             [personal["id"], service["id"]],
         )
 
     def test_update_and_disable_app(self) -> None:
-        svc = admin_store.ensure_service_account("svc", path=self.db)
-        profile = admin_store.create_profile("p", {"id": "p"}, path=self.db)
-        app = admin_store.create_app(
-            "old",
-            kind="service",
-            owner_service_account_id=svc["id"],
-            path=self.db,
-        )
+        plan = store_plan("p", path=self.db)
+        app = service_app("old", path=self.db)
 
         updated = admin_store.update_app(
             app["id"],
             name="new",
-            default_profile_id=profile["id"],
+            access_plan=plan["id"],
             path=self.db,
         )
         self.assertEqual(updated["name"], "new")  # type: ignore[index]
-        self.assertEqual(
-            updated["default_profile_id"], profile["id"]  # type: ignore[index]
-        )
+        self.assertEqual(updated["access_plan"], plan["id"])  # type: ignore[index]
+        with self.assertRaises(Exception):
+            admin_store.update_app(app["id"], access_plan="plan_missing", path=self.db)
 
         disabled = admin_store.disable_app(app["id"], now=1234, path=self.db)
         self.assertEqual(disabled["disabled_at"], 1234)  # type: ignore[index]
@@ -470,12 +367,7 @@ class TestCredentialInvariants(AdminStoreTestBase):
 
     def test_data_plane_app_mismatch_rejected(self) -> None:
         other = admin_store.create_service_account("other", path=self.db)
-        other_app = admin_store.create_app(
-            "svc-app",
-            kind="service",
-            owner_service_account_id=other["id"],
-            path=self.db,
-        )
+        other_app = service_app("svc-app", path=self.db)
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(
                 subject_kind="app",
@@ -653,38 +545,29 @@ class TestCredentialLifecycle(AdminStoreTestBase):
         self.assertEqual(sorted(cred["scopes"]), ["chat", "images"])
 
 
-class TestProfilesAndAudit(AdminStoreTestBase):
-    def test_profile_doc_roundtrips(self) -> None:
-        doc = {
-            "id": "local-tier",
-            "protocols": ["openai.chat", "openai.images"],
-            "fallback": {"cloud_allowed": False},
-            "status_visibility": {"level": "standard"},
-        }
-        prof = admin_store.create_profile(
-            "local-tier", doc, description="local-only", path=self.db
-        )
-        loaded = admin_store.get_profile(prof["id"], path=self.db)
-        self.assertEqual(loaded["profile"], doc)  # type: ignore[index]
+class TestAccessPlansAndAudit(AdminStoreTestBase):
+    def test_plan_document_roundtrips(self) -> None:
+        doc = plan_document("Local tier", caps=("chat", "image"), receipts="standard")
+        plan = admin_store.create_access_plan(doc, path=self.db)
+        loaded = admin_store.get_access_plan(plan["id"], path=self.db)
+        self.assertEqual(loaded["name"], "Local tier")  # type: ignore[index]
+        self.assertEqual({k: v for k, v in loaded["plan"].items() if k != "id"}, doc)  # type: ignore[index]
 
-    def test_update_profile_roundtrips_fields(self) -> None:
-        prof = admin_store.create_profile("old", {"id": "old"}, path=self.db)
-        updated_doc = {
-            "id": "new",
-            "protocols": ["openai.chat"],
-            "status_visibility": {"level": "basic"},
-        }
-        updated = admin_store.update_profile(
-            prof["id"],
-            name="new",
-            description="updated",
-            profile_doc=updated_doc,
-            path=self.db,
-        )
+    def test_update_plan_keeps_its_id_and_refuses_a_taken_name(self) -> None:
+        plan = store_plan("old", path=self.db)
+        store_plan("taken", path=self.db)
+        updated = admin_store.update_access_plan(plan["id"], plan_document("new", caps=("chat",)), path=self.db)
+        self.assertEqual((updated["id"], updated["name"]), (plan["id"], "new"))  # type: ignore[index]
+        with self.assertRaises(ValueError):
+            admin_store.update_access_plan(plan["id"], plan_document("taken"), path=self.db)
 
-        self.assertEqual(updated["name"], "new")  # type: ignore[index]
-        self.assertEqual(updated["description"], "updated")  # type: ignore[index]
-        self.assertEqual(updated["profile"], updated_doc)  # type: ignore[index]
+    def test_an_assigned_plan_cannot_be_deleted_even_in_sql(self) -> None:
+        plan = store_plan("used", path=self.db)
+        service_app("holder", path=self.db, plan_id=plan["id"])
+        with self.assertRaises(ValueError):
+            admin_store.delete_access_plan(plan["id"], path=self.db)
+        with admin_store._conn(self.db) as conn, self.assertRaises(sqlite3.IntegrityError):
+            conn.execute("DELETE FROM access_plans WHERE id = ?", (plan["id"],))
 
     def test_audit_event_records_actor_action_target_metadata(self) -> None:
         event = admin_store.record_audit(
@@ -766,7 +649,7 @@ class TestAdminRoles(AdminStoreTestBase):
 class TestBrotherFlow(AdminStoreTestBase):
     """End-to-end: 'give my brother a key' against the durable store.
 
-    Tim logs in via OIDC, creates a profile suitable for his brother,
+    Tim logs in via OIDC, creates an access plan suitable for his brother,
     materializes his brother as a user, ensures the brother has a personal
     app, mints a data-plane credential for that app, grants the brother an
     owner role over that app, and records an audit event for the whole
@@ -792,29 +675,19 @@ class TestBrotherFlow(AdminStoreTestBase):
             path=self.db,
         )
 
-        profile = admin_store.create_profile(
-            "brother-local-only",
-            {
-                "id": "brother-local-only",
-                "protocols": ["openai.chat"],
-                "fallback": {"cloud_allowed": False},
-                "status_visibility": {"level": "basic"},
-            },
-            description="local-only chat",
-            path=self.db,
-        )
+        plan = store_plan("brother-local-only", path=self.db, caps=("chat",))
+        accounts.initialize(self.db)
+        accounts.change_person(brother["id"], tim["id"], path=self.db, plan_id=plan["id"])
 
-        app = admin_store.ensure_personal_app_for_user(
-            brother["id"], default_profile_id=profile["id"], path=self.db
-        )
+        app = admin_store.ensure_personal_app_for_user(brother["id"], path=self.db)
         self.assertEqual(app["owner_user_id"], brother["id"])
-        self.assertEqual(app["default_profile_id"], profile["id"])
+        self.assertEqual(app["access_plan"], "person")
+        self.assertEqual(admin_store.person_plan_id(brother["id"], path=self.db), plan["id"])
 
         secret_hash = _hash("sk_live_brother_real_secret")
         cred = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app["id"],
-            profile_id=profile["id"],
             hash=secret_hash,
             prefix="sk_live_brother",
             display_name="brother's editor key",
@@ -822,7 +695,6 @@ class TestBrotherFlow(AdminStoreTestBase):
         )
         self.assertEqual(cred["subject_kind"], "app")
         self.assertEqual(cred["app_id"], app["id"])
-        self.assertEqual(cred["profile_id"], profile["id"])
 
         role = admin_store.assign_admin_role(
             role="owner",

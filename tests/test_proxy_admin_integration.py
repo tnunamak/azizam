@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 import io
 import os
@@ -54,14 +55,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.old_oidc = proxy.ADMIN_OIDC_CONFIG
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
         self.env_patcher = patch.dict(os.environ, {}, clear=False)
         self.env_patcher.start()
         os.environ.pop("AZIZAM_USER_SELF_SERVICE", None)
         os.environ.pop("AZIZAM_AUTO_CREATE_PERSONAL_APP", None)
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
-        proxy.AUTH_ENABLED = True
         self._status_projection = patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         )
@@ -85,7 +84,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = self.old_oidc
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
         self._status_projection.stop()
         self._backend_grid.stop()
         self._loaded_model_projection.stop()
@@ -890,10 +888,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         with patch.object(
             proxy,
-            "_default_profile_id_for_session",
-            return_value="default-local",
-        ), patch.object(
-            proxy,
             "_gateway_capabilities_for_auth_context",
             side_effect=AssertionError("deleted users must not get default catalog capabilities"),
         ):
@@ -1280,10 +1274,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 cfg.issuer, "bob-sub", email="bob@example.com", path=self.db
             )
             app_a = admin_store.create_app(
-                "Alice App", kind="personal", owner_user_id=alice["id"], path=self.db
+                "Alice App", kind="personal", owner_user_id=alice["id"], access_plan="person", path=self.db
             )
             app_b = admin_store.create_app(
-                "Bob App", kind="personal", owner_user_id=bob["id"], path=self.db
+                "Bob App", kind="personal", owner_user_id=bob["id"], access_plan="person", path=self.db
             )
 
             # Two receipts for Alice, one for Bob, one unattributed.
@@ -1387,14 +1381,14 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             kind="personal",
             owner_user_id=user_a["id"],
             default_profile_id=profile["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         app_b = admin_store.create_app(
             "User B App",
             kind="personal",
             owner_user_id=user_b["id"],
             default_profile_id=profile["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         credential_a = admin_store.create_credential_hash(
             subject_kind="app",
@@ -1660,7 +1654,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 cfg.issuer, "ada-sub", email="ada@example.com", path=self.db
             )
             app = admin_store.create_app(
-                "Ada App", kind="personal", owner_user_id=user["id"], path=self.db
+                "Ada App", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db
             )
             rcpt = RouteReceipt(
                 protocol="openai.chat", intent="chat.completions",
@@ -1815,7 +1809,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "limited-laptop",
             kind="personal",
             owner_user_id=user["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         session = session_from_claims(
             {"sub": user["id"], "email": "limited@example.com"},
@@ -1878,7 +1872,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "existing-laptop",
             kind="personal",
             owner_user_id=user["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
 
         with patch.object(
@@ -2132,10 +2126,8 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.old_oidc = proxy.ADMIN_OIDC_CONFIG
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
-        proxy.AUTH_ENABLED = True
         proxy.ADMIN_AUTH.signing_key = b"s" * 32
         proxy.ADMIN_AUTH.cookie = CookieConfig(secure=False)
         self._status_projection = patch.object(
@@ -2159,7 +2151,6 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = self.old_oidc
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
         self._status_projection.stop()
         self._loaded_model_projection.stop()
         proxy.ADMIN_OIDC_STATES.clear()
@@ -2962,9 +2953,7 @@ class ConfigExportTests(unittest.TestCase):
         self.old_path = proxy.ADMIN_STORE.path
         self.old_signing_key = proxy.ADMIN_AUTH.signing_key
         self.old_cookie = proxy.ADMIN_AUTH.cookie
-        self.old_auth_enabled = proxy.AUTH_ENABLED
         proxy.ADMIN_STORE.path = self.db
-        proxy.AUTH_ENABLED = True
         admin_store.init_db(self.db)
         admin_store.write_service_registry(
             {
@@ -2986,7 +2975,6 @@ class ConfigExportTests(unittest.TestCase):
         proxy.ADMIN_STORE.path = self.old_path
         proxy.ADMIN_AUTH.signing_key = self.old_signing_key
         proxy.ADMIN_AUTH.cookie = self.old_cookie
-        proxy.AUTH_ENABLED = self.old_auth_enabled
         self.tmp.cleanup()
 
     def _auth(self) -> dict:

@@ -263,7 +263,6 @@ def test_user_action_requires_current_session_nonempty_csrf(monkeypatch):
 def test_telemetry_never_masks_response_error_or_cancellation(
     monkeypatch, outcome, sink_fails,
 ):
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "_FIREHOSE_NO_RECORD_EXACT", set())
     monkeypatch.setattr(proxy, "_FIREHOSE_NO_RECORD_PREFIXES", ())
     monkeypatch.setattr(proxy.ui_routes, "classify", lambda path: None)

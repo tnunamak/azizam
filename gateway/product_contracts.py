@@ -136,19 +136,6 @@ class HomeReceipt(TypedDict):
     source: NotRequired[HomeReceiptSource]
 
 
-class PlanSpend(TypedDict):
-    period: Literal["daily", "monthly"]
-    # daily: the rolling last 24 hours; monthly: the UTC calendar month.
-    window: Literal["rolling_24h", "calendar_month_utc"]
-    # Decimal USD string; null when the spend is not known (never 0).
-    spent_usd: str | None
-    cap_usd: str
-    # monthly: start of next UTC month. daily: when the oldest counted charge
-    # leaves the window; null when nothing is counted or spend is unknown.
-    resets_at: int | None
-    unknown_reason: NotRequired[Literal["ledger_unavailable", "needs_reconciliation"]]
-
-
 class GatewayFacts(TypedDict):
     # Display name of the gateway owner; null when the owner has none.
     owner_name: str | None
@@ -157,8 +144,8 @@ class GatewayFacts(TypedDict):
 class HomeProjection(TypedDict):
     # NotRequired: older gateways omit these.
     gateway: NotRequired[GatewayFacts]
-    # The member's own plan; null when that plan cannot be loaded.
-    plan_spend: NotRequired[list[PlanSpend] | None]
+    # False when the signed-in person has no access plan: they cannot generate.
+    has_access_plan: bool
     csrf_token: str
     public_base_url: str
     api_base_url: str

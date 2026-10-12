@@ -231,8 +231,7 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
                 provider_type="paid-remote",
                 provider_id="household-remote",
                 api_key_env="UI_HOUSEHOLD_PROVIDER_KEY",
-                spend_caps_usd={"daily": 5, "monthly": 40}
-                if scenario == "budget-exhausted" else {"daily": 1, "monthly": 8},
+                spend_caps_usd={"daily": 1, "monthly": 8},
             )
         services[sid] = {
             "id": sid,
@@ -366,42 +365,20 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]
     )
     plans = {}
-    all_models = [mid for group in MODEL_GROUPS.values() for mid, _, _ in group] + list(PLAN_WORKFLOWS)
+    from gateway.access_plans import CAPABILITIES
     for name, paid in [("Everyone", True), ("Teen", False), ("Builder", True)]:
         doc = {
-            "id": name.lower(),
-            "protocols": ["openai", "anthropic"],
-            "models": all_models
-            if paid
-            else [
-                mid for mid in all_models if mid not in {"claude-sonnet", "gpt-mini"}
-            ],
-            "backends": list(MODEL_GROUPS)
-            if paid
-            else [sid for sid in MODEL_GROUPS if sid != "household-remote"],
-            "status_visibility": {"level": "full"},
-            "remote": {
-                "providers": ["household-remote"] if paid else [],
-                "max_usd_per_request": "0.10",
-                "budget_usd_per_day": "1",
-                "budget_usd_per_month": "8",
-                "allow_paid_fallback": False,
-            },
+            "name": name,
+            "can_use": {capability: {"items": "all"} for capability in CAPABILITIES},
+            "direct_engine_access": {"engines": [], "operations": []},
+            # Paid models need the plan to list the paid provider (design v4 §2.1).
+            "paid_providers": ["household-remote"] if paid else [],
+            "provider_fallback": False,
+            "can_load_models": True,
+            "receipt_detail": "full",
+            "media_metadata": "none",
         }
-        plans[name] = admin_store.create_profile(
-            name,
-            doc,
-            description="Local models only; paid models blocked"
-            if not paid
-            else "Local tools with a small remote backup allowance",
-            now=now, path=paths["admin"],
-        )
-    admin_store.create_runtime_profile_mapping(
-        source_kind="all_users",
-        source_value="*",
-        profile_id=plans["Everyone"]["id"],
-        now=now, path=paths["admin"],
-    )
+        plans[name] = admin_store.create_access_plan(doc, now=now, path=paths["admin"])
     people, apps, hashes = {}, {}, {}
     for index, (slug, name, plan) in enumerate(
         [
@@ -429,7 +406,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         accounts.record_oidc_verification(user["id"], True, path=paths["admin"])
         with sqlite3.connect(paths["admin"]) as conn:
             conn.execute(
-                "INSERT INTO account_access(user_id,profile_id) VALUES(?,?)",
+                "INSERT INTO account_access(user_id,plan_id) VALUES(?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET plan_id=excluded.plan_id",
                 (user["id"], plans[plan]["id"]),
             )
             conn.execute(
@@ -465,10 +443,11 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             f"{name.split(' ·')[0]}'s personal app",
             kind="personal",
             owner_user_id=user["id"],
-            default_profile_id=plans[plan]["id"],
+            access_plan="person",
             now=now, path=paths["admin"],
         )
-        apps[slug] = app
+        # The plan the app runs under, for the receipts and charges seeded below.
+        apps[slug] = {**app, "plan_ref": plans[plan]["id"]}
     for slug, owner, name in [
         ("webui", "robin", "Open WebUI"),
         ("home", "sam", "Home Assistant voice"),
@@ -476,13 +455,13 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         ("telegram", "robin", "Telegram homework and grocery reminder helper for the family group chat"),
         ("librechat", "sam", "LibreChat · retired"),
     ]:
-        apps[slug] = admin_store.create_app(
+        apps[slug] = {**admin_store.create_app(
             name,
             kind="personal",
             owner_user_id=people[owner]["id"],
-            default_profile_id=plans["Builder" if owner == "sam" else "Everyone"]["id"],
+            access_plan="person",
             now=now, path=paths["admin"],
-        )
+        ), "plan_ref": plans["Builder" if owner == "sam" else "Everyone"]["id"]}
     for index, (slug, app) in enumerate(apps.items()):
         digest = hash_api_key(f"household-fixture-key-{slug}-not-production")
         hashes[slug] = digest
@@ -493,7 +472,6 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             hash=digest,
             prefix=f"fixture_{slug}",
             display_name="Desktop" if slug == "codex" else "Household app key",
-            profile_id=app["default_profile_id"],
             now=now - (45 - index) * 86400,
             path=paths["admin"],
         )
@@ -534,7 +512,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 "invite",
                 people["sam"]["id"],
                 email=email,
-                profile_id=plans["Everyone"]["id"],
+                plan_id=plans["Everyone"]["id"],
                 token_factory=lambda _link_id: f"household-fixture-invite-{email}",
                 path=paths["admin"],
             )
@@ -663,7 +641,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             prompt_tokens = _lognormal(rng, 3500 if remote else 600, 0.6, 12, 9000)
             completion_tokens = _lognormal(rng, 1300 if remote else 260, 0.6, 12, 3500)
             if failure == "budget_exceeded":
-                # The estimate alone exceeds the $0.10 per-request cap.
+                # A large request that the provider spending cap refused.
                 prompt_tokens, completion_tokens = 38000 + rng.randint(0, 2500), 0
             elif failure == "invalid_request":
                 prompt_tokens = completion_tokens = 0
@@ -689,7 +667,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 path=endpoint,
                 request_id=request_id,
                 app_id=app["id"],
-                app_profile=app["default_profile_id"],
+                app_profile=app["plan_ref"],
                 api_key_name=app["name"],
                 client_hint=app["name"],
                 requested_model=model,
@@ -726,7 +704,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                         "model_access_denied": "Teen plan blocks paid remote models.",
                         "upstream_timeout": "The model did not respond before the request deadline.",
                         "upstream_unavailable": "Video studio is recovering after a queue timeout.",
-                        "budget_exceeded": "The per-request remote spending limit stopped this request.",
+                        "budget_exceeded": "The paid provider's spending cap stopped this request.",
                         "invalid_request": "The request body is missing a required field.",
                     }[failure]
                 ]
@@ -766,7 +744,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 spend.append(
                     (
                         backend,
-                        app["default_profile_id"],
+                        app["id"],
                         "settled",
                         cost,
                         cost,
@@ -841,7 +819,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         metrics_store.record_samples(conn, samples)
     with sqlite3.connect(paths["provider_spend"]) as conn:
         conn.executemany(
-            "INSERT INTO provider_spend(provider,profile_id,status,estimated_usd,actual_usd,cost_source,created_at,settled_at,request_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO provider_spend(provider,profile_id,app_id,status,estimated_usd,actual_usd,cost_source,created_at,settled_at,request_id) VALUES(?,'',?,?,?,?,?,?,?,?)",
             spend,
         )
     admin_store.put_operator_setting(
@@ -849,8 +827,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         {
             "providers": {
                 "household-remote": {
-                    "caps": {"daily_usd": 5, "monthly_usd": 40}
-                    if scenario == "budget-exhausted" else {"daily_usd": 1, "monthly_usd": 8},
+                    "caps": {"daily_usd": 1, "monthly_usd": 8},
                     # The last connection test failed; only this scenario stores one.
                     **(
                         {"connection": {"reachable": False, "checked_at": now - 120}}
@@ -936,7 +913,7 @@ def _remote_receipt(ctx, *, request_id, slug, ts, status, prompt_tokens, complet
     denied = status == "rejected"
     receipt = RouteReceipt(
         protocol="openai", intent="chat.completions", path="/v1/chat/completions",
-        request_id=request_id, app_id=app["id"], app_profile=app["default_profile_id"],
+        request_id=request_id, app_id=app["id"], app_profile=app["plan_ref"],
         api_key_name=app["name"], client_hint=app["name"], requested_model=model,
         resolved_model=model, backend=REMOTE_SERVICE, status=status, remote=True,
         owner_key_hash=ctx["hashes"][slug], latency_ms=latency_ms,
@@ -962,18 +939,17 @@ def _remote_receipt(ctx, *, request_id, slug, ts, status, prompt_tokens, complet
     if status != "succeeded":
         ctx["samples"].append((ts, "error", tags, 1))
     elif Decimal(cost) > 0:
-        ctx["spend"].append((REMOTE_SERVICE, app["default_profile_id"], "settled", cost,
+        ctx["spend"].append((REMOTE_SERVICE, app["id"], "settled", cost,
                              cost, "provider-reported", ts, ts + 2, request_id))
 
 
 def _scenario_budget_exhausted(ctx):
-    """Robin's plan (Everyone) has spent its daily and monthly allowance.
+    """The paid provider has spent its daily and monthly cap.
 
     Ledger rows and succeeded receipts share one cost, so the ledger total is the
     receipt total. Later 429 rejections follow the row that crossed the cap.
     """
     rng, now = ctx["rng"], ctx["now"]
-    profile = ctx["plans"]["Everyone"]["id"]
     month_start = int(datetime.fromtimestamp(now, timezone.utc).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     day_cap, month_cap = Decimal(1), Decimal(8)
@@ -982,7 +958,7 @@ def _scenario_budget_exhausted(ctx):
 
     def total(since, until=now):
         return sum((Decimal(row[4]) for row in ctx["spend"]
-                    if row[1] == profile and since <= row[6] <= until), Decimal(0))
+                    if row[0] == REMOTE_SERVICE and since <= row[6] <= until), Decimal(0))
 
     # Reserve room for the existing history, then add dated candidates in order.
     # This amount is exactly representable at the model's $0.000003 quantum.
@@ -1037,8 +1013,7 @@ def _scenario_budget_exhausted(ctx):
             day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
         exhausted = False
         for scope, daily, monthly in (
-            (lambda charge: charge[1] == data["app_profile"], day_cap, month_cap),
-            (lambda charge: charge[0] == data["backend"], Decimal(5), Decimal(40)),
+            (lambda charge: charge[0] == data["backend"], day_cap, month_cap),
             (lambda charge: True, Decimal(5), Decimal(40)),
         ):
             relevant = [charge for charge in accepted if scope(charge)]
@@ -1066,7 +1041,7 @@ def _scenario_budget_exhausted(ctx):
         elif data["request_id"] in charges:
             accepted.append(charges[data["request_id"]])
     ctx["spend"][:] = accepted
-    exhausted_at = max(row[6] for row in accepted if row[1] == profile)
+    exhausted_at = max(row[6] for row in accepted if row[0] == REMOTE_SERVICE)
     for number in range(1, 4):
         ts = exhausted_at + number * rng.randint(1200, 2400)
         prompt = _lognormal(rng, 1500, 0.4, 600, 3000)
@@ -1074,10 +1049,10 @@ def _scenario_budget_exhausted(ctx):
             ctx, request_id=f"req_household_budget_rejected_{number}", slug="robin",
             ts=min(ts, now - 60), status="rejected", prompt_tokens=prompt, completion_tokens=0,
             status_code=429, reason="budget_exceeded", latency_ms=rng.randint(8, 40),
-            warning="The Everyone plan has used its daily and monthly remote spending allowance.",
+            warning="household-remote has used its daily and monthly spending cap.",
         )
     ctx["details"].update(
-        member="robin", plan="Everyone", provider=REMOTE_SERVICE,
+        member="robin", provider=REMOTE_SERVICE,
         daily_cap_usd="1", monthly_cap_usd="8",
         daily_spent_usd=str(total(day_start)), monthly_spent_usd=str(total(month_start)),
         exhausted_at=exhausted_at, rejections=3,
@@ -1138,7 +1113,7 @@ def _scenario_running(ctx):
     def receipt(request_id, slug, intent, path, model, backend, accepted_s, status, **extra):
         item = RouteReceipt(
             protocol="openai", intent=intent, path=path, request_id=request_id,
-            app_id=apps[slug]["id"], app_profile=apps[slug]["default_profile_id"],
+            app_id=apps[slug]["id"], app_profile=apps[slug]["plan_ref"],
             api_key_name=apps[slug]["name"], requested_model=model, resolved_model=model,
             backend=backend, status=status, owner_key_hash=hashes[slug],
             accepted_at_ms=(now - accepted_s) * 1000, **extra,
@@ -1264,7 +1239,7 @@ def _media(state, paths, apps, hashes, now, rng, people):
             intent=intent,
             request_id=request_id,
             app_id=apps[owner]["id"],
-            app_profile=apps[owner]["default_profile_id"],
+            app_profile=apps[owner]["plan_ref"],
             api_key_name=apps[owner]["name"],
             requested_model=entry["model"],
             resolved_model=entry["model"],

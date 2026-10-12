@@ -1,6 +1,6 @@
 """Built-in identities, single-use links and immediate access revocation.
 
-Account product state shares admin.db with Apps and Profiles. Link consumption,
+Account product state shares admin.db with Apps and access plans. Link consumption,
 account creation, default App/key creation and auditing commit together. Password
 work runs outside the write transaction; persistent throttles limit that work.
 """
@@ -25,30 +25,7 @@ from gateway.runtime_auth import hash_api_key
 
 _SCRYPT_N = 2**17
 _PASSWORD_WORK = threading.BoundedSemaphore(2)
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS account_access (
- user_id TEXT PRIMARY KEY REFERENCES users(id), profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
- disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS account_sessions (
- session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS account_session_revocations (
- session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS account_links (
- id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
- profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL, user_id TEXT REFERENCES users(id), email TEXT,
- created_by TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
- used_at INTEGER, revoked_at INTEGER
-);
-CREATE TABLE IF NOT EXISTS account_oidc_verification (
- user_id TEXT PRIMARY KEY REFERENCES users(id), email_verified INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS account_login_limits (
- bucket TEXT PRIMARY KEY, started_at INTEGER NOT NULL, attempts INTEGER NOT NULL
-);
-"""
+_SCHEMA = admin_store.ACCOUNT_SCHEMA
 
 
 class AccountError(ValueError):
@@ -128,9 +105,9 @@ def _audit(conn, action: str, actor: str, target: str, now: int, metadata=None,
     )
 
 
-def _valid_profile(conn, profile_id: str):
-    if not conn.execute("SELECT id FROM profiles WHERE id=?", (profile_id,)).fetchone():
-        raise AccountError("profile_not_found", "Access plan not found.", 404)
+def _valid_plan(conn, plan_id: str | None):
+    if not plan_id or not conn.execute("SELECT id FROM access_plans WHERE id=?", (plan_id,)).fetchone():
+        raise AccountError("plan_not_found", "Access plan not found.", 404)
 
 
 def access(user_id: str, *, path: Path) -> dict[str, Any] | None:
@@ -139,13 +116,14 @@ def access(user_id: str, *, path: Path) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def profile_for_user(user_id: str, *, path: Path) -> str | None:
-    with connection(path) as conn:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-            row = conn.execute("SELECT profile_id,removed_at FROM account_access WHERE user_id=?", (user_id,)).fetchone()
-            if row and row[1] is None:
-                return row[0]
-        return None
+def plan_for_user(user_id: str, *, path: Path) -> str | None:
+    """The person's access plan id, or None (no plan: cannot generate)."""
+    return admin_store.person_plan_id(user_id, path=path)
+
+
+def ensure_access_row(conn, user_id: str) -> None:
+    """Every person has an account_access row; a missing row denies (design §2.13)."""
+    conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
 
 
 def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
@@ -154,11 +132,11 @@ def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
             if conn.execute("SELECT 1 FROM account_session_revocations WHERE session_id=? AND expires_at>?",
                             (session_id, int(time.time()))).fetchone():
                 return False
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-            return True
         row = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
         if not row:
-            return True  # Existing local-owner and OIDC sessions stay compatible.
+            # Service-account sessions have no access row. A person without one
+            # still cannot generate: the runtime treats them as disabled.
+            return True
         if row["disabled_at"] is not None or row["removed_at"] is not None:
             return False
         if not row["require_registered_session"]:
@@ -242,7 +220,7 @@ def _public_link(row) -> dict:
     return {key: value for key, value in dict(row).items() if key != "token_hash"}
 
 
-def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = None,
+def create_link(kind: str, actor: str, *, path: Path, plan_id: str | None = None,
                 user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None,
                 actor_kind: str = "user", actor_label: str | None = None) -> tuple[dict, str]:
     if kind not in {"invite", "reset"}:
@@ -255,7 +233,7 @@ def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = N
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if kind == "invite":
-            _valid_profile(conn, profile_id)
+            _valid_plan(conn, plan_id)
         else:
             row = conn.execute("SELECT u.id FROM users u JOIN local_password_credentials p ON p.user_id=u.id "
                                "WHERE u.id=?", (user_id,)).fetchone()
@@ -266,7 +244,7 @@ def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = N
                 raise AccountError("account_disabled", "Enable this account before resetting its password.", 409)
             conn.execute("UPDATE account_links SET revoked_at=? WHERE user_id=? AND kind='reset' AND used_at IS NULL", (ts, user_id))
         conn.execute("INSERT INTO account_links VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL)",
-                     (link_id, kind, hashlib.sha256(token.encode()).hexdigest(), profile_id, user_id, email, actor, ts, ts + expires_in,
+                     (link_id, kind, hashlib.sha256(token.encode()).hexdigest(), plan_id, user_id, email, actor, ts, ts + expires_in,
                       ))
         _audit(conn, f"account.{kind}.create", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
         row = conn.execute("SELECT * FROM account_links WHERE id=?", (link_id,)).fetchone()
@@ -286,14 +264,14 @@ def _usable_link(conn, token: str, kind: str, now: int):
 def inspect_invite(token: str, *, path: Path) -> dict:
     with connection(path) as conn:
         row = _usable_link(conn, token, "invite", int(time.time()))
-        _valid_profile(conn, row["profile_id"])
+        _valid_plan(conn, row["plan_id"])
         return _public_link(row)
 
 
 def list_invites(*, path: Path) -> list[dict]:
     with connection(path) as conn:
-        rows = conn.execute("SELECT l.*,p.name plan_name FROM account_links l LEFT JOIN profiles p "
-                            "ON l.profile_id=p.id WHERE kind='invite' ORDER BY created_at DESC").fetchall()
+        rows = conn.execute("SELECT l.*,p.name plan_name FROM account_links l LEFT JOIN access_plans p "
+                            "ON l.plan_id=p.id WHERE kind='invite' ORDER BY created_at DESC").fetchall()
         return [_public_link(row) for row in rows]
 
 
@@ -318,7 +296,7 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         link = _usable_link(conn, token, "invite", ts)
-        _valid_profile(conn, link["profile_id"])
+        _valid_plan(conn, link["plan_id"])
         if link["email"] and not hmac.compare_digest(link["email"].encode(), email.encode()):
             raise AccountError("invite_email_mismatch", "Use the email address on this invitation.", 403)
         if oidc_user_id:
@@ -326,7 +304,7 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
             if not user or (user["email"] or "").lower() != email:
                 raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
             state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
-            if state:
+            if state and (state["plan_id"] or state["removed_at"] is not None):
                 raise AccountError("account_exists", "This account already has an access plan.", 409)
             user_id = oidc_user_id
         else:
@@ -335,18 +313,16 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
             user_id = _id("usr")
             conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
             conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
-        # OIDC may have provisioned Apps before invitation acceptance. The
-        # invite plan must replace every explicit old App/key override.
-        conn.execute("UPDATE apps SET default_profile_id=? WHERE owner_user_id=?", (link["profile_id"], user_id))
-        conn.execute("UPDATE credentials SET profile_id=? WHERE app_id IN (SELECT id FROM apps WHERE owner_user_id=?)", (link["profile_id"], user_id))
-        conn.execute("INSERT INTO account_access(user_id,profile_id) VALUES(?,?)", (user_id, link["profile_id"]))
+        # The invitation's plan was previewed when it was sent (design §2.12).
+        conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
+                     "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
         app_id, credential_id = _id("app"), _id("cred")
-        conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,default_profile_id,created_at) VALUES(?,?,?,?,?,?)",
-                     (app_id, "personal", "My first app", user_id, link["profile_id"], ts))
-        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,profile_id,hash,prefix,display_name,created_at,created_by) "
-                     "VALUES(?,?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, link["profile_id"], hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
+        conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
+                     (app_id, "personal", "My first app", user_id, ts))
+        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,display_name,created_at,created_by) "
+                     "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
         conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
-        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"profile_id": link["profile_id"], "app_id": app_id, "credential_id": credential_id})
+        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"plan_id": link["plan_id"], "app_id": app_id, "credential_id": credential_id})
         _audit(conn, "credential.create", user_id, credential_id, ts,
                {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
         user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
@@ -373,13 +349,13 @@ def reset_password(token: str, password: str, *, path: Path):
         _audit(conn, "account.password.reset", user_id, link["id"], ts)
 
 
-def people(*, path: Path, effective_plan_resolver: Callable | None = None) -> list[dict]:
+def people(*, path: Path) -> list[dict]:
     with connection(path) as conn:
-        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,a.profile_id,p.name plan_name,"
+        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,a.plan_id,p.name plan_name,"
                             "a.disabled_at,MAX(u.last_login_at,(SELECT COALESCE(MAX(c.last_used_at),0) FROM credentials c "
                             "JOIN apps app ON app.id=c.app_id WHERE app.owner_user_id=u.id)) last_active "
                             "FROM users u LEFT JOIN account_access a ON a.user_id=u.id "
-                            "LEFT JOIN profiles p ON p.id=a.profile_id "
+                            "LEFT JOIN access_plans p ON p.id=a.plan_id "
                             "WHERE a.removed_at IS NULL ORDER BY u.created_at").fetchall()
         people = []
         for row in rows:
@@ -393,36 +369,39 @@ def people(*, path: Path, effective_plan_resolver: Callable | None = None) -> li
                           role="owner" if any(role[0] == "owner" for role in roles) else "admin" if any(role[0] in {"admin", "superadmin"} for role in roles) else "member")
             person["grants"] = [{"role": role["role"], "source": "oidc-claim" if role["provenance"] == "oidc" else "manual",
                                  "scope_app_id": role["scope_app_id"]} for role in roles]
-            person["plan_source"] = "assigned" if person["profile_id"] else "gateway_default"
-            if effective_plan_resolver is not None:
-                person.update(effective_plan_resolver(person))
-                plan = conn.execute("SELECT name FROM profiles WHERE id=?", (person["profile_id"],)).fetchone()
-                person["plan_name"] = plan[0] if plan else None
             people.append(person)
         return people
 
 
-def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | None = None,
+_UNCHANGED = object()
+
+
+def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHANGED,
                   disabled: bool | None = None, remove: bool = False,
                   actor_kind: str = "user", actor_label: str | None = None):
+    """Assign a person's plan (an id, or None for no plan), disable or remove them.
+
+    A plan change reaches every App that is "Same as its person" and bounds
+    every other App the person answers for (design §2.6).
+    """
     ts = int(time.time())
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if not conn.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone():
             raise AccountError("person_not_found", "Person not found.", 404)
         # Owners/admins are protected: People manages members, never break-glass access.
-        if conn.execute("SELECT 1 FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? "
-                        "AND revoked_at IS NULL AND role IN ('owner','admin','superadmin')", (user_id,)).fetchone():
+        if (disabled is not None or remove) and conn.execute(
+                "SELECT 1 FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? "
+                "AND revoked_at IS NULL AND role IN ('owner','admin','superadmin')", (user_id,)).fetchone():
             raise AccountError("protected_person", "Manage owner and administrator access through role settings.", 409)
         state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
         if state and state["removed_at"] is not None:
             raise AccountError("person_not_found", "Person not found.", 404)
-        conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
-        if profile_id is not None:
-            _valid_profile(conn, profile_id)
-            conn.execute("UPDATE account_access SET profile_id=? WHERE user_id=?", (profile_id, user_id))
-            conn.execute("UPDATE apps SET default_profile_id=? WHERE owner_user_id=?", (profile_id, user_id))
-            conn.execute("UPDATE credentials SET profile_id=? WHERE app_id IN (SELECT id FROM apps WHERE owner_user_id=?)", (profile_id, user_id))
+        ensure_access_row(conn, user_id)
+        if plan_id is not _UNCHANGED:
+            if plan_id is not None:
+                _valid_plan(conn, plan_id)
+            conn.execute("UPDATE account_access SET plan_id=? WHERE user_id=?", (plan_id, user_id))
         if disabled is not None or remove:
             conn.execute("UPDATE account_access SET disabled_at=?,removed_at=?,require_registered_session=1 WHERE user_id=?",
                          (ts if disabled or remove else None, ts if remove else None, user_id))
@@ -438,8 +417,11 @@ def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | Non
                 conn.execute("UPDATE admin_role_assignments SET revoked_at=? WHERE subject_kind='user' AND subject_id=?", (ts, user_id))
             if remove:
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
+        metadata: dict[str, Any] = {"disabled": disabled}
+        if plan_id is not _UNCHANGED:
+            metadata["plan_id"] = plan_id
         _audit(conn, "people.remove" if remove else "people.update", actor, user_id, ts,
-               {"profile_id": profile_id, "disabled": disabled}, actor_kind=actor_kind, actor_label=actor_label)
+               metadata, actor_kind=actor_kind, actor_label=actor_label)
 
     if remove:
         from gateway import prompt_memory
@@ -482,15 +464,3 @@ def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path,
             raise AccountError("link_unavailable", "This link is no longer available.", 404)
         _audit(conn, "account.invite.copy", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
     return token
-
-
-def profile_people_and_invites(conn, profile_id: str) -> tuple[list[str], int]:
-    """People assigned a plan and its pending invitations, which block deletion."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-        return [], 0
-    people = [row[0] or row[1] or row[2] for row in conn.execute(
-        "SELECT u.display_name,u.email,u.id FROM account_access a JOIN users u ON u.id=a.user_id "
-        "WHERE a.profile_id=? AND a.removed_at IS NULL ORDER BY u.created_at", (profile_id,))]
-    invites = conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL "
-                           "AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]
-    return people, invites

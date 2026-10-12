@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 import responses_translator
 from gateway import service_registry
 from gateway.transforms import run_request_pipeline
@@ -148,7 +149,7 @@ def _forward_to_fake_upstream(body: dict[str, Any]) -> dict[str, Any]:
         return _FakeClient(), _FakeResponse()
 
     client = TestClient(proxy.app)
-    with _local_model_config(), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    with _local_model_config(), authenticated(), patch.object(
         proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
     ), patch.object(proxy, "ensure_target", AsyncMock(return_value=True)), patch.object(
         proxy, "send_llm_execution_request", fake_send
@@ -170,7 +171,7 @@ def _forward_current_to_fake_upstream(
         return _FakeClient(), _FakeResponse()
 
     client = TestClient(proxy.app)
-    with _local_model_config(), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    with _local_model_config(), authenticated(), patch.object(
         proxy, "get_active_backend", AsyncMock(return_value="local")
     ), patch.object(
         proxy, "current_llm_model_for_backend", AsyncMock(return_value=loaded_model)
@@ -293,7 +294,7 @@ def test_responses_max_completion_tokens_reaches_chat_route_before_defaulting() 
         )
 
     client = TestClient(proxy.app)
-    with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    with authenticated(), patch.object(
         proxy, "_forward_chat_completions", fake_forward
     ):
         response = client.post(
@@ -436,7 +437,7 @@ def test_current_policy_is_logical_data_not_the_active_backend() -> None:
     client = TestClient(proxy.app)
     with patch.object(proxy, "config", {"backends": {"policy": policy_service, "active": active_service}}), patch.object(
         proxy, "LLM_BACKEND_HOSTS", {"active": "http://fake-active"}
-    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    ), authenticated(), patch.object(
         proxy, "get_active_backend", AsyncMock(return_value="active")
     ), patch.object(
         proxy, "current_llm_model_for_backend", AsyncMock(return_value="active-loaded.gguf")
@@ -480,7 +481,7 @@ def test_current_alias_without_a_declared_policy_fails_closed_before_routing() -
     client = TestClient(proxy.app)
     with patch.object(proxy, "config", {"backends": {"local": old_registry_shape}}), patch.object(
         proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
-    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    ), authenticated(), patch.object(
         proxy, "send_llm_execution_request", forbidden_send
     ):
         response = client.post("/v1/chat/completions", json={"model": "current", "messages": []})
@@ -499,9 +500,7 @@ def test_ambiguous_current_alias_policy_fails_closed_before_routing() -> None:
         return _FakeClient(), _FakeResponse()
 
     client = TestClient(proxy.app)
-    with patch.object(proxy, "config", {"backends": {"a": service_a, "b": service_b}}), patch.object(
-        proxy, "AUTH_ENABLED", False
-    ), patch.object(proxy, "send_llm_execution_request", forbidden_send):
+    with patch.object(proxy, "config", {"backends": {"a": service_a, "b": service_b}}), authenticated(), patch.object(proxy, "send_llm_execution_request", forbidden_send):
         response = client.post("/v1/chat/completions", json={"model": "current", "messages": []})
 
     assert response.status_code == 503
@@ -552,7 +551,7 @@ def test_unmigrated_or_invalid_default_fast_collection_fails_closed_before_egres
     client = TestClient(proxy.app)
     with patch.object(proxy, "config", {"backends": {"local": old_db_service}}), patch.object(
         proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
-    ), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    ), authenticated(), patch.object(
         proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
     ), patch.object(proxy, "send_llm_execution_request", forbidden_send):
         response = client.post("/v1/chat/completions", json={"model": "default-fast", "messages": []})
@@ -628,7 +627,7 @@ def test_responses_trusted_loopback_prepares_once_and_reaches_one_backend_body(
         return accepted
 
     client = TestClient(proxy.app)
-    with _local_model_config(), patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+    with _local_model_config(), authenticated(), patch.object(
         proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
     ), patch.object(proxy, "send_llm_execution_request", fake_send), patch.object(
         proxy, "_service_availability_response", lambda *_args, **_kwargs: None

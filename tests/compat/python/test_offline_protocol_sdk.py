@@ -6,6 +6,8 @@ payload, and the policy, translator and SDK response parsing are the real code.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import json
 import tempfile
 import unittest
@@ -16,8 +18,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated, plan_for, access# noqa: E402
 from gateway import media_jobs, receipt_store
-from gateway.policy import AppProfile
 from gateway.protocols.anthropic import (
     AnthropicTranslationError,
     messages_request_to_canonical,
@@ -37,7 +39,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             patch.object(receipt_store, "DB_PATH", receipt_db),
             patch.object(media_jobs, "DB_PATH", jobs_db),
             patch.object(proxy, "IMAGE_CACHE_DIR", root / "images"),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -71,10 +73,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             name="compat-chat-only",
             key_hash=key_hash,
             downstream={},
-            profile=AppProfile(
-                id="compat-chat-only",
-                protocols=frozenset({"openai.chat"}),
-            ),
+            access=access(plan_for("compat-chat-only"), caps=('chat',)),
         )
         lookup = Mock(
             side_effect=lambda candidate_hash, **kwargs:
@@ -83,9 +82,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
         backend = AsyncMock(
             side_effect=AssertionError("Denied request reached backend selection")
         )
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "LAN_BYPASS_ENABLED", False
-        ), patch.object(
+        with patch.object(
             proxy, "runtime_identity_for_app_credential_hash", lookup
         ), patch.object(proxy, "get_active_backend", backend):
             response = self.gateway.post(

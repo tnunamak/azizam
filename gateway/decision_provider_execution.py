@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway import category_enforcement, providers
 from gateway.capabilities import Capability
-from gateway.policy import AppProfile, PolicyRequest, evaluate
+from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 from gateway.decisions_api import DecisionDispatchResult
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 
@@ -74,17 +74,13 @@ def _auth_name(auth: Any) -> str | None:
     return str(value) if value else None
 
 
-def _is_delegated(auth: Any) -> bool:
-    return bool(_auth_value(auth, "delegated") or _auth_value(auth, "delegated_auth"))
-
-
 def _identity(auth: Any) -> Any:
     return getattr(auth, "identity", None) or auth
 
 
 def _require_real_app_identity(auth: Any) -> str:
     app_id = _auth_app_id(auth)
-    if not app_id or _is_delegated(auth):
+    if not app_id:
         raise PaidDecisionError(
             403,
             "remote_provider_not_allowed",
@@ -249,7 +245,7 @@ def _decision_receipt(
     protocol: str,
     path: str,
     provider: providers.ProviderRef,
-    profile: AppProfile,
+    access: EffectiveAccess,
     auth: Any,
     requested_model: str,
     resolved_model: str,
@@ -260,19 +256,19 @@ def _decision_receipt(
         intent="decision.systemone",
         path=path,
         backend=provider.id,
-        app_profile=profile.id,
+        app_profile="+".join(access.plan_ids) or None,
         app_id=_auth_app_id(auth),
         api_key_name=_auth_name(auth),
         requested_model=requested_model,
         resolved_model=resolved_model,
-        visibility=profile.status_visibility.level,
+        visibility=access.receipt_detail,
         remote=True,
     )
 
 
 async def systemone(
     auth: Any,
-    profile: AppProfile,
+    access: EffectiveAccess,
     body: Mapping[str, Any],
     request_id: str,
     registry: Mapping[str, Any],
@@ -299,7 +295,7 @@ async def systemone(
             remote_provider=provider.id,
         )
         decision = category_enforcement.apply(
-            _identity(auth), policy_request, evaluate(profile, policy_request))
+            _identity(auth), policy_request, evaluate(access, policy_request))
         if decision.denied:
             raise PaidDecisionError(403, "remote_provider_not_allowed", "; ".join(decision.reasons))
         if not _model_declared(provider, requested_model):
@@ -311,7 +307,7 @@ async def systemone(
         async with asyncio.timeout(DEFAULT_DECISION_TIMEOUT_S):
             payload, cost, usage, reservation = await providers.call_typesafe_systemone(
                 provider,
-                profile,
+                _identity(auth),
                 body,
                 ledger_path=ledger_path,
                 admin_db_path=admin_db_path,
@@ -360,7 +356,7 @@ async def systemone(
 async def openai(
     request: Request,
     auth: Any,
-    profile: AppProfile,
+    access: EffectiveAccess,
     registry: Mapping[str, Any],
     ledger_path: Path,
     admin_db_path: Path | None = None,
@@ -387,7 +383,7 @@ async def openai(
         protocol="openai.decisions",
         path=str(request.url.path),
         provider=provider,
-        profile=profile,
+        access=access,
         auth=auth,
         requested_model=model,
         resolved_model=model,
@@ -411,14 +407,14 @@ async def openai(
                 remote_provider=provider.id,
             )
             decision = category_enforcement.apply(
-                _identity(auth), policy_request, evaluate(profile, policy_request))
+                _identity(auth), policy_request, evaluate(access, policy_request))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
             estimate = providers.Cost(None, "unknown", provider.id, provider.cost_class)
             reservation = providers.reserve_provider_spend(
-                profile, provider, estimate, path=ledger_path, admin_db_path=admin_db_path,
+                _identity(auth), provider, estimate, path=ledger_path, admin_db_path=admin_db_path,
                 request_timeout_s=DEFAULT_DECISION_TIMEOUT_S,
             )
             providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)

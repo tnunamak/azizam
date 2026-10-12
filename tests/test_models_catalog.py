@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities, build_local_capabilities  # noqa: E402
 from gateway.models_catalog import (  # noqa: E402
@@ -651,30 +652,20 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(catalog["aliases"][0]["description"], "Generate or edit images from your prompts.")
         self.assertEqual(catalog["aliases"][0]["technical_description"], "Public poster workflow")
 
-    def test_default_profile_fallback_is_only_for_fresh_or_default_apps(self) -> None:
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": []},
-            default_profile_id="default-local",
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "default-local"}, "default-local")])
+    def test_person_access_is_used_only_when_the_person_has_no_enabled_app(self) -> None:
+        person = access(plan_for("plan_person"))
+        family = access(plan_for("plan_person"), plan_for("plan_family"))
 
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "missing-profile"}]},
-            default_profile_id="default-local",
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "missing-profile"}, "missing-profile")])
+        def contexts(apps, apps_access):
+            return auth_contexts_from_user_snapshot(
+                {"apps": apps}, access_for_app=apps_access.get, person_access=person,
+                context_for_access=lambda effective: effective.plan_ids,
+            )
 
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "default-local"}]},
-            default_profile_id=None,
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-        self.assertEqual(contexts, [({"id": "default-local"}, "default-local")])
+        self.assertEqual(contexts([], {}), [("plan_person",)])
+        self.assertEqual(contexts([{"id": "app"}], {"app": family}), [("plan_person", "plan_family")])
+        self.assertEqual(contexts([{"id": "a"}, {"id": "b"}], {"a": family, "b": family}),
+                         [("plan_person", "plan_family")])
 
     def test_receipt_timing_deduplicates_keys_and_uses_successful_calls(self) -> None:
         catalog = build_models_catalog(
@@ -830,30 +821,15 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertTrue(row["availability"]["measured"])
         self.assertEqual(row["availability"]["evidence"]["source"], "health")
 
-    def test_auth_contexts_from_user_snapshot_fail_closed_on_missing_profile(self) -> None:
+    def test_auth_contexts_from_user_snapshot_fail_closed_without_plans(self) -> None:
         contexts = auth_contexts_from_user_snapshot(
-            {
-                "apps": [
-                    {"id": "disabled", "effective_profile_id": "family", "self_service_enabled": False},
-                    {"id": "missing", "effective_profile_id": "missing"},
-                ]
-            },
-            default_profile_id=None,
-            profile_loader=lambda _profile_id: None,
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
+            {"apps": [{"id": "disabled", "disabled_at": 1}, {"id": "missing"}, {"id": "no-app-plan"}]},
+            access_for_app={"no-app-plan": access(plan_for("plan_person"), None)}.get,
+            person_access=access(plan_for("plan_person")),
+            context_for_access=lambda effective: effective.plan_ids,
         )
 
         self.assertEqual(contexts, [])
-
-    def test_auth_contexts_from_user_snapshot_uses_existing_app_profile(self) -> None:
-        contexts = auth_contexts_from_user_snapshot(
-            {"apps": [{"id": "app", "effective_profile_id": "family"}]},
-            default_profile_id=None,
-            profile_loader=lambda profile_id: {"id": profile_id},
-            context_for_profile=lambda profile, profile_id: (profile, profile_id),
-        )
-
-        self.assertEqual(contexts, [({"id": "family"}, "family")])
 
     def test_service_health_probe_uses_declared_endpoint(self) -> None:
         async def run():

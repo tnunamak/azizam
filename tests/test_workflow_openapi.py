@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.workflow_openapi import (  # noqa: E402
     ROOT_EXTENSION,
@@ -84,14 +85,14 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(len(inputs), len(self.registry.records()))
 
     def test_catalog_matches_gateway_workflows_endpoint(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             listing = self.client.get("/gateway/v1/workflows").json()["workflows"]
         self.assertEqual(sorted(w["id"] for w in listing), sorted(self.catalog))
         for item in listing:
             self.assertEqual(self.catalog[item["id"]]["intent"], item["intent"])
 
     def test_catalog_workflows_match_capability_rows(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False), \
+        with authenticated(), \
              patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         names = {
@@ -247,7 +248,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertIn("sfx", sfx["aliases"])
 
     def test_typical_seconds_flow_from_manifest_to_both_surfaces(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             listing = {
                 w["id"]: w
                 for w in self.client.get("/gateway/v1/workflows").json()["workflows"]
@@ -275,7 +276,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         skill = self.client.get("/.well-known/skills/azizam-gateway/SKILL.md").text
         self.assertIn("x-azizam-workflows", skill)
         self.assertIn("execution.fields", skill)
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             meta = self.client.get("/.well-known/azizam").json()
         self.assertEqual(meta["links"]["workflow_catalog"], "/openapi.json#x-azizam-workflows")
 

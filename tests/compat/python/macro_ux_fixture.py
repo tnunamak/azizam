@@ -34,7 +34,7 @@ SAFE_RECEIPT_FIELDS = frozenset({
     "protocol", "rejected_inputs", "request_id", "requested_model", "requested_workflow",
     "resolved_model", "resolved_workflow", "status", "stream", "updated_at_ms", "warnings",
 })
-CREDENTIAL_FIELDS = ("id", "subject_kind", "subject_id", "app_id", "profile_id", "prefix", "display_name", "scopes", "expires_at")
+CREDENTIAL_FIELDS = ("id", "subject_kind", "subject_id", "app_id", "prefix", "display_name", "scopes", "expires_at")
 SCENARIO_EXPECTATIONS = {
     "all_clear": ("ok", "ok", True, {"fixture-required": ("up", "ok"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, False),
     "required_down": ("bad", "bad", True, {"fixture-required": ("down", "bad"), "fixture-standby": ("up", "ok"), "litellm": ("up", "ok"), **_DISABLED_FIXTURE_SERVICES}, True),
@@ -170,7 +170,7 @@ def _status(scenario: str):
 
 
 def _seed(proxy: Any, state_root: Path, port: int) -> None:
-    from gateway import admin_store, receipt_store
+    from gateway import accounts, admin_store, receipt_store
     from gateway.admin_oidc import csrf_token_for_session, encode_session_cookie, session_from_claims
     from gateway.admin_runtime import create_admin_service_account_key
     from gateway.receipts import RouteReceipt
@@ -189,14 +189,20 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
             "fixture", row["subject"], email=row["email"], display_name=row["display_name"], now=now, path=db)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=people["admin"]["id"], granted_by="fixture", now=now, path=db)
     principal = admin_store.ensure_service_account(fixture["principal_name"], description="P1B only", now=now, path=db)
-    profile = admin_store.create_profile(fixture["profile_name"], {"id": "fixture-profile", "protocols": ["openai.chat"]}, path=db)
-    app_a = admin_store.ensure_personal_app_for_user(people["user_a"]["id"], name=fixture["long_value"], default_profile_id=profile["id"], now=now, path=db)
-    app_b = admin_store.ensure_personal_app_for_user(people["user_b"]["id"], name="User B fixture app", default_profile_id=profile["id"], now=now, path=db)
+    plan = admin_store.create_access_plan({
+        "name": fixture["plan_name"], "can_use": {"chat": {"items": "all"}},
+        "direct_engine_access": {"engines": [], "operations": []}, "paid_providers": [], "provider_fallback": False,
+        "can_load_models": True, "receipt_detail": "basic", "media_metadata": "none",
+    }, path=db)
+    for label in ("user_a", "user_b"):
+        accounts.change_person(people[label]["id"], "fixture", path=db, plan_id=plan["id"])
+    app_a = admin_store.ensure_personal_app_for_user(people["user_a"]["id"], name=fixture["long_value"], now=now, path=db)
+    app_b = admin_store.ensure_personal_app_for_user(people["user_b"]["id"], name="User B fixture app", now=now, path=db)
     for index in range(fixture["pagination_apps"]):
-        admin_store.create_app(f"Fixture page {index:02d}", kind="personal", owner_user_id=people["user_a"]["id"], default_profile_id=profile["id"], now=now, path=db)
+        admin_store.create_app(f"Fixture page {index:02d}", kind="personal", owner_user_id=people["user_a"]["id"], now=now, access_plan="person", path=db)
     app_credentials = []
     for app, label in ((app_a, "User A key"), (app_b, "User B key")):
-        app_credentials.append(admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, profile_id=profile["id"], path=db))
+        app_credentials.append(admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hashlib.sha256(app["id"].encode()).hexdigest(), prefix="opk_fixture", display_name=label, path=db))
     principal_credential = admin_store.create_credential_hash(subject_kind="service_account", subject_id=principal["id"], hash=hashlib.sha256(principal["id"].encode()).hexdigest(), prefix="oak_fixture", display_name=fixture["credential_name"], path=db)
     audit_id = admin_store.record_audit(fixture["audit_action"], actor_kind="user", actor_id=people["admin"]["id"], target_kind="app", target_id=app_a["id"], metadata={"fixture": True}, path=db)
     receipt_store.init_db(state_root / "receipts.db")
@@ -214,11 +220,11 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         conn.commit()
     compat_key, compat_credential, _ = create_admin_service_account_key("P1B compatibility", path=db)
     expected_credentials = sorted([
-        {"id": record["id"], "subject_kind": "app", "subject_id": app["id"], "app_id": app["id"], "profile_id": profile["id"], "prefix": "opk_fixture", "display_name": label, "scopes": [], "expires_at": None}
+        {"id": record["id"], "subject_kind": "app", "subject_id": app["id"], "app_id": app["id"], "prefix": "opk_fixture", "display_name": label, "scopes": [], "expires_at": None}
         for record, app, label in zip(app_credentials, (app_a, app_b), ("User A key", "User B key"), strict=True)
     ] + [
-        {"id": principal_credential["id"], "subject_kind": "service_account", "subject_id": principal["id"], "app_id": None, "profile_id": None, "prefix": "oak_fixture", "display_name": fixture["credential_name"], "scopes": [], "expires_at": None},
-        {"id": compat_credential["id"], "subject_kind": "service_account", "subject_id": compat_credential["subject_id"], "app_id": None, "profile_id": None, "prefix": compat_key[:18], "display_name": "P1B compatibility admin key", "scopes": [], "expires_at": None},
+        {"id": principal_credential["id"], "subject_kind": "service_account", "subject_id": principal["id"], "app_id": None, "prefix": "oak_fixture", "display_name": fixture["credential_name"], "scopes": [], "expires_at": None},
+        {"id": compat_credential["id"], "subject_kind": "service_account", "subject_id": compat_credential["subject_id"], "app_id": None, "prefix": compat_key[:18], "display_name": "P1B compatibility admin key", "scopes": [], "expires_at": None},
     ], key=lambda row: str(row["id"]))
     sessions: dict[str, dict[str, str]] = {}
     for label, user in people.items():
@@ -230,7 +236,7 @@ def _seed(proxy: Any, state_root: Path, port: int) -> None:
         "sessions": sessions, "compatibility_key": compat_key, "scenario": os.environ.get("P1B_FIXTURE_SCENARIO", "all_clear"),
         "fixture": fixture,
         "expected_credentials": expected_credentials,
-        "resolved_ids": {"users.admin": people["admin"]["id"], "users.user_a": people["user_a"]["id"], "users.user_b": people["user_b"]["id"], "profiles.fixture": profile["id"], "apps.user_a": app_a["id"], "apps.user_b": app_b["id"], "receipts.user_a": receipt_a, "service_principals.fixture_automation": principal["id"], "credentials.fixture_automation": principal_credential["id"], "audit.fixture_seed": audit_id["id"]},
+        "resolved_ids": {"users.admin": people["admin"]["id"], "users.user_a": people["user_a"]["id"], "users.user_b": people["user_b"]["id"], "access_plans.fixture": plan["id"], "apps.user_a": app_a["id"], "apps.user_b": app_b["id"], "receipts.user_a": receipt_a, "service_principals.fixture_automation": principal["id"], "credentials.fixture_automation": principal_credential["id"], "audit.fixture_seed": audit_id["id"]},
     })
 
 
@@ -358,12 +364,12 @@ def verify(path: Path) -> None:
         row["issuer"] = "fixture"
     if status != 200 or observed_users != expected_users:
         raise RuntimeError(f"fixture human-user projection failed: {status} {users}")
-    status, profiles = _request(bootstrap, "admin", "GET", "/admin/api/profiles")
-    profile_id = bootstrap["resolved_ids"]["profiles.fixture"]
-    expected_profile = {"id": profile_id, "name": bootstrap["fixture"]["profile_name"], "profile": {"id": "fixture-profile", "protocols": ["openai.chat"]}}
-    observed_profile = next(({key: row.get(key) for key in expected_profile} for row in profiles.get("profiles", []) if row.get("id") == profile_id), None)
-    if status != 200 or observed_profile != expected_profile:
-        raise RuntimeError(f"fixture profile projection failed: {status} {profiles}")
+    status, plans = _request(bootstrap, "admin", "GET", "/admin/api/access-plans")
+    plan_id = bootstrap["resolved_ids"]["access_plans.fixture"]
+    expected_plan = {"id": plan_id, "name": bootstrap["fixture"]["plan_name"], "summary": "Chat. No paid models."}
+    observed_plan = next(({key: row.get(key) for key in expected_plan} for row in plans.get("access_plans", []) if row.get("id") == plan_id), None)
+    if status != 200 or observed_plan != expected_plan:
+        raise RuntimeError(f"fixture access plan projection failed: {status} {plans}")
     status, credentials = _request(bootstrap, "admin", "GET", "/admin/api/credentials")
     credential_id = bootstrap["resolved_ids"]["credentials.fixture_automation"]
     observed_credentials = sorted([{key: row.get(key) for key in CREDENTIAL_FIELDS} for row in credentials.get("credentials", [])], key=lambda row: str(row["id"]))
@@ -386,8 +392,8 @@ def verify(path: Path) -> None:
     services_data = registry.get("service_registry", {}).get("services", {})
     if status != 200 or services_data.get("litellm", {}).get("lifecycle", {}).get("managed") is not False or services_data.get("litellm", {}).get("editable") is not False or services_data.get("fixture-required", {}).get("lifecycle", {}).get("managed") is not False or services_data.get("fixture-required", {}).get("editable") is not True:
         raise RuntimeError(f"fixture managed/editable service rows failed: {status} {services_data}")
-    status, admin_write = _request(bootstrap, "admin", "PUT", "/admin/api/operator/user-access-defaults", {"self_service_apps": True})
-    if status != 200 or admin_write.get("user_access_defaults", {}).get("self_service_apps") is not True:
+    status, admin_write = _request(bootstrap, "admin", "PUT", "/admin/api/settings/defaults", {"invite_access_plan": None})
+    if status != 200 or admin_write.get("defaults", {}).get("invite_access_plan", "missing") is not None:
         raise RuntimeError(f"admin CSRF write failed: {status} {admin_write}")
     status, app = _request(bootstrap, "user_a", "POST", "/me/api/apps", {"name": "P1B CSRF check"})
     if status != 201:
@@ -422,10 +428,12 @@ def verify(path: Path) -> None:
     status, setting = _request(bootstrap, "admin", "GET", "/admin/api/oidc-config")
     if status != 200 or setting.get("oidc_config", {}).get("client_secret") != "<redacted>" or bootstrap["fixture"]["redacted_setting"] in json.dumps(setting):
         raise RuntimeError(f"fixture redacted setting projection failed: {status} {setting}")
-    status, policy = _request(bootstrap, "admin", "POST", "/admin/api/policy/simulate", {"profile": bootstrap["resolved_ids"]["profiles.fixture"], "request": bootstrap["fixture"]["policy_request"]})
+    plan_id = bootstrap["resolved_ids"]["access_plans.fixture"]
+    status, policy = _request(bootstrap, "admin", "POST", "/admin/api/access/check", {"plan": plan_id, "request": bootstrap["fixture"]["policy_request"]})
     expected_policy = bootstrap["fixture"]["policy_result"]
-    if status != 200 or policy != {"profile_id": "fixture-profile", "decision": expected_policy}:
-        raise RuntimeError(f"fixture policy input failed: {status} {policy}")
+    observed_policy = {key: (policy.get("decision") or {}).get(key) for key in expected_policy}
+    if status != 200 or policy.get("plan_ids") != [plan_id] or observed_policy != expected_policy:
+        raise RuntimeError(f"fixture check access failed: {status} {policy}")
 
 
 def main() -> None:

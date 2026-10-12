@@ -155,7 +155,7 @@ def test_unauthenticated_chat_authenticates_without_reading_body(monkeypatch):
     auth = Mock(return_value=proxy.openai_error_response(
         "Authentication required.", status_code=401, error_type="authentication_error", code="invalid_api_key",
     ))
-    monkeypatch.setattr(proxy, "authenticate_runtime_or_litellm_request", auth)
+    monkeypatch.setattr(proxy, "authenticate_runtime_request", auth)
     receive = AsyncMock(side_effect=AssertionError("unauthenticated body was read"))
     request = Request(_scope(), receive)
     response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
@@ -168,7 +168,7 @@ def test_unauthenticated_huge_chunked_chat_is_rejected_without_buffering(monkeyp
     auth = Mock(return_value=proxy.openai_error_response(
         "Authentication required.", status_code=401, error_type="authentication_error", code="invalid_api_key",
     ))
-    monkeypatch.setattr(proxy, "authenticate_runtime_or_litellm_request", auth)
+    monkeypatch.setattr(proxy, "authenticate_runtime_request", auth)
     status, _, receive = _run(proxy.app, chunks=[b"x" * (33 * 1024 * 1024)], scope=_scope(headers=[(b"transfer-encoding", b"chunked")]))
     assert status == 401
     auth.assert_called_once()
@@ -177,7 +177,7 @@ def test_unauthenticated_huge_chunked_chat_is_rejected_without_buffering(monkeyp
 
 def test_unauthenticated_huge_declared_chat_is_413_without_reading(monkeypatch):
     auth = Mock(side_effect=AssertionError("oversized declaration should be rejected before routing"))
-    monkeypatch.setattr(proxy, "authenticate_runtime_or_litellm_request", auth)
+    monkeypatch.setattr(proxy, "authenticate_runtime_request", auth)
     status, body, receive = _run(proxy.app, scope=_scope(headers=[(b"content-length", b"34603008")]))
     assert status == 413
     assert json.loads(body)["error"]["code"] == "request_too_large"
@@ -198,7 +198,7 @@ def test_authenticated_chat_auth_runs_before_body_and_is_reused(monkeypatch):
         return {"type": "http.request", "body": b'{"model":"unknown-test","messages":[]}', "more_body": False}
 
     handler = AsyncMock(return_value=proxy.Response(status_code=200))
-    monkeypatch.setattr(proxy, "authenticate_runtime_or_litellm_request", authenticate)
+    monkeypatch.setattr(proxy, "authenticate_runtime_request", authenticate)
     monkeypatch.setattr(proxy, "resolve_stable_alias", lambda *args: None)
     monkeypatch.setattr(proxy, "_handle_openai_litellm_request_once", handler)
     request = Request(_scope(), receive)

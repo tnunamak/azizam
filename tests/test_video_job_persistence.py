@@ -186,7 +186,7 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
             "issuer", "alice", email="alice@example.test", path=proxy.ADMIN_STORE.path,
         )
         app = admin_store.create_app(
-            "Alice app", kind="personal", owner_user_id=alice["id"], path=proxy.ADMIN_STORE.path,
+            "Alice app", kind="personal", owner_user_id=alice["id"], access_plan="person", path=proxy.ADMIN_STORE.path,
         )
         maker_auth = proxy.AuthContext(identity=proxy.AuthIdentity(
             name="alice", key_hash="sha256:alice", app_id=app["id"], person_id=alice["id"],

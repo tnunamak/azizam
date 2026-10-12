@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store, extension_packages, service_registry  # noqa: E402
+from tests.support.access import plan_for  # noqa: E402
 from gateway.admin_api import (  # noqa: E402
     AdminAuthError,
     AdminContext,
@@ -25,7 +26,6 @@ from gateway.admin_api import (  # noqa: E402
     derive_admin_attention,
 )
 from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
-from gateway.policy import AppProfile  # noqa: E402
 
 
 class DeriveAdminAttentionTests(unittest.TestCase):
@@ -2161,7 +2161,7 @@ class AdminPolicySimulationTests(unittest.TestCase):
 
     def test_resolver_can_supply_profile_by_id(self) -> None:
         registry = {
-            "brother": AppProfile(id="brother", protocols=frozenset({"openai"})),
+            "brother": plan_for("brother"),
         }
         client, _ = _make_client(profile_resolver=registry.get)
         resp = client.post(

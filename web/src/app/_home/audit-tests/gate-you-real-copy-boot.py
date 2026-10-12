@@ -64,9 +64,9 @@ def _copy_media_cache() -> dict[str, int]:
     return counts
 
 
-def _first_profile_id(db: Path) -> str | None:
+def _first_plan_id(db: Path) -> str | None:
     with sqlite3.connect(db) as conn:
-        row = conn.execute("SELECT id FROM profiles ORDER BY created_at LIMIT 1").fetchone()
+        row = conn.execute("SELECT id FROM access_plans ORDER BY created_at LIMIT 1").fetchone()
         return str(row[0]) if row else None
 
 
@@ -121,7 +121,7 @@ def _member_user(db: Path) -> dict[str, str]:
         if row:
             return {"id": row["id"], "email": row["email"], "name": row["display_name"] or row["email"], "created": "true" if row["subject"] == "gate-you-copy-member" else "false"}
 
-    profile_id = _first_profile_id(db)
+    plan_id = _first_plan_id(db)
     user = admin_store.upsert_oidc_user(
         "local",
         "gate-you-copy-member",
@@ -133,15 +133,14 @@ def _member_user(db: Path) -> dict[str, str]:
     admin_store.set_local_password_verifier(user["id"], verifier, path=db)
     with sqlite3.connect(db) as conn:
         conn.execute(
-            "INSERT INTO account_access(user_id, profile_id, require_registered_session) VALUES(?,?,1) "
-            "ON CONFLICT(user_id) DO UPDATE SET profile_id=excluded.profile_id, require_registered_session=1",
-            (user["id"], profile_id),
+            "INSERT INTO account_access(user_id, plan_id, require_registered_session) VALUES(?,?,1) "
+            "ON CONFLICT(user_id) DO UPDATE SET plan_id=excluded.plan_id, require_registered_session=1",
+            (user["id"], plan_id),
         )
         conn.commit()
     admin_store.ensure_personal_app_for_user(
         user["id"],
         name="Gate You Copy Member",
-        default_profile_id=profile_id,
         path=db,
     )
     return {"id": user["id"], "email": user["email"], "name": user["display_name"], "created": "true"}

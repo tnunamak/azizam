@@ -38,7 +38,7 @@ const app: AccountApp = {
   kind: "app",
   disabled_at: null,
   created_at: 1800000000,
-  profile: null,
+  access_plan: null,
   can_mint_keys: true,
   credentials: [],
 };
@@ -79,7 +79,6 @@ const mintedKey: MintedCredential = {
   subject_kind: "app",
   subject_id: app.id,
   app_id: app.id,
-  profile_id: null,
   prefix: "test",
   display_name: "My laptop",
   scopes: [],
@@ -224,7 +223,7 @@ it("says why keys cannot be created for an app", async () => {
       {
         ...app,
         can_mint_keys: false,
-        profile: { name: "Gone", missing: true },
+        access_plan: null,
       },
     ],
   });
@@ -237,7 +236,7 @@ it("says why keys cannot be created for an app", async () => {
   openMenu("My laptop");
   expect(
     await screen.findByText(
-      "This app's access plan was removed. Ask the owner to choose one.",
+      "This app has no access plan. Ask the owner to choose one.",
     ),
   ).toBeVisible();
   expect(screen.getByRole("menuitem", { name: "Create key" })).toHaveAttribute(
@@ -310,8 +309,7 @@ it("refreshes a partially created app, clears the cancelled draft, and resumes k
     subject_kind: "user",
     subject_id: "member",
     app_id: app.id,
-    profile_id: null,
-    prefix: "test",
+      prefix: "test",
     display_name: "My laptop",
     scopes: [],
     created_at: 1800000000,
@@ -384,8 +382,7 @@ it("says what a new key does with prompts, from the gateway's answer", async () 
     subject_kind: "app",
     subject_id: app.id,
     app_id: app.id,
-    profile_id: null,
-    prefix: "test",
+      prefix: "test",
     display_name: "My laptop",
     scopes: [],
     created_at: 1800000000,
@@ -406,13 +403,13 @@ it("says what a new key does with prompts, from the gateway's answer", async () 
 it("names an app's access plan on its row instead of showing a bare word", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
-    apps: [{ ...app, profile: { name: "Old" } }],
+    apps: [{ ...app, access_plan: { id: "plan_old", name: "Old", summary: null, same_as_person: true } }],
   });
   renderApps();
   const row = within(
     (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
   );
-  expect(row.getByText(/Plan: Old/)).toBeVisible();
+  expect(row.getByText(/Access plan: Old \(yours\)/)).toBeVisible();
 });
 
 const unfinishedKey = "azizam:unfinished-key-rotations";

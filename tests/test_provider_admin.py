@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store, service_registry, secret_store  # noqa: E402
+from tests.support.access import plan_for  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext  # noqa: E402
 from gateway.provider_admin import (  # noqa: E402
     PROVIDER_ADMIN_SETTING_KEY,
@@ -29,7 +30,6 @@ from gateway.provider_admin import (  # noqa: E402
     provider_admin_setting_to_store,
     provider_ledger_spending_snapshot,
 )
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
 from gateway.providers import Cost, ProviderError, ProviderRef, reserve_provider_spend  # noqa: E402
 
 
@@ -750,10 +750,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         ledger_db = Path(tmpdir.name) / "provider_spend.db"
-        profile = DEFAULT_PROFILE.with_overrides(
-            id="builders",
-            remote=RemoteProviderPolicy(providers=frozenset({"openrouter"})),
-        )
+        profile = plan_for("builders", paid=sorted({"openrouter"}))
         provider = ProviderRef(
             id="openrouter",
             base_url="https://openrouter.test",
@@ -912,10 +909,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
         self.assertNotIn("allowed_plans", provider_policy)
 
-        profile = DEFAULT_PROFILE.with_overrides(
-            id="builders",
-            remote=RemoteProviderPolicy(providers=frozenset({"typesafe"})),
-        )
+        profile = plan_for("builders", paid=sorted({"typesafe"}))
         provider = ProviderRef(
             id="typesafe",
             base_url="https://typesafe.test",

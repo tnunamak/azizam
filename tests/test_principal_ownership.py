@@ -26,8 +26,8 @@ def owners(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     user = admin_store.upsert_oidc_user("fixture", "azizam-user", path=db)
-    first = admin_store.create_app("Azizam one", kind="personal", owner_user_id=user["id"], path=db)
-    second = admin_store.create_app("Azizam two", kind="personal", owner_user_id=user["id"], path=db)
+    first = admin_store.create_app("Azizam one", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
+    second = admin_store.create_app("Azizam two", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     credentials = []
     for app, suffix in ((first, "old"), (first, "new"), (second, "other")):
         credentials.append(admin_store.create_credential_hash(
@@ -39,7 +39,6 @@ def owners(tmp_path, monkeypatch):
     monkeypatch.setattr(admin_store, "DB_PATH", db)
     monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(path=db))
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "images")
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     contexts = [proxy.AuthContext(identity=runtime_identity_for_app_credential_hash(c["hash"], path=db)) for c in credentials]
     store = custom_voices.VoiceStore(tmp_path / "voices", legacy_owners=lambda owner: ownership.credential_owner_keys(owner, path=db))
     return SimpleNamespace(db=db, user=user, first=first, second=second, credentials=credentials,

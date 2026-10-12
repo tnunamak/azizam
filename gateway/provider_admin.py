@@ -43,12 +43,10 @@ AdminAuth = Callable[[Request], AdminContext]
 class ProviderAdminStore(Protocol):
     def get_service_registry(self) -> dict[str, Any]: ...
 
-    def list_profiles(self) -> list[dict[str, Any]]: ...
+    def list_access_plans(self) -> list[dict[str, Any]]: ...
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
-
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
     def get_provider_admin_state(self) -> dict[str, Any]: ...
@@ -209,11 +207,6 @@ def create_provider_admin_router(
                 if provider_id in (store.get_service_registry().get("services") or {}) or provider_id in _remote_providers(store):
                     raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
                 create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
-                create_allowed = (
-                    _normalize_allowed_plans(body, _profile_ids(store))
-                    if "allowed_plans" in body or "plans" in body
-                    else None
-                )
                 config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
                 secret_id = str(config.get("api_key_secret_id") or "").strip()
                 wrote_secret = False
@@ -233,11 +226,9 @@ def create_provider_admin_router(
                     provider_state = _provider_state_for_update(state, provider_id)
                     if create_caps:
                         provider_state["caps"] = create_caps
-                    provider_state["allowed_plans"] = create_allowed if create_allowed is not None else []
                     store.update_provider_admin_state(data=state, actor=ctx)
+                    # A new provider is in no access plan until the owner adds it.
                     record = store.add_service(data=_provider_service_to_store_form(service), actor=ctx, expected_generation=expected_generation)
-                    if create_allowed is not None:
-                        _sync_profile_remote_provider_grants(store, provider_id, create_allowed, actor=ctx)
                 except Exception:
                     if wrote_secret:
                         secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
@@ -282,6 +273,14 @@ def create_provider_admin_router(
             )
             if not rows:
                 _require_provider(store, provider_id)
+            # A charge belongs to an App; name it so the owner can tell which.
+            names: dict[str, str | None] = {}
+            for row in rows:
+                app_id = row.get("app_id")
+                if app_id and app_id not in names:
+                    app = admin_store.get_app(str(app_id), path=_admin_db_path(store))
+                    names[app_id] = app.get("name") if app else None
+                row["app_name"] = names.get(app_id) if app_id else None
         except _RouteError as exc:
             return exc.as_response()
         except sqlite3.Error:
@@ -508,7 +507,7 @@ def create_provider_admin_router(
                     actor=ctx,
                     expected_generation=_expected_registry_generation(store, body),
                 )
-                _sync_profile_remote_provider_grants(store, provider_id, [], actor=ctx)
+                _drop_provider_from_plans(store, provider_id, actor=ctx)
                 state = store.get_provider_admin_state()
                 providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
                 providers.pop(service_registry.canonical_provider_id(provider_id), None)
@@ -555,26 +554,6 @@ def create_provider_admin_router(
                 provider_state = _provider_state_for_update(state, provider_id)
                 provider_state.pop("caps", None)
                 store.update_provider_admin_state(data=state, actor=ctx)
-                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
-        except _RouteError as exc:
-            return exc.as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
-
-    @router.put("/{provider_id}/allowed-plans")
-    async def set_allowed_plans(request: Request, provider_id: str) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await _read_json_body(request)
-            with secret_store.provider_mutation_lock(_admin_db_path(store)):
-                _require_provider(store, provider_id)
-                allowed = _normalize_allowed_plans(body, _profile_ids(store))
-                state = store.get_provider_admin_state()
-                provider_state = _provider_state_for_update(state, provider_id)
-                provider_state["allowed_plans"] = allowed
-                store.update_provider_admin_state(data=state, actor=ctx)
-                _sync_profile_remote_provider_grants(store, provider_id, allowed, actor=ctx)
                 provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
@@ -744,6 +723,7 @@ def _providers_payload(
     registry = store.get_service_registry()
     provider_models = _provider_model_summaries(registry)
     db_path = _admin_db_path(store)
+    plans_by_provider = _access_plans_by_provider(store)
     providers = [
         _project_provider(
             provider_id,
@@ -753,6 +733,7 @@ def _providers_payload(
             spend_available,
             provider_models,
             db_path,
+            plans_by_provider,
         )
         for provider_id, service in _remote_providers(store).items()
     ]
@@ -767,7 +748,6 @@ def _providers_payload(
                 error=usage.get("error"),
             ),
         },
-        "available_plans": _plan_summaries(store),
     }
 
 
@@ -791,6 +771,7 @@ def _one_provider_payload(
         usage.get("available", True) is not False,
         _provider_model_summaries(store.get_service_registry()),
         _admin_db_path(store),
+        _access_plans_by_provider(store),
     )
 
 
@@ -825,6 +806,7 @@ def _project_provider(
     spend_available: bool,
     provider_models: Mapping[str, list[dict[str, str]]],
     db_path: Path,
+    access_plans_by_provider: Mapping[str, list[dict[str, str]]],
 ) -> dict[str, Any]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_state = _provider_state(state, provider_id)
@@ -846,11 +828,8 @@ def _project_provider(
             error=usage.get("error"),
         ),
         "caps": _normalize_caps(provider_state.get("caps")),
-        "allowed_plans": (
-            _normalize_string_list(provider_state.get("allowed_plans"))
-            if "allowed_plans" in provider_state
-            else None
-        ),
+        # Read-only: a plan's Paid providers decide who can use this provider.
+        "access_plans": access_plans_by_provider.get(provider_id, []),
         "cap_guarantee": _cap_guarantee(),
         "concurrency": _project_concurrency(config),
         "recommendations": _project_recommendations(provider_state, config),
@@ -1145,8 +1124,6 @@ def _normalize_provider_policy(value: Mapping[str, Any]) -> dict[str, Any]:
             "reachable": connection["reachable"],
             "checked_at": connection.get("checked_at"),
         }
-    if "allowed_plans" in value:
-        policy["allowed_plans"] = _normalize_string_list(value.get("allowed_plans"))
     if "recommendations" in value:
         policy["recommendations"] = _normalize_recommendations(value.get("recommendations"))
     return policy
@@ -1294,117 +1271,26 @@ def _month_start_epoch(timestamp: int) -> int:
     return calendar.timegm((current.tm_year, current.tm_mon, 1, 0, 0, 0))
 
 
-def _normalize_allowed_plans(
-    body: Mapping[str, Any], profile_aliases: Mapping[str, str]
-) -> list[str]:
-    raw = body.get("allowed_plans")
-    if raw is None:
-        raw = body.get("plans")
-    plans = _normalize_string_list(raw)
-    unknown = sorted(plan for plan in plans if plan not in profile_aliases)
-    if unknown:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "unknown_access_plan",
-            f"unknown access plan(s): {unknown}",
-        )
-    return sorted({profile_aliases[plan] for plan in plans})
-
-
-def _sync_profile_remote_provider_grants(
-    store: ProviderAdminStore,
-    provider_id: str,
-    allowed_policy_ids: list[str],
-    *,
-    actor: AdminContext,
+def _drop_provider_from_plans(
+    store: ProviderAdminStore, provider_id: str, *, actor: AdminContext,
 ) -> None:
+    """A removed provider leaves every plan's Paid providers."""
     provider = service_registry.canonical_provider_id(provider_id)
-    allowed = set(allowed_policy_ids)
-    for row in store.list_profiles():
-        if not isinstance(row, Mapping):
-            continue
-        record_id = str(row.get("record_id") or row.get("id") or "").strip()
-        policy_id = _profile_policy_id(row)
-        if not record_id or not policy_id:
-            continue
-        current = store.get_profile(record_id) or row
-        profile_doc = dict(current.get("profile") if isinstance(current.get("profile"), Mapping) else {})
-        profile_doc.setdefault("id", policy_id)
-        remote = dict(profile_doc.get("remote") if isinstance(profile_doc.get("remote"), Mapping) else {})
-        providers = set(str(item) for item in remote.get("providers") or [])
-        if policy_id in allowed:
-            providers.add(provider)
-        else:
-            providers.discard(provider)
-        if providers:
-            remote["providers"] = sorted(providers)
-            profile_doc["remote"] = remote
-        elif remote:
-            remote["providers"] = []
-            profile_doc["remote"] = remote
-        else:
-            profile_doc.pop("remote", None)
-        store.update_profile(profile_id=record_id, data={"profile": profile_doc}, actor=actor)
+    for row in store.list_access_plans():
+        doc = dict(row.get("plan") or {})
+        paid = [item for item in doc.get("paid_providers") or [] if service_registry.canonical_provider_id(item) != provider]
+        if paid != list(doc.get("paid_providers") or []):
+            doc["paid_providers"] = paid
+            store.update_access_plan(plan_id=str(row["id"]), data=doc, actor=actor)
 
 
-def _profile_policy_id(row: Mapping[str, Any]) -> str:
-    profile = row.get("profile")
-    if isinstance(profile, Mapping) and profile.get("id"):
-        return str(profile["id"])
-    return str(row.get("id") or "").strip()
-
-
-def _normalize_string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, (list, tuple)):
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_provider_policy",
-            "expected a string list",
-        )
-    return sorted({str(item).strip() for item in value if str(item).strip()})
-
-
-def _profile_ids(store: ProviderAdminStore) -> dict[str, str]:
-    ids: dict[str, str] = {}
-    for profile in store.list_profiles():
-        if not isinstance(profile, Mapping):
-            continue
-        row_id = str(profile.get("id") or "").strip()
-        policy = profile.get("profile")
-        policy_id = ""
-        if isinstance(policy, Mapping):
-            policy_id = str(policy.get("id") or "").strip()
-        canonical = policy_id or row_id
-        if canonical:
-            ids[canonical] = canonical
-        if row_id:
-            ids[row_id] = canonical or row_id
-    return ids
-
-
-def _plan_summaries(store: ProviderAdminStore) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    for profile in store.list_profiles():
-        if not isinstance(profile, Mapping):
-            continue
-        profile_id = str(profile.get("id") or "").strip()
-        if not profile_id:
-            continue
-        policy = profile.get("profile")
-        policy_id = ""
-        if isinstance(policy, Mapping):
-            policy_id = str(policy.get("id") or "").strip()
-        rows.append({
-            "id": policy_id or profile_id,
-            "record_id": profile_id,
-            "name": str(profile.get("name") or profile.get("label") or profile_id),
-        })
-    rows.sort(key=lambda row: row["id"])
-    return rows
+def _access_plans_by_provider(store: ProviderAdminStore) -> dict[str, list[dict[str, str]]]:
+    out: dict[str, list[dict[str, str]]] = {}
+    for row in store.list_access_plans():
+        for item in (row.get("plan") or {}).get("paid_providers") or []:
+            out.setdefault(service_registry.canonical_provider_id(item), []).append(
+                {"id": str(row["id"]), "name": str(row["name"])})
+    return out
 
 
 def _usage_snapshot(spending_provider: MoneyUsageProvider | None) -> Mapping[str, Any]:

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs  # noqa: E402
 
 
@@ -49,7 +50,7 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(media_jobs, "DB_PATH", self.db),
             patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.payload_dir),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0),
             patch.object(proxy, "COMFY_VIDEO_TIMEOUT", 5),
         ]
