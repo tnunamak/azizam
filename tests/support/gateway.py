@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 import proxy
 from gateway import admin_store
 from tests.registry_test_helpers import write_service_registry_for_test
+from tests.support.fake_upstream import StreamingASGITransport
 
 LITELLM_KEY_ENV = "FK_LITELLM_MASTER_KEY"
 LITELLM_MASTER_KEY = "fk-litellm-master-key"
@@ -40,4 +42,12 @@ def register_litellm(monkeypatch: pytest.MonkeyPatch, db: Path, base_url: str, *
             }
         },
         path=db,
+    )
+
+
+def gateway_client(*, client: tuple[str, int] = ("127.0.0.1", 40000)) -> httpx.AsyncClient:
+    """An httpx client for the in-process gateway that streams chunk by chunk."""
+    return httpx.AsyncClient(
+        transport=StreamingASGITransport(proxy.app, client=client),
+        base_url="http://gateway.test",
     )

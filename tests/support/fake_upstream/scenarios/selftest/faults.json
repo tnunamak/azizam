@@ -1,0 +1,25 @@
+{
+  "protocol": "ollama",
+  "name": "faults",
+  "description": "Self-test: an NDJSON stream cut inside a UTF-8 character, then a drop; and a drop before headers.",
+  "provenance": {"source": "hand-written", "reference": "tests/test_fake_upstream.py"},
+  "exchanges": [
+    {
+      "id": "stream",
+      "match": {"method": "POST", "path": "/api/chat"},
+      "response": {
+        "body": [
+          {"event": {"message": {"content": "a"}, "done": false}},
+          {"text": "{\"message\":{\"content\":\"caf"},
+          {"hex": "c3"},
+          {"wait": 1},
+          {"hex": "a9"},
+          {"text": "\"},\"done\":false}\n"},
+          {"wait": 1},
+          {"disconnect": true}
+        ]
+      }
+    },
+    {"id": "drop", "match": {"method": "POST", "path": "/api/generate"}, "response": {"disconnect_before_headers": true}}
+  ]
+}
