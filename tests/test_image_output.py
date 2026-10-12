@@ -195,14 +195,28 @@ class TestEncodeImageBytes(unittest.TestCase):
     def test_webp_encodes_and_keeps_alpha(self) -> None:
         from PIL import Image
 
-        raw = _png_bytes("RGBA")
-        encoded, mime = encode_image_bytes(raw, "webp", 80)
-        self.assertEqual(mime, "image/webp")
-        opened = Image.open(io.BytesIO(encoded))
-        self.assertEqual(opened.format, "WEBP")
-        result = opened.convert("RGBA")
-        # Fully-opaque source -> alpha preserved (not silently flattened).
-        self.assertEqual(result.getpixel((0, 0))[3], 255)
+        source = Image.new("RGBA", (2, 2))
+        source.putdata([
+            (10, 20, 30, 0),
+            (40, 50, 60, 64),
+            (70, 80, 90, 128),
+            (100, 110, 120, 255),
+        ])
+        buffer = io.BytesIO()
+        source.save(buffer, format="PNG")
+        raw = buffer.getvalue()
+        for quality in (80, 100):
+            with self.subTest(quality=quality):
+                encoded, mime = encode_image_bytes(raw, "webp", quality)
+                self.assertEqual(mime, "image/webp")
+                with Image.open(io.BytesIO(encoded)) as decoded:
+                    self.assertEqual(decoded.format, "WEBP")
+                    self.assertEqual(decoded.size, (2, 2))
+                    self.assertEqual(decoded.mode, "RGBA")
+                    self.assertEqual(
+                        list(decoded.getchannel("A").tobytes()),
+                        [0, 64, 128, 255],
+                    )
 
     def test_unsupported_format_raises(self) -> None:
         with self.assertRaises(ValueError):
