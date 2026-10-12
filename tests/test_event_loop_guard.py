@@ -6,6 +6,8 @@ long; the same work on a worker thread leaves the loop ticking. The probe
 fails any endpoint whose worst loop stall exceeds STALL_LIMIT_S.
 """
 import asyncio
+import builtins
+import os
 import sqlite3
 import threading
 import traceback
@@ -150,6 +152,12 @@ def _loop_thread_work(loop_calls: list[str]):
             loop_calls.append(f"{kind} " + " <- ".join(reversed(frames[-7:])))
 
     real_connect, real_popen, real_sleep = sqlite3.connect, subprocess.Popen, time.sleep
+    real_open = builtins.open
+
+    def traced_open(file, *args, **kwargs):
+        if isinstance(file, (str, os.PathLike)) and "/site-packages/" not in str(file) and not str(file).startswith("/proc"):
+            note(f"open({Path(str(file)).name})")
+        return real_open(file, *args, **kwargs)
 
     def connect(*args, **kwargs):
         note("sqlite3.connect")
@@ -166,7 +174,7 @@ def _loop_thread_work(loop_calls: list[str]):
         return real_sleep(seconds)
 
     return (patch.object(sqlite3, "connect", connect), patch.object(subprocess, "Popen", Popen),
-            patch.object(time, "sleep", sleep))
+            patch.object(time, "sleep", sleep), patch.object(builtins, "open", traced_open))
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -180,6 +188,6 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
             return (await client.get(_concrete(route), headers=gateway["bearer"])).status_code
 
     patches = _loop_thread_work(loop_calls)
-    with patches[0], patches[1], patches[2]:
+    with patches[0], patches[1], patches[2], patches[3]:
         asyncio.run(call())
     assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
