@@ -131,11 +131,9 @@ test("opened alternatives and the details sheet stay accessible and inside a dar
   };
   await catalog(page, [measured, peer]);
   const check = async () => {
-    expect(
-      await page.evaluate(
+    await expect.poll(() => page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
+      )).toBe(true);
     const result = await new AxeBuilder({ page }).analyze();
     expect(
       result.violations

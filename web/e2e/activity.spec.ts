@@ -48,7 +48,7 @@ test("requests refresh visible content on focus and keep metadata on one line", 
   await expect(oldRow).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Request details:/ })).toHaveCount(1);
   expect(loads).toBeGreaterThan(before);
-  expect(await freshRow.locator("p").nth(1).evaluate((element) => element.clientHeight))
+  await expect.poll(() => freshRow.locator("p").nth(1).evaluate((element) => element.clientHeight))
     .toBeLessThanOrEqual(20);
 
   await freshRow.click();
