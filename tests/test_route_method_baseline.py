@@ -25,6 +25,7 @@ Everything else, including every API 405 and Allow header, must be equal.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -59,13 +60,15 @@ def _flat(routing: dict) -> dict:
 
 def _now_needs_a_key(old: str | None, new: str | None) -> bool:
     """A method nothing serves answers a caller with no key 401 (key_required), not 404."""
-    return old is not None and new is not None and old.replace("none: 404", "none: 401") == new
+    if old is None or new is None:
+        return False
+    return re.sub(r"none: (404|405)[^;]*", "none: 401 application/json", old, count=1) == new
 
 
 def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
     """Same as the API-client outcome, except a caller with no key now gets 401, not 404."""
     old_any, new_any = _any_accept(old), _any_accept(new)
-    if old_any.get("none", "").startswith("404") and new_any.get("none", "").startswith("401"):
+    if old_any.get("none", "").startswith(("404", "405")) and new_any.get("none", "").startswith("401"):
         old_any["none"] = new_any["none"]
     return old_any == new_any
 
