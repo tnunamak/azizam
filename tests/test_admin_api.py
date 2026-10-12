@@ -2604,6 +2604,7 @@ class AdminAccessPlanRouteTests(unittest.TestCase):
         "direct_engine_access": {"engines": [], "operations": []},
         "paid_providers": [],
         "provider_fallback": False,
+        "caps": {"usd_per_request": None, "usd_per_day": None, "usd_per_month": None},
         "can_load_models": False,
         "receipt_detail": "basic",
         "media_metadata": "none",
