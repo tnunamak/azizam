@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -617,6 +619,56 @@ class TestDeriveBackendConstants(unittest.TestCase):
         }
         result = proxy._derive_backend_constants(cfg)
         self.assertTrue(result["COMFY_ENABLED"])
+
+
+def _pin_reload_state(monkeypatch) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Install a private copy of config and derived globals; monkeypatch undoes it."""
+    snapshot = _snapshot_reload_derived_state()
+    old_config = copy.deepcopy(snapshot["config"])
+    monkeypatch.setattr(proxy, "config", old_config)
+    for name, value in snapshot.items():
+        if name != "config":
+            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
+    return snapshot, old_config
+
+
+def _assert_reload_state_unchanged(snapshot: dict[str, Any], old_config: dict[str, Any]) -> None:
+    assert proxy.config is old_config
+    assert proxy.config == snapshot["config"]
+    for name, value in snapshot.items():
+        if name != "config":
+            assert getattr(proxy, name) == value, name
+
+
+def test_load_failure_preserves_exact_config_and_constants(monkeypatch):
+    snapshot, old_config = _pin_reload_state(monkeypatch)
+
+    def fail_load(_bootstrap):
+        raise RuntimeError("fixture load failure")
+
+    monkeypatch.setattr(proxy, "_load_effective_runtime_config", fail_load)
+    with pytest.raises(RuntimeError, match="fixture load failure"):
+        proxy.reload_runtime_config()
+
+    _assert_reload_state_unchanged(snapshot, old_config)
+
+
+def test_reload_replaces_mapping_without_mutating_captured_snapshot(monkeypatch):
+    snapshot, old_config = _pin_reload_state(monkeypatch)
+    new_config = _make_effective_config(
+        {"tabby": _tabby_backend(host="127.0.0.1", port=18091)}
+    )
+    monkeypatch.setattr(
+        proxy, "_load_effective_runtime_config", lambda _bootstrap: new_config
+    )
+
+    updates = proxy.reload_runtime_config()
+
+    assert proxy.config is not old_config
+    assert old_config == snapshot["config"]
+    assert proxy.config == new_config
+    assert proxy.TABBY_HOST == "http://127.0.0.1:18091"
+    assert updates["TABBY_HOST"] == "http://127.0.0.1:18091"
 
 
 if __name__ == "__main__":
