@@ -44,12 +44,12 @@ class TestMetricsStore(unittest.TestCase):
                 (now, "x", "", 3.0),
             ])
             self.assertAlmostEqual(
-                metrics_store.query_aggregate("x", since_s=10, op="avg") or 0.0,
+                metrics_store.query_aggregate("x", since_s=3600, op="avg") or 0.0,
                 2.0,
             )
-            self.assertEqual(metrics_store.query_aggregate("x", since_s=10, op="max"), 3.0)
-            self.assertEqual(metrics_store.query_aggregate("x", since_s=10, op="min"), 1.0)
-            self.assertEqual(metrics_store.query_aggregate("x", since_s=10, op="count"), 3.0)
+            self.assertEqual(metrics_store.query_aggregate("x", since_s=3600, op="max"), 3.0)
+            self.assertEqual(metrics_store.query_aggregate("x", since_s=3600, op="min"), 1.0)
+            self.assertEqual(metrics_store.query_aggregate("x", since_s=3600, op="count"), 3.0)
         finally:
             conn.close()
 
@@ -62,13 +62,13 @@ class TestMetricsStore(unittest.TestCase):
             metrics_store.record_sample(conn, now, "y", 30.0, tags={"key": "alpha"})
             self.assertEqual(
                 metrics_store.query_aggregate(
-                    "y", since_s=10, tags_filter={"key": "alpha"}, op="avg"
+                    "y", since_s=3600, tags_filter={"key": "alpha"}, op="avg"
                 ),
                 20.0,
             )
             self.assertEqual(
                 metrics_store.query_aggregate(
-                    "y", since_s=10, tags_filter={"key": "beta"}, op="max"
+                    "y", since_s=3600, tags_filter={"key": "beta"}, op="max"
                 ),
                 20.0,
             )

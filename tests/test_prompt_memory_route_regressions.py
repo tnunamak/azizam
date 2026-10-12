@@ -133,7 +133,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
         def slow_put(*args, **kwargs):
             entered.set()
             # Storage stays blocked until the test has seen the loop run.
-            assert release.wait(timeout=30), "the loop never ran while prompt storage waited"
+            assert release.wait(timeout=10), "the loop never ran while prompt storage waited"
             return original(*args, **kwargs)
         with patch.object(prompt_memory, "put", slow_put):
             task = asyncio.create_task(self._generate(None))
