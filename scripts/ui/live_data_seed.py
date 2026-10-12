@@ -48,7 +48,6 @@ auth:
   lan_bypass_enabled: true
   lan_bypass_cidrs: ["127.0.0.0/8", "::1/128"]
 backends:
-  tabby: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   kobold: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   comfyui: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
   embeddings: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}

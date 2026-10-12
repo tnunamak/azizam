@@ -29,10 +29,10 @@ Kobold assertions (K1 trap):
     (Restore-and-restart on the previous activation: test_systemd_swap_rollback.py.)
   - empty mmproj: Environment="LLAMA_BEE_MMPROJ=" (empty value).
 
-Tabby assertions (T1 fix):
+HttpLoadUnloadDriver assertions (T1 fix):
   - unload POST before load POST (when model already loaded).
   - load POST body includes {"model_name": target, **live_model_params} —
-    NOT a static dict; live params come from get_tabby_model_config()[2].
+    NOT a static dict; live params come from the registered params provider.
   - success-marker path returns True.
   - error-marker path returns False.
   - verify-fallback path returns True.
@@ -122,18 +122,18 @@ def _kobold_svc() -> dict:
     }
 
 
-def _tabby_svc() -> dict:
-    """Minimal svc dict for HttpLoadUnloadDriver matching the tabby seed."""
+def _http_swap_svc() -> dict:
+    """Minimal svc dict for HttpLoadUnloadDriver for a load/unload model server."""
     return {
         "host": "127.0.0.1",
-        "port": proxy.tabby_cfg.get("port", 5050),
+        "port": 5050,
         "lifecycle": {
             "driver": "http-load-unload",
             "driver_config": {
                 "load_url": "/v1/model/load",
                 "unload_url": "/v1/model/unload",
                 "admin_header": "x-admin-key",
-                "load_body_params": "tabby-config",
+                "load_body_params": "live-load-params",
                 "load_timeout_s": 5,
                 "success_marker": '"status":"finished"',
                 "verify_endpoint": "/v1/model",
@@ -396,31 +396,31 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. HttpLoadUnloadDriver — tabby golden swap tests
+# 2. HttpLoadUnloadDriver — golden swap tests
 # ---------------------------------------------------------------------------
 
-# Simulate the live model_params that get_tabby_model_config() would return.
-_TABBY_LIVE_PARAMS = {
+# Simulate the live model_params that a registered params provider would return.
+_HTTP_SWAP_LIVE_PARAMS = {
     "max_seq_len": 8192,
     "cache_size": 4096,
     "cache_mode": "Q4",
 }
-_TABBY_MODEL = "Qwen2.5-72B-Instruct"
-_TABBY_CURRENT_MODEL = "Llama-3.1-8B"
+_HTTP_SWAP_MODEL = "Qwen2.5-72B-Instruct"
+_HTTP_SWAP_CURRENT_MODEL = "Llama-3.1-8B"
 
 
-def _setup_tabby_params_provider():
+def _setup_live_params_provider():
     """Register a deterministic params-provider for tests."""
-    register_params_provider("tabby-config", lambda svc: dict(_TABBY_LIVE_PARAMS))
+    register_params_provider("live-load-params", lambda svc: dict(_HTTP_SWAP_LIVE_PARAMS))
 
 
 class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
-    """HttpLoadUnloadDriver.swap() produces byte-identical side-effects to swap_tabby_model()."""
+    """HttpLoadUnloadDriver.swap() produces the documented load/unload side-effects."""
 
     def setUp(self):
         self.driver = HttpLoadUnloadDriver()
-        self.svc = _tabby_svc()
-        _setup_tabby_params_provider()
+        self.svc = _http_swap_svc()
+        _setup_live_params_provider()
 
     # -----------------------------------------------------------------------
     # 2a. Already-loaded short-circuit — zero HTTP load/unload calls
@@ -433,7 +433,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         # GET /v1/model returns the target model → already loaded.
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"id": _TABBY_MODEL}
+        mock_resp.json.return_value = {"id": _HTTP_SWAP_MODEL}
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_resp)
@@ -443,7 +443,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            result = _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         self.assertTrue(result)
         self.assertEqual(
@@ -462,11 +462,11 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
 
         call_count = {"n": 0}
 
-        # First GET → current model (_TABBY_CURRENT_MODEL)
+        # First GET → current model (_HTTP_SWAP_CURRENT_MODEL)
         # Subsequent GETs (shouldn't be needed on success-marker path) → return target.
         get_resp_current = MagicMock()
         get_resp_current.status_code = 200
-        get_resp_current.json.return_value = {"id": _TABBY_CURRENT_MODEL}
+        get_resp_current.json.return_value = {"id": _HTTP_SWAP_CURRENT_MODEL}
 
         success_text = '"status":"finished"'
 
@@ -499,7 +499,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            result = _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         self.assertTrue(result)
 
@@ -520,14 +520,14 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
     def test_load_body_includes_live_model_params(self):
         """Load POST body = {model_name: target, **live_params} — NOT a static dict.
 
-        This is the T1 fix: parity with swap_tabby_model's get_tabby_model_config() read.
+        This is the T1 fix: the live params provider is read at swap time.
         """
         captured_load_body: list[dict] = []
 
         # GET verify_endpoint: returns different model (need to swap).
         get_resp = MagicMock()
         get_resp.status_code = 200
-        get_resp.json.return_value = {"id": _TABBY_CURRENT_MODEL}
+        get_resp.json.return_value = {"id": _HTTP_SWAP_CURRENT_MODEL}
 
         success_text = '"status":"finished"'
 
@@ -560,17 +560,17 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            result = _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         self.assertTrue(result)
         self.assertEqual(len(captured_load_body), 1, "Expected exactly one load POST")
         body = captured_load_body[0]
 
         # model_name must be present.
-        self.assertEqual(body.get("model_name"), _TABBY_MODEL)
+        self.assertEqual(body.get("model_name"), _HTTP_SWAP_MODEL)
 
         # ALL live params from the params-provider must be in the body.
-        for key, value in _TABBY_LIVE_PARAMS.items():
+        for key, value in _HTTP_SWAP_LIVE_PARAMS.items():
             self.assertIn(key, body, f"Live param '{key}' missing from load body (T1 fix)")
             self.assertEqual(
                 body[key],
@@ -586,7 +586,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         """Error in load response → return False."""
         get_resp = MagicMock()
         get_resp.status_code = 200
-        get_resp.json.return_value = {"id": _TABBY_CURRENT_MODEL}
+        get_resp.json.return_value = {"id": _HTTP_SWAP_CURRENT_MODEL}
 
         error_text = '{"status":"error","message":"OOM"}'
 
@@ -617,7 +617,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            result = _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         self.assertFalse(result)
 
@@ -645,11 +645,11 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         # First GET: current model (different). Second GET (verify): target loaded.
         get_resp_current = MagicMock()
         get_resp_current.status_code = 200
-        get_resp_current.json.return_value = {"id": _TABBY_CURRENT_MODEL}
+        get_resp_current.json.return_value = {"id": _HTTP_SWAP_CURRENT_MODEL}
 
         get_resp_target = MagicMock()
         get_resp_target.status_code = 200
-        get_resp_target.json.return_value = {"id": _TABBY_MODEL}
+        get_resp_target.json.return_value = {"id": _HTTP_SWAP_MODEL}
 
         async def _mock_get(url, **kwargs):
             call_count["gets"] += 1
@@ -670,7 +670,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            result = _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         self.assertTrue(result, "verify-fallback should return True when model matches")
 
@@ -684,7 +684,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
 
         get_resp = MagicMock()
         get_resp.status_code = 200
-        get_resp.json.return_value = {"id": _TABBY_CURRENT_MODEL}
+        get_resp.json.return_value = {"id": _HTTP_SWAP_CURRENT_MODEL}
 
         success_text = '"status":"finished"'
 
@@ -717,7 +717,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
         mock_httpx_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         with patch("httpx.AsyncClient", mock_httpx_cls):
-            _run(self.driver.swap(self.svc, {"model_name": _TABBY_MODEL}))
+            _run(self.driver.swap(self.svc, {"model_name": _HTTP_SWAP_MODEL}))
 
         for names in header_names_seen:
             self.assertIn(
@@ -742,13 +742,13 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
     """ensure_target() routes every backend through its LifecycleDriver.
 
     To exercise the swap path we inject lifecycle.driver keys into
-    proxy.config["backends"] for kobold/tabby — mirroring the seed data the
+    proxy.config["backends"] for kobold and an http-load-unload service — mirroring the seed data the
     production deployment carries (proxy_config.yml -> admin.db registry).
     """
 
     def setUp(self):
         import copy
-        _setup_tabby_params_provider()
+        _setup_live_params_provider()
         self._orig_config = copy.deepcopy(dict(proxy.config))
 
         # Inject seed lifecycle config so driver_for_service() resolves correctly.
@@ -770,21 +770,21 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
                 "precheck": "gguf_path",
             },
         }
-        tabby_seed = dict(backends.get("tabby") or {})
-        tabby_seed["lifecycle"] = {
+        http_seed = dict(backends.get("httpswap") or {})
+        http_seed["lifecycle"] = {
             "driver": "http-load-unload",
             "driver_config": {
                 "load_url": "/v1/model/load",
                 "unload_url": "/v1/model/unload",
                 "admin_header": "x-admin-key",
-                "load_body_params": "tabby-config",
+                "load_body_params": "live-load-params",
                 "load_timeout_s": 5,
                 "success_marker": '"status":"finished"',
                 "verify_endpoint": "/v1/model",
             },
         }
         backends["kobold"] = kobold_seed
-        backends["tabby"] = tabby_seed
+        backends["httpswap"] = http_seed
         proxy.config["backends"] = backends
 
     def tearDown(self):
@@ -825,8 +825,8 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
              patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True), \
              patch.object(proxy, "is_literal_gguf_path", return_value=True), \
-             patch.object(proxy, "currently_loaded_kobold_model", return_value="/old.gguf"), \
-             patch.object(proxy, "currently_loaded_kobold_mmproj", return_value=None):
+             patch.object(proxy, "currently_loaded_model", return_value="/old.gguf"), \
+             patch.object(proxy, "currently_loaded_aux", return_value=None):
             result = _run(proxy.ensure_target("kobold", _GGUF, _MMPROJ))
 
         self.assertTrue(result)
@@ -842,8 +842,8 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         # warned_models must be the shared proxy._pin_mismatch_warned set.
         self.assertIs(warned_models, proxy._pin_mismatch_warned)
 
-    def test_tabby_driver_path_calls_http_load_unload_swap(self):
-        """ensure_target('tabby', model) calls HttpLoadUnloadDriver.swap()."""
+    def test_http_swap_driver_path_calls_http_load_unload_swap(self):
+        """ensure_target('httpswap', model) calls HttpLoadUnloadDriver.swap()."""
         import gateway.lifecycle_drivers as _lcd
 
         swap_called_with: list[tuple] = []
@@ -853,16 +853,16 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
             return True
 
         with patch.object(_lcd._http_load_unload_driver, "swap", side_effect=_fake_swap), \
-             patch.object(proxy, "currently_loaded_tabby_model", new=AsyncMock(return_value="other-model")):
-            result = _run(proxy.ensure_target("tabby", _TABBY_MODEL))
+             patch.object(proxy, "_currently_loaded_model_for", new=AsyncMock(return_value="other-model")):
+            result = _run(proxy.ensure_target("httpswap", _HTTP_SWAP_MODEL))
 
         self.assertTrue(result)
         self.assertEqual(len(swap_called_with), 1)
         _, activation, ctx, warned_models = swap_called_with[0]
-        self.assertEqual(activation["model_name"], _TABBY_MODEL)
+        self.assertEqual(activation["model_name"], _HTTP_SWAP_MODEL)
         # SwapContext must be passed with correct target_model.
         self.assertIsNotNone(ctx, "ctx must be passed to driver.swap()")
-        self.assertEqual(ctx.target_model, _TABBY_MODEL)
+        self.assertEqual(ctx.target_model, _HTTP_SWAP_MODEL)
 
 
 # ---------------------------------------------------------------------------
@@ -884,8 +884,8 @@ class TestDriverForServiceNewDrivers(unittest.TestCase):
         self.assertIsInstance(driver, SystemdDriver)
 
     def test_http_load_unload_driver_resolved(self):
-        backends = {"tabby": {**_tabby_svc()}}
-        driver = self._call("tabby", backends)
+        backends = {"httpswap": {**_http_swap_svc()}}
+        driver = self._call("httpswap", backends)
         self.assertIsInstance(driver, HttpLoadUnloadDriver)
 
     def test_unknown_still_falls_back_to_external(self):
@@ -912,9 +912,9 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
 
     def setUp(self):
         self.kobold_driver = SystemdDriver()
-        self.tabby_driver = HttpLoadUnloadDriver()
+        self.http_driver = HttpLoadUnloadDriver()
         self.kobold_svc = _kobold_svc()
-        self.tabby_svc = _tabby_svc()
+        self.http_svc = _http_swap_svc()
         # Clear the shared warned set between tests.
         self._orig_warned = set(proxy._pin_mismatch_warned)
         proxy._pin_mismatch_warned.clear()
@@ -1090,21 +1090,21 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
         self.assertIn(_KOBOLD_UNIT, exec_argv[1])
 
     # -------------------------------------------------------------------
-    # Case (d): tabby already-loaded — no unload, no load call
+    # Case (d): http-load-unload already-loaded — no unload, no load call
     # -------------------------------------------------------------------
 
-    def test_d_tabby_already_loaded_no_http_calls(self):
-        """Case (d): tabby already-loaded → True, zero HTTP calls.
+    def test_d_http_already_loaded_no_http_calls(self):
+        """Case (d): http-load-unload already-loaded → True, zero HTTP calls.
 
-        Legacy: swap_tabby_model does current = await currently_loaded_tabby_model();
+        Legacy: the swap reads the loaded model first;
         if current == target_model: return True.
         Driver with ctx: uses ctx.loaded_model directly, same short-circuit.
         """
-        _setup_tabby_params_provider()
+        _setup_live_params_provider()
 
         ctx = _lcd.SwapContext(
-            loaded_model=_TABBY_MODEL,
-            target_model=_TABBY_MODEL,
+            loaded_model=_HTTP_SWAP_MODEL,
+            target_model=_HTTP_SWAP_MODEL,
         )
 
         http_calls: list = []
@@ -1128,24 +1128,24 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
                 pass
 
         with patch("httpx.AsyncClient", return_value=_TrackingClient()):
-            result = _run(self.tabby_driver.swap(
-                self.tabby_svc, {"model_name": _TABBY_MODEL}, ctx=ctx
+            result = _run(self.http_driver.swap(
+                self.http_svc, {"model_name": _HTTP_SWAP_MODEL}, ctx=ctx
             ))
 
-        self.assertTrue(result, "Case (d): already-loaded tabby must return True")
+        self.assertTrue(result, "Case (d): already-loaded http-load-unload must return True")
         self.assertEqual(http_made, [], "Case (d): no HTTP calls when ctx says already loaded")
 
     # -------------------------------------------------------------------
-    # Case (e): tabby mismatch → unload + load (same HTTP call sequence as legacy)
+    # Case (e): http-load-unload mismatch → unload + load (same HTTP call sequence as legacy)
     # -------------------------------------------------------------------
 
-    def test_e_tabby_mismatch_unload_then_load(self):
-        """Case (e): tabby mismatch -> unload POST then load POST with the live params body."""
+    def test_e_http_mismatch_unload_then_load(self):
+        """Case (e): http-load-unload mismatch -> unload POST then load POST with the live params body."""
         import copy
         import json
         import httpx
 
-        svc = copy.deepcopy(self.tabby_svc)
+        svc = copy.deepcopy(self.http_svc)
         dc = svc["lifecycle"]["driver_config"]
         dc["load_body_params"] = "audit-live-params"
         live_params = {"max_seq_len": 12345, "cache_size": 3456, "cache_mode": "Q8"}
@@ -1161,13 +1161,13 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
             kwargs["transport"] = httpx.MockTransport(respond)
             return real_client(*args, **kwargs)
 
-        ctx = _lcd.SwapContext(loaded_model="OldModel-7B", target_model=_TABBY_MODEL)
+        ctx = _lcd.SwapContext(loaded_model="OldModel-7B", target_model=_HTTP_SWAP_MODEL)
         with patch.dict(
             _lcd.PARAMS_PROVIDERS,
             {"audit-live-params": lambda _svc: dict(live_params)},
         ), patch.object(httpx, "AsyncClient", side_effect=client):
-            result = _run(self.tabby_driver.swap(
-                svc, {"model_name": _TABBY_MODEL}, ctx=ctx,
+            result = _run(self.http_driver.swap(
+                svc, {"model_name": _HTTP_SWAP_MODEL}, ctx=ctx,
             ))
 
         self.assertIs(result, True)
@@ -1178,7 +1178,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
         self.assertEqual(captured[0].content, b"")
         self.assertEqual(
             json.loads(captured[1].content),
-            {"model_name": _TABBY_MODEL, **live_params},
+            {"model_name": _HTTP_SWAP_MODEL, **live_params},
         )
         for request in captured:
             self.assertIn("x-admin-key", request.headers)
@@ -1201,7 +1201,7 @@ class TestBuildActivationGolden(unittest.TestCase):
     Verifies:
       - SystemdDriver.build_activation(seeded_kobold, model=X, aux=Y)
           == {"env": {"LLAMA_BEE_MODEL": X, "LLAMA_BEE_MMPROJ": Y}}
-      - HttpLoadUnloadDriver.build_activation(seeded_tabby, model=X)
+      - HttpLoadUnloadDriver.build_activation(seeded_http_swap, model=X)
           == {"model_name": X}
       - Precheck: missing GGUF → None (loud print).
       - Precheck: present abs .gguf → returns the activation dict.
@@ -1211,10 +1211,10 @@ class TestBuildActivationGolden(unittest.TestCase):
 
     def setUp(self):
         self.kobold_driver = SystemdDriver()
-        self.tabby_driver = HttpLoadUnloadDriver()
+        self.http_driver = HttpLoadUnloadDriver()
         # Use the seeded svc dicts (production-matching driver_config).
         self.kobold_svc = _kobold_svc()
-        self.tabby_svc = _tabby_svc()
+        self.http_svc = _http_swap_svc()
 
     # -----------------------------------------------------------------------
     # Kobold / SystemdDriver
@@ -1300,23 +1300,23 @@ class TestBuildActivationGolden(unittest.TestCase):
         )
 
     # -----------------------------------------------------------------------
-    # Tabby / HttpLoadUnloadDriver
+    # HttpLoadUnloadDriver
     # -----------------------------------------------------------------------
 
-    def test_tabby_build_activation_exact_model_name(self):
+    def test_http_swap_build_activation_exact_model_name(self):
         """HttpLoadUnloadDriver.build_activation produces {'model_name': model}."""
-        result = self.tabby_driver.build_activation(self.tabby_svc, model=_TABBY_MODEL)
-        expected = {"model_name": _TABBY_MODEL}
+        result = self.http_driver.build_activation(self.http_svc, model=_HTTP_SWAP_MODEL)
+        expected = {"model_name": _HTTP_SWAP_MODEL}
         self.assertIsNotNone(result)
         self.assertEqual(result, expected, (
             "build_activation must produce the exact model_name activation.\n"
             f"Expected: {expected!r}\nGot:      {result!r}"
         ))
 
-    def test_tabby_build_activation_no_precheck_always_succeeds(self):
+    def test_http_swap_build_activation_no_precheck_always_succeeds(self):
         """HttpLoadUnloadDriver.build_activation has no precheck; always returns a dict."""
-        result = self.tabby_driver.build_activation(
-            self.tabby_svc, model="some-model-name", aux=None
+        result = self.http_driver.build_activation(
+            self.http_svc, model="some-model-name", aux=None
         )
         self.assertIsNotNone(result)
         self.assertIn("model_name", result)

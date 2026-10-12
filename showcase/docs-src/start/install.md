@@ -11,7 +11,7 @@ This page installs the gateway with Docker Compose on one computer. At the end, 
 
 You need:
 
-- Docker with the Compose plugin.
+- Docker with a Compose plugin that supports optional env_file entries (required: false).
 - A copy of the Azizam repository.
 - Network access to download container images and build dependencies.
 - An engine that serves an OpenAI-compatible chat API, with a model loaded. You connect it in [First run](first-run.md).

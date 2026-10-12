@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-LLAMA_MTP_APP="${LLAMA_MTP_APP:-/home/tnunamak/applications/llama-tq-mtp}"
+LLAMA_MTP_APP="${LLAMA_MTP_APP:-$HOME/applications/llama-tq-mtp}"
 LLAMA_MTP_BIN="${LLAMA_MTP_BIN:-$LLAMA_MTP_APP/build/bin/llama-server}"
 LLAMA_MTP_MODEL="${LLAMA_MTP_MODEL:-/media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf}"
 LLAMA_MTP_PORT="${LLAMA_MTP_PORT:-5051}"

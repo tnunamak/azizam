@@ -27,4 +27,6 @@ A personal app key acts as its person only when that same person created it. Any
 
 A service key, or a personal key that someone else created, does not act as a person. Prompts sent with it are not saved to anyone's prompt memory.
 
+This does not prevent an app from explicitly saving a conversation. A request to responses with store: true can save a conversation until it is explicitly deleted.
+
 Protect a personal key as you would your password. Read [Prompt saving](prompt-saving.md) for the retention choices, and [Apps & keys](../use/apps-and-keys.md) to create, rotate and revoke keys.

@@ -4080,7 +4080,7 @@
     },
     "/admin/api/config/reload": {
       "post": {
-        "description": "Hot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (TABBY_HOST, KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST \u2026)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Hot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST \u2026)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_config_reload",
         "parameters": [],
         "requestBody": {

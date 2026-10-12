@@ -15,13 +15,13 @@ A request without a key gets HTTP 401 with a protected-resource metadata challen
 | --- | --- |
 | `capabilities` | Lists the media workflows and model names you can use. Pass `target` to see one target's inputs. Filter with `query` and `intent`. |
 | `run` | Starts a target with inputs. `mode` is `auto`, `sync` or `async`. For async work, `wait_seconds` defaults to 30, up to 120. |
-| `job` | Reads a job by `job_id`, waits for it, or cancels it with `cancel: true`. |
+| `job` | Reads a job by `job_id`, waits for it, or requests cancellation with `cancel: true`. Continue polling until its status is `succeeded`, `failed` or `canceled`. |
 
 Call `capabilities` before you build inputs. Do not assume that an example model exists.
 
-Results include signed URLs in `resource_link` blocks and asset records in `structuredContent`. For image and video inputs, use an asset ID, a signed asset URL from this gateway, or a data URI. The server does not fetch other URLs.
+Successful media results include signed URLs in `resource_link` blocks and asset records in `structuredContent`. Capability results and unfinished jobs do not necessarily include assets. For image and video inputs, use an asset ID, a signed asset URL from this gateway, or a data URI. The server does not fetch other URLs.
 
-Requests use the same access plan and media routes as other clients. A refusal comes back as a tool error. Check `isError` and `structuredContent`, not only the HTTP status.
+Check the HTTP status and any top-level JSON-RPC error first. For a tool result, check `isError` and `structuredContent.status`. A failed or canceled job can have status `failed` or `canceled` without `isError`. Read its `error` field. Tool execution uses the existing core routes with the caller's credentials.
 
 ## Claude Code
 
@@ -56,7 +56,7 @@ Add the server to `.mcp.json`. Replace the example address with your gateway's a
 
 ## Test with curl
 
-This request lists capabilities. It does not make anything.
+This request uses the server's legacy-compatible path to list capabilities. It does not start media generation.
 
 ```sh
 curl --fail-with-body -sS "$AZIZAM_BASE_URL/mcp" \
@@ -69,7 +69,7 @@ curl --fail-with-body -sS "$AZIZAM_BASE_URL/mcp" \
 
 - Protocol revisions: `2026-07-28`, and the earlier `2025-03-26`, `2025-06-18` and `2025-11-25`.
 - The server is stateless. It issues no session IDs and has no SSE streams. `GET` and `DELETE` on `/mcp` return HTTP 405.
-- With the newest revision, the version, method and tool name headers must match the request body. A compatible MCP client sets them.
+- For revision `2026-07-28`, `MCP-Protocol-Version` must match `params._meta["io.modelcontextprotocol/protocolVersion"]`, `Mcp-Method` must match `method`, and `Mcp-Name` must match `params.name` for `tools/call`. A compatible client supplies these fields.
 - The server offers tools only. Resources, prompts, sampling, elicitation, tasks and subscriptions are not supported.
 
 MCP is not in the gateway's [OpenAPI document](/openapi.json). Use `capabilities` for each target's inputs.

@@ -71,7 +71,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self._backend_grid.start()
         self._loaded_model_projection = patch.object(
-            proxy, "currently_loaded_kobold_model", return_value=None
+            proxy, "currently_loaded_model", return_value=None
         )
         self._loaded_model_projection.start()
         admin_store.init_db(self.db)
@@ -2143,7 +2143,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self._status_projection.start()
         self._loaded_model_projection = patch.object(
-            proxy, "currently_loaded_kobold_model", return_value=None
+            proxy, "currently_loaded_model", return_value=None
         )
         self._loaded_model_projection.start()
         admin_store.init_db(self.db)

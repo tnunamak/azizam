@@ -9,24 +9,18 @@ A job keeps working when your connection drops. Save its `job_id` and check the 
 
 `POST /gateway/v1/media/jobs` takes an `intent` and a `request`. This page uses `image.generate`, whose `request` is an OpenAI image request. The route also accepts `image.edit`, `audio.generate`, `music.generate`, `sfx.generate` and `video.generate`. Other intents return `unsupported_media_job`.
 
-Set the environment variables in the [API overview](index.md#set-up-your-environment) first, and set `AZIZAM_IMAGE_MODEL` to an image model your key can use.
+Set the environment variables in the [API overview](index.md#set-up-your-environment) first, and export `AZIZAM_IMAGE_MODEL` with an image model your key can use.
 
 ## Submit a job
 
-Choose an idempotency key for this request. Use the same key if you retry this exact request, and a new key for new work.
+Generate an idempotency key once for new work. If the submission response is lost, rerun only the submission pipeline with the same key and unchanged request. Do not rerun the key-generation line for a retry.
 
 ```sh
-export AZIZAM_IDEMPOTENCY_KEY='blue-bowl-001'
-curl --fail-with-body -sS "$AZIZAM_BASE_URL/gateway/v1/media/jobs" \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" \
-  -H "Idempotency-Key: $AZIZAM_IDEMPOTENCY_KEY" \
-  -H 'Content-Type: application/json' \
-  --output job.json \
-  --data @- <<EOF
-{"intent": "image.generate",
- "request": {"model": "$AZIZAM_IMAGE_MODEL",
-             "prompt": "A blue ceramic bowl on a plain table.", "n": 1}}
-EOF
+export AZIZAM_IDEMPOTENCY_KEY="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+python3 - <<'PY' | curl --fail-with-body -sS "$AZIZAM_BASE_URL/gateway/v1/media/jobs" -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Idempotency-Key: $AZIZAM_IDEMPOTENCY_KEY" -H 'Content-Type: application/json' --output job.json --data-binary @-
+import json, os
+print(json.dumps({"intent": "image.generate", "request": {"model": os.environ["AZIZAM_IMAGE_MODEL"], "prompt": "A blue ceramic bowl on a plain table.", "n": 1}}))
+PY
 ```
 
 ## Check the job
@@ -66,11 +60,7 @@ To read only new events, pass the highest `sequence` you have as `after_sequence
 
 ## Retry safely
 
-If you lose the response, send the same request again with the same idempotency key. The gateway returns the job it already has and does not start new work.
-
-Use a new idempotency key for new work. A request that reuses an idempotency key gets the original job back, even if its body is different.
-
-The gateway remembers idempotency keys for active jobs, and for 14 days after a job's last update. After that, a repeat can start new work.
+Retry a lost submission response with the same idempotency key and unchanged request. Use a new key for new work. Do not rely on a changed request replaying the old job: the media-job store rejects mismatched or unverifiable owner, operation or input with `idempotency_conflict`. The store retains replay eligibility while a job is active, or while its last update is within 14 days. After that, a repeated submission can start new work.
 
 ## Download the result
 

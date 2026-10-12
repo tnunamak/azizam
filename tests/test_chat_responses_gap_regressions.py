@@ -40,7 +40,6 @@ def isolated_handlers(monkeypatch):
         proxy, "authenticate_runtime_or_litellm_request",
         lambda *args, **kwargs: route_auth,
     )
-    monkeypatch.setattr(proxy.state, "update_activity", lambda: None)
     monkeypatch.setattr(
         proxy, "_model_dispatch_admission_response",
         lambda *args, **kwargs: None,

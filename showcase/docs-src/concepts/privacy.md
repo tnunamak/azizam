@@ -12,7 +12,7 @@ The gateway keeps creations and saved prompts under separate access rules. These
 - Library and Usage start with your own work.
 - Members cannot see other people's work.
 - An admin role alone does not show other people's Library.
-- An owner or a superadmin can see other people's creations and usage. The gateway records each time someone views the everyone view of Library or Usage, or downloads from it.
+- An owner or a superadmin can see other people's creations and usage. The gateway records requests to the everyone Library and Usage views, and requests for download links from the everyone Library view.
 - The list of running jobs stays personal, for the owner too.
 
 ## Saved prompts
@@ -21,7 +21,7 @@ Library shows a saved prompt only to the person who made the creation. When the 
 
 **Download with details** includes the saved prompt and workflow. Only the person with that saved prompt can download it.
 
-A personal app key can also read its person's saved prompts. Protect it as you would your password. See [Apps and keys](apps-and-keys.md).
+A personal app key can read its owner's saved prompts only when that same person created the key. A personal key created by someone else does not act as that person. Protect an owner-created personal key as you would your password. See [Apps and keys](apps-and-keys.md).
 
 ## The operator can read the storage
 

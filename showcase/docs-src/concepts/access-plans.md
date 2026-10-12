@@ -20,15 +20,16 @@ For a request with an app key, the gateway uses the first of these that is set:
 
 If the selected plan is missing or invalid, the request is refused. A turned-off app cannot run requests.
 
-You can change an app's plan at any time. The app does not need a new key.
+You can change an app's default plan without issuing new keys. A key with its own plan keeps using that plan instead.
 
 ## How a request is checked
 
 The gateway checks the rules in order. The first refusal wins.
 
-- A list that is not set does not restrict anything.
-- An empty list refuses everything.
-- Protocol, workflow, model and engine lists apply when the request names that value.
+- For protocol, workflow, model and engine allow-lists, an unset list adds no restriction. An empty list refuses requests that supply that value.
+- Capability selectors apply only when the request supplies the corresponding metadata.
+- Remote providers must be explicitly allowed.
+- Native passthrough must be enabled separately. Its empty engine and operation lists add no restriction.
 
 Capability rules use the labels that describe each model. A label is not proof of what a model or its output contains.
 

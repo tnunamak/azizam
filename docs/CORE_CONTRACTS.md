@@ -50,7 +50,7 @@ but they do not all need to be first-class dashboard nouns.
 | `Profile`      | The policy bundle attached to an App.                                   |
 | `Credential`   | The App API key (and any per-key downstream-credential overrides).      |
 | `Capability`   | A runtime fact about what a Provider/model can do right now.            |
-| `Provider`     | A configured backend instance (TabbyAPI, llama.cpp, ComfyUI, TTS, ...). |
+| `Provider`     | A configured backend instance (llama.cpp, ComfyUI, TTS, ...). |
 | `Workflow`     | A typed manifest mapping portable inputs to a backend binding.          |
 | `Job`          | A durable, asynchronous execution record for media work.                |
 | `Receipt`      | A body-free record of one request: identity, decision, accepted/rejected/ignored inputs. |
