@@ -71,10 +71,16 @@ async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
   await routeCatalogs(page, workflows);
   await page.goto("/try/?workflow=image.generate.poster");
   if (!workflows.workflows.length)
-    await expect(page.getByText("No workflows are listed")).toBeVisible();
-  await expect(
-    page.getByRole("tab", { name: "Workflow", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText(/No workflows are available/)).toBeVisible();
+  // Tabs above 640 px; the Task select on a phone.
+  if ((page.viewportSize()?.width ?? 0) >= 640)
+    await expect(
+      page.getByRole("tab", { name: "Workflow", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+  else
+    await expect(
+      page.getByRole("combobox", { name: "Task", exact: true }),
+    ).toHaveValue("workflow");
 }
 
 for (const theme of ["light", "dark"] as const) {
@@ -117,9 +123,7 @@ for (const theme of ["light", "dark"] as const) {
         .fill("A teal poster.");
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await expect(page.getByAltText("Generated result")).toBeVisible();
-      await expect(
-        page.getByText("Try uses a temporary key", { exact: false }),
-      ).toBeVisible();
+      await expect(page.getByText("Key details")).toBeVisible();
       await checkState(page, `workflow-try-result-${theme}-${width}.png`);
       await page.unroute("**/v1/images/generations");
       await page.route("**/v1/images/generations", (route) =>
@@ -129,13 +133,13 @@ for (const theme of ["light", "dark"] as const) {
         }),
       );
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await expect(page.getByText("This key cannot use poster.")).toBeVisible();
+      await expect(page.getByText("This key cannot use poster.", { exact: true })).toBeVisible();
       await checkState(page, `workflow-try-error-${theme}-${width}.png`);
       await page.unroute("**/v1/images/generations");
 
       await prepareWorkflowTry(page, { ...workflowCatalog, workflows: [] });
       await expect(
-        page.getByText("Run workflow", { exact: true }),
+        page.getByText("Your result appears here", { exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("combobox", { name: "Model", exact: true }),

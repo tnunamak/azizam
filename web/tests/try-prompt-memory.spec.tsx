@@ -88,7 +88,7 @@ function renderTry(viewer: Viewer = member) {
 
 async function ready() {
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Picture model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Picture model"),
   );
 }
 

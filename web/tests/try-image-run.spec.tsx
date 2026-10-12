@@ -76,7 +76,7 @@ afterEach(() => {
 async function startRun(user: ReturnType<typeof userEvent.setup>) {
   render(<TryPage />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox")).toHaveTextContent("Picture model"),
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Picture model"),
   );
   await user.click(screen.getByRole("button", { name: "Run" }));
 }
@@ -243,7 +243,7 @@ describe("a dropped connection on any tab", () => {
     });
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox")).toHaveTextContent(/model/i),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(/model/i),
     );
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("The connection dropped")).toBeVisible();

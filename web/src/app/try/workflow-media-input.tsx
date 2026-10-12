@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ImageIcon, Library, Upload, X } from "lucide-react";
+import { ImageIcon, Library, Music, Upload, Video, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,7 +26,7 @@ import {
 const ASSET_ID = /^(?:asset:)?((?:img|vid|aud)_[0-9a-f]{64})$/;
 
 function previewSource(value: string): string | null {
-  if (/^data:image\//i.test(value) || /^https?:\/\//i.test(value)) return value;
+  if (/^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)) return value;
   const asset = ASSET_ID.exec(value);
   return asset
     ? `/me/api/media/${encodeURIComponent(asset[1])}/download?scope=me`
@@ -109,6 +109,10 @@ export function MediaInput({
   const [fileError, setFileError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  // A read or download is under way: the choice is not in the form yet.
+  const [pending, setPending] = useState(false);
+  const [blockedSubmit, setBlockedSubmit] = useState(false);
   const fileUrl = useObjectUrl(fileMode ? file : null);
   const chosen = fileMode ? Boolean(file) : Boolean(value);
   const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
@@ -124,6 +128,25 @@ export function MediaInput({
   ) {
     setPreviousPreviewInput({ value, file });
     setPreviewFailed(false);
+  }
+
+  // Run must not go out while the choice is still arriving: it would send the
+  // form without it. The page owns Run, so the pending input stops the form.
+  useEffect(() => {
+    const form = pending ? fileInput.current?.closest("form") : null;
+    if (!form) return;
+    const stop = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setBlockedSubmit(true);
+    };
+    form.addEventListener("submit", stop, true);
+    return () => form.removeEventListener("submit", stop, true);
+  }, [pending]);
+
+  function startPending() {
+    setPending(true);
+    setBlockedSubmit(false);
   }
 
   async function choose(file: File | undefined) {
@@ -149,13 +172,16 @@ export function MediaInput({
       setSource(file.name);
       return;
     }
+    startPending();
     try {
       const value = await readAsDataUri(file);
       if (selection.current !== operation) return;
       onChange?.(value);
       setSource(file.name);
+      setPending(false);
     } catch {
       if (selection.current !== operation) return;
+      setPending(false);
       setFileError(`Could not read that ${noun}. Try another file.`);
     }
   }
@@ -170,6 +196,7 @@ export function MediaInput({
       return;
     }
     // A file part needs the bytes: fetch the Library picture into a file.
+    startPending();
     try {
       const response = await fetch(
         `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
@@ -182,8 +209,10 @@ export function MediaInput({
       const extension = SUBTYPE.exec(type)?.[1] ?? "png";
       onFileChange?.(new File([blob], `library-${noun}.${extension}`, { type }));
       setSource("From your Library");
+      setPending(false);
     } catch {
       if (selection.current !== operation) return;
+      setPending(false);
       setFileError(
         `Could not add that ${noun} from your Library. Try another, or choose a file.`,
       );
@@ -194,10 +223,13 @@ export function MediaInput({
     selection.current += 1;
     setSource(null);
     setFileError(null);
+    setPending(false);
     if (fileMode) onFileChange?.(null);
     else onChange?.(undefined);
   }
 
+  const PlaceholderIcon =
+    kind === "video" ? Video : kind === "audio" ? Music : ImageIcon;
   const sourceLabel = !chosen
     ? null
     : (source ??
@@ -218,15 +250,18 @@ export function MediaInput({
           {chosen && preview && !previewFailed ? (
             kind === "video" ? (
               <video
+                key={previewAttempt}
                 src={preview}
                 muted
                 preload="metadata"
                 className="size-full object-cover"
                 aria-label={`Chosen ${noun}`}
+                onError={() => setPreviewFailed(true)}
               />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
+                key={previewAttempt}
                 src={preview}
                 alt={`Chosen ${noun}`}
                 className="size-full object-cover"
@@ -234,7 +269,7 @@ export function MediaInput({
               />
             )
           ) : (
-            <ImageIcon
+            <PlaceholderIcon
               aria-hidden="true"
               className="text-muted-foreground size-6"
             />
@@ -254,19 +289,32 @@ export function MediaInput({
               <Upload aria-hidden="true" />
               Choose a file
             </Button>
-            {kind === "image" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="max-sm:h-11"
+              onClick={() => setLibraryOpen(true)}
+            >
+              <Library aria-hidden="true" />
+              Choose from Library
+            </Button>
+            {chosen && previewFailed && (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 className="max-sm:h-11"
-                onClick={() => setLibraryOpen(true)}
+                aria-label={`Retry preview of ${noun} for ${label}`}
+                onClick={() => {
+                  setPreviewFailed(false);
+                  setPreviewAttempt((count) => count + 1);
+                }}
               >
-                <Library aria-hidden="true" />
-                Choose from Library
+                Retry
               </Button>
             )}
-            {chosen && (
+            {(chosen || pending) && (
               <Button
                 type="button"
                 variant="ghost"
@@ -280,10 +328,22 @@ export function MediaInput({
               </Button>
             )}
           </div>
-          <p className="text-muted-foreground text-xs">
-            {sourceLabel ??
-              `${noun[0].toUpperCase()}${noun.slice(1)}s up to ${MAX_MEDIA_LABEL}.`}
-          </p>
+          {pending ? (
+            <p role="status" className="text-muted-foreground text-xs">
+              Adding {noun}…
+              {blockedSubmit && " Wait for it to finish, then run again."}
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              {sourceLabel ??
+                `${noun[0].toUpperCase()}${noun.slice(1)}s up to ${MAX_MEDIA_LABEL}.`}
+            </p>
+          )}
+          {chosen && previewFailed && (
+            <p role="status" className="text-muted-foreground text-xs">
+              Preview unavailable
+            </p>
+          )}
           {fileError && (
             <p role="alert" className="text-destructive text-xs">
               {fileError}
@@ -335,6 +395,7 @@ export function MediaInput({
       <LibraryPicker
         open={libraryOpen}
         onOpenChange={setLibraryOpen}
+        kind={kind}
         onPick={(assetId) => void pickFromLibrary(assetId)}
       />
     </div>
@@ -348,59 +409,121 @@ type LibraryAsset = {
   available?: boolean;
 };
 
+type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
+
+const PAGE_SIZE = 40;
+
+function downloadUrl(assetId: string) {
+  return `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`;
+}
+
 function LibraryPicker({
   open,
   onOpenChange,
+  kind,
   onPick,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  kind: MediaKind;
   onPick: (assetId: string) => void;
 }) {
+  const noun = MEDIA_NOUN[kind];
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
     "idle",
   );
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [more, setMore] = useState<"idle" | "loading" | "error">("idle");
+  const [unshown, setUnshown] = useState<Set<string>>(new Set());
   const [attempt, setAttempt] = useState(0);
   const [previousOpen, setPreviousOpen] = useState(open);
+  // Each reload or reopen is a new list; a "Show more" answer for an older
+  // one must not land in it.
+  const generation = useRef(0);
   if (open !== previousOpen) {
     setPreviousOpen(open);
-    if (open) setState("loading");
+    if (open) {
+      setState("loading");
+      setMore("idle");
+    }
+  }
+
+  function pageUrl(cursor?: string | null) {
+    const query = new URLSearchParams({
+      kind,
+      limit: String(PAGE_SIZE),
+      scope: "me",
+    });
+    if (cursor) query.set("cursor", cursor);
+    return `/me/api/media?${query}`;
+  }
+
+  function usable(page: LibraryPage) {
+    return (page.assets ?? []).filter(
+      (asset) =>
+        asset.asset_id &&
+        asset.available !== false &&
+        (asset.kind ?? kind) === kind,
+    );
   }
 
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    fetch("/me/api/media?kind=image&limit=40&scope=me", {
-      credentials: "same-origin",
-      signal: controller.signal,
-    })
+    const mine = ++generation.current;
+    fetch(pageUrl(), { credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Library unavailable");
-        const payload = (await response.json()) as { assets?: LibraryAsset[] };
-        setAssets(
-          (payload.assets ?? []).filter(
-            (asset) =>
-              asset.asset_id &&
-              asset.available !== false &&
-              (asset.kind ?? "image") === "image",
-          ),
-        );
+        const page = (await response.json()) as LibraryPage;
+        if (generation.current !== mine) return;
+        setAssets(usable(page));
+        setNextCursor(page.next_cursor ?? null);
+        setUnshown(new Set());
         setState("ready");
       })
       .catch(() => {
         if (!controller.signal.aborted) setState("error");
       });
     return () => controller.abort();
-  }, [open, attempt]);
+    // pageUrl and usable only read `kind`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, attempt, kind]);
+
+  async function showMore() {
+    if (!nextCursor) return;
+    const mine = generation.current;
+    setMore("loading");
+    try {
+      const response = await fetch(pageUrl(nextCursor), {
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("Library unavailable");
+      const page = (await response.json()) as LibraryPage;
+      if (generation.current !== mine) return;
+      setAssets((current) => {
+        const seen = new Set(current.map((asset) => asset.asset_id));
+        return [...current, ...usable(page).filter((a) => !seen.has(a.asset_id))];
+      });
+      setNextCursor(page.next_cursor ?? null);
+      setMore("idle");
+    } catch {
+      if (generation.current === mine) setMore("error");
+    }
+  }
+
+  function markUnshown(assetId: string) {
+    setUnshown((current) => new Set(current).add(assetId));
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Choose a picture from your Library</DialogTitle>
+          <DialogTitle>Choose {withArticle(noun)} from your Library</DialogTitle>
           <DialogDescription>
-            Pictures you made, newest first.
+            {noun[0].toUpperCase()}
+            {noun.slice(1)}s you made, newest first.
           </DialogDescription>
         </DialogHeader>
         {state === "loading" && (
@@ -416,7 +539,7 @@ function LibraryPicker({
         {state === "error" && (
           <ErrorState
             heading="Could not open your Library"
-            message="Your pictures could not be loaded."
+            message={`Your ${noun}s could not be loaded.`}
             action={{
               label: "Try loading it again",
               onClick: () => setAttempt((count) => count + 1),
@@ -425,7 +548,7 @@ function LibraryPicker({
         )}
         {state === "ready" && assets.length === 0 && (
           <p className="text-muted-foreground text-sm">
-            No pictures in your Library yet. Make one, or choose a file.
+            No {noun}s in your Library yet. Make one, or choose a file.
           </p>
         )}
         {state === "ready" && assets.length > 0 && (
@@ -433,7 +556,9 @@ function LibraryPicker({
             {assets.map((asset) => {
               const title =
                 asset.prompt?.trim().slice(0, 80) ||
-                "Picture from your Library";
+                `${noun[0].toUpperCase()}${noun.slice(1)} from your Library`;
+              const src = downloadUrl(asset.asset_id);
+              const broken = unshown.has(asset.asset_id);
               return (
                 <li key={asset.asset_id}>
                   <button
@@ -441,20 +566,59 @@ function LibraryPicker({
                     title={title}
                     aria-label={title}
                     onClick={() => onPick(asset.asset_id)}
-                    className="rounded-media focus-visible:ring-ring/50 block aspect-square w-full overflow-hidden border focus-visible:ring-[3px] focus-visible:outline-none"
+                    className="rounded-media focus-visible:ring-ring/50 bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border focus-visible:ring-[3px] focus-visible:outline-none"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=me`}
-                      alt=""
-                      loading="lazy"
-                      className="size-full object-cover"
-                    />
+                    {broken || kind === "audio" ? (
+                      <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
+                        {kind === "audio" ? (
+                          <Music aria-hidden="true" className="size-6" />
+                        ) : (
+                          <ImageIcon aria-hidden="true" className="size-6" />
+                        )}
+                        {broken ? "Preview unavailable" : null}
+                        {kind === "audio" && (
+                          <span className="line-clamp-3">{title}</span>
+                        )}
+                      </span>
+                    ) : kind === "video" ? (
+                      <video
+                        src={src}
+                        muted
+                        preload="metadata"
+                        className="size-full object-cover"
+                        onError={() => markUnshown(asset.asset_id)}
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={src}
+                        alt=""
+                        loading="lazy"
+                        className="size-full object-cover"
+                        onError={() => markUnshown(asset.asset_id)}
+                      />
+                    )}
                   </button>
                 </li>
               );
             })}
           </ul>
+        )}
+        {state === "ready" && more === "error" && (
+          <p role="alert" className="text-destructive text-xs">
+            Could not load more {noun}s. Try again.
+          </p>
+        )}
+        {state === "ready" && nextCursor && (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            disabled={more === "loading"}
+            onClick={() => void showMore()}
+          >
+            {more === "loading" ? "Loading…" : "Show more"}
+          </Button>
         )}
       </DialogContent>
     </Dialog>

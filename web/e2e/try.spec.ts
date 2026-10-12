@@ -4,11 +4,11 @@ import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
-  // Minting the temporary key can take a while on a busy machine; wait for
-  // it, so a slow mint fails here rather than as missing copy.
-  await expect(page.getByText("Creating Try key")).toBeHidden({ timeout: 30_000 });
+  // Minting the Try key can take a while on a busy machine; wait for it, so
+  // a slow mint fails here rather than as missing copy.
+  await expect(page.getByText("Getting Try ready…")).toBeHidden({ timeout: 30_000 });
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
 }
 
 const TINY_PNG =
@@ -113,8 +113,8 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   ).toBeVisible();
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Open receipt/ }),
-  ).toHaveAttribute("title", receiptId);
+    page.getByRole("link", { name: "View receipt" }),
+  ).toHaveAttribute("href", `/usage/?receipt=${receiptId}`);
 });
 
 test("try shows empty, public API error, decision 404, and non-chat results", async ({
@@ -132,7 +132,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("This key cannot use demo-chat.")).toBeVisible();
+  await expect(page.getByText("This key cannot use demo-chat.", { exact: true })).toBeVisible();
   await page.unroute("**/openai/v1/chat/completions");
 
   await page.route("**/me/api/receipts/receipt_preferred", (route) =>
@@ -155,8 +155,8 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Open receipt/ }),
-  ).toHaveAttribute("title", "receipt_preferred");
+    page.getByRole("link", { name: "View receipt" }),
+  ).toHaveAttribute("href", "/usage/?receipt=receipt_preferred");
   await expect(page.getByRole("link", { name: "generic_request" })).toHaveCount(
     0,
   );
@@ -334,7 +334,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await page.goto("/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Choose an option" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -344,7 +344,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/try/?capability=chat&model=fast");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -353,7 +353,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/try/?capability=chat&model=chat");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+  await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
@@ -495,7 +495,7 @@ for (const theme of ["light", "dark"] as const) {
         }),
       );
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await expect(page.getByText("This key cannot use chat.")).toBeVisible();
+      await expect(page.getByText("This key cannot use chat.", { exact: true })).toBeVisible();
       await checkState(page, `try-error-${theme}-${width}.png`);
       await page.unroute("**/openai/v1/chat/completions");
     });
@@ -549,28 +549,14 @@ function catalogRow(
   };
 }
 
-test("capability chips keep full labels and never overlap on a phone", async ({
-  page,
-}) => {
+test("a phone picks every task from one labelled select", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/try/");
-  const tabs = page.getByRole("tablist", { name: "Try capability" });
-  await expect(tabs.getByRole("tab")).toHaveCount(7);
-  const layout = await tabs.evaluate((list) =>
-    [...list.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => {
-      const box = tab.getBoundingClientRect();
-      return {
-        text: tab.textContent?.trim() ?? "",
-        left: box.left,
-        right: box.right,
-        // Text wider than its chip means it spills into the next one.
-        clipped: tab.scrollWidth > tab.clientWidth + 1,
-        // A label that ends mid-word has an ellipsis or a cut-off box.
-        overflow: getComputedStyle(tab).textOverflow,
-      };
-    }),
-  );
-  expect(layout.map((tab) => tab.text)).toEqual([
+  // The strip of tabs is gone on a phone; nothing hides past an edge.
+  await expect(page.getByRole("tablist", { name: "Try capability" })).toBeHidden();
+  const task = page.getByRole("combobox", { name: "Task", exact: true });
+  await expect(task).toBeVisible();
+  await expect(task.locator("option")).toHaveText([
     "Chat",
     "Make a picture",
     "Read text aloud",
@@ -579,24 +565,76 @@ test("capability chips keep full labels and never overlap on a phone", async ({
     "Turn text into numbers",
     "Workflow",
   ]);
-  for (const [index, tab] of layout.entries()) {
-    expect(tab.clipped, `${tab.text} is clipped`).toBe(false);
-    expect(tab.overflow).not.toBe("ellipsis");
-    const next = layout[index + 1];
-    if (next) {
-      expect(tab.right, `${tab.text} overlaps ${next.text}`).toBeLessThanOrEqual(
-        next.left + 0.5,
-      );
-    }
-  }
-  // The strip scrolls; the page itself does not.
+  const box = await task.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await task.selectOption({ label: "Choose an option" });
+  await expect(page.getByText("What is happening?", { exact: true })).toBeVisible();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
-  await page.getByRole("tab", { name: "Workflow" }).click();
-  await expect(page.getByRole("tab", { name: "Workflow" })).toBeInViewport();
+  await page.screenshot({ path: "test-results/screens/try-task-select-390.png" });
+});
+
+const kindCatalog = {
+  workflows: [
+    { id: "wf-song", title: "Song maker", capability: "music", aliases: ["song"], inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
+    { id: "wf-boom", title: "Boom maker", capability: "sfx", inputs: [], outputs: [{ kind: "audio" }], availability: { runnable: true } },
+  ],
+};
+
+test("a link to a kind of work opens it, or says why it cannot, never Chat", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({ json: kindCatalog }),
+  );
+  const task = page.getByRole("combobox", { name: "Task", exact: true });
+  const model = page.getByRole("combobox", { name: "Model", exact: true });
+
+  await page.goto("/try/?capability=music&model=song");
+  await expect(task).toHaveValue("workflow");
+  await expect(page.getByText("Showing music workflows.")).toBeVisible();
+  await expect(model).toContainText("Song maker");
+  await model.click();
+  await expect(page.getByRole("option")).toHaveText([/Song maker/]);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Show all workflows" }).click();
+  await model.click();
+  await expect(page.getByRole("option")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+
+  await page.goto("/try/?capability=sfx&model=sfx");
+  await expect(task).toHaveValue("workflow");
+  await expect(model).toContainText("Boom maker");
+
+  await page.goto("/try/?capability=video");
+  await expect(task).toHaveValue("workflow");
+  // The e2e viewer is the owner: the next step is in Engines.
+  await expect(page.getByText("No video engine is set up.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Add one in Engines" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await page.screenshot({ path: "test-results/screens/try-video-unavailable-390.png" });
+
+  await page.goto("/try/?capability=rerank");
+  await expect(page.getByText("Try can’t run reranking. Choose another task.")).toBeVisible();
+});
+
+test("Run waits for the model list", async ({ page }) => {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/me/api/models/catalog", async (route) => {
+    await ready;
+    await route.fulfill({ json: { aliases: [catalogRow("chat", "chat.completions")], models: [] } });
+  });
+  await page.goto("/try/", { waitUntil: "domcontentloaded" });
+  const run = page.getByRole("button", { name: "Run", exact: true });
+  await expect(run).toBeDisabled();
+  release();
+  await expect(run).toBeEnabled();
 });
 
 test("an image-to-video workflow offers a picture picker, checks before it runs and keeps values after a failure", async ({
@@ -612,17 +650,21 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
     route.fulfill({ json: ltxCatalog }),
   );
   await page.goto("/try/?workflow=video.generate.ltx-2.5-i2v");
-  await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(page.getByRole("combobox").first()).toContainText(
+  await expect(
+    page.getByRole("combobox", { name: "Task", exact: true }),
+  ).toHaveValue("workflow");
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText(
     "LTX 2.5 Distilled I2V",
   );
 
-  // One heading for the tab: the chip, not the chip and a card title.
+  // One name for the task: the phone's Task select, not it and a card title.
   await expect(page.getByRole("heading", { name: "Workflow" })).toHaveCount(0);
-  await expect(page.getByText("Workflow", { exact: true })).toHaveCount(1);
+  await expect(
+    page
+      .getByText("Workflow", { exact: true })
+      .and(page.locator(":not(option)"))
+      .filter({ visible: true }),
+  ).toHaveCount(0);
 
   // A picture picker, in plain words; nothing reads as developer output.
   const group = page.getByRole("group", { name: /Starting picture/ });
@@ -649,6 +691,9 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   ]) {
     expect(visible, jargon).not.toContain(jargon);
   }
+  // Optional inputs wait under More options, after what the workflow needs.
+  await expect(page.getByRole("textbox", { name: /Avoid/ })).toBeHidden();
+  await page.locator("summary").filter({ hasText: "More options" }).click();
   expect(await page.getByRole("textbox", { name: /Avoid/ }).inputValue()).toBe("");
 
   await page.screenshot({ path: "test-results/screens/try-workflow-media-top-390.png" });
@@ -690,7 +735,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 
   // The failed run says what failed and offers to edit, not to "try again".
   await expect(
-    page.getByText("The gateway could not start this video."),
+    page.getByText("The gateway could not start this video.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
   await checkState(page, "try-workflow-media-error-390.png");

@@ -39,11 +39,14 @@ test("every picture and video input on Try is one picker, in plain words", async
   for (const workflow of withMedia) {
     await test.step(workflow.id, async () => {
       await page.goto(`/try/?workflow=${encodeURIComponent(workflow.id)}`);
-      await expect(page.getByRole("combobox").first()).toContainText(
-        workflow.title,
-      );
+      await expect(
+        page.getByRole("combobox", { name: "Model", exact: true }),
+      ).toContainText(workflow.title);
       const form = page.getByRole("tabpanel", { name: "Workflow" });
       const media = workflow.inputs.filter(isMedia);
+      // Optional inputs wait under More options; open it to see them all.
+      const more = form.locator("summary").filter({ hasText: "More options" });
+      if (await more.count()) await more.click();
       // One picker per media input, and no other file control.
       await expect(
         form.getByRole("button", { name: "Choose a file" }),

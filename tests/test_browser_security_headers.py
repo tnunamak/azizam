@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 
-def test_browser_media_csp_allows_generated_audio_without_widening_scripts():
+def test_browser_media_csp_allows_generated_media_without_widening_scripts():
     tree = ast.parse((Path(__file__).parents[1] / "proxy.py").read_text())
     names = {"_HTML_CONTENT_TYPES", "_BROWSER_UI_PREFIXES", "_SECURITY_HEADERS", "_BROWSER_AUTH_PATHS"}
     nodes = [node for node in tree.body if isinstance(node, ast.Assign)
@@ -32,6 +32,8 @@ def test_browser_media_csp_allows_generated_audio_without_widening_scripts():
             assert response.status_code == 200
             directives = dict(part.strip().split(" ", 1) for part in response.headers["content-security-policy"].split(";") if part.strip())
             assert directives["media-src"] == "'self' blob: data:"
+            # Try shows a workflow's picture bytes from a blob: URL.
+            assert directives["img-src"] == "'self' data: blob:"
             assert directives["script-src"] == "'self' 'unsafe-inline'"
             assert directives["frame-ancestors"] == "'none'"
             assert response.headers["x-content-type-options"] == "nosniff"

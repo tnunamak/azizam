@@ -467,6 +467,8 @@ describe("WorkflowInputs", () => {
       />,
     );
 
+    // Optional inputs wait under "More options".
+    fireEvent.click(screen.getByText("More options"));
     expect(screen.getByRole("spinbutton", { name: "Steps" })).toHaveAttribute(
       "max",
       "50",
@@ -517,7 +519,7 @@ describe("WorkflowInputs", () => {
 
   it("disables guided controls while advanced JSON is malformed", () => {
     render(
-      <WorkflowInputs inputs={inputs} json="{" onChange={() => undefined} />,
+      <WorkflowInputs inputs={inputs} json="{" onChange={() => undefined} technical />,
     );
 
     expect(
@@ -535,6 +537,7 @@ describe("WorkflowInputs", () => {
         mapping={mapping}
         json={JSON.stringify({ extensions: '{"com.azizam.workflow":' })}
         onChange={() => undefined}
+        technical
       />,
     );
 
@@ -543,7 +546,65 @@ describe("WorkflowInputs", () => {
         "extensions must be valid JSON before using guided controls.",
       ),
     ).toBeVisible();
+    fireEvent.click(screen.getByText("More options"));
     expect(screen.getByRole("spinbutton", { name: "Steps" })).toBeDisabled();
+  });
+
+  it("tells a member plainly, not in schema words, when the inputs are unreadable", () => {
+    render(
+      <WorkflowInputs inputs={inputs} json="{" onChange={() => undefined} />,
+    );
+    expect(
+      screen.getByText(
+        "This workflow's inputs could not be loaded. Ask the owner to check the workflow.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/JSON object/)).toBeNull();
+  });
+
+  it("puts required inputs first and folds optional ones under More options", () => {
+    render(
+      <WorkflowInputs
+        inputs={inputs}
+        json={JSON.stringify(workflowDefaults(inputs))}
+        onChange={() => undefined}
+        onFileChange={() => undefined}
+      />,
+    );
+    const prompt = screen.getByRole("textbox", { name: /Prompt Required/ });
+    const more = screen.getByText("More options").closest("details")!;
+    expect(more).not.toHaveAttribute("open");
+    expect(more.contains(prompt)).toBe(false);
+    expect(more.contains(screen.getByRole("spinbutton", { name: "Steps" }))).toBe(true);
+    expect(
+      prompt.compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("opens More options when an optional input has a problem", () => {
+    render(
+      <WorkflowInputs
+        inputs={inputs}
+        json={JSON.stringify(workflowDefaults(inputs))}
+        onChange={() => undefined}
+        onFileChange={() => undefined}
+        problems={{ steps: "Steps must be a number" }}
+      />,
+    );
+    expect(screen.getByText("More options").closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("Steps must be a number")).toBeVisible();
+  });
+
+  it("shows no More options when nothing is required", () => {
+    render(
+      <WorkflowInputs
+        inputs={[{ name: "steps", type: "integer" }]}
+        json="{}"
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.queryByText("More options")).toBeNull();
+    expect(screen.getByRole("spinbutton", { name: "Steps" })).toBeVisible();
   });
 
   it("explains unsupported combined controls instead of editing them", () => {
@@ -563,7 +624,7 @@ describe("WorkflowInputs", () => {
     ).toHaveLength(2);
   });
 
-  it("renders object values as advanced-only instead of stringifying them", () => {
+  it("keeps object values out of the form and under Technical details", () => {
     render(
       <WorkflowInputs
         inputs={[{ name: "metadata", type: "object" }]}
@@ -572,10 +633,15 @@ describe("WorkflowInputs", () => {
       />,
     );
 
-    expect(screen.getByRole("textbox", { name: "Metadata" })).toHaveValue(
-      '{\n  "keep": true\n}',
-    );
-    expect(screen.getByRole("textbox", { name: "Metadata" })).toBeDisabled();
+    expect(screen.queryByRole("textbox", { name: "Metadata" })).toBeNull();
+    expect(
+      screen.getByText(
+        "This workflow's inputs could not be loaded. Ask the owner to check the workflow.",
+      ),
+    ).toBeVisible();
+    const details = screen.getByText("Technical details").closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(details.querySelector("pre")).toHaveTextContent('"keep": true');
   });
 });
 
@@ -616,6 +682,7 @@ describe("TM-12 optional inputs can return to unset", () => {
   it("omits a cleared optional boolean and says it is not set", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
+    fireEvent.click(screen.getByText("More options"));
     expect(screen.getByText("Disabled")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Clear Transparent background" }));
     const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");

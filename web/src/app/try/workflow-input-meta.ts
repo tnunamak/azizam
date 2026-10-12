@@ -109,7 +109,7 @@ export function inputHint(
     case "image_strength":
       return "Higher keeps the video closer to your picture.";
     case "seed":
-      return "The same number gives the same result again.";
+      return "Reuse this number to help repeat a result with the same model and settings.";
     case "seconds":
       return "How long the clip runs.";
     case "size":

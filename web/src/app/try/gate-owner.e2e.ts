@@ -80,19 +80,13 @@ for (const theme of ["light", "dark"]) {
             await expect(
               page.getByText("Local · no provider charge", { exact: true }),
             ).toBeVisible();
+            // The id and its copy action live in the receipt (PF-010).
             await expect(
-              page.getByRole("link", { name: "Open receipt request-…" }),
+              page.getByRole("link", { name: "View receipt" }),
             ).toHaveAttribute("href", `/usage/?receipt=${id}`);
-            await page
-              .context()
-              .grantPermissions(["clipboard-read", "clipboard-write"]);
-            await page.getByRole("button", { name: "Copy receipt ID" }).click();
-            await expect
-              .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-              .toBe(id);
             await expect(
-              page.getByText("Receipt ID copied", { exact: true }),
-            ).toHaveCount(1);
+              page.getByRole("button", { name: "Copy receipt ID" }),
+            ).toHaveCount(0);
           } else {
             await expect(
               page.getByText("Your access plan does not allow decisions."),
@@ -148,11 +142,6 @@ test("Try prepares a key and links a real public chat receipt", async ({
     ),
   ).toBeVisible();
   await expect(page.locator(`a[href="/usage/?receipt=${id}"]`)).toBeVisible();
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("button", { name: "Copy receipt ID" }).click();
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe(id);
   await expect(
     page.getByText("Session key ready", { exact: true }),
   ).toHaveCount(0);

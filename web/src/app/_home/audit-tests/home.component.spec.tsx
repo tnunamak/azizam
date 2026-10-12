@@ -283,11 +283,11 @@ describe("Home audit component behavior", () => {
       );
     }
     const music = within(tasks).getByRole("link", { name: "Make music" });
-    expect(music).toHaveAttribute("href", "/try?capability=audio&model=song");
+    expect(music).toHaveAttribute("href", "/try?capability=music&model=song");
     expect(music).toHaveClass("after:absolute", "after:inset-0");
     expect(within(music.closest("li")!).queryByText("Ready")).toBeNull();
     const sfx = within(tasks).getByRole("link", { name: "Make a sound effect" });
-    expect(sfx).toHaveAttribute("href", "/try?capability=audio&model=sfx");
+    expect(sfx).toHaveAttribute("href", "/try?capability=sfx&model=sfx");
     expect(within(sfx.closest("li")!).getByText("Busy")).toBeVisible();
     const video = within(tasks).getByText("Make a video").closest("li")!;
     expect(within(video).queryByRole("link")).toBeNull();
@@ -501,11 +501,11 @@ describe("Home audit component behavior", () => {
     expect(screen.queryByText("Details")).toBeNull();
     expect(music).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/try\/?\?capability=audio&model=song$/),
+      expect.stringMatching(/^\/try\/?\?capability=music&model=song$/),
     );
     expect(sfx).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/try\/?\?capability=audio&model=sfx$/),
+      expect.stringMatching(/^\/try\/?\?capability=sfx&model=sfx$/),
     );
     expect(screen.queryByText("ACE-Step XL Turbo")).toBeNull();
     expect(screen.queryByText("song")).toBeNull();
