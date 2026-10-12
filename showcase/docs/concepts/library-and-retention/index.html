@@ -41,6 +41,7 @@
 <p>Library shows the pictures, videos and audio made through the gateway. It builds each entry from jobs, files, receipts and app ownership.</p>
 <details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#what-the-gateway-keeps">What the gateway keeps</a></li><li class="toc-l2"><a href="#what-deleting-a-creation-does">What deleting a creation does</a></li></ul></nav></details><p>An entry can show its model, workflow, time, size, source and how long it took, when those facts were recorded. An entry can stay in the list after its file is gone. An entry is not a backup of its file.</p>
 <h2 id="what-the-gateway-keeps">What the gateway keeps <a class="anchor" href="#what-the-gateway-keeps" aria-label="Link to What the gateway keeps">#</a></h2>
+<p>Retention periods and download-link expiry have not been verified for this release. Keep your own backups and confirm the instance's retention settings before relying on stored history.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table">
 <table>
 <thead>
@@ -72,7 +73,7 @@
 <p>A saved prompt can expire or be erased without deleting the creation.</p>
 <h2 id="what-deleting-a-creation-does">What deleting a creation does <a class="anchor" href="#what-deleting-a-creation-does" aria-label="Link to What deleting a creation does">#</a></h2>
 <p>Deleting from Library works only on your own creations, for the owner too. It removes your saved prompt for that creation and records the deletion.</p>
-<p>It also deletes the file, unless another person or app shares the same file. Then the gateway keeps the file for them. Removing a creation from your Library does not always erase every copy.</p>
+<p>The gateway tries to delete the stored file. It keeps the file if its metadata lists more than one ownership key or more than one maker. Multiple keys can belong to the same app. Removing a creation from your Library does not always erase the stored file or other copies.</p>
 <p>Retention settings are not a backup plan. Disk space, engines and backups need their own care. See <a href="/showcase/docs/operate/upgrade-and-backup/">Upgrade and back up</a>.</p>
 
     </article>

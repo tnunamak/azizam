@@ -44,13 +44,13 @@
 <li>Library and Usage start with your own work.</li>
 <li>Members cannot see other people's work.</li>
 <li>An admin role alone does not show other people's Library.</li>
-<li>An owner or a superadmin can see other people's creations and usage. The gateway records each time someone views the everyone view of Library or Usage, or downloads from it.</li>
+<li>An owner or a superadmin can see other people's creations and usage. The gateway records requests to the everyone Library and Usage views, and requests for download links from the everyone Library view.</li>
 <li>The list of running jobs stays personal, for the owner too.</li>
 </ul>
 <h2 id="saved-prompts">Saved prompts <a class="anchor" href="#saved-prompts" aria-label="Link to Saved prompts">#</a></h2>
 <p>Library shows a saved prompt only to the person who made the creation. When the owner opens someone else's creation, they do not see its prompt.</p>
 <p><strong>Download with details</strong> includes the saved prompt and workflow. Only the person with that saved prompt can download it.</p>
-<p>A personal app key can also read its person's saved prompts. Protect it as you would your password. See <a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a>.</p>
+<p>A personal app key can read its owner's saved prompts only when that same person created the key. A personal key created by someone else does not act as that person. Protect an owner-created personal key as you would your password. See <a href="/showcase/docs/concepts/apps-and-keys/">Apps and keys</a>.</p>
 <h2 id="the-operator-can-read-the-storage">The operator can read the storage <a class="anchor" href="#the-operator-can-read-the-storage" aria-label="Link to The operator can read the storage">#</a></h2>
 <p>Saved prompts are stored in the gateway's database. Anyone with direct access to that storage can read them.</p>
 <p>Self-hosting does not hide your data from the person who runs the gateway. Use a gateway run by someone you trust.</p>

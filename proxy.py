@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Azizam - Unified OpenAI-compatible API for multiple backends.
-Served externally at ai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
+Served behind whatever reverse proxy the operator runs; see README.md.
 
 Routes requests to:
 - TabbyAPI (Qwen3-VL) for chat/completions/vision
@@ -10145,7 +10145,6 @@ async def _resolve_gateway_media_url(
     """Resolve our own content URLs with signatures and caller ownership."""
     parsed = urlsplit(url)
     public_urls = [
-        "https://ai.vivid.fish", "https://openai.vivid.fish",
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
         str((config.get("proxy") or {}).get("public_url") or ""),
         str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
@@ -17811,10 +17810,10 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
       admin:
         brand:
           product: "Azizam"      # neutral product label (default)
-          wordmark: "vivid.fish"     # optional deployment mark, "name.tld"
+          wordmark: "example.org"    # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so
-    nothing says "vivid.fish" unless this deployment opts in.
+    nothing carries a deployment name unless this deployment opts in.
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
@@ -24902,7 +24901,7 @@ async def _render_status_html(request: Request) -> Response:
     try:
         from firehose_render import render_html
         # Use the request's Host header so the page header reflects the
-        # address bar (loopback dev vs. external ai.vivid.fish).
+        # address bar (loopback dev vs. the public hostname).
         host_hdr = request.headers.get("host") or ""
         actor_label = actor.email or actor.subject
         logout_url = "/auth/logout-confirm" if actor.auth_method == "session" else None

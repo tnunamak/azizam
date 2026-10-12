@@ -1641,7 +1641,7 @@ auth:
 admin:
   db_path: data/admin.db
   # Deployment brand (data, not product code). A generic install shows only the
-  # neutral product label; this deployment opts into the vivid.fish wordmark.
+  # neutral product label; this deployment opts into a wordmark.
   brand:
     product: Azizam
     wordmark: vivid.fish

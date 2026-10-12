@@ -1,7 +1,6 @@
 #!/bin/bash
 # Azizam service starter
 # Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI backends
-# Served externally at ai.vivid.fish (via Traefik on 192.168.1.4)
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

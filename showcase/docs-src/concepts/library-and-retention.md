@@ -11,6 +11,8 @@ An entry can show its model, workflow, time, size, source and how long it took, 
 
 ## What the gateway keeps
 
+Retention periods and download-link expiry have not been verified for this release. Keep your own backups and confirm the instance's retention settings before relying on stored history.
+
 | Data | How long |
 | --- | --- |
 | Creations, jobs, job events and saved conversations | No automatic time limit. |
@@ -24,6 +26,6 @@ A saved prompt can expire or be erased without deleting the creation.
 
 Deleting from Library works only on your own creations, for the owner too. It removes your saved prompt for that creation and records the deletion.
 
-It also deletes the file, unless another person or app shares the same file. Then the gateway keeps the file for them. Removing a creation from your Library does not always erase every copy.
+The gateway tries to delete the stored file. It keeps the file if its metadata lists more than one ownership key or more than one maker. Multiple keys can belong to the same app. Removing a creation from your Library does not always erase the stored file or other copies.
 
 Retention settings are not a backup plan. Disk space, engines and backups need their own care. See [Upgrade and back up](../operate/upgrade-and-backup.md).

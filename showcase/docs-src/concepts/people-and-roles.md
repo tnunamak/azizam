@@ -7,7 +7,7 @@ summary: How people, roles and apps fit together, and who can see whose work.
 
 A person is a human account on the gateway. Azizam keeps a person separate from the apps they use and the keys those apps hold.
 
-Two things control access:
+Two main controls are roles and access plans. An active category policy can add restrictions to requests.
 
 - **Roles** control who can administer the gateway.
 - **Access plans** control which requests an app can make. See [Access plans](access-plans.md).

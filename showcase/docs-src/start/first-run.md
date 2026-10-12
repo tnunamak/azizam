@@ -9,6 +9,8 @@ This tutorial takes a new gateway to its first reply. You create the owner accou
 
 Before you start, [install Azizam](install.md) and make sure your chat engine is running with a model loaded.
 
+The examples below use the default port, 5000. If you changed AZIZAM_PORT during installation, replace 5000 in every URL on this page with that port. Run curl on the gateway computer. The app URL also assumes the app runs directly on that computer. For an app on another device or in another container, first configure a reachable gateway address using the Security guide.
+
 ## 1. Create the owner account
 
 On the computer that runs the gateway, open:
@@ -23,7 +25,7 @@ Create the owner account. The owner can configure the gateway and invite other p
 
 1. Open **Engines**, in the **Gateway** group of the menu, and select **Add engine**.
 2. Enter a name and your engine's OpenAI-compatible base URL. Use an `http://` address that the gateway can reach. For an engine on the same computer, see [Connect to an engine on the same computer](install.md#connect-to-an-engine-on-the-same-computer).
-3. If the engine needs a key, enter the name of the environment variable that holds it in **Key environment variable**. Do not paste the key itself.
+3. If the engine needs a key, first make sure its credential environment variable is available to the process that connects to the engine. Enter that variable's name in Key environment variable. Do not paste the key itself. If the variable has not been configured, stop here and complete credential setup before testing the connection.
 4. Select **Test connection**, then add the engine.
 5. On the engine, select **Detect models** to read the engine's models, and give the chat model a model name.
 
@@ -51,10 +53,10 @@ On **Home**, select **Check connection** to check the key against the gateway. T
 
 ### Send the same request with curl
 
-This example reads the key without showing it on screen. It asks for a streamed reply.
+Run this example in Bash on the gateway computer. If your terminal uses another shell, run bash first. It reads the key without echoing it and asks for a streamed reply. Your curl must support --fail-with-body.
 
-```sh
-read -r -s -p 'App key: ' AZIZAM_API_KEY; printf '\n'
+```bash
+read -r -s -p 'App key: ' AZIZAM_API_KEY && printf '\n' &&
 curl --no-buffer --fail-with-body --silent --show-error \
   http://127.0.0.1:5000/openai/v1/chat/completions \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
