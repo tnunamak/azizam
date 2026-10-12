@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
 from gateway.admin_oidc import AdminSession
-from gateway.public_failure import PublicFailure, describe
+from gateway.public_failure import PublicFailure, describe, project_job
 from gateway.receipts import RouteReceipt, new_request_id
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ APP_NAME = "Azizam"
 JOB_MODE = "session_make"
 # Shown while a canceled job's work settles; it then becomes ``canceled``.
 CANCEL_REQUESTED = "cancel_requested"
-_CANCELED = "Canceled by requester"
+_CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
 SUPPORTED_INTENTS = frozenset({"image.generate", "image.edit"})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
@@ -576,7 +576,7 @@ def _client_view(job: Mapping[str, Any]) -> dict[str, Any]:
     """The client's view of a job. A running job whose cancel has not settled
     shows ``cancel_requested``: its work may still be running, but it will
     publish nothing."""
-    view = media_jobs.for_audience(job, "client")
+    view = project_job(media_jobs.for_audience(job, "client"))
     if (job.get("status") == media_jobs.STATUS_RUNNING
             and (job.get("metadata") or {}).get("cancel_requested_at")):
         view["status"] = CANCEL_REQUESTED

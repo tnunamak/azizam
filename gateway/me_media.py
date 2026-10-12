@@ -141,7 +141,7 @@ def create_me_media_router(
             )
             page = rows[:100]
             cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
-            return _json({"jobs": [media_jobs.for_audience(job, "client") for job in page],
+            return _json({"jobs": [me_make._client_view(job) for job in page],
                           "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -155,7 +155,7 @@ def create_me_media_router(
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
             if job is None or not _job_in_scope(job, scope):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
-            return _json({"job": media_jobs.for_audience(job, "client")})
+            return _json({"job": me_make._client_view(job)})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
@@ -462,12 +462,12 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
     raw_scope = request.query_params.get("scope") or request.query_params.get("owner")
     person = request.query_params.get("person")
     if person:
+        if person in {"self", actor.user_id}:
+            return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
         if not actor.owner:
             raise PublicFailure("owner_required", 403, param="person")
         if person == "all":
             return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
-        if person == "self":
-            return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
         if person == "local-network":
             return _MediaScope(app_ids=None, person_id="local-network", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
@@ -1418,14 +1418,12 @@ def _usage_summary(
 
 def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tuple[list[str] | None, str, list[str] | None]:
     person = request.query_params.get("person")
-    if not person:  # Owners too: "Everyone" is an explicit choice.
+    if not person or person in {"self", actor.user_id}:  # Everyone is an explicit choice.
         return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if not actor.owner:
         raise PublicFailure("owner_required", 403, param="person")
     if person == "all":
         return None, "everyone", None
-    if person in {"self", actor.user_id}:
-        return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if person == "local-network":
         return None, "everyone", None
     return _owned_app_ids(person, admin_db_path), "person", [person]

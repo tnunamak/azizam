@@ -73,7 +73,7 @@ class AliasUnavailableError(Exception):
                **details: Any) -> "AliasUnavailableError":
         layer, message = describe(code, model=model)
         return cls(message, code=code, fallback_declared=fallback_declared,
-                   details={"layer": layer, **details})
+                   details={**details, "model": model, "layer": layer})
 
 
 @dataclass(frozen=True)
@@ -263,7 +263,8 @@ def resolve_alias(
                 picked = _pick_engine(spec, engines, engine_available)
                 if picked is None:
                     raise AliasUnavailableError.public(
-                        "model_not_deployed", requested, fallback_declared=len(spec) > 1,
+                        ("model_not_deployed" if any(_norm(c) in engines for c in spec) else "alias_misconfigured"),
+                        requested, fallback_declared=len(spec) > 1,
                         alias=cur, candidates=[str(c) for c in spec],
                     )
                 engine_id, engine_spec, skipped = picked
@@ -340,6 +341,8 @@ def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
                 problems.append(f"{operation}.engines.{engine_id}: missing model")
         for name, spec in stable.items():
             if isinstance(spec, list):
+                if not spec:
+                    problems.append(f"{operation}.stable.{name}: engine list must not be empty")
                 if operation not in ENGINE_OPERATIONS:
                     problems.append(f"{operation}.stable.{name}: engine list not allowed here")
                 for cand in spec:
