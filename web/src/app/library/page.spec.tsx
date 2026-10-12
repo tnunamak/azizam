@@ -597,6 +597,7 @@ describe("Library honesty and access", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   test("two workflows sharing an intent keep their own name in the viewer", async () => {
@@ -1008,6 +1009,11 @@ describe("Library honesty and access", () => {
   });
 
   test("2 dates each creation in its caption and marks the first tile of each day", async () => {
+    // Captions compare the creation's local day with the day at render time.
+    // Freeze only Date at local noon so a midnight between fixture and render
+    // cannot turn "Today" into "Yesterday".
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 12, 12, 0, 0));
     const day = 86_400;
     const nowS = Math.floor(Date.now() / 1000);
     routeFetch((path) =>
