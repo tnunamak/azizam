@@ -706,7 +706,23 @@ def _connection_test_contract(method, template, response, row, gateway):
         row["detail"] = ""
 
 
+# A lookup of one of the caller's own records answers 404 for an id that is not
+# theirs, before any model is considered. An existing job is judged against its
+# workflow's rules by the route (see test_runtime_route_policy).
+_RECORD_LOOKUP_CONTRACT = {
+    ("GET", "/gateway/v1/media/jobs/{job_id}/content"): "media_job_not_found",
+}
+
+
 def _metadata_contract(method, template, response, row):
+    code = _RECORD_LOOKUP_CONTRACT.get((method, template))
+    if code is not None and response.status_code == 404:
+        error = response.json().get("error", {})
+        if isinstance(error, dict) and error.get("code") == code:
+            row["outcome"] = "metadata (contract)"
+            row["rule"] = "owner-scoped record lookup; nothing runs"
+            row["detail"] = ""
+            return
     reason = _METADATA_CONTRACT.get((method, template))
     if reason is None or response.status_code != 200:
         return
@@ -1181,8 +1197,10 @@ def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
             reasons.append(value)
 
     collect_reasons(response.json())
-    assert any("workflow" in reason.lower() for reason in reasons), (
-        f"{path}: no workflow restriction in error reasons: {response.json()!r}"
+    error = response.json()["error"]
+    assert error["code"] == "not_in_access_plan", f"{path}: {error}"
+    assert any("flux2-klein-4b" in reason for reason in reasons), (
+        f"{path}: the refusal does not name the workflow: {reasons!r}"
     )
     assert not any("category rules:" in reason for reason in reasons), reasons
 
