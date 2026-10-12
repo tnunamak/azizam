@@ -220,10 +220,6 @@
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
-  "PUT /admin/api/operator/user-access-defaults": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
   "GET /admin/api/overview": {
     "tag": "status",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
@@ -243,35 +239,6 @@
   "POST /admin/api/people/{user_id}/reset": {
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
-  "GET /admin/api/policy/editor": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "POST /admin/api/policy/simulate": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "GET /admin/api/profiles": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "POST /admin/api/profiles": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
-  },
-  "DELETE /admin/api/profiles/{profile_id}": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "GET /admin/api/profiles/{profile_id}": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "PATCH /admin/api/profiles/{profile_id}": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
   "GET /admin/api/providers": {
     "tag": "engines and providers",
@@ -303,10 +270,6 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
   "GET /admin/api/providers/{provider_id}": {
-    "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "PUT /admin/api/providers/{provider_id}/allowed-plans": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
@@ -342,19 +305,6 @@
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
-  "GET /admin/api/runtime-profile-mappings": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
-  "POST /admin/api/runtime-profile-mappings": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
-  },
-  "DELETE /admin/api/runtime-profile-mappings/{mapping_id}": {
-    "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
-  },
   "GET /admin/api/session": {
     "tag": "account",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
@@ -380,14 +330,6 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "PUT /admin/api/settings/instance": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
-  "GET /admin/api/settings/lan-placeholder-keys": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
-  },
-  "PUT /admin/api/settings/lan-placeholder-keys": {
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
@@ -420,6 +362,35 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   },
   "GET /admin/api/users": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "DELETE /admin/api/access-plans/{plan_id}": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/access-plans": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/access-plans/editor": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "GET /admin/api/access-plans/{plan_id}": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "POST /admin/api/access-plans": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "success_status": 201
+  },
+  "POST /admin/api/access/check": {
+    "tag": "people and plans",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+  },
+  "PUT /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
   }
