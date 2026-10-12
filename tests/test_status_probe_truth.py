@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import ssl
 import unittest
 from unittest.mock import patch
 
@@ -59,6 +60,27 @@ class ProbeTruthTests(unittest.IsolatedAsyncioTestCase):
     async def test_on_demand_service_that_times_out_is_still_a_fault(self):
         row = await _probe(_raising(httpx.ReadTimeout("hung")), {"residency": "on_demand"})
         self.assertEqual(row["live_status"], "degraded")
+
+
+class BackendGridLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ssl_context_is_not_built_on_the_event_loop(self):
+        on_loop: list[bool] = []
+        real = ssl.create_default_context
+
+        def spy(*args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop.append(True)
+            except RuntimeError:
+                on_loop.append(False)
+            return real(*args, **kwargs)
+
+        with patch.object(status, "_probe_ssl_context", None, create=True), patch.object(
+            ssl, "create_default_context", spy
+        ):
+            await status._backend_grid({"backends": {}})
+        self.assertTrue(on_loop, "no SSL context was built")
+        self.assertFalse(any(on_loop), "SSL context was built on the event loop")
 
 
 if __name__ == "__main__":
