@@ -33,9 +33,6 @@
             "text": "nk>Answer\"},\"finish_reason\":null}]}\n\n"
           },
           {
-            "text": "nk>Answer\"},\"finish_reason\":null}]}\n\n"
-          },
-          {
             "event": {
               "id": "chatcmpl-fk-think",
               "object": "chat.completion.chunk",
