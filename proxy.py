@@ -328,7 +328,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
-from gateway.policy import DENIED, NO_ACCESS, EffectiveAccess, PolicyDecision
+from gateway.policy import DENIED, NO_ACCESS, EffectiveAccess, PolicyDecision, evaluate
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, new_request_id
 from gateway.runtime_auth import (
     RuntimeIdentity,
