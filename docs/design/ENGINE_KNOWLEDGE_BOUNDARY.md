@@ -3,6 +3,23 @@
 **Status:** Design (architect's recommendation). Operationalizes the owner's binding principle.
 **Last verified against code:** 2026-06-16, branch `ideogram4-quality-tuning`.
 
+**Status update — 2026-10-12 (S2):** `gateway/engine_quarantine.py` is deleted. Its six
+tables became service-record fields, seeded by `scripts/migrations/engine_service_fields.py`
+and `proxy_config.yml`: the local-swap set is derived from the lifecycle driver;
+`lifecycle.driver_config.activation_requires_absolute_path`; `loaded_model_identity: path`;
+`aux` (`probe`, `process`, `flag`, `grants_input_modalities`); and
+`context_window_probe.endpoint`. The migration also deletes the disabled `tabby` row.
+`tests/test_engine_service_fields.py` runs each behaviour under two service ids.
+The text below describes the earlier state.
+
+**Status update — 2026-10-12:** Tabby support is removed (the service was disabled in
+the live registry and the product is unreleased, so there is no migration shim). Five
+quarantine tables existed only for it and are deleted; `LOCAL_SWAP_BACKENDS` is now
+`{kobold}`. Six tables remain in `gateway/engine_quarantine.py`. A per-file
+engine-knowledge ratchet (`tests/engine_knowledge_baseline.json`, enforced by
+`tests/test_engine_knowledge_boundary.py`) counts every engine name in all production
+Python and may only fall. Mentions of Tabby below are historical.
+
 **Status update — 2026-10-10:** The owner-supplied audit at `fdc3c9d`
 supersedes the D-1/D-2/D-3 implementation status and old code anchors below.
 The engine-named classes are now generic transforms. D-2's engine framing is

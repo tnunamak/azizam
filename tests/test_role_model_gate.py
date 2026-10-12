@@ -1,12 +1,12 @@
 """Tests pinning role-model gate generalization (ENGINE_REGISTRY_DESIGN §2.3 + §8 Step 4).
 
 Covers:
-- _normalize_models_catalog: kobold/tabby entries with paths still parse identically
+- _normalize_models_catalog: kobold entries with paths still parse identically
   (golden / byte-identical proof).
 - _normalize_models_catalog: a NEW enabled backend's entry now parses (was dropped).
 - _normalize_models_catalog: an UNKNOWN/disabled backend is still skipped.
 - _normalize_models_catalog: a swap-backend entry without a path is still skipped.
-- _build_role_catalog_entries: kobold/tabby roles identical to before.
+- _build_role_catalog_entries: kobold roles identical to before.
 - _build_role_catalog_entries: a new backend's role now lists.
 - _build_role_catalog_entries: unknown backend role still skipped.
 - _build_role_catalog_entries: remote role with no model field skipped (malformed).
@@ -49,6 +49,14 @@ def _backends_with(*ids: str, **extra: dict) -> dict:
     return out
 
 
+def _swap_backends(*ids: str) -> dict:
+    """Backends whose lifecycle driver swaps models, declared as service data."""
+    out = _backends_with(*ids)
+    for bid in ids:
+        out[bid]["lifecycle"] = {"driver": "systemd", "driver_config": {"unit": f"{bid}.service"}}
+    return out
+
+
 def _normalize(raw_models: list[dict], backends: dict | None = None) -> dict:
     """Call _normalize_models_catalog under a patched config["backends"]."""
     with patch.dict(proxy.config, {"backends": backends or {}}):
@@ -73,33 +81,22 @@ def _role_entries(roles: dict, backends: dict | None = None) -> list[dict]:
 class TestNormalizeModelsCatalog(unittest.TestCase):
     """Gate-1: config["models"] GGUF alias catalog."""
 
-    # --- Golden / byte-identical for kobold/tabby ----------------------------
+    # --- Golden / byte-identical for kobold ----------------------------
 
     def test_kobold_entry_with_path_accepted(self) -> None:
         """kobold entry with a path parses exactly as before."""
         raw = [{"id": "my-kobold", "backend": "kobold", "path": "/models/q4.gguf"}]
-        result = _normalize(raw, backends=_backends_with("kobold"))
+        result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertIn("my-kobold", result)
         entry = result["my-kobold"]
         self.assertEqual(entry["backend"], "kobold")
         self.assertEqual(entry["path"], "/models/q4.gguf")
         self.assertIsNone(entry["mmproj"])
 
-    def test_tabby_entry_with_path_accepted(self) -> None:
-        """tabby entry with a path parses exactly as before."""
-        raw = [{"id": "my-tabby", "backend": "tabby", "path": "/models/fp16.gguf"}]
-        result = _normalize(raw, backends=_backends_with("tabby"))
-        self.assertIn("my-tabby", result)
-        self.assertEqual(result["my-tabby"]["backend"], "tabby")
-
-    def test_kobold_no_backends_key_still_accepted(self) -> None:
-        """kobold/tabby are _LOCAL_SWAP_BACKENDS and accepted even if absent
-        from config["backends"] (backwards-compat: old configs may not have
-        them under backends)."""
+    def test_backend_absent_from_registry_is_skipped_whatever_its_name(self) -> None:
+        """No backend name is special: one absent from config["backends"] is skipped."""
         raw = [{"id": "bare-kobold", "backend": "kobold", "path": "/models/q5.gguf"}]
-        # No backends key at all
-        result = _normalize(raw, backends={})
-        self.assertIn("bare-kobold", result)
+        self.assertNotIn("bare-kobold", _normalize(raw, backends={}))
 
     def test_kobold_mmproj_preserved(self) -> None:
         raw = [
@@ -110,7 +107,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
                 "mmproj": "/models/clip.gguf",
             }
         ]
-        result = _normalize(raw, backends={})
+        result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertEqual(result["vision-kobold"]["mmproj"], "/models/clip.gguf")
 
     # --- New backend now participates ----------------------------------------
@@ -126,7 +123,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
     # --- Unknown/disabled backend still skipped ------------------------------
 
     def test_unknown_backend_skipped(self) -> None:
-        """A backend not in config["backends"] and not a legacy swap backend is skipped."""
+        """A backend not in config["backends"] is skipped."""
         raw = [{"id": "ghost", "backend": "ghost-backend", "path": "/models/ghost.gguf"}]
         result = _normalize(raw, backends={})  # ghost-backend not registered
         self.assertNotIn("ghost", result)
@@ -144,11 +141,6 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
         result = _normalize(raw, backends={})
         self.assertNotIn("pathless", result)
 
-    def test_tabby_without_path_skipped(self) -> None:
-        raw = [{"id": "pathless-tabby", "backend": "tabby"}]
-        result = _normalize(raw, backends={})
-        self.assertNotIn("pathless-tabby", result)
-
     def test_new_backend_without_path_skipped(self) -> None:
         """New backend with no path: still skipped (GGUF catalog requires path)."""
         raw = [{"id": "remote-no-path", "backend": "my-vllm"}]
@@ -161,7 +153,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_id_normalized_to_lowercase(self) -> None:
         raw = [{"id": "My-Kobold", "backend": "kobold", "path": "/models/q4.gguf"}]
-        result = _normalize(raw, backends={})
+        result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertIn("my-kobold", result)
 
 
@@ -172,7 +164,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 class TestBuildRoleCatalogEntries(unittest.TestCase):
     """Gate-2: ROLES dict → /v1/models listing."""
 
-    # --- Golden for kobold/tabby (byte-identical) ----------------------------
+    # --- Golden for kobold (byte-identical) ----------------------------
 
     def test_kobold_role_with_model_path_listed(self) -> None:
         """kobold role with model path produces azizam_model_path (unchanged)."""
@@ -183,7 +175,7 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
                 "description": "Default model",
             }
         }
-        entries = _role_entries(roles, backends=_backends_with("kobold"))
+        entries = _role_entries(roles, backends=_swap_backends("kobold"))
         ids = {e["id"] for e in entries}
         self.assertIn("default", ids)
         entry = next(e for e in entries if e["id"] == "default")
@@ -191,26 +183,15 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         self.assertEqual(entry["azizam_model_path"], "/models/q4.gguf")
         self.assertTrue(entry["azizam_role"])
 
-    def test_tabby_role_without_model_listed(self) -> None:
-        """Tabby role without a pinned model is still listed (unpinned backend role)."""
-        roles = {"assistant": {"backend": "tabby"}}
-        entries = _role_entries(roles, backends=_backends_with("tabby"))
+    def test_kobold_role_without_model_listed(self) -> None:
+        """A local-swap role without a pinned model is still listed (unpinned backend role)."""
+        roles = {"assistant": {"backend": "kobold"}}
+        entries = _role_entries(roles, backends=_swap_backends("kobold"))
         ids = {e["id"] for e in entries}
         self.assertIn("assistant", ids)
         entry = next(e for e in entries if e["id"] == "assistant")
         self.assertNotIn("azizam_model_path", entry)
-        self.assertEqual(entry["azizam_backend"], "tabby")
-
-    def test_tabby_role_with_model_path_has_model_path_field(self) -> None:
-        roles = {
-            "vision": {
-                "backend": "tabby",
-                "model": "/models/vision.gguf",
-            }
-        }
-        entries = _role_entries(roles, backends=_backends_with("tabby"))
-        entry = next(e for e in entries if e["id"] == "vision")
-        self.assertEqual(entry["azizam_model_path"], "/models/vision.gguf")
+        self.assertEqual(entry["azizam_backend"], "kobold")
 
     # --- New backend now participates ----------------------------------------
 
@@ -248,7 +229,7 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
 
     def test_none_backend_role_skipped(self) -> None:
         roles = {"nobackend": {"model": "/models/q4.gguf"}}
-        entries = _role_entries(roles, backends=_backends_with("kobold"))
+        entries = _role_entries(roles, backends=_swap_backends("kobold"))
         ids = {e["id"] for e in entries}
         self.assertNotIn("nobackend", ids)
 
@@ -268,13 +249,26 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
 
     def test_non_dict_role_def_skipped(self) -> None:
         roles = {"bad": "not-a-dict", "good": {"backend": "kobold"}}
-        entries = _role_entries(roles, backends=_backends_with("kobold"))
+        entries = _role_entries(roles, backends=_swap_backends("kobold"))
         ids = {e["id"] for e in entries}
         self.assertNotIn("bad", ids)
         self.assertIn("good", ids)
 
+    def test_swap_lifecycle_data_makes_any_service_id_a_local_swap_role(self) -> None:
+        """A new service id with a swap driver gets the kobold role shape (data, not the name)."""
+        roles = {"mine": {"backend": "brand-new-llm", "model": "/models/a.gguf"}}
+        entry = _role_entries(roles, backends=_swap_backends("brand-new-llm"))[0]
+        self.assertEqual(entry["azizam_model_path"], "/models/a.gguf")
+        self.assertNotIn("azizam_model", entry)
+
+    def test_non_swap_lifecycle_keeps_the_remote_role_shape_even_when_named_kobold(self) -> None:
+        roles = {"mine": {"backend": "kobold", "model": "remote-name"}}
+        entry = _role_entries(roles, backends=_backends_with("kobold"))[0]
+        self.assertEqual(entry["azizam_model"], "remote-name")
+        self.assertNotIn("azizam_model_path", entry)
+
     def test_empty_roles_produces_no_role_entries(self) -> None:
-        entries = _role_entries({}, backends=_backends_with("kobold"))
+        entries = _role_entries({}, backends=_swap_backends("kobold"))
         self.assertEqual(entries, [])
 
 

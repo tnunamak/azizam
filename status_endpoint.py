@@ -2356,7 +2356,7 @@ def _cpu_usage_quick() -> dict:
     # which Brave window is on top.
     SERVICE_PATTERNS = (
         "proxy.py", "llama-server", "comfyui", "comfy_server",
-        "voxtral", "parakeet", "daisy", "claude", "tabby",
+        "voxtral", "parakeet", "daisy", "claude",
         "main.py", "uvicorn",
     )
 
@@ -2962,11 +2962,6 @@ def _workflow_drift_status() -> Optional[dict]:
 def _swap_state(proxy_module) -> dict:
     """Model-swap lock state and swap-drain leases from proxy module globals."""
     out: dict[str, Any] = {}
-    try:
-        tabby_lock = getattr(proxy_module, "tabby_swap_lock", None)
-        out["tabby_swap_in_progress"] = tabby_lock.locked() if tabby_lock else None
-    except Exception:
-        out["tabby_swap_in_progress"] = None
     try:
         kobold_lock = getattr(proxy_module, "kobold_swap_lock", None)
         out["kobold_swap_in_progress"] = kobold_lock.locked() if kobold_lock else None
@@ -3865,7 +3860,7 @@ async def build_status_payload(config: dict) -> dict:
             api_health_reasons.append(("warn", reason))
 
     # Model swap in progress → transient unavailability for one provider.
-    if swap_state and (swap_state.get("tabby_swap_in_progress") or swap_state.get("kobold_swap_in_progress")):
+    if swap_state and swap_state.get("kobold_swap_in_progress"):
         banner = _bump(banner, "warn")
         reason = "model swap in progress"
         api_reasons.append(("warn", reason))

@@ -1,0 +1,32 @@
+{
+  "protocol": "openai-compatible",
+  "name": "served-model-context",
+  "description": "A local server lists its served model with the context window it loaded, at /v1/models.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "llama.cpp server /v1/models: data[].meta.n_ctx"
+  },
+  "exchanges": [
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "id": "{{model}}",
+              "object": "model",
+              "meta": {
+                "n_ctx": 32768
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

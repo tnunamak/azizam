@@ -5,7 +5,7 @@ This document explains how Azizam handles authentication for the apps that call 
 The gateway uses **App API keys** that are separate from downstream provider
 keys. Each app — LibreChat, Open WebUI, Continue, Cline, a personal chat
 client, an agent — authenticates to the gateway with its own `opk_...` key.
-The gateway then maps that key to the provider credentials needed for Tabby,
+The gateway then maps that key to the provider credentials needed for
 Kobold, TTS, STT, ComfyUI, or any other configured backend.
 
 The legacy term "client" is preserved only inside protocol/SDK compatibility
@@ -284,7 +284,7 @@ or:
 api-key: opk_...
 ```
 
-Do not send Tabby admin keys or downstream provider keys as App auth. The
+Do not send backend admin keys or downstream provider keys as App auth. The
 gateway strips inbound auth headers before forwarding requests and injects the
 appropriate downstream credentials itself.
 
@@ -319,8 +319,7 @@ AZIZAM_API_KEY='opk_...' ./test_e2e.sh
 By default, App API keys map to the global downstream provider credentials
 configured for the gateway:
 
-- Tabby API key: `TABBY_API_KEY` or Tabby's `api_tokens.yml`
-- Tabby admin key: `TABBY_ADMIN_KEY` or Tabby's `api_tokens.yml`
+- Backend credentials are service data (`auth_inject` rules naming a `secret_env` variable). The gateway has no built-in credential variables.
 - TTS, STT, ComfyUI, Kobold: no extra auth unless configured per key
 
 The current DB runtime path does not expose per-App downstream credential

@@ -108,7 +108,6 @@ def gateway(monkeypatch, tmp_path, request):
         return called
 
     monkeypatch.setattr(proxy, "check_service_health", tripwire("health", True))
-    monkeypatch.setattr(proxy, "is_model_loaded", tripwire("model-state", False))
     for name in ("send_llm_execution_request", "_forward_current_loaded_openai_request"):
         monkeypatch.setattr(proxy, name, tripwire(name, RuntimeError("backend reached")))
     # Translators (A1111, MCP) call the gateway's own routes in process through

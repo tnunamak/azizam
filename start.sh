@@ -1,6 +1,6 @@
 #!/bin/bash
 # Azizam service starter
-# Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI backends
+# Unified local AI API for local LLM/TTS/STT/ComfyUI backends
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -36,7 +36,6 @@ fi
 
 # Config via environment (override proxy_config.yml defaults)
 export AZIZAM_PORT="${AZIZAM_PORT:-5000}"
-export TABBY_IDLE_TIMEOUT="${TABBY_IDLE_TIMEOUT:-300}"
 export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:4011}"
 export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-$(python3 - <<'PY'
 import secrets

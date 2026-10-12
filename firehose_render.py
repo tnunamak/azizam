@@ -734,8 +734,6 @@ def _render_critical_strip(p: dict) -> str:
             _add(key, xid_latest, label, summary, css)
 
     swap = p.get("swap_state") or {}
-    if swap.get("tabby_swap_in_progress"):
-        _add("swap_in_progress", now, "swap", "tabby model swap in progress", "warn")
     if swap.get("kobold_swap_in_progress"):
         _add("swap_in_progress", now, "swap", "kobold model swap in progress", "warn")
 
@@ -865,8 +863,6 @@ def _render_alert_box(p: dict) -> str:
                 f'Disk <b>{_esc(part.get("target"))}</b> is {_esc(pct)}% full '
                 f'({_bytes(part.get("avail_bytes"))} free of {_bytes(part.get("size_bytes"))})'))
     swap = p.get("swap_state") or {}
-    if swap.get("tabby_swap_in_progress"):
-        alerts.append(("warn", "TabbyAPI model swap is in progress"))
     if swap.get("kobold_swap_in_progress"):
         alerts.append(("warn", "Kobold/llama-turbo model swap is in progress"))
     by60 = ((p.get("driver") or {}).get("by_code_60min") or {})
@@ -983,10 +979,9 @@ def _render_swap_state(p: dict) -> str:
     """
     s = p.get("swap_state") or {}
     ws = p.get("comfy_ws_state") or {}
-    tabby = bool(s.get("tabby_swap_in_progress"))
     kobold = bool(s.get("kobold_swap_in_progress"))
     ws_connected = bool(ws.get("connected"))
-    all_quiet = (not tabby) and (not kobold) and ws_connected
+    all_quiet = (not kobold) and ws_connected
 
     if all_quiet:
         client_id = ws.get("client_id")
@@ -1001,8 +996,6 @@ def _render_swap_state(p: dict) -> str:
         )
 
     rows: list[tuple[str, Any]] = []
-    if tabby:
-        rows.append(("Tabby model swap", "in progress"))
     if kobold:
         rows.append(("Kobold model swap", "in progress"))
     if not ws_connected:
@@ -2487,7 +2480,7 @@ def _render_backend_readiness(payload: dict) -> str:
     """Digest existing backend/aux/llama state into a single warmth grid.
 
     Pure presentation — no new probes. Helps the user see at a glance which
-    backends are warm vs cold-by-design (TabbyAPI is intentionally cold at idle).
+    backends are warm vs cold-by-design.
     """
     cards: list[tuple[str, str, str, str]] = []  # (name, state_pill, detail, hint)
 
@@ -2521,18 +2514,8 @@ def _render_backend_readiness(payload: dict) -> str:
         cards.append(("llama-turbo", _pill("cold"), "no model loaded",
                       "first chat will load weights"))
 
-    # TabbyAPI: cold-by-design at idle. Look at backends list.
     backends = payload.get("backends") or []
     bmap = {b.get("name"): b for b in backends if isinstance(b, dict)}
-    tabby = bmap.get("tabbyapi") or bmap.get("tabby")
-    if tabby:
-        live = tabby.get("live_status") or tabby.get("status")
-        if live == "up":
-            cards.append(("TabbyAPI", _pill("warm"), "responding", ""))
-        else:
-            cards.append(("TabbyAPI", _pill("cold"),
-                          str(live or "down"),
-                          "cold-start ~30-60s on first request"))
 
     # ComfyUI: warm if backend up
     comfy = bmap.get("comfyui") or bmap.get("comfy")
