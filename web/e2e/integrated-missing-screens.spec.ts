@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const themes = ["light", "dark"] as const;
 const widths = [1440, 390] as const;
@@ -61,17 +62,13 @@ async function inspect(page: Page, file: string) {
 
 async function mockAppsSessionFailure(page: Page) {
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
   );
 }
 
 async function mockProviders(page: Page, state: "seeded" | "empty") {
   await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         providers:
           state === "empty"
             ? []
@@ -86,8 +83,7 @@ async function mockProviders(page: Page, state: "seeded" | "empty") {
                   cap_usd: 10,
                 },
               ],
-      },
-    }),
+      }),
   );
 }
 

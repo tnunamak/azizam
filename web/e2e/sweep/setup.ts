@@ -50,7 +50,9 @@ export default async function setup() {
   const paths = sweepPaths(target);
   await mkdir(paths.dir, { recursive: true });
   // SWEEP_KEEP=1 reruns part of the matrix and keeps the other results (same-named files are replaced).
-  if (process.env.SWEEP_KEEP !== "1") await rm(paths.findings, { recursive: true, force: true });
+  if (process.env.SWEEP_KEEP !== "1") await rm(paths.findings, { recursive: true }).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
   await mkdir(paths.findings, { recursive: true });
   await mkdir(paths.shots, { recursive: true });
   await waitForFile(paths.seedManifest);

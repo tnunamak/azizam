@@ -1,6 +1,7 @@
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
@@ -16,31 +17,23 @@ const TINY_PNG =
 
 async function routeImageJob(page: import("@playwright/test").Page) {
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
-    route.fulfill({
-      status: 202,
-      json: {
+    fulfilJson(route, {
         object: "media.job",
         id: "job_image_try",
         status: "queued",
         request_id: "req_image_try",
-      },
-    }),
+      }, { status: 202 }),
   );
   await page.route("**/gateway/v1/media/jobs/job_image_try", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         object: "media.job",
         id: "job_image_try",
         status: "succeeded",
         request_id: "req_image_try",
-      },
-    }),
+      }),
   );
   await page.route("**/gateway/v1/media/jobs/job_image_try/content", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_image_try" },
-      json: { id: "req_image_try", data: [{ url: TINY_PNG }] },
-    }),
+    fulfilJson(route, { id: "req_image_try", data: [{ url: TINY_PNG }] }, { headers: { "x-azizam-request-id": "req_image_try" } }),
   );
 }
 
@@ -60,9 +53,7 @@ async function routeAudioCatalog(page: import("@playwright/test").Page) {
       capabilities: [{ intent, input_modalities: [capability === "transcribe" ? "audio" : "text"] }],
       locality: "local",
     });
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...body,
         models: [
           ...(body.models ?? []),
@@ -71,8 +62,7 @@ async function routeAudioCatalog(page: import("@playwright/test").Page) {
           row("demo-decide", "decide", "decision.systemone"),
           row("demo-embed", "embed", "text.embeddings"),
         ],
-      },
-    });
+      }, { response });
   });
 }
 
@@ -126,31 +116,25 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await waitForCatalog(page);
 
   await page.route("**/openai/v1/chat/completions", (route) =>
-    route.fulfill({
-      status: 403,
-      json: { error: { message: "This key cannot use demo-chat." } },
-    }),
+    fulfilJson(route, { error: { message: "This key cannot use demo-chat." } }, { status: 403 }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("This key cannot use demo-chat.", { exact: true })).toBeVisible();
   await page.unroute("**/openai/v1/chat/completions");
 
   await page.route("**/me/api/receipts/receipt_preferred", (route) =>
-    route.fulfill({ json: { id: "receipt_preferred" } }),
+    fulfilJson(route, { id: "receipt_preferred" }),
   );
   await page.route("**/me/api/receipts/generic_request", (route) =>
-    route.fulfill({ status: 404, json: { error: "not found" } }),
+    fulfilJson(route, { error: "not found" }, { status: 404 }),
   );
   await page.route("**/openai/v1/chat/completions", (route) =>
-    route.fulfill({
-      headers: {
+    fulfilJson(route, {
+        choices: [{ message: { content: "Receipt header priority works." } }],
+      }, { headers: {
         "x-azizam-receipt-id": "receipt_preferred",
         "x-request-id": "generic_request",
-      },
-      json: {
-        choices: [{ message: { content: "Receipt header priority works." } }],
-      },
-    }),
+      } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
@@ -173,7 +157,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
 
   await page.getByRole("tab", { name: "Read text aloud" }).click();
   await page.route("**/openai/v1/audio/speech", (route) =>
-    route.fulfill({
+    fulfilBytes(route, {
       headers: {
         "content-type": "audio/mpeg",
         "x-azizam-request-id": "req_speech_try",
@@ -191,10 +175,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     buffer: Buffer.from("RIFF....WAVEfmt "),
   });
   await page.route("**/openai/v1/audio/transcriptions", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_transcribe_try" },
-      json: { text: "The gateway is ready.", request_id: "req_transcribe_try" },
-    }),
+    fulfilJson(route, { text: "The gateway is ready.", request_id: "req_transcribe_try" }, { headers: { "x-azizam-request-id": "req_transcribe_try" } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
@@ -208,10 +189,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       "Take a taxi": "Take a taxi",
       "Wait for the bus": "Wait for the bus",
     });
-    await route.fulfill({
-      status: 404,
-      json: { error: { message: "not found" } },
-    });
+    await fulfilJson(route, { error: { message: "not found" } }, { status: 404 });
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
@@ -220,10 +198,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.unroute("**/v1/systemone");
   // A 403 is a refusal with its own reason, not a missing feature.
   await page.route("**/v1/systemone", (route) =>
-    route.fulfill({
-      status: 403,
-      json: { error: { message: "Your access plan does not allow decisions." } },
-    }),
+    fulfilJson(route, { error: { message: "Your access plan does not allow decisions." } }, { status: 403 }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
@@ -234,9 +209,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   ).toHaveCount(0);
   await page.unroute("**/v1/systemone");
   await page.route("**/v1/systemone", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_decide_try" },
-      json: {
+    fulfilJson(route, {
         answers: {
           route: {
             type: "choice",
@@ -245,8 +218,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
             probabilities: { "Take a taxi": 0.7, "Wait for the bus": 0.3 },
           },
         },
-      },
-    }),
+      }, { headers: { "x-azizam-request-id": "req_decide_try" } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
@@ -266,13 +238,10 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
 
   await page.getByRole("tab", { name: "Turn text into numbers" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>
-    route.fulfill({
-      headers: {
+    fulfilJson(route, { data: [{ embedding: [0.1, -0.2, 0.4] }] }, { headers: {
         "x-azizam-request-id": "req_embed_try",
         "x-litellm-response-cost": "0.0025",
-      },
-      json: { data: [{ embedding: [0.1, -0.2, 0.4] }] },
-    }),
+      } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Dimensions")).toBeVisible();
@@ -287,8 +256,7 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         schema_version: 1,
         object: "models.catalog",
         aliases: [
@@ -307,8 +275,7 @@ test("try catalog maps exact capability intents to the right tabs", async ({
           catalogRow("embeddings", "text.embeddings"),
         ],
         models: [],
-      },
-    }),
+      }),
   );
   await prepareTryKey(page);
   await expect(page.getByRole("combobox").first()).toContainText(
@@ -346,8 +313,7 @@ test("try query params select capability and preserve requested model", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         schema_version: 1,
         object: "models.catalog",
         aliases: [
@@ -357,8 +323,7 @@ test("try query params select capability and preserve requested model", async ({
           catalogRow("decide", "decision.systemone"),
         ],
         models: [],
-      },
-    }),
+      }),
   );
   await page.goto("/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -465,9 +430,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
     const requestBody = await route.request().postDataBuffer();
     expect(requestBody).not.toBeNull();
     uploadedBody = requestBody!.toString("utf8");
-    await route.fulfill({
-      json: { text: "Recorded text." },
-    });
+    await fulfilJson(route, { text: "Recorded text." });
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Recorded text.")).toBeVisible();
@@ -517,10 +480,7 @@ for (const theme of ["light", "dark"] as const) {
       await checkState(page, `try-result-${theme}-${width}.png`);
 
       await page.route("**/openai/v1/chat/completions", (route) =>
-        route.fulfill({
-          status: 403,
-          json: { error: { message: "This key cannot use chat." } },
-        }),
+        fulfilJson(route, { error: { message: "This key cannot use chat." } }, { status: 403 }),
       );
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await expect(page.getByText("This key cannot use chat.", { exact: true })).toBeVisible();
@@ -618,7 +578,7 @@ test("a link to a kind of work opens it, or says why it cannot, never Chat", asy
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: kindCatalog }),
+    fulfilJson(route, kindCatalog),
   );
   const task = page.getByRole("combobox", { name: "Task", exact: true });
   const model = page.getByRole("combobox", { name: "Model", exact: true });
@@ -656,7 +616,7 @@ test("Run waits for the model list", async ({ page }) => {
   const ready = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/me/api/models/catalog", async (route) => {
     await ready;
-    await route.fulfill({ json: { aliases: [catalogRow("chat", "chat.completions")], models: [] } });
+    await fulfilJson(route, { aliases: [catalogRow("chat", "chat.completions")], models: [] });
   });
   await page.goto("/try/", { waitUntil: "domcontentloaded" });
   const run = page.getByRole("button", { name: "Run", exact: true });
@@ -670,12 +630,10 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({
-      json: { schema_version: 1, aliases: [], models: [], counts: {} },
-    }),
+    fulfilJson(route, { schema_version: 1, aliases: [], models: [], counts: {} }),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: ltxCatalog }),
+    fulfilJson(route, ltxCatalog),
   );
   await page.goto("/try/?workflow=video.generate.ltx-2.5-i2v");
   await expect(
@@ -722,7 +680,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   // Optional inputs wait under More options, after what the workflow needs.
   await expect(page.getByRole("textbox", { name: /Avoid/ })).toBeHidden();
   await page.locator("summary").filter({ hasText: "More options" }).click();
-  expect(await page.getByRole("textbox", { name: /Avoid/ }).inputValue()).toBe("");
+  await expect(page.getByRole("textbox", { name: /Avoid/ })).toHaveValue("");
 
   await page.screenshot({ path: "test-results/screens/try-workflow-media-top-390.png" });
 
@@ -730,10 +688,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   let posted = 0;
   await page.route("**/v1/videos", async (route) => {
     posted += 1;
-    await route.fulfill({
-      status: 400,
-      json: { error: { message: "The gateway could not start this video." } },
-    });
+    await fulfilJson(route, { error: { message: "The gateway could not start this video." } }, { status: 400 });
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Choose a picture to start from")).toBeVisible();
@@ -782,22 +737,17 @@ test("a picture survives a dropped connection and never reports the browser's er
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Make a picture" }).click();
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
-    route.fulfill({
-      status: 202,
-      json: { object: "media.job", id: "job_phone", status: "queued" },
-    }),
+    fulfilJson(route, { object: "media.job", id: "job_phone", status: "queued" }, { status: 202 }),
   );
   let polls = 0;
   await page.route("**/gateway/v1/media/jobs/job_phone", (route) => {
     polls += 1;
     // The phone switched apps: the first check gets no answer at all.
     if (polls === 1) return route.abort("connectionfailed");
-    return route.fulfill({
-      json: { object: "media.job", id: "job_phone", status: "succeeded" },
-    });
+    return fulfilJson(route, { object: "media.job", id: "job_phone", status: "succeeded" });
   });
   await page.route("**/gateway/v1/media/jobs/job_phone/content", (route) =>
-    route.fulfill({ json: { data: [{ url: TINY_PNG }] } }),
+    fulfilJson(route, { data: [{ url: TINY_PNG }] }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible({
@@ -844,7 +794,7 @@ for (const width of [390, 1440]) {
     });
     await page.route("**/me/api/models/catalog", async (route) => {
       await ready;
-      await route.fulfill({ json: { aliases: [], models: [speechModel("speech-a", "Voice studio", "a-default"), speechModel("speech-b", "Second studio", "b-default")] } });
+      await fulfilJson(route, { aliases: [], models: [speechModel("speech-a", "Voice studio", "a-default"), speechModel("speech-b", "Second studio", "b-default")] });
     });
     await page.goto("/try/?capability=speech", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
@@ -866,7 +816,7 @@ for (const width of [390, 1440]) {
     expect((await new AxeBuilder({ page }).analyze()).violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
     await page.route("**/openai/v1/audio/speech", async (route) => {
       expect(route.request().postDataJSON()).toMatchObject({ model: "speech-b", voice: "b-default" });
-      await route.fulfill({ contentType: "audio/wav", body: Buffer.from("RIFF") });
+      await fulfilBytes(route, { contentType: "audio/wav", body: Buffer.from("RIFF") });
     });
     const request = page.waitForRequest("**/openai/v1/audio/speech");
     await page.getByRole("button", { name: "Run", exact: true }).click();

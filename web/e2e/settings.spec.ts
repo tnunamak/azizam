@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 async function seed(page: Page, state: "seeded" | "empty" | "error") {
   await page.route("**/admin/api/settings/**", (route) => {
@@ -38,12 +39,10 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
               },
               export_url: "/admin/api/settings/effective/export",
             };
-    return route.fulfill({ status: state === "error" ? 503 : 200, json: body });
+    return fulfilJson(route, body, { status: state === "error" ? 503 : 200 });
   });
   await page.route("**/admin/api/oidc-config", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(route, {
         revision: "7",
         oidc_config:
           state === "empty"
@@ -65,25 +64,19 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                 jwks_uri: "",
                 clock_skew_seconds: 60,
               },
-      },
-    }),
+      }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/operator/sign-in", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(route, {
         revision: "7",
         mode: state === "empty" ? "built-in" : "both",
         built_in: true,
         oidc: state !== "empty",
         oidc_label: "Example identity",
-      },
-    }),
+      }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/operator/overrides", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(route, {
         overrides: {
           revisions: { media_job_admission_overrides: "7" },
           media_job_admission:
@@ -95,13 +88,10 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             auto_create_personal_app: true,
           },
         },
-      },
-    }),
+      }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/extensions", (route) =>
-    route.fulfill({
-      status: state === "error" ? 503 : 200,
-      json: {
+    fulfilJson(route, {
         extension_packages: {
           packages:
             state === "empty"
@@ -115,12 +105,10 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                   },
                 },
         },
-      },
-    }),
+      }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/profiles", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         profiles: [
           {
             id: "local",
@@ -129,8 +117,7 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             profile: {},
           },
         ],
-      },
-    }),
+      }),
   );
 }
 
@@ -501,12 +488,10 @@ test("new visitors use the saved default theme and personal choices persist", as
   const context = await browser.newContext({ colorScheme: "light" });
   const page = await context.newPage();
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         service: { name: "Our gateway" },
         presentation: { theme_default: "dark" },
-      },
-    }),
+      }),
   );
   await page.goto(`${baseURL}/sign-in/`);
   await expect(page.locator("html")).toHaveClass(/dark/);
@@ -534,9 +519,7 @@ for (const width of [390, 1440]) {
     const name = "n".repeat(300);
     const url = `https://example.test/${"path".repeat(100)}`;
     await page.route("**/admin/api/settings/instance", (route) =>
-      route.fulfill({
-        json: { instance: { name, base_url: url, theme_default: "system" } },
-      }),
+      fulfilJson(route, { instance: { name, base_url: url, theme_default: "system" } }),
     );
     await page.goto("/settings/");
     const section = page.getByRole("region", { name: "Instance", exact: true });

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 // The banner truth table (disabled, unavailable, unobserved, hardware, unused,
 // unknown-usage) is asserted in src/components/shell/app-shell.health.spec.tsx.
@@ -7,8 +8,7 @@ test("global owner alert: a down engine links to its Status section", async ({
   page,
 }) => {
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         status: {
           current_health: {
             state: "warn",
@@ -35,8 +35,7 @@ test("global owner alert: a down engine links to its Status section", async ({
             ],
           },
         },
-      },
-    }),
+      }),
   );
   await page.goto("/models/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
@@ -61,11 +60,10 @@ test("provider alerts use explicit enabled and reachability data", async ({
   page,
 }) => {
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({ json: { status: {} } }),
+    fulfilJson(route, { status: {} }),
   );
   await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         providers: [
           {
             name: "Remote provider",
@@ -74,8 +72,7 @@ test("provider alerts use explicit enabled and reachability data", async ({
             key_set: true,
           },
         ],
-      },
-    }),
+      }),
   );
   await page.goto("/models/");
   await expect(

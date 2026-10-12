@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -135,9 +136,7 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   });
   const address = "https://gateway.example/openai/v1?exact=1";
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({
-      json: { recipes: { openai: { canonical_base_url: address } } },
-    }),
+    fulfilJson(route, { recipes: { openai: { canonical_base_url: address } } }),
   );
   await page.goto("/models/");
   const trigger = page.getByRole("button", {
@@ -193,7 +192,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
     });
   });
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({ status: 503, json: { error: "fixture unavailable" } }),
+    fulfilJson(route, { error: "fixture unavailable" }, { status: 503 }),
   );
   await page.keyboard.press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Go to" });
@@ -275,20 +274,16 @@ test("member shell hides owner controls and makes no owner API calls", async ({
       ownerCalls.push(request.url());
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         csrf_token: "member-fixture",
         user: member,
         apps: [],
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/home", async (route) => {
     const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: {
+    await fulfilJson(route, {
         ...(await response.json()),
         user: member,
         apps: [],
@@ -297,12 +292,10 @@ test("member shell hides owner controls and makes no owner API calls", async ({
         aliases: [],
         credential_aliases: {},
         new_app_aliases: [],
-      },
-    });
+      }, { response });
   });
   await page.route("**/me/api/status", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         scope: "member",
         status: {
           state: "unavailable",
@@ -311,8 +304,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
         capabilities: [],
         receipts: [],
         help: "Ask the owner if an allowed capability is unavailable.",
-      },
-    }),
+      }),
   );
   await page.goto("/");
   await expect(
@@ -382,10 +374,7 @@ test("session failure explains the problem and retry restores the account", asyn
   page,
 }) => {
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
   );
   await page.goto("/");
   await expect(

@@ -3,6 +3,7 @@ import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 import { seededCatalog, seededRecentJobs } from "./fixtures/workflows-seeded";
+import { fulfilJson } from "./fixtures/intercept";
 
 // Browser-only checks for the Workflows page: real layout geometry, the
 // horizontal-overflow guard, axe, and the colour tokens of both themes. What the
@@ -24,13 +25,13 @@ async function setSurface(
 
 async function routeWorkflows(page: Page, payload: unknown, status = 200) {
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ status, json: payload }),
+    fulfilJson(route, payload, { status }),
   );
 }
 
 async function routeRecentJobs(page: Page, payload: unknown) {
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({ json: payload }),
+    fulfilJson(route, payload),
   );
 }
 

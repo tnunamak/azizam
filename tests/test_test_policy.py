@@ -267,6 +267,8 @@ def _inject_bare_test_import(tree: Tree) -> None:
     (_inject_hygiene("expect(await page.getByRole('button').isVisible()).toBe(true);"), "hygiene: one_shot_expect occurs"),
     (_inject_hygiene("if (await banner.isVisible()) return;"), "hygiene: bare_isVisible occurs"),
     (_inject_hygiene("await page.screenshot({ path: '/home/someone/.tmp/shot.png' });"), "hygiene: absolute_home_path occurs"),
+    (_inject_hygiene("await route.fulfill({ json: { records: [] } });"), "hygiene: raw_fulfil occurs"),
+    (_inject_hygiene("await fulfilJson(route, {}, { malformed: 'because' });"), "hygiene: malformed_stub occurs"),
     (_inject_hygiene("await page.waitForTimeout (500);"), "hygiene: waitForTimeout occurs"),
     (_inject_hygiene("await page.waitForLoadState ( 'networkidle' );"), "hygiene: networkidle occurs"),
     (_inject_hygiene("expect (await page.locator('a')?.isVisible ()).toBe(true);"), "hygiene: one_shot_expect occurs"),

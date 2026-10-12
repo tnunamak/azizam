@@ -71,7 +71,6 @@ const SETTLE_MS = Number(process.env.SWEEP_SETTLE_MS ?? (target.name === "copy" 
 /** Wait until the page stops loading. A surface still busy at the deadline is an error, never a checked state. */
 async function settle(page: Page, timeoutMs = SETTLE_MS): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForLoadState("networkidle", { timeout: timeoutMs / 2 }).catch(() => {});
   await page.waitForFunction(
     () => {
       const shown = (el: Element) => {
@@ -84,7 +83,14 @@ async function settle(page: Page, timeoutMs = SETTLE_MS): Promise<boolean> {
     { timeout: timeoutMs },
   );
   await page.evaluate(() => document.fonts.ready).catch(() => {});
-  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
   return true;
 }
 

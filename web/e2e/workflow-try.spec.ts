@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { type Page, type Route } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 const emptyModelsCatalog = {
   schema_version: 1,
@@ -301,10 +302,10 @@ const workflowsCatalog = {
 
 async function routeCatalogs(page: Page) {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ json: emptyModelsCatalog }),
+    fulfilJson(route, emptyModelsCatalog),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: workflowsCatalog }),
+    fulfilJson(route, workflowsCatalog),
   );
 }
 
@@ -364,17 +365,15 @@ const composedCatalog = {
 async function openComposed(page: Page, workflowId: string, member = false) {
   if (member)
     await page.route("**/me/api/session", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           authenticated: true,
           csrf_token: "fixture",
           apps: [],
           user: { id: "member-try", name: "Member", role: "member", email: "member@example.test" },
-        },
-      }),
+        }),
     );
-  await page.route("**/me/api/models/catalog", (route) => route.fulfill({ json: emptyModelsCatalog }));
-  await page.route("**/me/api/workflows", (route) => route.fulfill({ json: composedCatalog }));
+  await page.route("**/me/api/models/catalog", (route) => fulfilJson(route, emptyModelsCatalog));
+  await page.route("**/me/api/workflows", (route) => fulfilJson(route, composedCatalog));
   await page.goto(`/try/?workflow=${encodeURIComponent(workflowId)}`);
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
 }
@@ -398,44 +397,34 @@ test("successive video runs poll their own jobs and never reuse old output", asy
     if (request.method() === "POST" && path === "/v1/videos") {
       submissions += 1;
       posted.push(request.postDataJSON());
-      return route.fulfill({
-        status: 202,
-        json: {
+      return fulfilJson(route, {
           id: submissions === 1 ? firstId : secondId,
           object: "video",
           status: "queued",
-        },
-      });
+        }, { status: 202 });
     }
     if (request.method() === "GET" && path === "/v1/videos/" + firstId) {
-      return route.fulfill({
-        json: submissions === 1
+      return fulfilJson(route, submissions === 1
           ? { id: firstId, object: "video", status: "completed" }
           : {
               id: firstId,
               object: "video",
               status: "failed",
               error: { message: "WRONG: polled the previous job" },
-            },
-      });
+            });
     }
     if (request.method() === "GET" && path === "/v1/videos/" + firstId + "/content") {
-      return route.fulfill({ contentType: "video/mp4", body: clip });
+      return fulfilBytes(route, { contentType: "video/mp4", body: clip });
     }
     if (request.method() === "GET" && path === "/v1/videos/" + secondId) {
-      return route.fulfill({
-        json: {
+      return fulfilJson(route, {
           id: secondId,
           object: "video",
           status: "failed",
           error: { message: failure },
-        },
-      });
+        });
     }
-    return route.fulfill({
-      status: 404,
-      json: { error: { message: "Unexpected video route: " + path } },
-    });
+    return fulfilJson(route, { error: { message: "Unexpected video route: " + path } }, { status: 404 });
   });
 
   await prepareTryKey(page, "video.generate.async");
@@ -497,11 +486,10 @@ for (const scenario of [
     const posts: Array<{ method: string; body: unknown }> = [];
 
     await page.route("**/me/api/models/catalog", (route) =>
-      route.fulfill({ json: emptyModelsCatalog }),
+      fulfilJson(route, emptyModelsCatalog),
     );
     await page.route("**/me/api/workflows", (route) =>
-      route.fulfill({
-        json: {
+      fulfilJson(route, {
           ...composedCatalog,
           workflows: composedCatalog.workflows.map((workflow) => ({
             ...workflow,
@@ -512,15 +500,14 @@ for (const scenario of [
               body: { model: workflow.id, prompt: "" },
             },
           })),
-        },
-      }),
+        }),
     );
     await page.route("**" + runPath, (route) => {
       posts.push({
         method: route.request().method(),
         body: route.request().postDataJSON(),
       });
-      return route.fulfill({ json: { proof } });
+      return fulfilJson(route, { proof });
     });
 
     await page.goto("/try/?workflow=" + encodeURIComponent(scenario.id));
@@ -583,7 +570,7 @@ test("workflow multipart run sends a browser-encoded file part without a JSON co
     method = request.method();
     contentType = request.headers()["content-type"] ?? "";
     uploadedBody = (await request.postDataBuffer())?.toString("utf8") ?? "";
-    await route.fulfill({
+    await fulfilBytes(route, {
       headers: {
         "content-type": "image/png",
         "x-azizam-request-id": "req_workflow_multipart",
@@ -617,8 +604,7 @@ test("workflow JSON media says each signed audio and video file could not load",
 }) => {
   await prepareTryKey(page, "audio.generate.voiceover");
   await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             kind: "audio",
@@ -631,8 +617,7 @@ test("workflow JSON media says each signed audio and video file could not load",
             media_type: "video/mp4",
           },
         ],
-      },
-    }),
+      }),
   );
   await page.route("https://media.example.test/**", (route) => route.abort());
   await fillRequiredPrompt(page);

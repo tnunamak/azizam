@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fulfilJson } from "./fixtures/intercept";
 
 // Axe must inspect settled toast colours, not their entrance/exit opacity.
 test.use({ contextOptions: { reducedMotion: "reduce" } });
@@ -433,16 +434,14 @@ for (const theme of ["light", "dark"]) {
       );
       let failing = true;
       await page.route("**/admin/api/operator/services/test", (route) =>
-        route.fulfill({
-          json: {
+        fulfilJson(route, {
             probe: {
               ok: !failing,
               url: "http://127.0.0.1:18498/health",
               status: failing ? 503 : 200,
               error: failing ? "Engine unavailable" : "",
             },
-          },
-        }),
+          }),
       );
       await page.goto("/engines/?service=capture-engine");
       const card = page.locator('tr[data-engine-id="capture-engine"]');
@@ -483,15 +482,12 @@ test("a registry conflict preserves the detected-model preview for retry", { tag
   await page.route("**/admin/api/operator/services/capture-engine", (route) => {
     expect(route.request().method()).toBe("PATCH");
     expect(route.request().headers()["if-match"]).toBeTruthy();
-    return route.fulfill({
-      status: 412,
-      json: {
+    return fulfilJson(route, {
         error: {
           code: "generation_mismatch",
           message: "The registry changed. Review your preview and try again.",
         },
-      },
-    });
+      }, { status: 412 });
   });
   await page.goto("/engines/?service=capture-engine");
   const card = page.locator('tr[data-engine-id="capture-engine"]');

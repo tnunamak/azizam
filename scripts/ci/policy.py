@@ -33,7 +33,8 @@ merge_cases.py. Rules, each failing the step with one line per violation:
 - hygiene: in browser test code (web/e2e and *.e2e.* / *.playwright.* files
   under web/src) each pattern of TEST_STRATEGY.md 3.4 rules 1-3 occurs no
   more often than its tests/budgets.toml [hygiene] ceiling. The ceilings only
-  fall; S14 takes them to 0.
+  fall; they are all 0 (malformed_stub counts the stubs that say why they are
+  unlike the server).
 """
 
 from __future__ import annotations
@@ -81,7 +82,15 @@ HYGIENE_PATTERNS = {
     # lets two copies of a case overwrite each other.
     "absolute_home_path": re.compile(r"""["'`]/home/[A-Za-z0-9_.-]+/"""),
     "bare_isVisible": re.compile(r"\??\.isVisible\s*\("),
+    # A stub answered with route.fulfill() skips the check against the real
+    # gateway that web/e2e/fixtures/intercept.ts (fulfilJson, fulfilBytes) makes.
+    "raw_fulfil": re.compile(r"\.fulfill\s*\("),
+    # A JSON stub marked as deliberately unlike the server (a resilience test).
+    "malformed_stub": re.compile(r"\bmalformed\s*:"),
 }
+# Patterns that look only at TypeScript files outside the intercept helper.
+INTERCEPT_HELPER = "web/e2e/fixtures/intercept"
+STUB_PATTERNS = {"raw_fulfil", "malformed_stub"}
 BROWSER_CODE = re.compile(r"\.(e2e|playwright)\.|\.household\.ts$")
 QUARANTINE_MARKER = re.compile(r"\bmark\.quarantine\b|@quarantine\b|\btest(\.describe)?\.quarantine\b")
 
@@ -256,7 +265,10 @@ def check_hygiene(root: Path, files: list[str], budgets: dict) -> tuple[list[str
     counts = dict.fromkeys(HYGIENE_PATTERNS, 0)
     for relative in browser_code(files):
         text = read(root, relative)
+        stubs_checked = relative.endswith((".ts", ".tsx")) and not relative.startswith(INTERCEPT_HELPER)
         for name, pattern in HYGIENE_PATTERNS.items():
+            if name in STUB_PATTERNS and not stubs_checked:
+                continue
             counts[name] += len(pattern.findall(text))
     ceilings = budgets.get("hygiene", {})
     problems = []

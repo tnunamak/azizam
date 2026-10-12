@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const registry = {
   schema_version: 1,
@@ -109,23 +110,17 @@ async function mockEngineApis(
 ) {
   await page.route("**/admin/api/status", (route) => {
     if (options.statusError) {
-      return route.fulfill({
-        status: 503,
-        json: {
+      return fulfilJson(route, {
           error: { code: "status_down", message: "Status refresh failed" },
-        },
-      });
+        }, { status: 503 });
     }
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         status:
           options.empty ? { backends: [] } : status,
-      },
-    });
+      });
   });
   await page.route("**/admin/api/operator/service-presets", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         presets: [
           {
             id: "openai-compatible",
@@ -137,24 +132,17 @@ async function mockEngineApis(
             native_passthrough: false,
           },
         ],
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/operator/service-registry", (route) => {
     if (options.registryError) {
-      return route.fulfill({
-        status: 503,
-        json: { error: { code: "offline", message: "Registry offline" } },
-      });
+      return fulfilJson(route, { error: { code: "offline", message: "Registry offline" } }, { status: 503 });
     }
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         service_registry: options.empty
           ? { schema_version: 1, services: {} }
           : registry,
-      },
-      headers: { etag: "test-etag" },
-    });
+      }, { headers: { etag: "test-etag" } });
   });
 }
 
@@ -245,8 +233,7 @@ test("Engines is owner gated for a member", async ({ page }) => {
     }
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         user: {
           id: "member",
@@ -255,8 +242,7 @@ test("Engines is owner gated for a member", async ({ page }) => {
           role: "member",
         },
         apps: [],
-      },
-    }),
+      }),
   );
   await page.goto("/engines/");
   await expect(

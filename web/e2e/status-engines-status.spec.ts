@@ -1,6 +1,7 @@
 import { type Page, type Route } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const registry = {
   schema_version: 1,
@@ -143,8 +144,7 @@ async function mockStatusApis(
   { empty = false, statusError = false, providers = 404 } = {},
 ) {
   await page.route("**/me/api/session", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         user: {
           id: "owner",
@@ -153,20 +153,15 @@ async function mockStatusApis(
           role: "owner",
         },
         apps: [],
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/status", (route: Route) => {
     if (statusError) {
-      return route.fulfill({
-        status: 503,
-        json: {
+      return fulfilJson(route, {
           error: { code: "status_unavailable", message: "Status probe failed" },
-        },
-      });
+        }, { status: 503 });
     }
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         status: empty
           ? {
               current_health: {
@@ -180,28 +175,19 @@ async function mockStatusApis(
               backends: [],
             }
           : currentStatus,
-      },
-    });
+      });
   });
   await page.route("**/admin/api/operator/service-registry", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         service_registry: empty
           ? { schema_version: 1, services: {} }
           : registry,
-      },
-      headers: { etag: "test-etag" },
-    }),
+      }, { headers: { etag: "test-etag" } }),
   );
   await page.route("**/admin/api/providers", (route: Route) => {
     if (providers === 404)
-      return route.fulfill({
-        status: 404,
-        json: { error: { message: "not found" } },
-      });
-    return route.fulfill({
-      status: providers,
-      json: {
+      return fulfilJson(route, { error: { message: "not found" } }, { status: 404 });
+    return fulfilJson(route, {
         providers: empty ? [] : [
           {
             id: "openrouter",
@@ -213,8 +199,7 @@ async function mockStatusApis(
             cap_usd: 10,
           },
         ],
-      },
-    });
+      }, { status: providers });
   });
 }
 

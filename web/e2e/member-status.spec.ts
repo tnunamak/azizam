@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 // The Home pass-through route can still be fetching when a test ends.
 test.afterEach(async ({ page }) => {
@@ -15,8 +16,7 @@ test("member Status offers sign-in when its account snapshot expires", async ({
       ownerCalls.push(request.url());
   });
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         apps: [],
         user: {
@@ -25,14 +25,10 @@ test("member Status offers sign-in when its account snapshot expires", async ({
           role: "member",
           email: null,
         },
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/status", (route) =>
-    route.fulfill({
-      status: 401,
-      json: { error: { code: "unauthorized", message: "Session expired" } },
-    }),
+    fulfilJson(route, { error: { code: "unauthorized", message: "Session expired" } }, { status: 401 }),
   );
   await page.goto("/status/");
   await expect(
@@ -62,8 +58,7 @@ for (const theme of ["light", "dark"] as const) {
             ownerCalls.push(request.url());
         });
         await page.route("**/me/api/session", (route) =>
-          route.fulfill({
-            json: {
+          fulfilJson(route, {
               authenticated: true,
               apps: [],
               user: {
@@ -72,8 +67,7 @@ for (const theme of ["light", "dark"] as const) {
                 role: "member",
                 email: null,
               },
-            },
-          }),
+            }),
         );
         // Status reads the member's capability states from their Home
         // snapshot (the shared model), so Home carries the same rows.
@@ -96,9 +90,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.route("**/me/api/home", async (route) => {
           const response = await route.fetch();
           const home = await response.json();
-          return route.fulfill({
-            response,
-            json: {
+          return fulfilJson(route, {
               ...home,
               capabilities:
                 state === "empty"
@@ -116,18 +108,13 @@ for (const theme of ["light", "dark"] as const) {
                     ],
               aliases: [],
               receipts: [],
-            },
-          });
+            }, { response });
         });
         let failed = state === "error";
         await page.route("**/me/api/status", (route) =>
           failed
-            ? route.fulfill({
-                status: 503,
-                json: { error: { message: "Unavailable" } },
-              })
-            : route.fulfill({
-                json: {
+            ? fulfilJson(route, { error: { message: "Unavailable" } }, { status: 503 })
+            : fulfilJson(route, {
                   scope: "member",
                   status: {
                     state: "unavailable",
@@ -162,8 +149,7 @@ for (const theme of ["light", "dark"] as const) {
                           },
                         ],
                   help: "",
-                },
-              }),
+                }),
         );
         const yourCapabilities = page.getByRole("region", {
           name: "What you can use",
