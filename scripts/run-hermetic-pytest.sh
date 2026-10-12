@@ -29,7 +29,9 @@ checkout_head=$(git -C "$repo_root" rev-parse HEAD)
 
 mkdir -p -- "$state_root"
 state_dir=$(mktemp -d "$state_root/azizam-pytest.XXXXXXXX")
-cleanup() { rm -rf -- "$state_dir"; if ((created_cache_mount_dir)); then rmdir -- "$repo_root/cache"; fi; }
+tmpfs_tmp=
+tmpfs_fallback=
+cleanup() { rm -rf -- "$state_dir" ${tmpfs_tmp:+"$tmpfs_tmp"}; if ((created_cache_mount_dir)); then rmdir -- "$repo_root/cache"; fi; }
 trap cleanup EXIT HUP INT TERM
 checkout_root="$state_dir/checkout"
 mkdir -p -- "$checkout_root"
@@ -40,7 +42,25 @@ fresh_env="$state_dir/fresh-venv"
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --offline --no-build --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null
 find "$fresh_env" -type f -name '*.pth' -delete
-mkdir -p -- "$state_dir"/{tmp,cache,pycache,home}
+mkdir -p -- "$state_dir"/{tmp,cache,pycache,home,disk}
+
+# pytest's TMPDIR (tmp_path, fixture databases) is RAM: a SQLite commit on the
+# host disk costs ~71 ms of fsync, which made the tier 7x slower. Tests that need
+# real-disk semantics take the host_disk_dir fixture, bound from $state_dir/disk.
+# If tmpfs is missing or too small the run keeps TMPDIR on disk and says so.
+tmpfs_root=${AZIZAM_PYTEST_TMPFS_ROOT:-/dev/shm}
+tmpfs_min_kib=${AZIZAM_PYTEST_TMPFS_MIN_KIB:-4194304}
+tmpfs_free_kib=$(df --output=avail -k -- "$tmpfs_root" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
+if [[ $(stat -f -c %T -- "$tmpfs_root" 2>/dev/null || true) == tmpfs && ${tmpfs_free_kib:-0} -ge $tmpfs_min_kib ]] \
+   && tmpfs_tmp=$(mktemp -d "$tmpfs_root/azizam-pytest.XXXXXXXX" 2>/dev/null); then
+  tmpfs_source=$tmpfs_tmp
+  echo "pytest TMPDIR: tmpfs ($tmpfs_source)" >&2
+else
+  tmpfs_tmp=
+  tmpfs_fallback=1
+  tmpfs_source=$state_dir/tmp
+  echo "pytest TMPDIR: host disk (no tmpfs with ${tmpfs_min_kib} KiB free at $tmpfs_root); the tier will be slow" >&2
+fi
 
 host_runner_pid=$$
 host_pid_namespace=$(readlink /proc/self/ns/pid)
@@ -58,7 +78,7 @@ declare -a bwrap_args=(
   --setenv TMPDIR "$state_dir/tmp" --setenv TMP "$state_dir/tmp" --setenv TEMP "$state_dir/tmp"
   --setenv XDG_CACHE_HOME "$state_dir/cache" --setenv XDG_CONFIG_HOME "$state_dir/home/.config" --setenv XDG_RUNTIME_DIR /run/user/0
   --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
-  --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
+  --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv HERMETIC_HOST_DISK_DIR "$state_dir/disk" --setenv AZIZAM_PYTEST_TMPFS_FALLBACK "$tmpfs_fallback" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
   --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
   --setenv HYPOTHESIS_PROFILE "${HYPOTHESIS_PROFILE:-gate}"
   --setenv HERMETIC_TEST_NAMESPACE 1 --setenv HERMETIC_STATE_DIR "$state_dir"
@@ -89,9 +109,10 @@ for system_path in /usr/bin /usr/sbin /usr/lib /usr/lib64 /usr/libexec /usr/shar
 for config_path in /etc/ld.so.cache /etc/ld.so.conf /etc/ld.so.conf.d /etc/passwd /etc/group /etc/nsswitch.conf /etc/hosts /etc/localtime /etc/mime.types /etc/os-release /etc/debian_version /etc/ssl /etc/ca-certificates /etc/ca-certificates.conf; do add_read_only_bind "$config_path" "$config_path"; done
 add_read_only_bind "$python_root" "$python_root"
 add_parent_dirs "$state_dir"
-for writable in tmp cache pycache home; do
+for writable in cache pycache home disk; do
   bwrap_args+=(--bind "$state_dir/$writable" "$state_dir/$writable")
 done
+bwrap_args+=(--bind "$tmpfs_source" "$state_dir/tmp")
 bwrap_args+=(--ro-bind "$state_dir/proxy_config.yml" "$state_dir/proxy_config.yml")
 add_read_only_bind "$checkout_root" "$checkout_root"
 add_read_only_bind "$fresh_env" /venv
