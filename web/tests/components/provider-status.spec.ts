@@ -50,6 +50,29 @@ describe("provider status contract", () => {
     );
   });
 
+  it.each([
+    {
+      payload: [{ id: "fixture-provider", name: "Fixture provider", enabled: true }],
+    },
+    {
+      payload: {
+        providers: [{ id: "fixture-provider", name: "Fixture provider", enabled: true }],
+      },
+    },
+  ])(
+    "returns valid provider status and preserves its transport contract",
+    async ({ payload }) => {
+      const fetchMock = vi.fn(async () => Response.json(payload));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(fetchProviderStatus()).resolves.toEqual(payload);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith("/admin/api/providers", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    },
+  );
+
   it("returns no views for pending or hidden provider status", () => {
     expect(providerViews(undefined)).toEqual([]);
     expect(providerViews(null)).toEqual([]);
