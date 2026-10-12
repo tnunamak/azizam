@@ -215,7 +215,7 @@ def test_native_policy_denial_is_owned_durable_attempt_and_never_dispatches(
     assert receipt.status == "denied"
     assert receipt.app_id == "app-a"
     assert receipt.owner_key_hash == "fixture-hash-a"
-    assert receipt.app_profile == "profile-a"
+    assert receipt.app_profile == "plan-a"
     forbidden.assert_not_called()
 
 
