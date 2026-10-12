@@ -954,7 +954,7 @@ def test_connection_test_request_uses_owned_fixture_credential(gateway):
 
 
 def _load_known_gaps(path=Path(__file__).parent / "fixtures" / "route_policy_known_gaps.txt"):
-    """Parse "[pass title]" sections of "METHOD template  # note" lines."""
+    """Parse "[pass title]" sections of "METHOD template STATUS  # note" lines."""
     gaps, title = {}, None
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
@@ -962,8 +962,8 @@ def _load_known_gaps(path=Path(__file__).parent / "fixtures" / "route_policy_kno
             title = line[1:-1]
             gaps[title] = set()
         elif line:
-            method, template = line.split()
-            gaps[title].add(f"{method} {template}")
+            method, template, status = line.split()
+            gaps[title].add(f"{method} {template} {status}")
     return {title: frozenset(keys) for title, keys in gaps.items()}
 
 
@@ -971,6 +971,10 @@ def _load_known_gaps(path=Path(__file__).parent / "fixtures" / "route_policy_kno
 # only shrink: _report fails on an unproved row that is not listed, and on a
 # listed row that now proves policy. See the file's header.
 KNOWN_GAPS = _load_known_gaps()
+
+
+def _gap_key(row):
+    return f"{row['method']} {row['path']} {row['status']}"
 
 
 def _report(rows, title, known_gaps=None):
@@ -984,12 +988,12 @@ def _report(rows, title, known_gaps=None):
     violations = [row for row in rows if row["outcome"] == "VIOLATION"]
     assert not violations, f"{title}: {len(violations)} violation(s)\n{_table(violations)}"
     known = KNOWN_GAPS.get(title, frozenset()) if known_gaps is None else known_gaps
-    new = [row for row in unproved if f"{row['method']} {row['path']}" not in known]
+    new = [row for row in unproved if _gap_key(row) not in known]
     assert not new, (
         f"{title}: {len(new)} row(s) prove no policy decision (status, validation or missing "
         f"category proof); make the request reach policy or add a route contract\n{_table(new)}"
     )
-    fixed = known - {f"{row['method']} {row['path']}" for row in unproved}
+    fixed = known - {_gap_key(row) for row in unproved}
     assert not fixed, f"{title}: listed gap(s) now prove policy; remove them from KNOWN_GAPS: {sorted(fixed)}"
 
 
@@ -1013,15 +1017,18 @@ def test_report_accepts_each_proved_outcome(outcome):
 def test_report_fails_violations_first_with_their_evidence():
     row = _row("VIOLATION", **{"backend called": "yes", "detail": "backend calls=['HTTP backend']"})
     with pytest.raises(AssertionError, match=r"1 violation\(s\)[\s\S]*HTTP backend"):
-        _report([row], "unit", known_gaps=frozenset({"POST /v1/x"}))
+        _report([row], "unit", known_gaps=frozenset({"POST /v1/x 403"}))
 
 
 def test_report_tolerates_only_listed_gaps_and_only_while_they_remain():
-    _report([_row("coverage gap")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+    listed = frozenset({"POST /v1/x 403"})
+    _report([_row("coverage gap")], "unit", known_gaps=listed)
     with pytest.raises(AssertionError, match="now prove policy"):
-        _report([_row("denied")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+        _report([_row("denied")], "unit", known_gaps=listed)
     with pytest.raises(AssertionError, match="prove no policy decision"):
-        _report([_row("coverage gap", path="/v1/new")], "unit", known_gaps=frozenset({"POST /v1/x"}))
+        _report([_row("coverage gap", path="/v1/new")], "unit", known_gaps=listed)
+    with pytest.raises(AssertionError, match="prove no policy decision"):
+        _report([_row("coverage gap", status=500)], "unit", known_gaps=listed)  # same route, new status
 
 
 def test_known_gap_file_names_every_inventory_pass_once():
