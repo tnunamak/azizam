@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import path from "node:path";
 
@@ -116,7 +117,7 @@ for (const mode of ["light", "dark"] as const) {
         .getByRole("button", { name: "Images", exact: true });
       await images.click();
       await expect(images).toHaveAttribute("aria-pressed", "true");
-      expect(mediaRequests.at(-1)).toContain("kind=image");
+      await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("kind=image");
       // On a phone the search field opens from a button in the row (D1.5).
       if (width === 390)
         await page.getByRole("button", { name: "Search", exact: true }).click();
@@ -146,7 +147,7 @@ for (const mode of ["light", "dark"] as const) {
         );
       expect(Math.max(...cards) - Math.min(...cards)).toBeLessThan(2);
       await expect(page.getByText(/Playback link expires|Reopen to renew/)).toHaveCount(0);
-      if (mode === "light") await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/library-viewer-light-${width}.png` });
+      if (mode === "light") await page.screenshot({ path: `test-results/screens/uxfb/library-viewer-light-${width}.png` });
       await page.screenshot({
         path: `test-results/screens/library-sheet-${mode}-${width}.png`,
         fullPage: false,

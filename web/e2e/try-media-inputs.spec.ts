@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 
 // Every workflow manifest that takes a picture or video, through the
 // gateway's real catalog (no mocks): each media input gets exactly one picker

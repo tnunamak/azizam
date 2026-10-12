@@ -1909,3 +1909,71 @@ describe("catalog loading, reload, in-flight status labels and role actions", ()
     expect(dialog.queryByRole("link", { name: "Connect a provider" })).toBeNull();
   });
 });
+
+describe("polished catalog states (moved from the catalog-polish browser spec)", () => {
+  const chatAlias = (id: string) =>
+    row({
+      id,
+      title: id[0].toUpperCase() + id.slice(1),
+      display_name: id[0].toUpperCase() + id.slice(1),
+      use_names: [id],
+      use: { ...row().use, model: id },
+    });
+
+  it("groups three chat aliases into one row with a count, and drops the count when a search leaves one", async () => {
+    renderModels(catalog(["fast", "default", "balanced"].map(chatAlias)));
+    const table = within(await screen.findByRole("table", { name: "Available model names" }));
+    expect(table.getByRole("heading", { name: "Fast" })).toBeVisible();
+    expect(table.getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(screen.getByText("2 more", { exact: true })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Audio" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: "fast" },
+    });
+    expect(table.getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(screen.queryByText(/\d+ more/)).toBeNull();
+  });
+
+  it("keeps price and unknown timing honest on paid rows and moves the provider into Details", async () => {
+    const provider = "Example remote provider with a long configured display name";
+    const price = "$0.80 per million input tokens / $2.40 per million output tokens";
+    renderModels(
+      catalog(
+        ["image", "portrait", "illustration"].map((id) =>
+          row({
+            ...chatAlias(id),
+            capability: "image",
+            capabilities: [{ ...row().capabilities[0], capability: "image", intent: "image.generate", label: "Images" }],
+            provider,
+            engine_label: provider,
+            locality: "remote",
+            cost: { kind: "paid", price },
+            timing: { typical_seconds: null, source: null },
+          }),
+        ),
+      ),
+    );
+    const table = within(await screen.findByRole("table", { name: "Available model names" }));
+    const first = within(table.getAllByRole("row")[1]);
+    expect(table.getAllByRole("row").slice(1)).toHaveLength(1);
+    expect(screen.getByText("2 more", { exact: true })).toBeVisible();
+    expect(first.getByText(`Paid · ${price}`, { exact: true })).toBeVisible();
+    expect(first.queryByText("Not measured yet", { exact: true })).toBeNull();
+    expect(first.queryByText(provider, { exact: true })).toBeNull();
+    fireEvent.click(first.getByRole("button", { name: "Details" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText(`Paid · ${price}`, { exact: true })).toBeVisible();
+    expect(sheet.getByText(provider, { exact: true })).toBeVisible();
+    expect(sheet.queryByText("Not measured yet", { exact: true })).toBeNull();
+  });
+
+  it("opens with the no-provider-charge price filter pressed", async () => {
+    renderModels(catalog([chatAlias("fast"), row({ ...chatAlias("image"), capability: "image" })]));
+    await screen.findByRole("table", { name: "Available model names" });
+    expect(
+      within(screen.getByRole("group", { name: "Price filters (choose any)" })).getByRole("button", {
+        name: "No provider charge",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+});

@@ -76,3 +76,14 @@ def test_vitest_states_map_to_outcomes(tmp_path: Path) -> None:
     rows = _merge(tmp_path, "--receipts", str(tmp_path / "cases.jsonl"), str(root))
     assert [(row["framework"], row["outcome"], row["attempt"]) for row in rows] == [
         ("vitest", "passed", 0), ("vitest", "failed", 0), ("vitest", "skipped", 0), ("vitest", "skipped", 0)]
+
+
+def test_a_browser_case_keeps_its_data_namespace(tmp_path: Path) -> None:
+    """The isolated fixture's namespace reaches cases.jsonl, so a collision
+    between two invocations can be traced to its data (TEST_STRATEGY.md 3.4.7)."""
+    root = tmp_path / "lane"
+    tagged = json.loads(_receipt(root, "a", ["People", "invites"], "passed"))
+    (tmp_path / "cases.jsonl").write_text(json.dumps({**tagged, "namespace": "run-lane-chromium-w0-i3"}) + "\n"
+                                          + _receipt(root, "b", ["People", "lists"], "passed"))
+    rows = _merge(tmp_path, "--receipts", str(tmp_path / "cases.jsonl"), str(root))
+    assert [row.get("namespace") for row in rows] == ["run-lane-chromium-w0-i3", None]

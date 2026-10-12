@@ -7,9 +7,17 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ViewerContext, type Viewer } from "@/components/shell/session";
+import {
+  composedRows,
+  faceLikenessRow,
+  seededCatalog,
+  seededRecentJobs,
+} from "../../../e2e/fixtures/workflows-seeded";
+import { workflowsPolishCatalog } from "../../../e2e/fixtures/workflows-polish";
 import WorkflowsPage from "./page";
 
 const member: Viewer = {
@@ -144,6 +152,18 @@ describe("WorkflowsPage empathy copy", () => {
       .toHaveAttribute("title", "From no required inputs → a picture");
     expect(screen.getByText("From inputs not listed → text")).toBeVisible();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  test("keeps the internal workflow ID behind Technical details and a copy action", async () => {
+    renderWorkflows(owner);
+    const card = await screen.findByRole("listitem", { name: "Upscale image" });
+    expect(within(card).queryByText("workflow.image.upscale", { exact: true })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Details for Upscale image" }));
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.getByText("workflow.image.upscale", { exact: true })).not.toBeVisible();
+    fireEvent.click(sheet.getByText("Technical details", { exact: true }));
+    expect(sheet.getByText("workflow.image.upscale", { exact: true })).toBeVisible();
+    expect(sheet.getByRole("button", { name: "Copy workflow ID" })).toBeVisible();
   });
 
   test("whole rows open details while the compact quiet Try action remains independent", async () => {
@@ -700,5 +720,278 @@ describe("workflow recovery and empty headings", () => {
     expect(await within(recent).findByText("No creations yet.")).toBeVisible();
     expect(within(recent).queryByText(/Open this workflow in Try|Busy with other requests/)).toBeNull();
     expect(sheet.getAllByText("Busy with other requests. Try again soon.")).toHaveLength(1);
+  });
+});
+
+/** Serve the catalog and the recent-creations list; remember each media URL asked for. */
+function serveWithMedia(
+  catalog: unknown,
+  media: unknown = { assets: [], models: [], next_cursor: null },
+  mediaStatus = 200,
+) {
+  const mediaUrls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/me/api/media")) {
+        mediaUrls.push(url);
+        return Response.json(media, { status: mediaStatus });
+      }
+      return Response.json(catalog);
+    }),
+  );
+  return mediaUrls;
+}
+
+async function openDetails(name: string, openTechnical = false) {
+  fireEvent.click(await screen.findByRole("button", { name: `Details for ${name}` }));
+  const sheet = within(screen.getByRole("dialog"));
+  if (openTechnical) fireEvent.click(sheet.getByText("Technical details"));
+  return sheet;
+}
+
+describe("workflow sheet input table and summaries (moved from the browser)", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  test("the wide input table has five columns and shows every default, range and enum", async () => {
+    serveWithMedia(workflowsPolishCatalog);
+    renderWorkflows(owner);
+    const sheet = await openDetails("Product render", true);
+    const table = within(sheet.getByLabelText("Scrollable inputs"));
+    for (const name of ["Name", "Type", "Default", "Range", "Applies"]) {
+      expect(table.getByRole("columnheader", { name })).toBeInTheDocument();
+    }
+    expect(table.getAllByRole("columnheader")).toHaveLength(5);
+    // seed and guidance_scale both default to 0.
+    expect(table.getAllByRole("cell", { name: "0" })).toHaveLength(2);
+    expect(table.getByRole("cell", { name: "false" })).toBeInTheDocument();
+    expect(table.getByRole("cell", { name: "0 to 65535" })).toBeInTheDocument();
+    expect(table.getByRole("cell", { name: "0 to 20" })).toBeInTheDocument();
+    expect(table.getByText("studio, flatlay")).toBeInTheDocument();
+    expect(table.getByText("Ignored")).toBeInTheDocument();
+  });
+
+  test("the narrow input summaries show type, requirement, default, range and Applies for each input", async () => {
+    serveWithMedia(workflowsPolishCatalog);
+    renderWorkflows(owner);
+    const sheet = await openDetails("Product render", true);
+    const summaries = within(sheet.getByRole("list", { name: "Input summaries" }));
+    expect(summaries.getAllByRole("listitem")).toHaveLength(5);
+    expect(summaries.getByText("seed")).toBeInTheDocument();
+    expect(summaries.getByText("integer · Optional")).toBeInTheDocument();
+    expect(summaries.getByText("0 to 65535")).toBeInTheDocument();
+    expect(summaries.getByText("guidance_scale")).toBeInTheDocument();
+    expect(summaries.getByText("0 to 20")).toBeInTheDocument();
+    expect(summaries.getByText("studio, flatlay")).toBeInTheDocument();
+    expect(summaries.getByText("Ignored")).toBeInTheDocument();
+    expect(summaries.getByText("prompt").closest("li")).toHaveTextContent("string · Required");
+  });
+
+  test("an input with no default or range and a workflow with no typical time add no empty facts", async () => {
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByText("Not set up (1)"));
+    const sheet = await openDetails("Voiceover", true);
+    expect(sheet.queryByText("Typical time")).toBeNull();
+    const summary = within(sheet.getByRole("list", { name: "Input summaries" }));
+    expect(summary.queryByText("Default")).toBeNull();
+    expect(summary.queryByText("Range")).toBeNull();
+    cleanup();
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    const product = await openDetails("Product render", true);
+    expect(product.getByText("Typical time")).toBeInTheDocument();
+    expect(product.getByText("~12 s")).toBeInTheDocument();
+  });
+});
+
+describe("workflows catalog states (moved from the browser)", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  test("a catalog the gateway refuses (HTTP 503) shows the retryable error and no rows", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      Response.json({ error: { message: "Unavailable for this test" } }, { status: 503 }),
+    ));
+    renderWorkflows(owner);
+    expect(await screen.findByText("Workflows catalog could not be loaded. Try again.")).toBeVisible();
+    expect(screen.queryByRole("listitem")).toBeNull();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+
+  test("the seeded owner catalog groups by output, folds the unset workflow with one reason and hides schema detail", async () => {
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    expect(await screen.findByRole("heading", { name: /^Pictures\b/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Details for Product render" })).toBeVisible();
+    fireEvent.click(screen.getByText("Not set up (1)"));
+    expect(screen.getByRole("heading", { name: /^Output not listed\b/ })).toBeVisible();
+    expect(screen.getByText("Setup is not finished. Finish it in Engines.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Engines" })).toBeVisible();
+    expect(screen.queryByText(/Long manifest guidance stays searchable/)).toBeNull();
+    expect(screen.queryByText("image/png")).toBeNull();
+    expect(screen.queryByText("product-shot", { exact: true })).toBeNull();
+    expect(screen.queryByText("Unavailable", { exact: true })).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Details for / })).toHaveLength(2);
+  });
+
+  test("an empty catalog tells the owner none are available without sending them anywhere", async () => {
+    serveWithMedia({ schema_version: 1, workflows: [] });
+    renderWorkflows(owner);
+    expect(await screen.findByText(/^No workflows are available/)).toBeVisible();
+  });
+});
+
+describe("workflows search (moved from the browser)", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  test("search finds a workflow by alias, engine, input text, output text, range and route but not by technical notes, and clearing restores the list", async () => {
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    const search = await screen.findByRole("textbox", { name: "Search workflows" });
+    const product = () => screen.queryByRole("button", { name: "Details for Product render" });
+    const voiceover = () => screen.queryByRole("button", { name: "Details for Voiceover", hidden: true });
+
+    fireEvent.change(search, { target: { value: "product-shot" } });
+    expect(product()).toBeInTheDocument();
+    expect(voiceover()).toBeNull();
+
+    fireEvent.change(search, { target: { value: "does-not-exist" } });
+    expect(screen.getByText("No matching workflows")).toBeVisible();
+    // Technical notes are shown in the sheet but are not searched.
+    fireEvent.change(search, { target: { value: "Long manifest guidance" } });
+    expect(screen.getByText("No matching workflows")).toBeVisible();
+    expect(product()).toBeNull();
+
+    for (const query of [
+      "image-local",
+      "What to render",
+      "Final product render asset",
+      "256 to 2048",
+      "/v1/workflows/image.product-render/run",
+    ]) {
+      fireEvent.change(search, { target: { value: query } });
+      expect(product(), query).toBeInTheDocument();
+    }
+    fireEvent.change(search, { target: { value: "" } });
+    expect(product()).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Not set up (1)"));
+    expect(voiceover()).toBeVisible();
+  });
+
+  test("a search that only matches a workflow that is not set up opens the folded section", async () => {
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    fireEvent.change(await screen.findByRole("textbox", { name: "Search workflows" }), { target: { value: "speech" } });
+    expect(screen.getByRole("button", { name: "Details for Voiceover" })).toBeVisible();
+    expect(screen.getByText("Not set up (1)").closest("details")).toHaveAttribute("open");
+  });
+});
+
+describe("workflow sheet content and recent creations (moved from the browser)", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  test("the owner sheet folds the technical details, then shows the table, ids, code tabs, copy, links and recent jobs", async () => {
+    const user = userEvent.setup();
+    const mediaUrls = serveWithMedia(seededCatalog, seededRecentJobs);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Product render" }));
+    const dialog = screen.getByRole("dialog");
+    const sheet = within(dialog);
+    const technical = sheet.getByText("Technical details").closest("details")!;
+    expect(technical).not.toHaveAttribute("open");
+    fireEvent.click(sheet.getByText("Technical details"));
+    expect(technical).toHaveAttribute("open");
+    expect(sheet.getByText(/Long manifest guidance stays searchable/)).toBeVisible();
+    for (const name of ["Name", "Type", "Default", "Range", "Applies"]) {
+      expect(sheet.getByRole("columnheader", { name })).toBeInTheDocument();
+    }
+    expect(sheet.getByRole("cell", { name: /prompt/ })).toBeInTheDocument();
+    expect(sheet.getByRole("cell", { name: /256\s*(?:-|to)\s*2048/ })).toBeInTheDocument();
+    expect(sheet.getByRole("cell", { name: "Ignored" })).toBeInTheDocument();
+
+    const facts = within(technical);
+    expect(facts.getByText("image.product-render", { exact: true })).toBeVisible();
+    expect(facts.getByText("image-local", { exact: true })).toBeVisible();
+    expect(facts.getByText("/v1/workflows/image.product-render/run", { exact: true })).toBeVisible();
+    expect(facts.getByText("product-shot", { exact: true })).toBeVisible();
+
+    expect(sheet.getByText(/curl \$AZIZAM_BASE/)).toBeVisible();
+    await user.click(sheet.getByRole("tab", { name: "Python" }));
+    expect(sheet.getByText(/from openai import OpenAI/)).toBeVisible();
+    await user.click(sheet.getByRole("tab", { name: "JavaScript" }));
+    expect(sheet.getByText(/import OpenAI from "openai"/)).toBeVisible();
+    await user.click(sheet.getByRole("button", { name: "Copy JavaScript code" }));
+    expect(await navigator.clipboard.readText()).toContain("image.product-render");
+
+    // The seeded rows carry the browser link fields; the page builds its own Try address.
+    expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
+    expect(sheet.getByRole("link", { name: "Machine-readable workflow" })).toHaveAttribute("href", "/gateway/v1/workflows/image.product-render");
+
+    const recent = within(await sheet.findByRole("region", { name: "Recent creations" }));
+    expect(await recent.findByText("A teal desk lamp on walnut")).toBeVisible();
+    expect(recent.getByText("12.4 s")).toBeVisible();
+    expect(recent.getAllByText("Image output")).toHaveLength(2);
+    expect(dialog.querySelector("time")).not.toBeNull();
+    const last = mediaUrls.at(-1)!;
+    expect(last).toContain("workflow=image.product-render");
+    expect(last).toContain("limit=5");
+  });
+
+  test("a workflow with no recent jobs says so and does not invite a Try that cannot run", async () => {
+    serveWithMedia(seededCatalog);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByText("Not set up (1)"));
+    const sheet = await openDetails("Voiceover");
+    expect(await sheet.findByText("No creations yet.")).toBeVisible();
+    expect(sheet.queryByText(/Open this workflow in Try/)).toBeNull();
+  });
+
+  test("recent creations that the gateway refuses (HTTP 503) show a retryable error in the sheet", async () => {
+    serveWithMedia(seededCatalog, { error: { message: "Unavailable" } }, 503);
+    renderWorkflows(owner);
+    const sheet = await openDetails("Product render");
+    expect(await sheet.findByText("Recent creations could not be loaded. Try again.")).toBeVisible();
+    expect(sheet.getByRole("button", { name: "Try again" })).toBeEnabled();
+  });
+});
+
+describe("composed workflow availability names the engine it waits on (moved from the browser)", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  test.each([owner, member])("a $role sees ready, on-demand and down states, folded away from nothing", async (viewer) => {
+    serveWithMedia({ schema_version: 1, workflows: composedRows });
+    renderWorkflows(viewer);
+    await screen.findByRole("listitem", { name: "Identity Scene" });
+    // An engine that is down is not a setup task: nothing is folded away.
+    expect(screen.queryByText(/Not set up/)).toBeNull();
+
+    const ready = screen.getByRole("listitem", { name: "Identity Scene" });
+    expect(within(ready).getByRole("link", { name: "Open in Try" })).toBeVisible();
+    expect(ready).not.toHaveTextContent(/Every engine|Unavailable|Ready to start/);
+
+    const startable = screen.getByRole("listitem", { name: "Face Likeness Check" });
+    expect(startable).toHaveTextContent("Ready to start");
+    expect(startable).toHaveTextContent("Face service starts when you make a request.");
+    expect(startable).not.toHaveTextContent(/Unavailable|Not available/);
+    expect(within(startable).getByRole("link", { name: "Open in Try" })).toBeVisible();
+
+    const down = screen.getByRole("listitem", { name: "Seamless Tile" });
+    expect(down).toHaveTextContent("ComfyUI is down.");
+    expect(within(down).getByRole("button", { name: "Open in Try" })).toBeDisabled();
+    expect(down).not.toHaveTextContent(/Not available right now|See Status/);
+    const engines = within(down).queryByRole("link", { name: "Open Engines" });
+    if (viewer.role === "owner") expect(engines).toHaveAttribute("href", "/engines?service=comfyui");
+    else expect(engines).toBeNull();
+  });
+
+  test("a Face Likeness Check that no health check has reported on reads in plain words with its reason and Status link", async () => {
+    serveWithMedia({ schema_version: 1, workflows: [seededCatalog.workflows[0], faceLikenessRow] });
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByText("Not set up (1)"));
+    const card = screen.getByRole("listitem", { name: "Face Likeness Check" });
+    expect(card).toHaveTextContent("From a face photo and a photo to check → a likeness score");
+    expect(card).toHaveTextContent("No health check has reported on it yet. See Status.");
+    expect(card).not.toHaveTextContent(/Unavailable|Not available right now|text and text/);
+    expect(within(card).getByRole("link", { name: "Open Status" })).toHaveAttribute("href", expect.stringMatching(/\/status/));
   });
 });

@@ -6,13 +6,19 @@
 # with this slice merged. Only a slice that must add cases
 # raises a ceiling, in the same PR and with its reason; S14 lowers them.
 
+# VT (browser display-state cases moved to vitest, plus VT-FIX oracle restorations):
+# Playwright 759 -> 425 (-334: moved or collapsed, with 4 browser representatives restored:
+# multipart wire contract, signed media load failure, 1440 px long instance name,
+# post-search model grouping geometry); vitest +165 (1708 -> 1873). Counted with
+# ~/.tmp/vt-tools/counts.sh at b03f1053 + VT + VT-FIX.
+
 # Slice S13 (orphaned e2e files): +25 vitest and +24 Playwright cases that carry
 # the orphans' assertions into gated suites; node:test cases are new, from
 # probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
 [ceilings]
-pytest = 8404  # +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
-vitest = 1708  # +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
-playwright = 759
+pytest = 8416  # +12: BX (ci-local browser-section and policy hygiene/fixture self-tests); +164: the azgap coverage-gap batch (15 new files, with the held-back four excluded); +24: ORPH (test-scheduled decisions, scheduled/live tier policy self-tests; -1 always-skipped showcase wrapper)
+vitest = 1874  # +1: BX (test-priority case for the isolation-proof config); +165: VT moves from the browser. Before that, +67: azgap web specs (16 files incl. 2 cases in try/page.spec). Prior note: +10: web/tests/test-priority.spec.ts (self-renice of the test runners, lead2)
+playwright = 425
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
@@ -28,3 +34,15 @@ node = 103
 # patch.object(proxy.httpx, "AsyncClient", ...) fakes).
 [ratchets]
 ad_hoc_upstream_fake_files = 50
+
+# Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3): occurrences in Playwright
+# code under web/e2e and *.e2e.* / *.playwright.* files under web/src. Set at
+# the counts on 2026-10-12; a slice that removes occurrences lowers its
+# ceiling, and no slice raises one. S14 takes them to 0.
+[hygiene]
+waitForTimeout = 18
+networkidle = 9
+force_true = 4
+one_shot_expect = 1
+bare_isVisible = 3
+absolute_home_path = 0

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
@@ -850,7 +850,7 @@ for (const width of [390, 1440]) {
     await expect(page.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
     await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeDisabled();
     await expect(page.getByRole("combobox", { name: "Voice", exact: true })).toBeDisabled();
-    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-loading-light-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/screens/uxfb/try-speech-loading-light-${width}.png`, fullPage: true });
     release();
     const voice = page.getByRole("combobox", { name: "Voice", exact: true });
     await expect(voice).toHaveValue("a-default");
@@ -862,7 +862,7 @@ for (const width of [390, 1440]) {
     await page.getByRole("option", { name: "Second studio", exact: true }).click();
     await expect(voice).toHaveValue("b-default");
     await expect(voice.locator("option")).toHaveText(["Second studio default", "Second studio warm"]);
-    await page.screenshot({ path: `/home/tnunamak/.tmp/uxfb-shots/try-speech-voices-light-${width}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/screens/uxfb/try-speech-voices-light-${width}.png`, fullPage: true });
     expect((await new AxeBuilder({ page }).analyze()).violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))).toEqual([]);
     await page.route("**/openai/v1/audio/speech", async (route) => {
       expect(route.request().postDataJSON()).toMatchObject({ model: "speech-b", voice: "b-default" });

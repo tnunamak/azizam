@@ -1,5 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -42,7 +43,7 @@ test("You navigation keeps Workflows right after Models", async ({
   ).toBeVisible();
 });
 
-test("command palette navigates and runs three real actions", async ({
+test("command palette navigates and runs three real actions", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   context,
 }) => {
@@ -159,11 +160,9 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   });
   await expect(field).toHaveValue(address);
   await expect(field).toBeFocused();
-  expect(
-    await field.evaluate((element: HTMLInputElement) =>
+  await expect.poll(() => field.evaluate((element: HTMLInputElement) =>
       element.value.slice(element.selectionStart!, element.selectionEnd!),
-    ),
-  ).toBe(address);
+    )).toBe(address);
   // Pending command groups ("Loading apps…") are status regions of their own.
   await expect(
     dialog.getByTestId("gateway-address-recovery").getByRole("status"),
@@ -453,7 +452,7 @@ test("tablet rail returns focus to its opener when it closes", async ({
   await page.setViewportSize({ width: 768, height: 1000 });
   await page.goto("/");
   const expand = page.getByRole("button", { name: "Expand navigation" });
-  expect(await seriousAxeViolations(page)).toEqual([]);
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
 
   await expand.click();
   const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
@@ -479,7 +478,7 @@ test("phone More returns keyboard focus, and Go to hands focus to its own dialog
   await more.focus();
   await page.keyboard.press("Enter");
   await expect(sheet).toBeVisible();
-  expect(await seriousAxeViolations(page)).toEqual([]);
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(sheet).not.toBeVisible();
   await expect(more).toBeFocused();
@@ -504,5 +503,5 @@ test("owner shell names every control by its visible words at desktop width", as
   await expect(
     page.getByRole("button", { name: "Go to", exact: true }).first(),
   ).toBeVisible();
-  expect(await seriousAxeViolations(page)).toEqual([]);
+  await expect.poll(() => seriousAxeViolations(page)).toEqual([]);
 });

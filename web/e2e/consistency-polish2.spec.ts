@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 test("Providers presents the current API shape without inventing readiness or names", async ({
@@ -31,305 +30,37 @@ test("Providers presents the current API shape without inventing readiness or na
       },
     }),
   );
-  for (const theme of ["light", "dark"]) {
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.addInitScript(
-        (value) => localStorage.setItem("theme", value),
-        theme,
-      );
-      await page.goto("/providers/");
-      const provider = page.locator("li").filter({
-        has: page.getByRole("heading", {
-          name: "Remote provider",
-          exact: true,
-        }),
-      });
-      await expect(
-        provider.getByRole("heading", {
-          name: "Remote provider",
-          exact: true,
-        }),
-      ).toBeVisible();
-      await provider.getByText("Manage", { exact: true }).click();
-      await provider.getByText("Provider details", { exact: true }).click();
-      await expect(
-        provider.getByText("Provider ID: internal-provider-record", {
-          exact: true,
-        }),
-      ).toBeVisible();
-      await expect(
-        provider.getByText("Key set", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        provider.getByText("Provider connection not confirmed.", { exact: true }),
-      ).toHaveCount(0);
-      await expect(provider).toContainText("This monthUSD 12.50 of USD 50.00");
-      const missing = page.locator("li").filter({
-        has: page.getByRole("heading", {
-          name: "Missing key provider",
-          exact: true,
-        }),
-      });
-      await expect(
-        missing.getByText("Unavailable", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        missing.getByText("Missing key", { exact: true }),
-      ).toBeVisible();
-      await missing.getByText("Manage", { exact: true }).click();
-      const unknownSpend = missing.getByText("Cost not recorded", {
-        exact: true,
-      });
-      // The collapsed row's month, then the overview's Today and This month.
-      await expect(unknownSpend).toHaveCount(3);
-      for (const index of [0, 1, 2])
-        await expect(unknownSpend.nth(index)).toBeVisible();
-      await expect(missing).not.toContainText("999");
-      await expect(page.getByText("Global spend cap")).toBeVisible();
-      await expect(page.locator("body")).not.toContainText("888");
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-      expect(
-        (await new AxeBuilder({ page }).analyze()).violations.filter((v) =>
-          ["serious", "critical"].includes(v.impact ?? ""),
-        ),
-      ).toEqual([]);
-      await page.screenshot({
-        path: `test-results/screens/providers-contract-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    }
-  }
-});
-
-test("unknown provider readiness stays distinct from observed unavailability", async ({
-  page,
-}) => {
-  await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      json: {
-        providers: [
-          {
-            id: "unknown",
-            name: "Unchecked provider",
-            enabled: true,
-            reachable: null,
-            key_set: true,
-          },
-          {
-            id: "down",
-            name: "Unreachable provider",
-            enabled: true,
-            reachable: false,
-            key_set: true,
-          },
-          {
-            id: "ready",
-            name: "Reachable provider",
-            enabled: true,
-            reachable: true,
-            key_set: true,
-          },
-        ],
-      },
-    }),
-  );
+  // Names, readiness words and spend rules are asserted in
+  // src/app/providers/consistency.spec.tsx; the browser keeps phone geometry
+  // and axe for the expanded rows in the dark theme.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => localStorage.setItem("theme", "dark"));
   await page.goto("/providers/");
-  const unknown = page.locator("li").filter({
+  const provider = page.locator("li").filter({
+    has: page.getByRole("heading", { name: "Remote provider", exact: true }),
+  });
+  await provider.getByText("Manage", { exact: true }).click();
+  await provider.getByText("Provider details", { exact: true }).click();
+  const missing = page.locator("li").filter({
     has: page.getByRole("heading", {
-      name: "Unchecked provider",
+      name: "Missing key provider",
       exact: true,
     }),
   });
-  await expect(
-    unknown.getByText("Provider connection not confirmed.", { exact: true }),
-  ).toHaveCount(0);
-  await expect(unknown.getByText("Unknown", { exact: true })).toHaveCount(0);
-  await expect(unknown.getByText("Starting", { exact: true })).toHaveCount(0);
-  await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
-    0,
-  );
-  const down = page.locator("li").filter({
-    has: page.getByRole("heading", {
-      name: "Unreachable provider",
-      exact: true,
-    }),
-  });
-  await expect(down.getByText("Unavailable", { exact: true })).toBeVisible();
-  await expect(
-    down.getByText("Provider connection check observed it down.", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  const ready = page.locator("li").filter({
-    has: page.getByRole("heading", {
-      name: "Reachable provider",
-      exact: true,
-    }),
-  });
-  await expect(ready.getByText("Ready", { exact: true })).toBeVisible();
+  await missing.getByText("Manage", { exact: true }).click();
+  await expect(missing.getByText("Cost not recorded")).toHaveCount(3);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
+  expect(
+    (await new AxeBuilder({ page }).analyze()).violations.filter((v) =>
+      ["serious", "critical"].includes(v.impact ?? ""),
+    ),
+  ).toEqual([]);
 });
 
-test("workflow cards keep internal IDs behind an explicit copy or details action", async ({
-  page,
-}) => {
-  await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({ json: workflowsPolishCatalog }),
-  );
-  await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({ json: { assets: [], models: [], next_cursor: null } }),
-  );
-
-  await page.goto("/workflows/");
-  const card = page.getByRole("listitem", { name: "Product render" });
-  await expect(card.getByText("Product render", { exact: true })).toBeVisible();
-  await expect(
-    card.getByText("image.product-render", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    card.getByRole("button", { name: "Details for Product render", exact: true }),
-  ).toBeVisible();
-
-  await card
-    .getByRole("button", { name: "Details for Product render", exact: true })
-    .click();
-  const sheet = page.getByRole("dialog");
-  await expect(
-    sheet.getByText("image.product-render", { exact: true }),
-  ).not.toBeVisible();
-  await sheet.getByText("Technical details", { exact: true }).click();
-  await expect(
-    sheet.getByText("image.product-render", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    sheet.getByRole("button", { name: "Copy workflow ID", exact: true }),
-  ).toBeVisible();
-});
-
-test("an observed-up engine with a bad health tone is shown as unavailable", async ({
-  page,
-}) => {
-  await page.route("**/admin/api/operator/service-registry", (route) =>
-    route.fulfill({
-      json: {
-        service_registry: {
-          schema_version: 1,
-          services: {
-            engine_chat: {
-              id: "engine_chat",
-              name: "Chat engine",
-              kind: "upstream",
-              source: "ui",
-              enabled: true,
-              editable: true,
-              capabilities: ["chat"],
-              role: "primary",
-              config: { protocol: "openai-compatible" },
-            },
-          },
-        },
-      },
-      headers: { etag: "consistency-test" },
-    }),
-  );
-  await page.route("**/admin/api/operator/service-presets", (route) =>
-    route.fulfill({ json: { presets: [] } }),
-  );
-  await page.route("**/admin/api/status", (route) =>
-    route.fulfill({
-      json: {
-        status: {
-          current_health: {
-            observation_available: true,
-            services: [
-              {
-                service_id: "engine_chat",
-                name: "Chat engine",
-                enabled: true,
-                observation: "up",
-                tone: "bad",
-              },
-            ],
-          },
-          backends: [],
-        },
-      },
-    }),
-  );
-
-  await page.goto("/engines/");
-  const card = page.locator("tr").filter({ hasText: "Chat engine" });
-  await expect(card.getByText("Unavailable", { exact: true })).toBeVisible();
-  await expect(card.getByText("Ready", { exact: true })).toHaveCount(0);
-});
-
-test("empty provider status exposes Add provider; a bare 404 is a load failure", async ({
-  page,
-}) => {
-  await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({ json: { providers: [] } }),
-  );
-  await page.route("**/admin/api/providers/-/catalog", (route) =>
-    route.fulfill({
-      json: {
-        providers: [
-          {
-            id: "openrouter",
-            display_name: "OpenRouter",
-            base_url: "https://openrouter.ai/api/v1",
-            protocol: "openai-chat",
-            billing_dimensions: ["prompt_tokens", "completion_tokens"],
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/admin/api/profiles", (route) =>
-    route.fulfill({ json: { profiles: [] } }),
-  );
-
-  await page.goto("/providers/");
-  await expect(
-    page.getByText("No providers yet", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Add provider" }).first().click();
-  await expect(
-    page.getByRole("heading", { name: "Add provider", exact: true }),
-  ).toBeVisible();
-  await page.unroute("**/admin/api/providers");
-  await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({ status: 404, json: {} }),
-  );
-  await page.reload();
-  // The provider API is always mounted; a bare 404 is a load failure.
-  await expect(
-    page.getByText("Provider controls could not be loaded. Try again.", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Retry providers" }),
-  ).toBeVisible();
-});
-
-test("Status offers a local action when no remote providers are configured", async ({
-  page,
-}) => {
-  await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({ json: { providers: [] } }),
-  );
-  await page.goto("/status/");
-  await expect(
-    page.getByText("No remote providers are configured.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Review connections", exact: true }),
-  ).toHaveAttribute("href", "/engines/");
-});
 
 test("legacy email names remain contact details on People and in search", async ({
   page,

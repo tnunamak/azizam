@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { type APIRequestContext, type Page } from "@playwright/test";
+import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const root = "/admin/api/categories";
@@ -174,7 +175,7 @@ test.describe("Categories real fixture journeys", () => {
   });
 
   for (const width of widths) {
-    test(`seed, preview, restore and stale base at ${width}px`, async ({ page, request }) => {
+    test(`seed, preview, restore and stale base at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({ page, request }) => {
       test.setTimeout(180_000);
       await surface(page, width);
       await page.goto("/categories/");

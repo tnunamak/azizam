@@ -1,10 +1,5 @@
-import {
-  expect,
-  test,
-  type Locator,
-  type Page,
-  type Route,
-} from "@playwright/test";
+import { type Locator, type Page, type Route } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 
 const serviceRegistry = {
@@ -154,11 +149,11 @@ async function expectNoSeriousAxeOrOverflow(page: Page) {
     ["serious", "critical"].includes(violation.impact ?? ""),
   );
   expect(violations).toEqual([]);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
 }
 
 async function expectMinBox(target: Locator, width: number, height: number) {
@@ -212,8 +207,15 @@ function engineSummaryButton(card: Locator, serviceName: string) {
 }
 
 test.describe("phone target primitives", () => {
-  for (const theme of ["light", "dark"] as const) {
-    for (const width of [1440, 390] as const) {
+  // Geometry is theme-independent; axe contrast is not. 390 runs in both
+  // themes (axe on the dialog), 1440 once in dark.
+  const engineCases = [
+    { theme: "dark", width: 390 },
+    { theme: "light", width: 390 },
+    { theme: "dark", width: 1440 },
+  ] as const;
+  {
+    for (const { theme, width } of engineCases) {
       test(`engines controls meet geometry in ${theme} at ${width}`, async ({
         page,
       }) => {
@@ -368,7 +370,7 @@ test.describe("phone target primitives", () => {
     });
   }
 
-  for (const theme of ["light", "dark"] as const) {
+  for (const theme of ["dark"] as const) {
     test(`design desktop keeps compact modern switch geometry in ${theme}`, async ({
       page,
     }) => {
