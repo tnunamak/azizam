@@ -23,7 +23,7 @@ from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
-from gateway import admin_store, category_enforcement, category_policy, media_jobs, receipt_store
+from gateway import admin_store, category_enforcement, category_policy, me_make, media_jobs, receipt_store
 from gateway.admin_oidc import (
     AdminSession, CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims,
 )
@@ -36,17 +36,27 @@ from gateway.user_runtime import mint_user_app_key
 
 DENIED = {401, 403, 404, 405}
 INVALID_BODY = {400, 422}
-REQUEST_TIMEOUT = 3
+REQUEST_TIMEOUT = 3  # websocket handshakes: an accepted idle socket must not hang the suite
+HTTP_REQUEST_TIMEOUT = 60  # HTTP: generous, so host load never turns a slow answer into a 500
+
+REFUSALS = {"denied", "refused", "closed", "refused (wrapped)", "refused (queued)"}
 
 
 class _BoundedApp:
-    """Keep an accidentally accepted, idle websocket from hanging the suite."""
+    """Keep an accidentally accepted, idle websocket from hanging the suite.
+
+    The bound sits outside the app's error handling, so a request that runs
+    past it comes back as an empty 500. HTTP gets a far larger bound: under
+    load, POST /me/api/make/jobs (several SQLite commits plus the worker's
+    refusal in the same event loop) took longer than 3 s.
+    """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        with anyio.fail_after(REQUEST_TIMEOUT):
+        limit = REQUEST_TIMEOUT if scope["type"] == "websocket" else HTTP_REQUEST_TIMEOUT
+        with anyio.fail_after(limit):
             await self.app(scope, receive, send)
 
 
@@ -56,6 +66,7 @@ def gateway(monkeypatch, tmp_path, request):
     paths = {}
     for module, name in (
         (admin_store, "admin"), (receipt_store, "receipts"), (media_jobs, "media_jobs"),
+        (proxy.responses_store, "responses"),  # else stored-response routes answer 500
     ):
         path = tmp_path / f"{name}.db"
         module.init_db(path)
@@ -68,6 +79,10 @@ def gateway(monkeypatch, tmp_path, request):
     cache = tmp_path / "image-cache"
     cache.mkdir()
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
+    # The image-job payload spool defaults to <checkout>/data. The sandbox
+    # mounts the checkout read-only, so POST /me/api/make/jobs failed with a
+    # 500 there and queued (then ran) a job everywhere else.
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "image_media_jobs")
     monkeypatch.setattr(proxy, "IMAGE_SIGNED_URL_SECRET_CFG", "inventory-test-only")
     monkeypatch.setattr(proxy, "_image_url_signing_secret", None)
     monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
@@ -146,6 +161,12 @@ def gateway(monkeypatch, tmp_path, request):
         default_profile_id=profile["id"], path=paths["admin"],
     )
     key = mint_user_app_key(session, app["id"], path=paths["admin"])["api_key"]
+    # Session routes (/me/api/make/jobs) act as the person's keyless session
+    # App, which otherwise inherits the person's plan rather than this one.
+    session_app = admin_store.ensure_session_app_for_user(
+        user["id"], name=me_make.APP_NAME, path=paths["admin"],
+    )
+    admin_store.update_app(session_app["id"], default_profile_id=profile["id"], path=paths["admin"])
     headers = {"Authorization": f"Bearer {key}"}
     request = Request({
         "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
@@ -192,7 +213,8 @@ def gateway(monkeypatch, tmp_path, request):
         snapshot = category_policy.PolicyVersion(
             "inventory-rules",
             {"audience": category_policy.Category("audience", "Audience", values=("general",))},
-            {user["id"]: (plan,)}, {app["id"]: (plan,)}, {"no-such-service@r1": service},
+            {user["id"]: (plan,)}, {app["id"]: (plan,), session_app["id"]: (plan,)},
+            {"no-such-service@r1": service},
         )
         category_path = paths["admin"].parent / "categories.db"
         store = CategoryStore(category_path)
@@ -236,8 +258,8 @@ def gateway(monkeypatch, tmp_path, request):
             client=client, member_client=member_client, calls=calls, paths=paths,
             headers=headers, session_headers=session_headers, category_mode=category_mode,
             connection_test_body={"api_key": key},
-            person_id=user["id"], app_id=app["id"],
-            category_path=paths["admin"].parent / "categories.db",
+            person_id=user["id"], app_id=app["id"], session_app_id=session_app["id"],
+            category_path=paths["admin"].parent / "categories.db", passes=0,
         )
     finally:
         category_enforcement.configure(None)
@@ -510,7 +532,7 @@ def _category_reasons(gateway, value, row, source):
 def _category_oracle(gateway, row):
     if not gateway.category_mode or row["outcome"] == "VIOLATION":
         return
-    if row.get("category evidence") and row["outcome"] in {"denied", "refused", "closed", "refused (wrapped)"}:
+    if row.get("category evidence") and row["outcome"] in REFUSALS:
         row["rule"] = "category-rules refusal with no backend call"
         return
     previous = row["rule"]
@@ -682,6 +704,25 @@ def _metadata_contract(method, template, response, row):
     row["detail"] = ""
 
 
+def _queued_job_contract(method, template, response, row, gateway):
+    """Home's make queue answers 202 before policy; only the worker's refusal proves it."""
+    if (method, template) != ("POST", "/me/api/make/jobs") or response.status_code != 202:
+        return
+    if gateway.calls or row.get("dispatched") != "no":
+        return  # Backend calls and dispatched receipts stay violations.
+    job_id = response.json()["job"]["job_id"]
+    job = media_jobs.get(job_id, path=gateway.paths["media_jobs"]) or {}
+    refused = "rejected/denied" in row.get("receipts", "")
+    if job.get("status") == media_jobs.STATUS_FAILED and refused:
+        row["outcome"] = "refused (queued)"
+        row["rule"] = "the worker refused the queued job; no model ran"
+        row["detail"] = ""
+    else:
+        row["outcome"] = "coverage gap"
+        row["rule"] = "a queued job is no proof until the worker refuses it"
+        row["detail"] = f"job status {job.get('status')!r}, receipts {row.get('receipts')!r}"
+
+
 def _probe_request(headers):
     return Request({
         "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
@@ -734,10 +775,6 @@ def _decoy_oracle(method, template, row, gateway, response):
         row["detail"] = ""
     elif method == "GET" and status == 200 and not gateway.calls:
         row["outcome"], row["rule"] = "metadata (contract)", "discovery for a member who holds grants"
-        row["detail"] = ""
-    elif (method, template) == ("POST", "/me/api/make/jobs") and status == 200 and not gateway.calls:
-        # Queued only; test_http_category_resolved_check_inventory checks the job never ran.
-        row["outcome"], row["rule"] = "metadata (contract)", "queued; the worker checks the resolved service"
         row["detail"] = ""
 
 
@@ -885,6 +922,10 @@ def _report(rows, title):
 
 def _http_inventory(gateway, title=None, report=True):
     rows = []
+    # A fresh key per pass, so each pass submits its own make job rather than
+    # replaying the first pass's job.
+    gateway.passes += 1
+    session_headers = {**gateway.session_headers, "Idempotency-Key": f"route-policy-inventory-{gateway.passes}"}
     for route, template, converters in _routes(proxy.app.routes):
         if isinstance(route, WebSocketRoute):
             continue
@@ -899,7 +940,7 @@ def _http_inventory(gateway, title=None, report=True):
                 path = _concrete_path(template, converters)
                 member = _member_model_path(template, route)
                 client = gateway.member_client if member else gateway.client
-                headers = gateway.session_headers if member else gateway.headers
+                headers = session_headers if member else gateway.headers
                 response = client.request(
                     method, path, headers=headers, follow_redirects=False,
                     **_request_kwargs(route, path, method, gateway),
@@ -940,6 +981,7 @@ def _http_inventory(gateway, title=None, report=True):
                         pass
                 _record_receipts(gateway, before, row)
                 _connection_test_contract(method, template, response, row, gateway)
+                _queued_job_contract(method, template, response, row, gateway)
             except Exception as exc:
                 row["outcome"] = "VIOLATION"
                 row["rule"] = "unexpected exception"
@@ -1037,7 +1079,8 @@ def _activate_decoy_snapshot(gateway, capabilities):
     snapshot = category_policy.PolicyVersion(
         "inventory-decoy-rules",
         {"audience": category_policy.Category("audience", "Audience", values=("general",))},
-        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,)}, {decoy.id: decoy},
+        {gateway.person_id: (plan,)}, {gateway.app_id: (plan,), gateway.session_app_id: (plan,)},
+        {decoy.id: decoy},
     )
     store = CategoryStore(gateway.category_path)
     active = store.get_active()
