@@ -47,7 +47,7 @@ def home_case(tmp_path):
                            client_app=client_app, outsider=outsider, key=key, cred=cred,
                            other_cred=other_cred, calls=[], logged_in=True, owner=True,
                            health={"backends": [{"key": "service", "live_status": "up"}]},
-                           fast=True, health_error=False, plan=everything,
+                           fast=True, health_error=False, plan=everything, ledger=tmp_path / "provider_spend.db",
                            capabilities_override=None, aliases_override=None,
                            registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
     def require_session(request):
@@ -80,7 +80,8 @@ def home_case(tmp_path):
                                          capabilities=capabilities,
                                          aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
                                          public_base_url=lambda _request: "https://gateway.example",
-                                         status_provider=status, admin_auth=admin_auth))
+                                         status_provider=status, admin_auth=admin_auth,
+                                         spend_ledger_path=lambda: case.ledger))
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         case.calls.append((request.url.path, dict(request.headers), await request.json()))
@@ -949,22 +950,22 @@ def test_home_and_member_status_name_the_gateway_owner(home_case):
     assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
 
 
-def test_home_reports_the_members_own_plan_spend(home_case):
+def test_home_reports_the_members_own_spend_against_their_plans_caps(home_case):
     import sqlite3
     import time as _time
     from gateway.providers import ensure_ledger
     c = home_case
     c.owner = False
-    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the default plan has no caps
-    plan = admin_store.create_profile("Everyone", {"id": "everyone", "remote": {
-        "providers": ["typesafe"], "budget_usd_per_day": "1", "budget_usd_per_month": "8"}}, path=c.db)
-    c.prospective_profile = plan["id"]
-    ensure_ledger(c.ledger)
+    ledger = c.db.parent / "provider_spend.db"
+    c.ledger = ledger
+    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the plan has no caps
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1", usd_per_month="8"))
+    ensure_ledger(ledger)
     now = int(_time.time())
-    with sqlite3.connect(c.ledger) as conn:
-        for profile_id, usd in (("everyone", "0.30"), ("other-plan", "5.00")):
-            conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
-                         "VALUES ('typesafe', ?, 'settled', ?, ?, 'test', ?)", (profile_id, usd, usd, now - 60))
+    with sqlite3.connect(ledger) as conn:
+        for person_id, app_id, usd in ((c.user["id"], "any-app", "0.30"), ("someone-else", "other-app", "5.00")):
+            conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                         "VALUES ('typesafe', ?, ?, 'settled', ?, ?, 'test', ?)", (person_id, app_id, usd, usd, now - 60))
     data = c.http.get("/me/api/home").json()
     TypeAdapter(HomeProjection).validate_python(data)
     daily = next(entry for entry in data["plan_spend"] if entry["period"] == "daily")
@@ -973,6 +974,21 @@ def test_home_reports_the_members_own_plan_spend(home_case):
     monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
     assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
     assert "5.00" not in str(data["plan_spend"])
+
+
+def test_spend_is_unknown_not_zero_while_a_charge_needs_reconciliation(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.ledger = c.db.parent / "provider_spend.db"
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1"))
+    ensure_ledger(c.ledger)
+    with sqlite3.connect(c.ledger) as conn:
+        conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, cost_source, created_at) "
+                     "VALUES ('typesafe', ?, 'a', 'needs_reconciliation', '0.1', 'unknown', ?)", (c.user["id"], int(_time.time()) - 60))
+    [entry] = c.http.get("/me/api/home").json()["plan_spend"]
+    assert entry["spent_usd"] is None and entry["unknown_reason"] == "needs_reconciliation"
 
 
 def test_owner_name_never_publishes_an_email(home_case):

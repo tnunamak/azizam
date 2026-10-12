@@ -18,7 +18,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, sqlite_startup
+from gateway import admin_store, providers, sqlite_startup
 from gateway.admin_api import AdminAuthError
 from gateway.admin_runtime import access_for_person, identity_from_access_row, person_for_app_credential
 from gateway.alias_policy import service_model_records
@@ -287,6 +287,7 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
                        require_action, csrf_token, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
+                       spend_ledger_path: Callable[[], Path | None] = lambda: None,
                        availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
                        workflow_records: Callable[[], Any] = lambda: ()) -> APIRouter:
     """Register session discovery, connection checks and owner setup evidence.
@@ -294,6 +295,9 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     ``availability_services`` adds engines that only composed workflows use
     (such as the face sidecar) to the registry view availability reads;
     ``workflow_records`` lets those workflows project from their engines.
+
+    ``spend_ledger_path`` returns the provider spend ledger that cap
+    enforcement uses; without it, spend against a cap is reported as unknown.
     """
     router = APIRouter()
 
@@ -369,7 +373,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         base = (public_base_url(request) or "").rstrip("/")
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
         gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
-        return _json({**account, "gateway": gateway, "has_access_plan": new_identity.access.complete,
+        # The person's own spending against their plan's caps (their total
+        # across every App they answer for); null when they have no plan.
+        person_plan = new_identity.access.person_plan
+        plan_spend = (providers.counter_spend(person_plan.caps, column="person_id", subject_id=session.subject,
+                                              path=spend_ledger_path())
+                      if person_plan is not None else None)
+        return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
+                      "has_access_plan": new_identity.access.complete,
                       "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                       "aliases": alias_rows, "credential_aliases": credential_aliases,

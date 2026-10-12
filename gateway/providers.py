@@ -1136,6 +1136,96 @@ def _window_total(
     return total
 
 
+def _next_month_start_epoch(timestamp: int) -> int:
+    parts = time.gmtime(timestamp)
+    year, month = (parts.tm_year + 1, 1) if parts.tm_mon == 12 else (parts.tm_year, parts.tm_mon + 1)
+    return calendar.timegm((year, month, 1, 0, 0, 0))
+
+
+def counter_spend(
+    caps: PlanCaps, *, column: str, subject_id: str | None, path: Path | None, now: int | None = None
+) -> list[dict[str, Any]]:
+    """Read-only spend of one person (``column="person_id"``) or App
+    (``"app_id"``) against the daily and monthly caps of their plan.
+
+    Mirrors the reservation barrier: before it counts, rows that
+    ``recover_provider_spend`` would turn into ``needs_reconciliation`` are
+    treated as unknown; ``_window_total`` then counts reserved, settled and
+    unreconciled rows. The daily window is the rolling last 24 hours, the
+    monthly window is the UTC calendar month. One entry per period that has
+    a cap.
+
+    ``spent_usd`` is ``None`` (with ``unknown_reason``) when the spend is not
+    known: no ledger or an unreadable one (``ledger_unavailable``), or a
+    charge whose cost is unknown (``needs_reconciliation``; the barrier
+    refuses paid requests until an owner settles it). A missing ledger file
+    means no paid request has reserved spend yet, which the barrier also
+    reads as 0.
+    """
+    assert column in ("person_id", "app_id")
+    timestamp = int(now if now is not None else time.time())
+    periods = [(period, cap) for period, cap in (("daily", caps.usd_per_day), ("monthly", caps.usd_per_month))
+               if cap is not None]
+    if not periods:
+        return []
+    since = {"daily": timestamp - 24 * 60 * 60, "monthly": _month_start_epoch(timestamp)}
+    unknown: str | None = None
+    totals: dict[str, Decimal] = {}
+    oldest_daily: int | None = None
+    if path is None or not subject_id:
+        unknown = "ledger_unavailable"
+    elif path.exists():
+        try:
+            with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+                if column in columns:
+                    if {"process_generation", "expires_at"} <= columns:
+                        # The rows recover_provider_spend would mark needs_reconciliation.
+                        stale = ("status = 'reserved' AND (process_generation IS NULL OR expires_at IS NULL "
+                                 "OR process_generation != ? OR expires_at <= ?)")
+                        stale_params: list[Any] = [current_process_generation(), timestamp]
+                    else:
+                        stale, stale_params = "status = 'reserved'", []
+                    if conn.execute(
+                        f"SELECT 1 FROM provider_spend WHERE {column} = ? AND "
+                        f"(status = 'needs_reconciliation' OR ({stale})) LIMIT 1",
+                        [subject_id, *stale_params],
+                    ).fetchone():
+                        unknown = "needs_reconciliation"
+                    else:
+                        scope = {"person_id": subject_id} if column == "person_id" else {"app_id": subject_id}
+                        totals = {period: _window_total(conn, provider=None, since=start, **scope)
+                                  for period, start in since.items()}
+                        oldest_daily = conn.execute(
+                            f"SELECT MIN(created_at) FROM provider_spend WHERE {column} = ? AND created_at >= ? "
+                            "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
+                            (subject_id, since["daily"]),
+                        ).fetchone()[0]
+        except sqlite3.Error:
+            unknown = "ledger_unavailable"
+    entries: list[dict[str, Any]] = []
+    for period, cap in periods:
+        if unknown is not None:
+            resets_at = None
+        elif period == "daily":
+            # A rolling window has no single reset: this is when the oldest
+            # counted charge leaves the window and the spend first drops.
+            resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None else None
+        else:
+            resets_at = _next_month_start_epoch(timestamp)
+        entry: dict[str, Any] = {
+            "period": period,
+            "window": "rolling_24h" if period == "daily" else "calendar_month_utc",
+            "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
+            "cap_usd": format(cap, "f"),
+            "resets_at": resets_at,
+        }
+        if unknown:
+            entry["unknown_reason"] = unknown
+        entries.append(entry)
+    return entries
+
+
 def _month_start_epoch(timestamp: int) -> int:
     parts = time.gmtime(timestamp)
     return calendar.timegm((parts.tm_year, parts.tm_mon, 1, 0, 0, 0))

@@ -14963,6 +14963,7 @@ app.include_router(create_home_router(
     public_base_url=lambda request: _public_base_url(request),
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
+    spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
 ))
