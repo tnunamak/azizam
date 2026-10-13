@@ -20,7 +20,8 @@ CALL = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
 
 
 def _tool(client: TestClient, name: str, arguments: dict) -> dict:
-    resp = client.post("/mcp", json={**CALL, "params": {"name": name, "arguments": arguments}})
+    resp = client.post("/mcp", json={**CALL, "params": {"name": name, "arguments": arguments}},
+                       headers={"mcp-protocol-version": "2025-11-25"})
     assert resp.status_code == 200, resp.text
     return resp.json()["result"]
 

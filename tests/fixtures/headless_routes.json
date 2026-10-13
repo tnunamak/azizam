@@ -1049,6 +1049,38 @@
   },
   {
     "method": "GET",
+    "path": "/me/api/mcp/connections",
+    "auth": "session-only",
+    "gate": "Browser session; own connections only",
+    "handler": "gateway.mcp_oauth.connections",
+    "schema": false
+  },
+  {
+    "method": "POST",
+    "path": "/me/api/mcp/connections/{grant_id}/revoke",
+    "auth": "session-only",
+    "gate": "Browser session; own connections only; mutations require CSRF/action header",
+    "handler": "gateway.mcp_oauth.revoke_connection",
+    "schema": false
+  },
+  {
+    "method": "GET",
+    "path": "/me/api/mcp/requests/{request_id}",
+    "auth": "session-only",
+    "gate": "Browser session; same-browser binding cookie",
+    "handler": "gateway.mcp_oauth.consent_details",
+    "schema": false
+  },
+  {
+    "method": "POST",
+    "path": "/me/api/mcp/requests/{request_id}",
+    "auth": "session-only",
+    "gate": "Browser session; same-browser binding cookie; mutations require CSRF/action header",
+    "handler": "gateway.mcp_oauth.consent_decision",
+    "schema": false
+  },
+  {
+    "method": "GET",
     "path": "/me/api/media",
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",

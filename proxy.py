@@ -102,7 +102,7 @@ from gateway import custom_voices
 from gateway import voice_audio
 from gateway import voices_api
 from gateway import a1111_api
-from gateway import mcp_server
+from gateway import mcp_oauth, mcp_oauth_store, mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
@@ -2401,6 +2401,12 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
 
+    # 0. An MCP OAuth access token: never treated as an API key, and never
+    # allowed to fall through to a weaker rule (LAN bypass, path token).
+    bearer = _authorization_bearer(request)
+    if bearer.startswith(mcp_oauth.ACCESS_TOKEN_PREFIX):
+        return _authenticate_mcp_access_token(request, request_path, bearer)
+
     # 1. Header Bearer / x-api-key, then optional ?api_key= query fallback.
     # Configured LAN placeholders are absent during credential resolution.
     # Every other supplied key retains its identity and revocation checks.
@@ -2427,6 +2433,37 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         return AuthContext(identity=_identity_for(str(PATH_TOKENS[token]), "path-token"))
 
     return auth_error("Missing API key.")
+
+
+def _authorization_bearer(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    parts = header.split(None, 1)
+    return parts[1].strip() if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+
+
+def _authenticate_mcp_access_token(request: Request, request_path: str, token: str) -> AuthContext | Response:
+    """An OAuth access token acts as the person who approved the client.
+
+    It is valid on the MCP endpoint and on the core routes the MCP adapter
+    calls in process (marked by a per-process secret header), nowhere else:
+    the token's audience is the MCP endpoint (RFC 8707). The person's current
+    plan applies through their signed-in identity, so plan changes and
+    removal take effect on the next call.
+    """
+    if not MCP_OAUTH_ENABLED:
+        return auth_error("Invalid API key.")
+    dispatched = hmac.compare_digest(request.headers.get(_MCP_DISPATCH_HEADER, ""), _MCP_DISPATCH_SECRET)
+    if request_path != MCP_PATH and not dispatched:
+        return auth_error("This access token is only valid at the MCP endpoint.")
+    # The outer /mcp request already matched the token's resource; an
+    # in-process call has the internal host, so it is not compared again.
+    connection = MCP_OAUTH.verify_access_token(token, None if dispatched else MCP_OAUTH.resource(request))
+    if connection is None:
+        return auth_error("The access token is invalid, expired or revoked.")
+    identity = _mcp_identity_for_person(connection.person_id)
+    if identity is None:
+        return auth_error("This account can no longer use this gateway.", status_code=403)
+    return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)"))
 
 
 def _is_delegatable_litellm_key(api_key: str) -> bool:
@@ -14355,9 +14392,11 @@ voices_api.register_voice_routes(
 # --- MCP server (gateway/mcp_server.py) ---------------------------------------
 # Thin adapter: every tool action is dispatched in process to the core routes
 # with the caller's own credentials, so auth, profile policy and receipts apply.
+_MCP_DISPATCH_HEADER = "x-azizam-mcp-dispatch"
 _MCP_SKIP_FORWARD_HEADERS = {
     "content-length", "content-type", "accept", "accept-encoding", "connection", "transfer-encoding",
     "mcp-protocol-version", "mcp-method", "mcp-name", "mcp-session-id", "origin", "idempotency-key",
+    _MCP_DISPATCH_HEADER,
 }
 
 
@@ -14368,6 +14407,18 @@ async def _mcp_internal_call(request: Request, method: str, path: str, **kwargs:
     transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
     async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
         return await http.request(method, path, headers=headers, **kwargs)
+
+
+async def _mcp_dispatch_call(request: Request, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    """The MCP adapter's in-process call. The marker lets a core route accept
+    the caller's MCP access token, which is valid only at /mcp otherwise."""
+    headers = {**(kwargs.pop("headers", None) or {}), _MCP_DISPATCH_HEADER: _MCP_DISPATCH_SECRET}
+    client = request.client
+    transport = httpx.ASGITransport(app=app, client=(client.host, client.port) if client else ("127.0.0.1", 0))
+    forwarded = {k: v for k, v in request.headers.items()
+                 if k.lower() not in _MCP_SKIP_FORWARD_HEADERS and not k.lower().startswith("mcp-param-")}
+    async with httpx.AsyncClient(transport=transport, base_url="http://gateway.internal", timeout=None) as http:
+        return await http.request(method, path, headers={**forwarded, **headers}, **kwargs)
 
 
 def _mcp_catalog() -> list[dict[str, Any]]:
@@ -14397,19 +14448,98 @@ def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
     return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
 
 
+def _mcp_allowed_origins(_request: Request) -> list[str]:
+    """Browser origins allowed to call /mcp: the configured list plus the
+    saved public address. A request's own Host header is not evidence."""
+    listed = [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])]
+    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    return [*listed, pinned] if pinned else listed
+
+
+def _mcp_identity_for_person(person_id: str) -> AuthIdentity | None:
+    """The identity a person's signed-in work runs as (their session App,
+    with their current plan), or None if they may not use the gateway now."""
+    session_app = admin_store.get_session_app_for_user(person_id, path=ADMIN_STORE.path)
+    if session_app is None:
+        return None
+    return runtime_identity_for_session_app(
+        str(session_app["id"]), person_id,
+        inherited_profile_id_for_app=_inherited_profile_id_for_app, path=ADMIN_STORE.path,
+    )
+
+
+def _mcp_person_can_connect(person_id: str) -> bool:
+    if admin_store.get_user(person_id, path=ADMIN_STORE.path) is None:
+        return False
+    admin_store.ensure_session_app_for_user(person_id, name=me_make.APP_NAME, path=ADMIN_STORE.path)
+    return _mcp_identity_for_person(person_id) is not None
+
+
+def _mcp_plan(person_id: str) -> dict[str, Any]:
+    person = admin_store.get_user(person_id, path=ADMIN_STORE.path) or {"id": person_id}
+    plan = _effective_plan_for_person({"id": person_id, "email": person.get("email") or ""})
+    record = admin_store.get_profile(str(plan["profile_id"]), path=ADMIN_STORE.path) if plan.get("profile_id") else None
+    return {"name": (record or {}).get("name") or "Default", "description": (record or {}).get("description") or ""}
+
+
+def _mcp_oauth_person(session: Any) -> Mapping[str, Any] | None:
+    return admin_store.get_user(str(getattr(session, "subject", "") or ""), path=ADMIN_STORE.path)
+
+
+async def _fetch_mcp_client_document(url: str) -> tuple[bytes, Mapping[str, str]]:
+    fetched = await media_fetch.safe_fetch_media(
+        url, limit=mcp_oauth.CLIENT_DOCUMENT_MAX_BYTES, max_redirects=0, schemes=frozenset({"https"}),
+        timeout=mcp_oauth.CLIENT_DOCUMENT_TIMEOUT_SECONDS, accept="application/json",
+    )
+    return fetched.data, fetched.headers
+
+
+def _mcp_oauth_audit(action: str, *, person_id: str, **details: Any) -> None:
+    try:
+        admin_store.record_audit(action, actor_kind="user", actor_id=person_id, target_kind="mcp_connection",
+                                 target_id=str(details.get("grant_id") or details.get("client_id") or ""),
+                                 metadata={k: v for k, v in details.items() if v is not None}, path=ADMIN_STORE.path)
+    except Exception as exc:  # noqa: BLE001 - an audit write must not undo the action
+        print(f"[mcp-oauth] audit {action} failed: {type(exc).__name__}", flush=True)
+
+
+MCP_PATH = "/mcp"
+MCP_OAUTH_ENABLED = bool_from_config(((config.get("mcp") or {}).get("oauth") or {}).get("enabled"), True)
+_MCP_DISPATCH_SECRET = secrets.token_urlsafe(32)
+MCP_OAUTH = mcp_oauth.McpOAuth(mcp_oauth.McpOAuthDeps(
+    public_base_url=lambda request: _public_base_url(request),
+    session=lambda request: _oidc_session_from_request(request),
+    person=_mcp_oauth_person,
+    check_action=lambda request, session: _require_user_action_header(request, session),
+    person_can_connect=_mcp_person_can_connect,
+    plan=_mcp_plan,
+    client_ip=lambda request: str(resolve_real_client_ip(request) or ""),
+    fetch_client_document=_fetch_mcp_client_document,
+    store=mcp_oauth_store.Store(lambda: ADMIN_STORE.path),
+    settings=lambda: mcp_oauth.Settings.from_config((config.get("mcp") or {}).get("oauth")),
+    audit=_mcp_oauth_audit,
+    mcp_path=MCP_PATH,
+))
+if MCP_OAUTH_ENABLED:
+    MCP_OAUTH.register(app)
+
 mcp_server.register_mcp_routes(
     app,
     mcp_server.McpDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
-        call=_mcp_internal_call,
+        call=_mcp_dispatch_call,
         catalog=_mcp_catalog,
         aliases=lambda: _gateway_aliases_provider(),
         store_asset=_mcp_store_asset,
         read_asset=_mcp_read_asset,
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
-        allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+        allowed_origins=_mcp_allowed_origins,
+        authorization_servers=lambda request: (
+            [MCP_OAUTH.issuer(request)] if MCP_OAUTH_ENABLED and MCP_OAUTH.available(request) else []),
+        scopes=(mcp_oauth.SCOPE,) if MCP_OAUTH_ENABLED else (),
     ),
+    path=MCP_PATH,
 )
 
 # System One facades use the existing registry lifecycle and profile evaluator.
@@ -15359,6 +15489,8 @@ app.include_router(create_account_router(
     client_ip_resolver=resolve_real_client_ip,
     effective_plan_resolver=_effective_plan_for_person,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
+    # A removed person's MCP connections end; re-adding them does not revive any.
+    on_person_removed=lambda person_id: MCP_OAUTH.deps.store.revoke_person_grants(person_id, "person_removed"),
 ))
 
 
@@ -17637,6 +17769,7 @@ async def well_known_azizam(request: Request):
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
         mcp_tools=mcp_server.TOOLS,
+        mcp_sign_in=MCP_OAUTH_ENABLED and MCP_OAUTH.available(request),
     )
     metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {

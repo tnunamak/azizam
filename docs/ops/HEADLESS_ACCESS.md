@@ -309,6 +309,10 @@ Selected successful workflows are exercised separately.
 | `POST /me/api/make/jobs` | session-only | denied | `gateway.me_make.submit`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/make/jobs/{job_id}` | session-only | denied | `gateway.me_make.get_job`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/make/jobs/{job_id}/cancel` | session-only | denied | `gateway.me_make.cancel_job`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/mcp/connections` | session-only | denied | `gateway.mcp_oauth.connections`; Browser session; own connections only | hidden |
+| `POST /me/api/mcp/connections/{grant_id}/revoke` | session-only | denied | `gateway.mcp_oauth.revoke_connection`; Browser session; own connections only; mutations require CSRF/action header | hidden |
+| `GET /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_details`; Browser session; same-browser binding cookie | hidden |
+| `POST /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_decision`; Browser session; same-browser binding cookie; mutations require CSRF/action header | hidden |
 | `GET /me/api/media` | session-only | denied | `gateway.me_media.list_media`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.delete_media`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.media_detail`; Browser session; mutations require CSRF/action header | hidden |

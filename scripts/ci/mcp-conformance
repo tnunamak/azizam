@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Gate step: the official MCP conformance suite against the production MCP
+# router and authorization server (scripts/ci/mcp_conformance.py). It takes a
+# few seconds after the installs. Logs and result JSON go to $1 if given.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+(cd tests/conformance && npm ci --no-audit --no-fund)
+uv venv -q --python 3.12 .ci-conformance-venv
+uv pip sync -q --require-hashes --python .ci-conformance-venv/bin/python tests/requirements-hermetic.lock
+exec .ci-conformance-venv/bin/python scripts/ci/mcp_conformance.py ${1:+--output "$1"}

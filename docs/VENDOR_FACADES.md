@@ -198,6 +198,11 @@ GET    /.well-known/oauth-protected-resource/mcp
 GET    /.well-known/oauth-protected-resource
 GET    /mcp
 DELETE /mcp
+GET    /.well-known/oauth-authorization-server
+GET    /oauth/authorize
+POST   /oauth/token
+POST   /oauth/register
+POST   /oauth/revoke
 ```
 
 `GET /mcp` and `DELETE /mcp` return `405`.
@@ -206,11 +211,12 @@ The MCP facade is a Streamable HTTP JSON-RPC endpoint. It supports the 2026-07-2
 
 Tool calls dispatch in process to existing gateway routes with the caller's credentials. `capabilities` reads the workflow catalog and stable aliases. `run` starts a workflow or the speech route. `job` polls, waits for or cancels a media job. Media results are returned as MCP `resource_link` blocks with signed asset URLs.
 
-Auth uses bearer API keys in headers. Missing credentials return a `WWW-Authenticate` challenge pointing at the protected-resource metadata route. Browser origins must be same-origin unless configured in `mcp.allowed_origins`.
+Auth accepts an API key or an OAuth access token in the `Authorization` header. Missing or rejected credentials return `401` with a `WWW-Authenticate` challenge that names the protected-resource metadata and the `mcp` scope. The metadata names the gateway's own authorization server, so clients that cannot send a header (ChatGPT, Claude.ai) sign the person in instead; see `docs/design/MCP_AUTHORIZATION.md`. A browser `Origin` must be the saved public address or listed in `mcp.allowed_origins`.
 
 Known limits:
 
-- There is no server-sent event stream on `GET /mcp`; all responses are plain JSON.
+- There is no server-sent event stream on `GET /mcp` and no legacy HTTP+SSE transport; all responses are plain JSON.
+- Prompts, resources, completion, logging, sampling, elicitation and tasks are not offered.
 - The server does not mint an `Mcp-Session-Id`.
 - Only the three meta-tools are exposed. It does not generate one tool per workflow.
 - Feature limits come from the core route that a tool calls, and are returned as tool errors.

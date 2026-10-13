@@ -7,8 +7,8 @@ import ipaddress
 import os
 import socket
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
-from typing import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -34,6 +34,7 @@ class FetchedMedia:
     data: bytes
     filename: str
     content_type: str
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 def max_bytes() -> int:
@@ -104,19 +105,26 @@ async def safe_fetch_media(
     *,
     internal_resolver: Callable[[str], Awaitable[FetchedMedia | None]] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    limit: int | None = None,
+    max_redirects: int = MAX_REDIRECTS,
+    schemes: frozenset[str] = frozenset({"http", "https"}),
+    timeout: float = 60,
+    accept: str | None = None,
 ) -> FetchedMedia:
     """Validate every hop, pin its IP, and stream at most the configured bytes.
 
     The optional transport is for deterministic tests. Production uses HTTPX's
     normal TLS transport, with certificate validation against the original SNI.
     No caller headers, cookies, credentials, or environment proxies are used.
+    Other fetchers of untrusted URLs narrow ``limit``, ``max_redirects``,
+    ``schemes`` and ``timeout``.
     """
-    limit = max_bytes()
-    async with asyncio.timeout(60):
-        for hop in range(MAX_REDIRECTS + 1):
+    limit = max_bytes() if limit is None else limit
+    async with asyncio.timeout(timeout):
+        for hop in range(max_redirects + 1):
             parsed = urlsplit(url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-                raise MediaFetchError("media URL must use http or https")
+            if parsed.scheme not in schemes or not parsed.hostname:
+                raise MediaFetchError(f"URL must use {' or '.join(sorted(schemes))}")
             if parsed.username is not None or parsed.password is not None:
                 raise MediaFetchError("media URL must not contain credentials")
             if internal_resolver is not None:
@@ -149,7 +157,8 @@ async def safe_fetch_media(
                     try:
                         response = await resources.enter_async_context(client.stream(
                             "GET", pinned,
-                            headers={"host": parsed.netloc, "accept-encoding": "identity"},
+                            headers={"host": parsed.netloc, "accept-encoding": "identity",
+                                     **({"accept": accept} if accept else {})},
                             extensions={"sni_hostname": host},
                         ))
                     except (httpx.ConnectError, httpx.ConnectTimeout):
@@ -160,12 +169,13 @@ async def safe_fetch_media(
                         break
                 if response.status_code in {301, 302, 303, 307, 308}:
                     location = response.headers.get("location")
-                    if not location or hop == MAX_REDIRECTS:
+                    if not location or hop == max_redirects:
                         raise MediaFetchError("media URL exceeded the redirect limit")
                     url = urljoin(url, location)
                     continue
                 response.raise_for_status()
                 data = await read_bounded_media_response(response, limit=limit)
                 filename = parsed.path.rsplit("/", 1)[-1] or "input_reference.png"
-                return FetchedMedia(data, filename, response.headers.get("content-type", "application/octet-stream"))
+                return FetchedMedia(data, filename, response.headers.get("content-type", "application/octet-stream"),
+                                    dict(response.headers))
     raise MediaFetchError("media download did not complete")

@@ -1,0 +1,37 @@
+# Expected failures for `conformance server --requirements 2025-11-25`
+# (scripts/ci/mcp_conformance.py). Measured 2026-10-13 with 0.2.0-alpha.12.
+# Same two kinds of entry as expected-failures.2026-07-28.yml: optional
+# features Azizam does not offer (prompts, resources, completion, logging,
+# elicitation, sampling) and checks that need the suite's diagnostic tools.
+server:
+  # 1. features not offered
+  - prompts-list
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-embedded-resource
+  - prompts-get-with-image
+  - resources-list
+  - resources-read-text
+  - resources-read-binary
+  - resources-templates-read
+  - resources-subscribe
+  - resources-unsubscribe
+  - completion-complete
+  - logging-set-level
+  - tools-call-with-logging
+  - tools-call-sampling
+  - tools-call-elicitation
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
+  # A warning: the server mints no Mcp-Session-Id (sessions are optional and
+  # this server is stateless), so the SSE multiple-streams probe cannot run.
+  - server-sse-multiple-streams
+  # 2. needs the suite's diagnostic tools
+  - tools-call-simple-text
+  - tools-call-image
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-mixed-content
+  - tools-call-error
+  - tools-call-with-progress
+  - json-schema-2020-12

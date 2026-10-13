@@ -63,6 +63,7 @@ REPO_FILES = {
     "scripts/run-hermetic-pytest.sh": """#!/usr/bin/env bash
 printf '<testsuites><testsuite name="pytest"><testcase classname="tests.test_ok" name="test_ok" time="0.1"/></testsuite></testsuites>\\n' > "$2"
 """,
+    "scripts/ci/mcp-conformance": "#!/usr/bin/env bash\n",
     "scripts/e2e/fresh_instance.sh": """#!/usr/bin/env bash
 if [[ ${1:-} != --compose && -n ${FAKE_DURING_RUN:-} ]]; then eval "$FAKE_DURING_RUN"; fi
 """,
@@ -109,7 +110,7 @@ class World:
         for relative in COPIED:
             (self.repo / relative).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, self.repo / relative)
-        for script in ("scripts/run-hermetic-pytest.sh", "scripts/e2e/fresh_instance.sh"):
+        for script in ("scripts/run-hermetic-pytest.sh", "scripts/e2e/fresh_instance.sh", "scripts/ci/mcp-conformance"):
             (self.repo / script).chmod(0o755)
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
         subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
@@ -193,8 +194,8 @@ def test_signoff_posts_to_the_tested_sha_then_writes_the_receipt(world: World) -
     assert receipt["status_url"] == f"https://api.github.test/repos/o/r/statuses/{sha}"
     assert receipt["steps"].split(",") == sorted([
         "cases", "compat-node", "e2e-browser", "e2e-household", "e2e-live-data", "e2e-main", "e2e-tree-unchanged", "e2e-venv",
-        "fresh-compose", "fresh-native", "fresh-venv", "pi-unit", "policy", "python-hermetic", "showcase-core", "web-check",
-        "web-npm-ci", "web-unit"])
+        "fresh-compose", "fresh-native", "fresh-venv", "mcp-conformance", "pi-unit", "policy", "python-hermetic",
+        "showcase-core", "web-check", "web-npm-ci", "web-unit"])
     assert receipt["policy"].startswith("policy: ok:")
     assert world.run_dirs() == []  # a passed run removes its directory
 

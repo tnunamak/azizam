@@ -1,0 +1,140 @@
+{
+  "checked": "2026-10-13",
+  "about": "Setup notes for MCP clients, rendered on the Connect page. Data only: the gateway has no client-specific code. 'documented' means the steps come from the client's own documentation on the checked date; no entry is a recorded live connection. 'unverified' means the documentation leaves part of the flow unclear. Product menus move; the server URL and 'sign in when asked' are what stay true.",
+  "clients": [
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "auth": "sign-in",
+      "status": "documented",
+      "steps": [
+        "Add a custom MCP server. Current layouts: Plugins, then Add custom MCP server. Older workspace layouts: Settings, Apps, Create (developer mode).",
+        "Paste the server address and choose OAuth.",
+        "Leave the OAuth client ID and secret empty.",
+        "Create it, then sign in and approve when asked."
+      ],
+      "note": "ChatGPT takes no API key. Your plan and workspace decide whether custom servers are available.",
+      "docs": "https://developers.openai.com/api/docs/guides/custom-mcp-server"
+    },
+    {
+      "id": "claude-ai",
+      "name": "Claude.ai and Claude Desktop",
+      "auth": "sign-in",
+      "status": "documented",
+      "steps": [
+        "Open Customize, then Connectors, then Add custom connector. On Team and Enterprise plans an owner adds it under Organization settings, Connectors first.",
+        "Paste the server address. Leave the advanced OAuth client ID and secret empty and add no request headers.",
+        "Select Connect, sign in and approve."
+      ],
+      "note": "Each person connects with their own sign-in, so each gets their own plan.",
+      "docs": "https://claude.com/docs/connectors/custom/add-unlisted"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "Run: claude mcp add --transport http azizam <server address>",
+        "Run /mcp in Claude Code and choose Authenticate to sign in.",
+        "Or use an app key: add --header \"Authorization: Bearer <your app key>\"."
+      ],
+      "docs": "https://code.claude.com/docs/en/mcp"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "Add the server to mcp.json: {\"mcpServers\": {\"azizam\": {\"url\": \"<server address>\"}}}",
+        "Cursor asks you to sign in the first time it connects.",
+        "Or use an app key: add \"headers\": {\"Authorization\": \"Bearer <your app key>\"}."
+      ],
+      "docs": "https://cursor.com/docs/mcp"
+    },
+    {
+      "id": "vscode",
+      "name": "VS Code",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "Run MCP: Add Server, choose HTTP and paste the server address.",
+        "VS Code asks you to sign in and approve.",
+        "Or use an app key through a headers entry with an input variable."
+      ],
+      "docs": "https://code.visualstudio.com/docs/agents/reference/mcp-configuration"
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf (Cascade)",
+      "auth": "sign-in-or-key",
+      "status": "unverified",
+      "steps": [
+        "Add a server with \"serverUrl\": \"<server address>\" to the MCP configuration.",
+        "Sign in when asked, or add an Authorization header with your app key."
+      ],
+      "note": "The documentation does not say which sign-in method Windsurf uses.",
+      "docs": "https://docs.devin.ai/desktop/cascade/mcp"
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "Run goose configure, then Add Extension, then Remote Extension (Streamable HTTP).",
+        "Paste the server address. Goose opens a browser to sign in.",
+        "Or add the header Authorization: Bearer <your app key>."
+      ],
+      "docs": "https://goose-docs.ai/docs/getting-started/using-extensions/"
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "auth": "sign-in-or-key",
+      "status": "unverified",
+      "steps": [
+        "Add a context server with \"url\": \"<server address>\" in Zed's settings.",
+        "Without an Authorization header Zed signs in through the browser; with one it uses your app key."
+      ],
+      "note": "The documentation does not say which protocol versions Zed sends.",
+      "docs": "https://zed.dev/docs/ai/mcp"
+    },
+    {
+      "id": "librechat",
+      "name": "LibreChat",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "In librechat.yaml under mcpServers add: type: streamable-http and url: <server address>. Set the type: without it LibreChat uses the old SSE transport.",
+        "Each user signs in from LibreChat when first using the server.",
+        "Or set headers with Authorization: Bearer and requiresOAuth: false."
+      ],
+      "docs": "https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/mcp_servers"
+    },
+    {
+      "id": "open-webui",
+      "name": "Open WebUI",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "An admin adds an MCP (Streamable HTTP) tool server with the server address.",
+        "Choose OAuth 2.1 (dynamic registration) so each user signs in, or Bearer with an app key.",
+        "Do not choose the OAuth or Session modes: they send Open WebUI's own sign-in, which this server refuses."
+      ],
+      "docs": "https://docs.openwebui.com/features/extensibility/mcp/"
+    },
+    {
+      "id": "mcp-inspector",
+      "name": "MCP Inspector",
+      "auth": "sign-in-or-key",
+      "status": "documented",
+      "steps": [
+        "Run: npx @modelcontextprotocol/inspector",
+        "Choose Streamable HTTP, paste the server address and connect. Use the OAuth flow to sign in, or add an Authorization header."
+      ],
+      "docs": "https://modelcontextprotocol.io/docs/tools/inspector"
+    }
+  ]
+}

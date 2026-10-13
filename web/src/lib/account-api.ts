@@ -68,18 +68,55 @@ async function accountRequest<T>(
   }
   return payload as T;
 }
+/** One MCP client's setup notes (gateway/mcp_client_notes.json). */
+export type McpClientNote = {
+  id: string;
+  name: string;
+  auth: "sign-in" | "sign-in-or-key";
+  status: "documented" | "unverified";
+  steps: string[];
+  note?: string;
+  docs: string;
+};
 /** The parts of /.well-known/azizam the UI reads. */
 export type GatewayDiscovery = {
   recipes: Record<string, { canonical_base_url?: string } | undefined>;
   mcp?: {
     url: string;
     transport: string;
+    /** True when MCP clients can sign in here (OAuth needs a public https address). */
+    sign_in?: boolean;
+    clients?: { checked: string; clients: McpClientNote[] };
     tools: { name: string; title: string; description: string }[];
   };
 };
+/** One MCP client a person connected by signing in. */
+export type McpConnection = {
+  id: string;
+  client_name: string;
+  client_id: string;
+  redirect_host: string;
+  created_at: number;
+  last_used_at: number | null;
+};
+/** What the consent page shows for a pending MCP sign-in. */
+export type McpConsentRequest = {
+  client: {
+    name: string;
+    client_id: string;
+    /** The domain that publishes the client's metadata, or null when the client registered itself. */
+    verified_domain: string | null;
+    registration: "metadata_document" | "self_registered";
+    redirect_host: string;
+  };
+  person: { name: string; email: string | null };
+  plan: { name: string; description?: string };
+  can_connect: boolean;
+  access: string[];
+  lasts: string;
+};
 export const accountApi = {
-  discovery: () =>
-    accountRequest<GatewayDiscovery>("/.well-known/azizam"),
+  discovery: () => accountRequest<GatewayDiscovery>("/.well-known/azizam"),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
   createApp: (name: string) =>
     accountRequest<{ app: AccountApp }>("/me/api/apps", {
@@ -114,6 +151,26 @@ export const accountApi = {
       method: "PUT",
       body: value,
     }).then(rejectPendingCleanup),
+  /** MCP clients this person connected by signing in. */
+  mcpConnections: () =>
+    accountRequest<{ connections: McpConnection[] }>(
+      "/me/api/mcp/connections",
+    ).then((r) => r.connections),
+  /** Disconnect one: its tokens stop working at once. */
+  revokeMcpConnection: (id: string) =>
+    accountRequest(`/me/api/mcp/connections/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+    }),
+  mcpConsentRequest: (requestId: string) =>
+    accountRequest<McpConsentRequest>(
+      `/me/api/mcp/requests/${encodeURIComponent(requestId)}`,
+    ),
+  /** Answer a pending sign-in; the browser then goes to `redirect`. */
+  decideMcpConsent: (requestId: string, decision: "allow" | "deny") =>
+    accountRequest<{ redirect: string }>(
+      `/me/api/mcp/requests/${encodeURIComponent(requestId)}`,
+      { method: "POST", body: { decision } },
+    ),
   deleteSavedPrompts: () =>
     accountRequest<DeletePromptsResponse>("/me/api/prompt-memory/prompts", {
       method: "DELETE",

@@ -2,6 +2,7 @@
   "": "public",
   "account": "member",
   "apps": "member",
+  "authorize": "member",
   "connect": "member",
   "design": "member",
   "library": "member",
