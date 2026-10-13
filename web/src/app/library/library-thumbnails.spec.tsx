@@ -87,4 +87,11 @@ describe("Library tiles load small previews", () => {
     expect(video).not.toHaveAttribute("src");
     expect(requested.filter((path) => path.includes("/download?"))).toEqual([]);
   });
+
+  test("a video whose preview fails to load falls back to the source frame at 0.1 s", async () => {
+    renderLibrary([item("clip", "video", { thumbnail_url: "/signed/clip/thumb", duration_s: 4 })]);
+    fireEvent.error(await screen.findByAltText("Prompt clip"));
+    await waitFor(() => expect(document.querySelector("video")).toHaveAttribute("src", "/signed/clip/original#t=0.1"));
+    expect(document.querySelector("video")).toHaveAttribute("preload", "metadata");
+  });
 });

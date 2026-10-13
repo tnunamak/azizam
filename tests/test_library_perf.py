@@ -237,6 +237,32 @@ def test_video_thumbnail_comes_from_the_first_frame(tmp_path: Path) -> None:
         assert max(image.size) == thumbnails.THUMB_EDGE
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_video_thumbnail_uses_the_frame_at_a_tenth_of_a_second_when_the_clip_is_that_long(tmp_path: Path) -> None:
+    # Frame 0 is red, frame 1 (at 0.2 s) is blue: a 0.1 s seek must not land on frame 0.
+    video = tmp_path / ("f" * 64 + ".mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:size=64x64:rate=10:duration=0.1",
+                    "-f", "lavfi", "-i", "color=c=blue:size=64x64:rate=10:duration=1",
+                    "-filter_complex", "[0][1]concat=n=2:v=1:a=0", "-pix_fmt", "yuv420p", str(video)], check=True)
+    with Image.open(thumbnails.thumbnail_for(video)) as image:
+        red, _, blue = image.convert("RGB").getpixel((32, 32))
+    assert blue > red
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_video_thumbnail_falls_back_to_frame_zero_for_a_clip_shorter_than_a_tenth_of_a_second(tmp_path: Path) -> None:
+    video = tmp_path / ("1" * 64 + ".mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=green:size=64x64:rate=10:duration=0.1",
+                    "-pix_fmt", "yuv420p", str(video)], check=True)
+    assert thumbnails.thumbnail_for(video) is not None
+
+
+def test_unreadable_video_gives_no_thumbnail(tmp_path: Path) -> None:
+    video = tmp_path / ("2" * 64 + ".mp4")
+    video.write_bytes(b"not a video")
+    assert thumbnails.thumbnail_for(video) is None
+
+
 def test_removing_a_thumbnail_is_quiet_when_there_is_none(tmp_path: Path) -> None:
     source = tmp_path / ("e" * 64 + ".png")
     source.write_bytes(_png(64, 64))

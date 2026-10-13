@@ -70,11 +70,12 @@ def _fresh(target: Path, source: Path) -> bool:
 def _make(source: Path, target: Path) -> Path | None:
     from PIL import Image, ImageOps
 
-    if source.stat().st_size > _MAX_SOURCE_BYTES:
-        return None
+    is_video = source.suffix.lower() in _VIDEO_SUFFIXES
+    if not is_video and source.stat().st_size > _MAX_SOURCE_BYTES:
+        return None  # ffmpeg reads one frame of a video, so only images are capped
     frame: Path | None = None
     try:
-        if source.suffix.lower() in _VIDEO_SUFFIXES:
+        if is_video:
             frame = _first_frame(source)
             if frame is None:
                 return None
@@ -98,17 +99,19 @@ def _make(source: Path, target: Path) -> Path | None:
 
 
 def _first_frame(video: Path) -> Path | None:
+    """Decode the frame at 0.1 s (the one the old tile showed); the first frame for a shorter clip."""
     fd, name = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     out = Path(name)
     try:
-        run = subprocess.run(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(video), "-frames:v", "1",
-             "-vf", f"scale='min({THUMB_EDGE},iw)':-2", str(out)],
-            capture_output=True, timeout=15, check=False,
-        )
-        if run.returncode == 0 and out.stat().st_size > 0:
-            return out
+        for seek in (("-ss", "0.1"), ()):
+            run = subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", *seek, "-i", str(video), "-frames:v", "1",
+                 "-vf", f"scale='min({THUMB_EDGE},iw)':-2", str(out)],
+                capture_output=True, timeout=15, check=False,
+            )
+            if run.returncode == 0 and out.stat().st_size > 0:
+                return out
     except (OSError, subprocess.TimeoutExpired):
         pass
     out.unlink(missing_ok=True)

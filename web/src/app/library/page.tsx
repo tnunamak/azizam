@@ -1074,7 +1074,10 @@ function Preview({
           key={`video-${asset.asset_id}-${retryKey}`}
           src={tileStarted || (visible && !effectivePosterUrl) ? `${currentSrc}#t=0.1` : undefined}
           poster={effectivePosterUrl}
-          preload="none"
+          // With the server preview as poster the tile loads no video bytes. Without
+          // one, the tile reads metadata so the browser can decode a frame (and
+          // report an error, which opens recovery).
+          preload={thumbUrl ? "none" : "metadata"}
           muted
           playsInline
           onWaiting={() => setTileBuffering(true)}
