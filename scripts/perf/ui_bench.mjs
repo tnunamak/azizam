@@ -67,9 +67,9 @@ const INIT = `
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 
-async function loadOnce(browser, state, route) {
-  const context = await browser.newContext({ storageState: state, viewport: { width: 1440, height: 900 } });
-  await context.addInitScript(INIT);
+// One context per person keeps the HTTP cache between loads, as a returning visitor has it:
+// hashed scripts are immutable, so only the first load of a route fetches them.
+async function loadOnce(context, route) {
   const page = await context.newPage();
   const apiDone = [];
   let requests = 0, bytes = 0, api = 0, inflight = 0;
@@ -100,7 +100,7 @@ async function loadOnce(browser, state, route) {
   } catch (e) { error = String(e).split("\n")[0]; }
   const perf = await page.evaluate(() => window.__perf).catch(() => ({ meaningful: null, long: [], fcp: null }));
   const final = new URL(page.url()).pathname;
-  await context.close();
+  await page.close();
   const settled = apiDone.length ? Math.max(...apiDone) - start : 0;
   return {
     ready_ms: perf.meaningful === null ? null : Math.max(perf.meaningful, perf.lastMain),
@@ -118,10 +118,12 @@ for (const [who, email] of [["owner", manifest.owner_email], ["member", manifest
   if (!login.ok()) throw new Error(`login ${who}: ${login.status()}`);
   const state = await api.storageState();
   await api.dispose();
+  const context = await browser.newContext({ storageState: state, viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(INIT);
   for (const route of pages()) {
-    await loadOnce(browser, state, route); // warm the HTTP cache and the server
+    await loadOnce(context, route); // warm the HTTP cache and the server
     const runs = [];
-    for (let i = 0; i < REPEATS; i++) runs.push(await loadOnce(browser, state, route));
+    for (let i = 0; i < REPEATS; i++) runs.push(await loadOnce(context, route));
     const ok = runs.filter((r) => r.meaningful_ms !== null);
     rows.push({
       route, who, final: runs[0].final, error: ok.length ? null : runs[0].error,
@@ -133,6 +135,7 @@ for (const [who, email] of [["owner", manifest.owner_email], ["member", manifest
     });
     console.error(`${who} ${route} -> meaningful ${rows.at(-1).ready_ms} ms (shell ${rows.at(-1).meaningful_ms})`);
   }
+  await context.close();
 }
 await browser.close();
 writeFileSync(args.out, JSON.stringify({ rows }, null, 1));
