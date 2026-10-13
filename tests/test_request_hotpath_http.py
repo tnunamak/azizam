@@ -51,6 +51,9 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
         # The original resolver opened a separate connection in each helper.
         yield None
 
+    # The process stamps a key's last use once a minute (admin_store._LAST_TOUCH); start from a key
+    # not yet stamped so the first request pays for its stamp, as the original resolver did.
+    admin_store._LAST_TOUCH.clear()
     with patch.object(admin_store, "runtime_auth_connection", separate_connections), patch.object(
         admin_store, "_conn", wraps=admin_store._conn,
     ) as connections:
