@@ -1669,6 +1669,11 @@ def revoke_older_session_credentials(
 # relative "used N ago", which doesn't need second-level precision, and this
 # keeps the write rate to at most one UPDATE per key per minute under load.
 TOUCH_LAST_USED_INTERVAL_SECONDS = 60
+# (database, credential) -> when this process last asked to record a use. An UPDATE that
+# matches no row still takes the database write lock, and every request paid for it, so
+# a key already recorded inside the interval does not reach the database at all.
+_LAST_TOUCH: dict[tuple[str, str], int] = {}
+_LAST_TOUCH_MAX = 4096
 
 
 def touch_credential_last_used(
@@ -1688,6 +1693,9 @@ def touch_credential_last_used(
     """
     ts = _now() if now is None else int(now)
     cutoff = ts - max(0, int(min_interval))
+    key = (str(path), cred_id)
+    if _LAST_TOUCH.get(key, 0) > cutoff:
+        return False
     with _conn(path) if connection is None else nullcontext(connection) as conn:
         cur = conn.execute(
             "UPDATE credentials SET last_used_at = ? "
@@ -1695,6 +1703,9 @@ def touch_credential_last_used(
             (ts, cred_id, cutoff),
         )
         conn.commit()
+        if len(_LAST_TOUCH) >= _LAST_TOUCH_MAX:
+            _LAST_TOUCH.clear()
+        _LAST_TOUCH[key] = ts
         return cur.rowcount > 0
 
 

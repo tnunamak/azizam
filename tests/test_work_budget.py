@@ -206,3 +206,31 @@ def test_categories_api_checks_the_store_file_once(tmp_path: Path) -> None:
         category_api._verified_store(path)
         category_api._verified_store(path)
     assert sum("integrity_check" in statement for statement in seen) == 2
+
+
+# -- credential use stamp: a key used inside the interval does not write -------------
+
+def test_a_busy_key_is_stamped_once_per_interval(tmp_path: Path) -> None:
+    import sqlite3
+    from unittest.mock import patch
+
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    user = admin_store.upsert_oidc_user("iss", "u", email="u@example.test", path=db)
+    app = admin_store.create_app("A", kind="personal", owner_user_id=user["id"], path=db)
+    key = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=app["id"], app_id=app["id"], hash="h" * 64, prefix="masked", path=db)
+    seen: list[str] = []
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = real(*args, **kwargs)
+        connection.set_trace_callback(seen.append)
+        return connection
+
+    with patch.object(sqlite3, "connect", connect):
+        results = [admin_store.touch_credential_last_used(key["id"], now=5000 + n, path=db) for n in range(30)]
+        later = admin_store.touch_credential_last_used(key["id"], now=5000 + 90, path=db)
+    assert results.count(True) == 1 and later is True
+    writes = [statement for statement in seen if statement.startswith("UPDATE credentials")]
+    assert len(writes) == 2, f"{len(writes)} UPDATEs for 31 uses in two intervals"
