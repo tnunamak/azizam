@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import proxy
 import pytest
+from gateway.receipts import RouteReceipt
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
 from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
@@ -285,6 +286,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             return None, [b"fake-image"]
 
         before = copy.deepcopy(self.workflow)
+        self.serve("upload-ok-any")
         with patch.object(proxy, "_comfy_run_round", side_effect=run):
             response = await proxy.proxy_comfy_edit_request(
                 self.edit_request(n=2, seed=41), proxy.NO_AUTH_CONTEXT,
@@ -294,6 +296,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.workflow, before)
 
     async def test_non_object_generation_json_is_400_before_backend_effects(self):
+        fake = self.serve("upload-ok-any")
         for body in (None, [], 42, True):
             with self.subTest(body=body):
                 request = SimpleNamespace(json=AsyncMock(return_value=body))
@@ -306,7 +309,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 self.assertIsInstance(error["message"], str)
                 self.assertTrue(error["message"])
                 generate.assert_not_awaited()
-                self.assertEqual(FakeUploadClient.calls, [])
+                self.assertEqual(len(fake.calls("upload")), 0)
 
 
 class ImageRouteCancellationGapTests(IsolatedAsyncioTestCase):
