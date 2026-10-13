@@ -41,17 +41,24 @@ const aliases = [
 const plans = ["Family", "Creative", "Builders"].map((name, index) => ({
   id: `plan-${index}`,
   name,
-  description: null,
   created_at: 1720000000,
-  protocols: [],
-  workflows: [],
-  status_visibility: "full",
-  profile: {
-    allow: { intents: ["chat", "images"], exposure: ["local"] },
-    models: ["demo-chat"],
-    fallback: { cloud_allowed: false },
+  updated_at: 1720000000,
+  plan: {
+    id: `plan-${index}`,
+    name,
+    can_use: { chat: { items: "all" }, image: { items: "all" } },
+    direct_engine_access: { engines: [], operations: [] },
+    paid_providers: [],
+    provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+    can_load_models: true,
+    receipt_detail: "basic",
+    media_metadata: "none",
   },
+  summary: "Chat and images. Local models only. No paid providers.",
+  used_by: { people: [], apps: [], invites: 0 },
 }));
+const choices = plans.map(({ id, name, summary }) => ({ id, name, summary }));
 
 // Copy, grouping, price/provider text and plan summaries are asserted in
 // web/src/app/models/models-client.spec.tsx and web/tests/people-plans-list.spec.tsx.
@@ -188,13 +195,13 @@ test("paid model rows with a long provider name keep the 390 px page inside the 
 
 async function checkPlanRows(page: Page, width: number) {
   await page.route("**/admin/api/people", (route) =>
-    fulfilJson(route, { people: [], profiles: plans }),
+    fulfilJson(route, { people: [], access_plans: choices }),
   );
   await page.route("**/admin/api/invites", (route) =>
-    fulfilJson(route, { invites: [], profiles: plans }),
+    fulfilJson(route, { invites: [], access_plans: choices, invite_access_plan: null }),
   );
-  await page.route("**/admin/api/profiles", (route) =>
-    fulfilJson(route, { profiles: plans }),
+  await page.route("**/admin/api/access-plans", (route) =>
+    fulfilJson(route, { access_plans: plans }),
   );
   await page.goto("/people/");
   await page.getByRole("tab", { name: "Access plans" }).click();

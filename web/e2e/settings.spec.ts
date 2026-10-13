@@ -28,7 +28,7 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             }
           : path.includes("defaults")
             ? {
-                defaults: { profile_id: state === "empty" ? null : "local" },
+                defaults: { invite_access_plan: state === "empty" ? null : "local" },
                 aliases:
                   state === "empty"
                     ? {}
@@ -96,10 +96,6 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             state === "empty"
               ? {}
               : { max_queue_depth: 5, retry_after_seconds: 30 },
-          user_access_defaults: {
-            self_service_apps: true,
-            auto_create_personal_app: true,
-          },
         },
       },
       { status: state === "error" ? 503 : 200 },
@@ -126,14 +122,28 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
       { status: state === "error" ? 503 : 200 },
     ),
   );
-  await page.route("**/admin/api/profiles", (route) =>
+  await page.route("**/admin/api/access-plans", (route) =>
     fulfilJson(route, {
-      profiles: [
+      access_plans: [
         {
           id: "local",
           name: "Local only",
-          description: "Fixture local access",
-          profile: {},
+          created_at: 1710000000,
+          updated_at: 1710000000,
+          plan: {
+            id: "local",
+            name: "Local only",
+            can_use: { chat: { items: "all" } },
+            direct_engine_access: { engines: [], operations: [] },
+            paid_providers: [],
+            provider_fallback: false,
+            caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+            can_load_models: true,
+            receipt_detail: "basic",
+            media_metadata: "none",
+          },
+          summary: "Fixture local access",
+          used_by: { people: [], apps: [], invites: 0 },
         },
       ],
     }),
@@ -178,8 +188,7 @@ for (const [state, theme, width] of [
         for (const name of [
           "Instance",
           "Sign-in",
-          "Defaults",
-          "App creation",
+          "People and access",
           "Prompts",
           "Receipts",
           "Media admission",
@@ -202,8 +211,8 @@ for (const [state, theme, width] of [
           ).toBeVisible();
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(10);
-          for (const name of ["Defaults", "App creation"]) {
+          ).toHaveCount(9);
+          for (const name of ["People and access"]) {
             const retry = page
               .getByRole("region", { name, exact: true })
               .getByRole("button", { name: "Try again" });
@@ -280,10 +289,8 @@ for (const [state, theme, width] of [
   }
 }
 
-// Owner-global state: instance, media admission, default plan, app defaults
-// and sign-in choice. The fixture restores them after the test; the default
-// plan matters most, since the owner inherits it and a "Local chat" default
-// left behind hides every workflow from later specs.
+// Owner-global state: instance, media admission, the access plan for new
+// invitations and the sign-in choice. The fixture restores them after the test.
 test(
   "settings saves each section through its own API and keeps OIDC secret write-only",
   { tag: GLOBAL_STATE_TAG },
@@ -331,46 +338,25 @@ async function settingsJourney(page: Page) {
   await page.reload();
   await editSection(page, "Media admission");
   await expect(page.getByLabel("Maximum queued jobs")).toHaveValue("7");
-  await expect(
-    page.getByRole("region", { name: "Defaults", exact: true }),
-  ).toBeVisible();
-  await page.getByLabel("Default access plan").click();
+  const access = page.getByRole("region", {
+    name: "People and access",
+    exact: true,
+  });
+  await expect(access).toBeVisible();
+  await page.getByLabel("Access plan for new invitations").click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   const planSaved = page.waitForResponse(
     (r) =>
       r.url().endsWith("/admin/api/settings/defaults") &&
       r.request().method() === "PUT",
   );
-  await page.getByRole("button", { name: "Save default plan" }).click();
+  await access.getByRole("button", { name: "Save", exact: true }).click();
   expect((await planSaved).status()).toBe(200);
-  await expect(
-    page
-      .getByRole("region", { name: "Defaults", exact: true })
-      .getByRole("status"),
-  ).toHaveText("Default access plan saved");
-  const personalApp = page.getByRole("switch", {
-    name: "Create a personal app automatically",
-  });
-  const wasAutomatic = await personalApp.isChecked();
-  await personalApp.click();
-  const appSaved = page.waitForResponse(
-    (r) =>
-      r.url().endsWith("/admin/api/operator/user-access-defaults") &&
-      r.request().method() === "PUT",
+  await expect(access.getByRole("status")).toHaveText(
+    "Access plan for new invitations saved",
   );
-  await page.getByRole("button", { name: "Save app defaults" }).click();
-  expect((await appSaved).status()).toBe(200);
-  await expect(
-    page
-      .getByRole("region", { name: "App creation", exact: true })
-      .getByRole("status"),
-  ).toHaveText("Personal app defaults saved");
   await page.reload();
-  await expect(personalApp).toBeChecked({ checked: !wasAutomatic });
-  await expect(
-    page.getByRole("region", { name: "Defaults", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByLabel("Default access plan")).toContainText(
+  await expect(page.getByLabel("Access plan for new invitations")).toContainText(
     "Local chat",
   );
   await editSection(page, "Sign-in");
@@ -595,23 +581,14 @@ for (const theme of ["dark"] as const) {
       await seed(page, "empty");
       await page.goto("/settings/");
       const defaults = page.getByRole("region", {
-        name: "Defaults",
+        name: "People and access",
         exact: true,
       });
-      const apps = page.getByRole("region", {
-        name: "App creation",
-        exact: true,
-      });
-      const plan = page.getByLabel("Default access plan");
-      await expect(plan).toContainText("None — built-in local access");
+      const plan = page.getByLabel("Access plan for new invitations");
+      await expect(plan).toContainText("Ask each time");
       await expect(
-        defaults.getByText(/Choosing none does not block AI access/),
+        defaults.getByText(/Nobody has a plan until you choose one/),
       ).toBeVisible();
-      await expect(
-        apps.getByRole("switch", {
-          name: "Create a personal app automatically",
-        }),
-      ).toBeChecked();
       await defaults.scrollIntoViewIfNeeded();
       await page.screenshot({
         path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/after-${width}-${theme}.png`,
@@ -620,10 +597,7 @@ for (const theme of ["dark"] as const) {
       await plan.focus();
       await page.keyboard.press("Enter");
       await expect(
-        page.getByRole("option", {
-          name: "None — built-in local access",
-          exact: true,
-        }),
+        page.getByRole("option", { name: "Ask each time", exact: true }),
       ).toBeFocused();
       await page.keyboard.press("End");
       await expect(
@@ -632,9 +606,6 @@ for (const theme of ["dark"] as const) {
       await page.keyboard.press("Enter");
       await expect(plan).toContainText("Local only");
       await expect(plan).toBeFocused();
-      await expect(
-        defaults.getByText(/capabilities allowed by this plan/),
-      ).toBeVisible();
       await page.screenshot({
         path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/after-plan-${width}-${theme}.png`,
         fullPage: true,
@@ -650,12 +621,9 @@ for (const theme of ["dark"] as const) {
         if (textSize === "200%") {
           await plan.click();
           await page
-            .getByRole("option", {
-              name: "None — built-in local access",
-              exact: true,
-            })
+            .getByRole("option", { name: "Ask each time", exact: true })
             .click();
-          await expect(plan).toContainText("None — built-in local access");
+          await expect(plan).toContainText("Ask each time");
           await expect(
             page.locator('[data-slot="select-content"]'),
           ).toHaveCount(0);
@@ -683,7 +651,7 @@ for (const theme of ["dark"] as const) {
             { message: JSON.stringify(overflow) },
           )
           .toBe(true);
-        for (const section of [defaults, apps]) {
+        for (const section of [defaults]) {
           for (const control of await section
             .locator("button, a, summary")
             .all()) {
@@ -704,8 +672,7 @@ for (const theme of ["dark"] as const) {
         fullPage: true,
       });
       const axe = await new AxeBuilder({ page })
-        .include('[aria-labelledby="defaults"]')
-        .include('[aria-labelledby="app-creation"]')
+        .include('[aria-labelledby="people-and-access"]')
         .analyze();
       expect(axe.violations).toEqual([]);
       // The secondary link opens the plan editor, not the People tab.

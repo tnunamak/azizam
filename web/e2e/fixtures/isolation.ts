@@ -102,13 +102,6 @@ export const GLOBAL_SETTINGS: GlobalSetting[] = [
     },
   },
   {
-    name: "user-access-defaults",
-    read: async (owner) => ({ value: (await overrides(owner)).user_access_defaults }),
-    write: async (owner, value) => {
-      await owner.send("PUT", "/admin/api/operator/user-access-defaults", value);
-    },
-  },
-  {
     name: "media-job-admission",
     read: async (owner) => {
       const all = await overrides(owner);
@@ -343,15 +336,15 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
       tag: (text) => `${text} [ns:${namespace}]`,
       member: async ({ plan = "Local chat", name = "Isolated Member" } = {}) => {
         const owner = await ownerApi(request);
-        const profiles = (await owner.get("/admin/api/profiles")).profiles as {
+        const plans = (await owner.get("/admin/api/access-plans")).access_plans as {
           id: string;
           name: string;
         }[];
-        const profile = profiles.find((item) => item.name === plan);
-        expect(profile, `access plan ${plan}`).toBeDefined();
+        const found = plans.find((item) => item.name === plan);
+        expect(found, `access plan ${plan}`).toBeDefined();
         const email = isolated.email(`member${members.length + 1}`);
         const invite = (await owner.send("POST", "/admin/api/invites", {
-          profile_id: profile!.id,
+          access_plan: found!.id,
           email,
         })) as { url: string };
         const token = new URL(invite.url, baseURL).hash.replace(/^#token=/, "");

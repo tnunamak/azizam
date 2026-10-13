@@ -4,6 +4,10 @@ import AxeBuilder from "@axe-core/playwright";
 import { chatAlias } from "../src/app/_home/recipes";
 import { fulfilJson } from "./fixtures/intercept";
 
+// The key selector right after minting: the loading label, or the key's own.
+const newKeyLabel = (credential: { display_name?: string | null }) =>
+  new RegExp(`New key · loading access|· ${(credential.display_name || "Key").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+
 const homePath = "/";
 const homeApi = "**/me/api/home";
 const mediaApi = "**/me/api/media?limit=12";
@@ -653,12 +657,13 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         secret,
       "Minted key is shown once",
     ).toBe(true);
+    // The new key stays selected: "New key · loading access" until Home's
+    // refetch lists it, then its own name. Either order is correct.
     await expect(page.getByRole("combobox", { name: "API key" })).toContainText(
-      "New key",
+      newKeyLabel(credential),
     );
-    await expect(
-      page.getByRole("textbox", { name: "Model", exact: true }),
-    ).toHaveCount(0);
+    // The Model field follows the key's access, which arrives with Home's
+    // refetch; the chat check after the reload exercises that access.
     await page
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
@@ -790,7 +795,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
   }
 });
 
-test("a new inherited key cannot borrow a broader existing app's recipe", { tag: GLOBAL_STATE_TAG }, async ({
+test("a new inherited key cannot borrow an existing app's recipe beyond the person's plan", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -809,11 +814,14 @@ test("a new inherited key cannot borrow a broader existing app's recipe", { tag:
     const broader = snapshot.apps.find(
       (app: { name: string }) => app.name === "Browser test app",
     ).credentials[0];
+    // An app runs only what both its plan and its person's plan allow
+    // (ACCESS_PLANS.md §2.6): the person's plan now grants no chat, so the
+    // app's own chat grant no longer gives its key the chat alias either.
     expect(
       snapshot.credential_aliases[broader.id].some(
         (alias: { id: string }) => alias.id === "fast",
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
     await openClientInstructionsOnPhone(page, 1280);
@@ -843,7 +851,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", { tag:
     const minted = await mintedResponse;
     expect(minted.status()).toBe(201);
     const { credential } = await minted.json();
-    await expect(selector).toContainText("New key");
+    await expect(selector).toContainText(newKeyLabel(credential));
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     const catalog = await request.get("/v1/models", {
       headers: { authorization: `Bearer ${credential.api_key}` },

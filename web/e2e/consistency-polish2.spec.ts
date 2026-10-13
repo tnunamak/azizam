@@ -68,14 +68,19 @@ test("legacy email names remain contact details on People and in search", async 
     id: "email-person",
     name: "person@example.test",
     email: "person@example.test",
-    profile_id: null,
+    plan_id: null,
     plan_name: null,
+    disabled_at: null,
     disabled: false,
     last_active: null,
     requests_this_month: null,
+    builtin: true,
+    protected: false,
+    role: "member",
+    grants: [],
   };
   await page.route("**/admin/api/people", (route) =>
-    fulfilJson(route, { people: [person], profiles: [] }),
+    fulfilJson(route, { people: [person], access_plans: [] }),
   );
   await page.route("**/admin/api/users", (route) =>
     fulfilJson(route, { users: [{ ...person, display_name: person.email }] }),

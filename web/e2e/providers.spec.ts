@@ -32,19 +32,37 @@ const catalog = {
   ],
 };
 
+// GET /admin/api/access-plans: a plan's Paid providers are in its document.
+const planDocument = (name: string, paid: string[]) => ({
+  name,
+  can_use: { chat: { items: "all" } },
+  direct_engine_access: { engines: [], operations: [] },
+  paid_providers: paid,
+  provider_fallback: false,
+  caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+  can_load_models: true,
+  receipt_detail: "basic",
+  media_metadata: "none",
+});
 const plans = {
-  plans: [
+  access_plans: [
     {
       id: "local",
       name: "Local only",
-      description: "No paid providers",
-      paid_allowed: false,
+      created_at: 1710000000,
+      updated_at: 1710000000,
+      plan: { ...planDocument("Local only", []), id: "local" },
+      summary: "No paid providers",
+      used_by: { people: [], apps: [], invites: 0 },
     },
     {
       id: "paid",
       name: "Paid cloud",
-      description: "Can use selected paid providers",
-      paid_allowed: true,
+      created_at: 1710000000,
+      updated_at: 1710000000,
+      plan: { ...planDocument("Paid cloud", ["openrouter"]), id: "paid" },
+      summary: "Can use selected paid providers",
+      used_by: { people: [], apps: [], invites: 0 },
     },
   ],
 };
@@ -70,7 +88,7 @@ const seededProviders = {
         pending_reconciliation_count: 1,
       },
       caps: { daily_usd: 5, monthly_usd: 50 },
-      allowed_plans: [],
+      access_plans: ["paid"],
       recommendations: [
         {
           message:
@@ -115,7 +133,7 @@ async function setViewport(
 // vitest (src/app/providers/providers-states.spec.tsx). The browser keeps
 // real layout at 390 px, axe per state and the real-gateway journey.
 async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
-  await page.route("**/admin/api/profiles", (route: Route) =>
+  await page.route("**/admin/api/access-plans", (route: Route) =>
     fulfilJson(route, plans),
   );
   await page.route("**/admin/api/providers**", (route: Route) => {
@@ -129,7 +147,8 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
             {
               id: 42,
               provider: "openrouter",
-              profile_id: "paid",
+              app_id: "app-paid",
+              person_id: "person-owner",
               status: "needs_reconciliation",
               estimated_usd: "0.015",
               actual_usd: null,
@@ -239,12 +258,6 @@ async function clearOpenRouterProvider(
     }
   }
   await request
-    .put("/admin/api/providers/openrouter/allowed-plans", {
-      headers,
-      data: { allowed_plans: [] },
-    })
-    .catch(() => undefined);
-  await request
     .delete("/admin/api/providers/openrouter/key", {
       headers,
       data: {},
@@ -282,51 +295,56 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     "x-azizam-csrf": session.actor.csrf_token,
   };
   const unique = Date.now().toString(36);
-  let profile: { id: string } | undefined;
-  let observerProfile: { id: string } | undefined;
+  let plan: { id: string } | undefined;
+  let observerPlan: { id: string } | undefined;
   let app: { id: string } | undefined;
   let observerApp: { id: string } | undefined;
+  // A paid route needs both the app's plan and its accountable person's plan
+  // (design §2.6). The owner's plan is restored afterwards.
+  const people = await (await request.get("/admin/api/people")).json();
+  const owner = people.people.find((p: { role: string }) => p.role === "owner");
+  const ownerPlan = (await (await request.get("/admin/api/access-plans")).json())
+    .access_plans.find((p: { id: string }) => p.id === owner.plan_id);
+  expect(ownerPlan, "the owner holds a plan").toBeTruthy();
+  const document = (name: string, paid: string[]) => ({
+    name,
+    can_use: { chat: { items: "all" } },
+    direct_engine_access: { engines: [], operations: [] },
+    paid_providers: paid,
+    provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: "2.00", usd_per_month: null },
+    can_load_models: true,
+    receipt_detail: "full",
+    media_metadata: "none",
+  });
+  const putPlan = async (id: string, doc: Record<string, unknown>) => {
+    const response = await request.put(`/admin/api/access-plans/${id}`, { headers, data: doc });
+    expect(response.status(), await response.text()).toBe(200);
+  };
   try {
     await clearOpenRouterProvider(request, headers);
     await removeSeededOpenRouterProvider(request, headers);
     const port = Number(new URL(baseURL!).port);
 
-    const profileResponse = await request.post("/admin/api/profiles", {
+    const planResponse = await request.post("/admin/api/access-plans", {
       headers,
-      data: {
-        name: `Provider denied plan ${unique}`,
-        profile: {
-          id: `provider-denied-${unique}`,
-          protocols: ["openai"],
-          remote: { providers: [], budget_usd_per_day: "2.00" },
-          status_visibility: { level: "full" },
-        },
-      },
+      data: document(`Provider denied plan ${unique}`, []),
     });
-    expect(profileResponse.status()).toBe(201);
-    ({ profile } = await profileResponse.json());
-    const users = await (await request.get("/admin/api/users")).json();
-    const observerProfileResponse = await request.post("/admin/api/profiles", {
+    expect(planResponse.status(), await planResponse.text()).toBe(201);
+    ({ access_plan: plan } = await planResponse.json());
+    const observerPlanResponse = await request.post("/admin/api/access-plans", {
       headers,
-      data: {
-        name: `Provider observer plan ${unique}`,
-        profile: {
-          id: `provider-observer-${unique}`,
-          protocols: ["openai"],
-          remote: { providers: ["openrouter"], budget_usd_per_day: "2.00" },
-          status_visibility: { level: "full" },
-        },
-      },
+      data: document(`Provider observer plan ${unique}`, ["openrouter"]),
     });
-    expect(observerProfileResponse.status()).toBe(201);
-    ({ profile: observerProfile } = await observerProfileResponse.json());
+    expect(observerPlanResponse.status(), await observerPlanResponse.text()).toBe(201);
+    ({ access_plan: observerPlan } = await observerPlanResponse.json());
     const observerAppResponse = await request.post("/admin/api/apps", {
       headers,
       data: {
         name: `Provider observer app ${unique}`,
         kind: "personal",
-        owner_user_id: users.users[0].id,
-        profile_id: observerProfile!.id,
+        owner_user_id: owner.id,
+        access_plan: observerPlan!.id,
       },
     });
     expect(observerAppResponse.status()).toBe(201);
@@ -336,8 +354,8 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       data: {
         name: `Provider test app ${unique}`,
         kind: "personal",
-        owner_user_id: users.users[0].id,
-        profile_id: profile!.id,
+        owner_user_id: owner.id,
+        access_plan: plan!.id,
       },
     });
     expect(appResponse.status()).toBe(201);
@@ -373,9 +391,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     ).toHaveValue("15.000000");
     await page.getByRole("button", { name: "Next" }).click();
     await expect(
-      page.getByText(
-        "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
-      ),
+      page.getByText(/No access plan includes a new provider/),
     ).toBeVisible();
     await page.getByRole("button", { name: "Save provider" }).click();
     await expect(
@@ -453,14 +469,13 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       error: { code: "remote_provider_not_allowed" },
     });
 
-    const allowResponse = await request.put(
-      "/admin/api/providers/openrouter/allowed-plans",
-      {
-        headers,
-        data: { allowed_plans: [observerProfile!.id, profile!.id] },
-      },
-    );
-    expect(allowResponse.status()).toBe(200);
+    // Allow it: add OpenRouter to the app's plan and to the owner's plan.
+    await putPlan(plan!.id, document(`Provider denied plan ${unique}`, ["openrouter"]));
+    await putPlan(ownerPlan.id, {
+      ...ownerPlan.plan,
+      id: undefined,
+      paid_providers: [...ownerPlan.plan.paid_providers, "openrouter"],
+    });
 
     await page.goto("/models/");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
@@ -567,26 +582,13 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await removeSeededOpenRouterProvider(request, headers).catch(
       () => undefined,
     );
-    if (app?.id) {
+    // Apps are turned off, never deleted, so the two test plans stay listed.
+    for (const id of [app?.id, observerApp?.id].filter(Boolean)) {
       await request
-        .delete(`/admin/api/apps/${app.id}`, { headers })
+        .delete(`/admin/api/apps/${id}`, { headers })
         .catch(() => undefined);
     }
-    if (observerApp?.id) {
-      await request
-        .delete(`/admin/api/apps/${observerApp.id}`, { headers })
-        .catch(() => undefined);
-    }
-    if (profile?.id) {
-      await request
-        .delete(`/admin/api/profiles/${profile.id}`, { headers })
-        .catch(() => undefined);
-    }
-    if (observerProfile?.id) {
-      await request
-        .delete(`/admin/api/profiles/${observerProfile.id}`, { headers })
-        .catch(() => undefined);
-    }
+    await putPlan(ownerPlan.id, { ...ownerPlan.plan, id: undefined }).catch(() => undefined);
   }
 });
 
