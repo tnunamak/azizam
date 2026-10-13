@@ -22,6 +22,7 @@ UI_SHAPES = sorted({
     *(f"/{name}" for name in ui_routes.PAGES if name),
     *(f"/{name}/index.txt" if name else "/index.txt" for name in ui_routes.PAGES),
     "/_next/static/x", ASSET,
+    *(f"/{name}" for name in ui_routes.ROOT_FILES),
 })
 HTML = {"accept": "text/html,application/xhtml+xml"}
 
@@ -49,6 +50,10 @@ def client():
     ("/people/index.txt", ui_routes.PagePayload("people")),
     (ASSET, ui_routes.Asset(ASSET[1:])),
     ("/_next/static/css/a.css", ui_routes.Asset("_next/static/css/a.css")),
+    ("/favicon.ico", ui_routes.Asset("favicon.ico")),
+    ("/icon.svg", ui_routes.Asset("icon.svg")),
+    ("/opengraph-image.png", ui_routes.Asset("opengraph-image.png")),
+    ("/manifest.webmanifest", ui_routes.Asset("manifest.webmanifest")),
 ])
 def test_classify_exact_export_shapes(path, expected):
     assert ui_routes.classify(path) == expected
@@ -59,9 +64,18 @@ def test_classify_exact_export_shapes(path, expected):
     "/library/index.html", "/library//", "//library/", "/_next/static/", "/_next/other/x.js", "/index.html",
     "/_next/static/../../people/index.txt", "/library/../people/", "/_next/static/./x.js", "/_next/static//x.js",
     "/_next/static/a\\b.js", "/404.html", "/404/",
+    "/favicon.ico/", "/library/favicon.ico", "/_next/favicon.ico", "/icon.png", "/apple-touch-icon.png",
 ])
 def test_classify_rejects_everything_else(path):
     assert ui_routes.classify(path) is None
+
+
+def test_root_files_are_bare_names_that_no_page_or_route_owns():
+    assert {"favicon.ico", "icon.svg", "apple-icon.png", "manifest.webmanifest",
+            "opengraph-image.png"} <= ui_routes.ROOT_FILES
+    assert not ui_routes.ROOT_FILES & set(ui_routes.PAGES)
+    assert all("/" not in name for name in ui_routes.ROOT_FILES)
+    assert not {name.split(".")[0] for name in ui_routes.ROOT_FILES} & proxy.WEB_UI_ROUTE.registered_segments
 
 
 def test_registry_access_classes_and_admin_pages():
@@ -180,6 +194,29 @@ def test_anonymous_admin_payload_is_guarded(export, client):
     response = client.get("/people/index.txt", headers=HTML, follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "/login?return_to=%2Fpeople%2F"
+
+
+@pytest.mark.parametrize("name,media", [
+    ("favicon.ico", "image/"), ("icon.svg", "image/svg+xml"), ("apple-icon.png", "image/png"),
+    ("icon-maskable-512.png", "image/png"), ("opengraph-image.png", "image/png"),
+    ("manifest.webmanifest", "application/manifest+json"),
+])
+def test_root_files_are_served_to_anyone_and_revalidate(name, media, export, client):
+    # Browsers fetch icons without credentials and link previews fetch from outside.
+    (export / name).write_bytes(b"icon bytes " + name.encode())
+    response = client.get(f"/{name}")
+    assert response.status_code == 200
+    assert response.content == b"icon bytes " + name.encode()
+    assert response.headers["content-type"].startswith(media)
+    assert response.headers["cache-control"] == "no-cache"
+    head = client.head(f"/{name}")
+    assert head.status_code == 200 and head.content == b""
+
+
+def test_missing_root_file_is_a_bodyless_404(export, client):
+    response = client.get("/favicon.ico", headers=HTML)
+    assert response.status_code == 404
+    assert response.content == b""
 
 
 def test_missing_asset_is_a_bodyless_404(export, client):

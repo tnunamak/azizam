@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   Cloud,
   ExternalLink,
-  Fish,
   KeyRound,
   Loader2,
   MinusCircle,
@@ -1928,13 +1927,7 @@ function AddProviderDialog({
                   <div className="flex gap-3">
                     <Logo value={provider.logoKey || provider.name} />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 font-medium">
-                        <Fish
-                          className="text-link size-4"
-                          aria-hidden="true"
-                        />
-                        {provider.name}
-                      </div>
+                      <div className="font-medium">{provider.name}</div>
                       <div className="text-muted-foreground mt-1 text-meta [overflow-wrap:anywhere]">
                         {provider.baseUrl}
                       </div>
@@ -2206,7 +2199,7 @@ function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 gap-3">
           <div className="bg-primary/10 text-link relative flex size-12 shrink-0 items-center justify-center rounded-panel">
-            <Fish className="size-9" aria-hidden="true" />
+            <Cloud className="size-9" aria-hidden="true" />
             <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
           </div>
           <div>

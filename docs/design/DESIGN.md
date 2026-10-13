@@ -4,7 +4,7 @@ Owner: the D1 designer (Opus 5.5). Status: v1.6, 2026-10-09 (D1.6: a continuous 
 
 ## Direction
 
-**Deep water, daylight.** Everything a person came for sits on a clean daylight page (a deep-water night page in dark theme). Every surface opens with a title and one verdict label, says how old the evidence behind it is, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the goldfish-orange fish with the verdict line: the fish tells you whose gateway this is; the verdict tells you, in a few words, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
+**Deep water, daylight.** Everything a person came for sits on a clean daylight page (a deep-water night page in dark theme). Every surface opens with a title and one verdict label, says how old the evidence behind it is, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the copper curl with the verdict line: the curl (one lock of a baby's red hair, see "Brand") tells you whose gateway this is; the verdict tells you, in a few words, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
 
 D1.1 change: in light theme the sidebar is now a quiet grey-green panel one step off the page, not a dark-teal frame. The Linear-designer red team read the dark frame plus pastel tiles as two products glued together; a quieter frame lets the page carry the hierarchy. Dark theme keeps the deep-water chrome.
 
@@ -79,7 +79,7 @@ All raw values live in `web/src/styles/tokens.css`. Components use Tailwind util
 | Chrome raised | `--chrome-raised` | #E1E8EA | #13292F | Hover and current item |
 | Chrome text | `--chrome-foreground` / `--chrome-muted` | #10232A / #3D4F55 | #E3EEF0 / #B0C6CC | Nav rows: 7.6:1 on the light chrome (was 5.7), 10.3:1 on the dark (was 7.9) |
 | Chrome edge | `--chrome-border` | #D7E0E2 | #1A333A | Sidebar right edge, phone header bottom |
-| Chrome accent | `--chrome-accent` | #D2702A (goldfish) | #F2A65A | The brand mark; used nowhere else |
+| Chrome accent | `--chrome-accent` | #C4532B (copper) | #F08A5D | The brand mark, the current page's sidebar icon and the sidebar focus ring; nowhere else. 4.0:1 on the light chrome, 3.7:1 on its hover row, 4.6:1 on white; 6.1:1 or better on every dark surface (was #D2702A / #F2A65A: 3.1:1 on the light chrome, 2.8:1 on the hover row) |
 | Media stage | `--media-stage` / `-foreground` | #E6ECEE / #10232A | #050F12 / #E3EEF0 | Behind media in the viewer |
 | Media badge | `--media-badge` / `-foreground` / `-hover` | rgb(5 15 18 / 64%) / white / 80% | same | The duration badge on video and audio tiles and the audio play badge (white text 9:1 or better over the scrim on white) |
 | Subtle ink | `--subtle-foreground` | #4A5C62 | #9FB2B9 | Group labels, axis labels, quiet counts: 6.4:1 on the light page (was 4.8), 7.7:1 on the dark (was 5.5) |
@@ -297,6 +297,58 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 
 `token_drift.py` also flags unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl` in `app/`, `shadow-*` on non-overlay elements, and the old text utilities once their surface has moved. They fail in the files listed in its `SYSTEM_FILES` (PR 1: the shared parts) and are warnings elsewhere; a `craft-allow` comment exempts one line and says why (Button's `lg`, the full-width phone action).
 
+## Brand
+
+The mark is one curl of a baby's red hair. "Azizam" is Persian for "my dear"; the curl carries that warmth without a face or a mascot. It replaced the goldfish on 2026-10-13.
+
+How it was chosen: six concepts, drawn as SVG and rendered at 16, 32, 180 and 512 px and in context (browser tabs, an iOS home row, the sidebar in both themes, one colour). One blind judge (a different model from the maker) saw only the renders and the owner's brief. It ranked: tapered curl, fat horizontal curl, curl cut from a disc, thin even-stroke curl, heart of two curls, heart with a curl inside. It read the hearts as generic and "a little toy", the disc as a "9" in a circle, and the even stroke as too light at 16 px. The winner was redrawn once on its notes: larger in the square, a round tip, an open counter, a firmer 16 px drawing. The candidates, the renders and the ranking are in `~/Documents/azizam/brand/`.
+
+### Geometry
+
+- **One shape.** A spiral of four circular quarter turns, each radius 1.42 times the last, that runs out into a falling tail, tilted 18° so it fills the square. The stroke holds a round tip for the inner fifth, then thickens smoothly to the tail. Both ends are round.
+- **Two drawings.** The master (tip 4.8, tail 8.8, in a 48 box) serves every size from 20 px up. The small drawing (tip 6.0, tail 10.0) serves only the favicons, so at 16 px the stem is about 3 px and the counter keeps a pixel.
+- **Optical centre.** The curl is centred halfway between its bounding-box centre and its area centroid, so the heavy head does not ride high. The master keeps 2 units clear of the 48 box; the small drawing keeps 1.
+- **Source.** `docs/design/brand/curl.py` writes both drawings as SVG and prints the master path for `BrandMark` (`--path`). `node web/scripts/brand-icons.mjs` renders every icon from those SVGs. Do not edit a PNG or a path by hand.
+
+### Colour
+
+| Use | Colour | Contrast |
+|---|---|---|
+| Mark on light surfaces | `--chrome-accent` #C4532B | 4.0:1 on the light chrome, 4.6:1 on white |
+| Mark on dark surfaces and on app tiles | `--chrome-accent` (dark) #F08A5D | 6.1:1 or better on the dark chrome, page and card; 6.9:1 on the tile |
+| `favicon.ico` only | #D65F33 | 2.9:1 or better on light and dark browser tabs (an .ico cannot follow the colour scheme) |
+| App tile | #0C1F25, the dark page | |
+| One colour | `--foreground` (ink) or white | |
+
+Copper sits near the complement of the petrol teal, so the mark is the only warm colour in the chrome. Never tint it, put it on a gradient or give it a glow.
+
+### Lockup, clear space and sizes
+
+- **Lockup.** The mark, then "Azizam" in Hanken Grotesk 600 with tight tracking. In the sidebar the mark is 24 px beside 16 px text, 10 px apart. The curl's ink spans x 10 to 38 of its 48 box: where the mark stands at a text edge, as in the link preview, pull the box back by 10/48 of its size.
+- **Clear space.** Half the mark's height on every side, except toward the name in the lockup.
+- **Minimum size.** 16 px for the mark (the favicon uses the small drawing). Below 20 px in the UI, use the mark alone.
+
+### Icon set
+
+| File (served at the site root) | Size | Treatment |
+|---|---|---|
+| `favicon.ico` (`web/src/app/`) | 16, 32, 48 | Small drawing in #D65F33, transparent |
+| `icon.svg` (`web/src/app/`) | any | Small drawing; #C4532B, or #F08A5D when the browser prefers dark |
+| `apple-icon.png` (`web/src/app/`) | 180 | Master on #0C1F25, its 48 box at 70 % of the tile, opaque and square (iOS rounds it) |
+| `icon-192.png`, `icon-512.png` (`web/public/`) | 192, 512 | The same tile with 22.5 % rounded corners, for desktop shortcuts |
+| `icon-maskable-192.png`, `icon-maskable-512.png` (`web/public/`) | 192, 512 | Full bleed; the 48 box at 56 %, every copper pixel inside the 40 % safe circle (a test checks) |
+| `manifest.webmanifest` (`web/src/app/manifest.ts`) | | Name, colours and the four icons above |
+| `opengraph-image.png` (`web/public/`) | 1200 × 630 | The lockup on #0C1F25 and the showcase's line, "One AI gateway for your apps and the people you invite." |
+
+`gateway/ui_pages.json` lists these root files: the gateway serves exactly these names to anyone (browsers fetch icons without credentials), and `web/scripts/check-export-shape.mjs` fails the build when one is missing or an unlisted file appears. Next writes the icon, manifest and theme-color tags from `web/src/app/`. A link preview needs an absolute image URL, and the static export knows its origin only at build time, so `og:image` is added only when the build runs with `AZIZAM_PUBLIC_URL` set (`web/src/lib/site-metadata.ts`). Without it the preview has a title and a description and no image; a file-convention `opengraph-image` would point at `http://localhost:3000` instead.
+
+### Do and don't
+
+- Do use the lockup where the product names itself (the sidebar, the phone header, the showcase and the link preview), and the mark alone on app tiles, as the favicon and above a welcome card (the invitation).
+- Do keep one colour per mark: copper on the chrome and on deep water, ink or white when colour is not possible.
+- Don't rotate, mirror, outline, stretch or animate the curl, and don't add a face, eyes, a heart or a second curl.
+- Don't use the copper for text, buttons, links or state. It marks the brand and the current place only.
+
 ## Shell
 
 - **Sidebar (≥ 1024 px):** 232 px; a quiet light panel with a hairline edge in light theme, deep water in dark. The brand mark and name (plus the instance name when it differs), a search field with its shortcut, then two groups: **You** (Home, Library, Try, Apps & keys, Models, Workflows, Usage) and, for owners, **Gateway** (Status, Engines, Providers, People, Activity, Settings). Members see Status in You. Order is by how often a household member needs each place. Every destination has its own icon (ban 19). The footer holds the health line (a dot and the shared verdict count, Status model rule 3; its popover separates gateway reachability from "Your AI"), the account (person mark and name) and the theme toggle. Nav items are 32 px, 13 px text, medium weight only for the current page; group labels in subtle ink. D1.6: one type size and one row height for every nav item; the owner's Gateway group is set apart by space and its small label only (D1.5 made it smaller and quieter, and round 6 read the two sizes as incoherent).
@@ -326,7 +378,7 @@ How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status]
 | UptimeBar, `hourSlots`, `hoursUp`, `failingSince`, `healthHistory`, `healthStory` | `components/product/uptime-bar.tsx` | Rule 4: 24 hourly segments, down hours taller as well as red, a legend of the colours shown, hour-by-hour list (`hourByHour={false}` in the engine table). `size="lg"` on problem cards: 24 px cells, the legend above the strip, clock times every six hours and "Now" under it. `healthStory` gives a card its two plain lines (rule 4) |
 | AppMark | `components/product/app-mark.tsx` | Real marks for known apps (Simple Icons, CC0) and a monogram otherwise |
 | PersonMark | `components/product/person-mark.tsx` | A person's initial in their stable hue |
-| BrandMark | `components/product/brand-mark.tsx` | The fish, in the chrome accent |
+| BrandMark | `components/product/brand-mark.tsx` | The curl ("Brand"), in the chrome accent |
 | Segmented, Tabs | `components/product/segmented.tsx`, `components/ui/tabs.tsx` | The only segment pattern for filtering, and the tab pattern. D1.5: no sunken track; quiet chips, the chosen one in the accent tint and semibold (the sidebar's "you are here"). Options may carry an icon (hidden on phones, where four segments share the width). Tabs' `line` variant (People) keeps its underline. Segmented and chip tabs are a 32 group of 28 segments; `line` tabs are 40 with a 2 px indicator; all 44 on a phone |
 | Disclosure | `app/globals.css` (`summary`) | Every `<summary>` draws one chevron in the text colour that turns 90° when open; a summary with `list-none` draws its own. Disclosure buttons (the Callout's "Show details") lead with the same chevron |
 | CopyField | `components/product/copy-field.tsx` | One boxed value with the copy button inside its edge (Cloudflare 6a.2) |

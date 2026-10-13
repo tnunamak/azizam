@@ -24345,12 +24345,6 @@ async def status_dashboard_raw(request: Request):
     return await _render_status_html(request)
 
 
-@app.get("/favicon.ico", include_in_schema=False)
-async def status_favicon():
-    # The web export ships no icon. 204 No Content keeps browsers quiet.
-    return Response(status_code=204)
-
-
 # =============================================================================
 # /v1/responses — OpenAI Responses API (spring 2025 surface).
 # Implemented as a translation layer over /v1/chat/completions. Stateful
