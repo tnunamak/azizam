@@ -9,6 +9,8 @@ const SOURCE = "owner";
 const MAPPING_VERSION = "owner-edit-1";
 
 export type Visibility = "everyone" | "owner" | "plans";
+/** A bundled starter category (manifests/categories). Adding one writes the rows a custom category gets. */
+export type Preset = { id: string; label: string; description: string; visibility: "owner" | "everyone" };
 export type Item = { stem: string; serviceId: string; kind: "workflow" | "model"; label: string };
 
 export const emptySnapshot = (): Snapshot => ({
@@ -82,6 +84,14 @@ export function saveCategory(snapshot: Snapshot, input: CategoryInput, id?: stri
     description: input.description.trim(), visible_to: visibleTo(input),
   };
   return { snapshot: next, id: key };
+}
+
+export const presetAdded = (snapshot: Snapshot, preset: Preset) => Boolean(snapshot.categories[preset.id]);
+
+/** Add a bundled preset as an ordinary category: same rows as the Add category form. */
+export function addPreset(snapshot: Snapshot, preset: Preset): Snapshot {
+  if (presetAdded(snapshot, preset)) return snapshot;
+  return saveCategory(snapshot, { label: preset.label, description: preset.description, visibility: preset.visibility, plans: [] }, preset.id).snapshot;
 }
 
 /** What stops a category from being deleted: an access rule that still refers to it. */

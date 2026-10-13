@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminFetch, ApiError, api, type AdminFetchInit } from "@/lib/api";
 import { ViewerContext } from "@/components/shell/session";
 import CategoriesPage from "./page";
-import { deleteBlocker, itemsIn, moveItem, saveCategory, visibilityText } from "./simple";
+import { addPreset, deleteBlocker, itemsIn, moveItem, saveCategory, visibilityText, type Preset } from "./simple";
 import type { CatalogService, Snapshot } from "./editor";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -48,10 +48,15 @@ const catalog: CatalogService[] = [
   { stem: "painter", label: "Painter", kind: "workflow", capabilities: ["image.generate"] },
   { stem: "chatty", label: "Chatty", kind: "model", capabilities: ["chat.completions"] },
 ];
+const presetList: Preset[] = [
+  { id: "adult", label: "Adult", description: "Content for adults only.", visibility: "owner" },
+  { id: "experimental", label: "Experimental", description: "Still being built, so it may not work yet.", visibility: "owner" },
+  { id: "shared", label: "Shared", description: "Fine for everyone.", visibility: "everyone" },
+];
 const active = (snapshot: Snapshot) => ({ revision: 4, parent_revision: 3, active_counter: 4, snapshot, created_at: NOW, activated_at: NOW, author: "usr_owner", reason: "x" });
 
 type Posted = { path: string; body: { base_revision?: number | null; expected_active_revision?: number | null; reason?: string; snapshot?: Snapshot } };
-function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError } = {}) {
+function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail, presets = presetList }: { snapshot?: Snapshot | null; role?: "owner" | "admin" | "member"; fail?: ApiError; presets?: Preset[] } = {}) {
   const posted: Posted[] = [];
   vi.spyOn(api.users, "list").mockResolvedValue([]);
   vi.spyOn(api.apps, "list").mockResolvedValue([]);
@@ -71,7 +76,7 @@ function mount({ snapshot = rules() as Snapshot | null, role = "owner", fail }: 
       return active(snapshot);
     }
     if (path.endsWith("/history")) return { history: [] };
-    if (path.endsWith("/services")) return { services: catalog };
+    if (path.endsWith("/services")) return { services: catalog, presets };
     throw new Error("Unexpected path: " + path);
   }) as never);
   render(<ViewerContext.Provider value={{ authenticated: true, name: "Sam", email: null, role, admin: role !== "member" }}>
@@ -127,6 +132,45 @@ it("starts empty with one action, then adds a category visible to the owner only
   expect(posted[0].body.base_revision).toBeNull();
   expect(posted[0].body.snapshot?.categories.adult).toMatchObject({ label: "Adult", description: "For adults only.", visible_to: [], values: ["included"] });
   expect(posted[1]).toMatchObject({ path: "/admin/api/categories/candidates/5/activate", body: { expected_active_revision: null } });
+});
+
+it("offers presets on an empty page and adds one as an ordinary owner-only category", async () => {
+  const { posted } = mount({ snapshot: null });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Start from a preset" }));
+  const dialog = await screen.findByRole("dialog", { name: "Start from a preset" });
+  expect(within(dialog).getByText("Content for adults only.")).toBeVisible();
+  expect(within(dialog).getByText("Still being built, so it may not work yet.")).toBeVisible();
+  expect(within(dialog).getAllByText("At first only you can see it.")).toHaveLength(2);
+  expect(within(dialog).getByText("At first everyone can see it.")).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Add Adult" }));
+  await waitFor(() => expect(posted).toHaveLength(2));
+  expect(posted[0].body.base_revision).toBeNull();
+  expect(posted[0].body.snapshot?.categories.adult).toEqual({
+    id: "adult", label: "Adult", kind: "set", values: ["included"], applies_to: ["release", "workflow"],
+    description: "Content for adults only.", visible_to: [],
+  });
+  expect(Object.keys(posted[0].body.snapshot!.categories)).toEqual(["adult"]);
+});
+
+it("marks presets that are already added and offers only the rest", async () => {
+  const { posted } = mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Start from a preset" }));
+  const dialog = await screen.findByRole("dialog", { name: "Start from a preset" });
+  expect(within(dialog).getByLabelText("Adult is already added")).toBeVisible();
+  expect(within(dialog).getByLabelText("Experimental is already added")).toBeVisible();
+  expect(within(dialog).queryByRole("button", { name: "Add Adult" })).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Add Shared" }));
+  await waitFor(() => expect(posted).toHaveLength(2));
+  expect(posted[0].body.snapshot?.categories.shared.visible_to).toBeNull();
+  expect(posted[0].body.snapshot?.categories.adult.label).toBe("Adult");
+});
+
+it("hides the preset button when the gateway ships no presets", async () => {
+  mount({ presets: [] });
+  await screen.findByRole("region", { name: "Adult" });
+  expect(screen.queryByRole("button", { name: "Start from a preset" })).toBeNull();
 });
 
 it("chooses access plans, and warns before making a category visible to everyone", async () => {
@@ -257,6 +301,15 @@ it("words who can see a category, and names a plan that was removed", () => {
   expect(visibilityText(category("a", "A", "", null), name)).toBe("Everyone who can use the gateway");
   expect(visibilityText(category("a", "A", "", []), name)).toBe("Only you");
   expect(visibilityText(category("a", "A", "", ["plan_family", "gone"]), name)).toBe("You, and people and apps on Family, a removed access plan");
+});
+
+it("adds a preset only once and keeps the owner's edits to an existing category", () => {
+  const edited = rules();
+  edited.categories.adult.label = "Grown-up";
+  expect(addPreset(edited, presetList[0])).toBe(edited);
+  const added = addPreset(edited, presetList[2]);
+  expect(Object.keys(added.categories)).toEqual(["adult", "experimental", "shared"]);
+  expect(added.categories.adult.label).toBe("Grown-up");
 });
 
 it("makes a unique id for a new category and leaves the others alone", () => {

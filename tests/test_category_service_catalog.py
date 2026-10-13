@@ -32,10 +32,10 @@ def test_catalog_owner_only_without_snapshot(tmp_path, role, status):
         response = client.get("/admin/api/categories/services")
         assert response.status_code == status
         if status == 200:
-            assert response.json() == {"services": rows}
+            assert response.json() == {"services": rows, "presets": []}
             rows.append({"stem": "new-model", "label": "New model", "kind": "model",
                          "capabilities": ["chat.completions"]})
-            assert client.get("/admin/api/categories/services").json() == {"services": rows}
+            assert client.get("/admin/api/categories/services").json() == {"services": rows, "presets": []}
             assert len(calls) == 2
         else:
             assert calls == []

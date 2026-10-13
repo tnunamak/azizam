@@ -10,6 +10,47 @@ Items in no category are unaffected. Move an item out of its category and it is 
 
 In code: `gateway/category_enforcement.py` reads a category's `visible_to` list (access plan ids) and refuses and hides the items filed in it. `scripts/migrations/seed_categories.py` creates the two starter categories, Adult and Experimental, as ordinary rows the owner can edit on the Categories page. The sections below are the older, finer design for rules about specific people and apps (the page's Advanced section).
 
+## Starter presets
+
+Starter categories are bundled data in `manifests/categories/<id>.yml`: id, label,
+one-line meaning and `visibility` (`owner` or `everyone`). `gateway/category_presets.py`
+lists and validates them. The gateway sends them with the catalog
+(`GET /admin/api/categories/services`, key `presets`). The page offers them under
+"Start from a preset"; adding one writes the same rows as the Add category form,
+so it stays fully editable and deletable. `seed_categories.py` adds the same list.
+No category id or label is in code.
+
+Shipped: Adult and Experimental, both owner only at first.
+
+Prior art (from the divan corpus; nothing re-researched):
+
+- Plex, Jellyfin and Emby let the owner label content and hide it from accounts
+  that lack the label. Plex ships a few presets (younger child, older child,
+  teen) and owner-written labels; denied items are hidden, not greyed. Jellyfin
+  gives a new user all libraries unless access is explicit, so presets here
+  start owner only.
+- SwarmUI documents a "Spicy" user and a "Safe" user through a model deny list
+  by role. Open WebUI grants model visibility to users and groups; a restricted
+  model is unavailable even through a direct link. Civitai defaults `nsfw` to
+  false. Each ships adult or safe handling and lets the owner add more.
+- Apple Screen Time and Google Family Link restrict by categories the parent
+  picks. The corpus covers them for supervision, not for content labels, and
+  Immich only for per-user libraries. They give no more than this lesson: a
+  preset is a shortcut to a rule the owner can change.
+
+Not shipped, because the one visibility rule cannot express them:
+
+- Kids or Family-friendly needs an allow list (kids see only this). The visibility
+  rule only hides an item from people who are not listed. The Advanced per-person
+  rules cover that case.
+- Costs money: an access plan already grants paid providers. A second switch for
+  the same fact could disagree with the plan.
+
+Corpus entries: `local-ai-gateway/owner-defined-dimensions-over-imported-evidence-…`
+(household section: Plex, Jellyfin, Emby; SwarmUI, Open WebUI and Civitai sections),
+`…/administrator-content-reach-differs-across-14-products-…` (Immich),
+`…/no-surveyed-product-gives-a-supervisor-every-private-creation-…` (Screen Time, Family Link).
+
 Status of the design below: validated 2026-10-10 and implemented as owner-only category rules (the page's Advanced section). The plain categories above were added 2026-10-13.
 
 Evidence, all in divan `local-ai-gateway/`:

@@ -1,0 +1,7 @@
+# A starter category the owner can add from the Categories page. Bundled data:
+# the gateway never reads the id or label, only the rows the owner saves.
+schema_version: 1
+id: experimental
+label: Experimental
+description: Still being built, so it may not work yet.
+visibility: owner
