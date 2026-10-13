@@ -154,3 +154,26 @@ def test_category_gate_asks_the_store_once_per_read_request(tmp_path: Path) -> N
             assert category_enforcement.visible(who, request) is False
     finally:
         category_enforcement.configure(None)
+
+
+# -- provider presets: parsed once, again only when a file changes ---------------
+
+def test_provider_catalog_is_parsed_once_until_a_file_changes(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import yaml
+
+    from gateway import provider_catalog
+
+    source = provider_catalog.CATALOG_DIR
+    for file in source.glob("*.yml"):
+        (tmp_path / file.name).write_text(file.read_text(encoding="utf-8"), encoding="utf-8")
+    with patch.object(yaml, "safe_load", wraps=yaml.safe_load) as parse:
+        first = provider_catalog.load_provider_catalog(tmp_path)
+        parsed = parse.call_count
+        again = provider_catalog.load_provider_catalog(tmp_path)
+        assert parse.call_count == parsed > 0 and again == first
+        victim = next(tmp_path.glob("*.yml"))
+        victim.write_text(victim.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+        provider_catalog.load_provider_catalog(tmp_path)
+        assert parse.call_count == parsed * 2
