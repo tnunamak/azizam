@@ -251,7 +251,7 @@ describe("Connect", () => {
     ).toMatch(/Partly unverified/);
   });
 
-  test("lists connected apps and disconnects one", async () => {
+  test("lists connections and disconnects one", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([
       {
@@ -267,7 +267,7 @@ describe("Connect", () => {
       .spyOn(accountApi, "revokeMcpConnection")
       .mockResolvedValue({});
     renderPage(member);
-    const list = await screen.findByRole("list", { name: "Connected AI apps" });
+    const list = await screen.findByRole("list", { name: "Connections" });
     expect(within(list).getByText("Hosted Chat")).toBeTruthy();
     expect(within(list).getByText(/Returns to hosted.example/)).toBeTruthy();
     fireEvent.click(

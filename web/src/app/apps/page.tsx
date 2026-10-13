@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type MouseEvent,
 } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
@@ -37,6 +38,7 @@ import {
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ListCard, ListRow } from "@/components/product/list-card";
+import { SignInConnections } from "@/components/product/sign-in-connections";
 import {
   Select,
   SelectContent,
@@ -779,6 +781,20 @@ function AppsContents() {
           })}
         </ListCard>
       )}
+      {accountData?.authenticated ? (
+        <SignInConnections
+          empty={
+            <>
+              No connections yet. ChatGPT, Claude.ai and other AI apps that
+              sign in appear here once you{" "}
+              <Link prefetch={false} href="/connect" className="underline">
+                connect one
+              </Link>
+              .
+            </>
+          }
+        />
+      ) : null}
       <Dialog
         open={creating}
         onOpenChange={(open) => {
