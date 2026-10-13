@@ -4,7 +4,7 @@ import { JobNotices } from "@/components/jobs/job-notices";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ThemeProvider, useTheme } from "next-themes";
 import {
@@ -453,6 +453,19 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   );
 }
 
+// The lg breakpoint is where shell-nav-label becomes visible; below it the rail is icon-only.
+const WIDE_SIDEBAR_QUERY = "(min-width: 64rem)";
+
+function subscribeWideSidebar(onChange: () => void) {
+  const query = window.matchMedia(WIDE_SIDEBAR_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function isWideSidebar() {
+  return window.matchMedia(WIDE_SIDEBAR_QUERY).matches;
+}
+
 function Nav({
   expanded = false,
   onNavigate,
@@ -462,6 +475,8 @@ function Nav({
 }) {
   const viewer = useViewer();
   const pathname = usePathname();
+  const wideSidebar = useSyncExternalStore(subscribeWideSidebar, isWideSidebar, () => true);
+  const collapsed = !expanded && !wideSidebar;
   return (
     <nav
       aria-label="Main navigation"
@@ -495,24 +510,28 @@ function Nav({
                 const active =
                   canonicalDestinationPath(pathname) ===
                   canonicalDestinationPath(item.href);
-                return (
+                const link = (
+                  <Link prefetch={false}
+                    key={item.href}
+                    href={item.href}
+                    className="shell-nav-link"
+                    aria-label={item.title}
+                    aria-current={active ? "page" : undefined}
+                    onClick={onNavigate}
+                  >
+                    <Icon />
+                    <span className={expanded ? "" : "shell-nav-label"}>
+                      {item.title}
+                    </span>
+                  </Link>
+                );
+                return !expanded && collapsed ? (
                   <Tooltip key={item.href}>
-                    <TooltipTrigger asChild>
-                      <Link prefetch={false}
-                        href={item.href}
-                        className="shell-nav-link"
-                        aria-label={item.title}
-                        aria-current={active ? "page" : undefined}
-                        onClick={onNavigate}
-                      >
-                        <Icon />
-                        <span className={expanded ? "" : "shell-nav-label"}>
-                          {item.title}
-                        </span>
-                      </Link>
-                    </TooltipTrigger>
+                    <TooltipTrigger asChild>{link}</TooltipTrigger>
                     <TooltipContent side="right">{item.title}</TooltipContent>
                   </Tooltip>
+                ) : (
+                  link
                 );
               })}
           </div>
