@@ -1,6 +1,7 @@
 """Owner-only category snapshots, previews and compare-and-swap activation."""
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import sqlite3
@@ -285,7 +286,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                     raise ValueError("A service revision ID cannot be reused for a different closure")
 
     def install(path, method, operation):
-        async def endpoint(request: Request):
+        def handle(request: Request, raw: bytes):
             ctx = _require_admin(auth, request)
             if isinstance(ctx, JSONResponse):
                 return ctx
@@ -296,7 +297,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                     return {"services": service_catalog()}
                 body = {}
                 if method == "POST":
-                    body = json.loads(await request.body(), object_pairs_hook=_pairs,
+                    body = json.loads(raw, object_pairs_hook=_pairs,
                                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
                 revision = request.path_params.get("revision")
                 if revision is not None:
@@ -381,6 +382,11 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                 return _error(400, "invalid_request", "Ambiguous stored assertion provenance.")
             except (ValueError, TypeError, KeyError, RecursionError, UnicodeError):
                 return _error(400, "invalid_request", "Invalid category policy request.")
+        async def endpoint(request: Request):
+            # Auth and the policy store use blocking SQLite: keep them off the event loop.
+            raw = await request.body() if method == "POST" else b""
+            return await asyncio.to_thread(handle, request, raw)
+
         # The endpoint reads path params itself; declare them for the OpenAPI schema.
         params = [{"name": "revision", "in": "path", "required": True, "schema": {"type": "integer"}}]
         router.add_api_route(path, endpoint, methods=[method], name="categories_" + operation,

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Requests } from "./requests";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -396,7 +397,7 @@ export default function ActivityPage() {
                   </Button>
                 ) : (
                   <Button asChild variant="outline">
-                    <a href="/apps/?action=create-key">Create an app</a>
+                    <Link href="/apps/?action=create-key">Create an app</Link>
                   </Button>
                 )
               }

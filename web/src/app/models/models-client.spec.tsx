@@ -1654,7 +1654,7 @@ describe("task-first catalog rows", () => {
         expect(table.queryByRole("columnheader", { name: "Cost" })).toBeNull();
         expect(table.getByRole("columnheader", { name: "Status" })).toBeVisible();
         expect(table.getByText("Not checked yet")).toBeVisible();
-        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status/");
+        expect(table.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status");
       }
       expect(screen.queryByText("Local · no provider charge")).toBeNull();
     },
@@ -1802,7 +1802,7 @@ describe("model availability and removal recovery", () => {
   it("distinguishes a failed observation from a model not checked yet", async () => {
     renderModels(catalog([row({ availability: { ...row().availability, status: "unknown", measured: true } })]));
     expect(await screen.findByText("Couldn't check")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status/");
+    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute("href", "/status");
     expect(screen.queryByText("Ready")).toBeNull();
   });
 

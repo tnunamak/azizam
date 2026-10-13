@@ -588,7 +588,7 @@ function Availability({
   if (state === "unknown" || state === "not_measured") {
     return <span className="text-muted-foreground text-meta whitespace-normal">
       <span>{state === "not_measured" || !row.availability.measured ? "Not checked yet" : "Couldn\'t check"}</span>
-      {!showReason && <> · <a href="/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</a></>}
+      {!showReason && <> · <Link href="/status/" onClick={(event) => event.stopPropagation()} className="underline underline-offset-4">Check status</Link></>}
     </span>;
   }
   return (

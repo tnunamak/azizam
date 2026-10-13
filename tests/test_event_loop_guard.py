@@ -6,6 +6,8 @@ long; the same work on a worker thread leaves the loop ticking. The probe
 fails any endpoint whose worst loop stall exceeds STALL_LIMIT_S.
 """
 import asyncio
+import builtins
+import os
 import sqlite3
 import threading
 import traceback
@@ -111,3 +113,116 @@ def test_handler_does_not_block_the_event_loop(gateway, path, auth):
     assert worst < STALL_LIMIT_S, (
         f"{path} blocked the event loop for {worst:.3f}s (limit {STALL_LIMIT_S}s) opening SQLite on the loop at:\n"
         + "\n".join(sorted(set(loop_calls))))
+
+
+def _get_routes() -> list[str]:
+    paths = []
+    for route in proxy.app.routes:
+        path = getattr(route, "path", "")
+        if "GET" in (getattr(route, "methods", None) or ()) and path.startswith(("/me/api/", "/admin/api/", "/v1/")):
+            paths.append(path)
+    return sorted(set(paths))
+
+
+def _concrete(path: str) -> str:
+    out = []
+    for part in path.split("/"):
+        out.append("x" if part.startswith("{") and "path" not in part else part)
+    return "/".join(out).replace("{rest:path}", "x").replace("{model_id:path}", "x")
+
+
+# Content and download routes stream bytes from disk by design.
+_STREAMING = ("/content", "/download", "/sample")
+ROUTES = [route for route in _get_routes() if not route.endswith(_STREAMING)]
+
+
+def test_route_table_is_covered():
+    assert len(ROUTES) > 60, "the route table walk found too few GET routes"
+
+
+def _loop_thread_work(loop_calls: list[str]):
+    """Patch SQLite, subprocess and sleeps so a call on the loop thread is recorded."""
+    import subprocess
+    loop_thread = threading.get_ident()
+
+    def note(kind: str) -> None:
+        if threading.get_ident() == loop_thread:
+            frames = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_stack()[:-2]
+                      if "/site-packages/" not in f.filename and "/lib/python" not in f.filename]
+            loop_calls.append(f"{kind} " + " <- ".join(reversed(frames[-7:])))
+
+    real_connect, real_popen, real_sleep = sqlite3.connect, subprocess.Popen, time.sleep
+    real_open = builtins.open
+
+    def traced_open(file, *args, **kwargs):
+        if isinstance(file, (str, os.PathLike)) and "/site-packages/" not in str(file) and not str(file).startswith("/proc"):
+            note(f"open({Path(str(file)).name})")
+        return real_open(file, *args, **kwargs)
+
+    def connect(*args, **kwargs):
+        note("sqlite3.connect")
+        return real_connect(*args, **kwargs)
+
+    class Popen(real_popen):
+        def __init__(self, *args, **kwargs):
+            note("subprocess.Popen")
+            super().__init__(*args, **kwargs)
+
+    def sleep(seconds):
+        if seconds > 0.01:
+            note("time.sleep")
+        return real_sleep(seconds)
+
+    return (patch.object(sqlite3, "connect", connect), patch.object(subprocess, "Popen", Popen),
+            patch.object(time, "sleep", sleep), patch.object(builtins, "open", traced_open))
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_every_get_route_leaves_the_loop_free(gateway, route):
+    loop_calls: list[str] = []
+
+    async def call() -> int:
+        transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000), raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=gateway["cookies"],
+                                     timeout=20) as client:
+            return (await client.get(_concrete(route), headers=gateway["bearer"])).status_code
+
+    patches = _loop_thread_work(loop_calls)
+    with patches[0], patches[1], patches[2], patches[3]:
+        asyncio.run(call())
+    assert not loop_calls, f"{route} ran blocking work on the event loop:\n" + "\n".join(sorted(set(loop_calls)))
+
+
+def test_startup_initializes_the_stores_in_parallel_off_the_loop():
+    slow = 0.2
+
+    def sleeper(*args, **kwargs):
+        time.sleep(slow)
+
+    async def run() -> tuple[float, float]:
+        worst, stop = 0.0, False
+
+        async def ticker():
+            nonlocal worst
+            last = time.perf_counter()
+            while not stop:
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                worst, last = max(worst, now - last), now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        started = time.perf_counter()
+        await proxy._initialize_stores()
+        elapsed = time.perf_counter() - started
+        stop = True
+        await task
+        return worst, elapsed
+
+    from gateway import providers
+    with patch.object(proxy.ADMIN_STORE, "init_db", sleeper), patch.object(proxy.responses_store, "init_db", sleeper), \
+            patch.object(proxy.receipt_store, "init_db", sleeper), patch.object(proxy.media_jobs, "init_db", sleeper), \
+            patch.object(providers, "recover_provider_spend", sleeper):
+        worst, elapsed = asyncio.run(run())
+    assert worst < STALL_LIMIT_S, f"startup stalled the event loop for {worst:.3f}s"
+    assert elapsed < slow * 3, f"the stores initialized one after another ({elapsed:.2f}s)"

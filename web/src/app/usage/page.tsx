@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { lazy, Suspense, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -323,7 +324,7 @@ export default function UsagePage() {
               </Button>
             ) : (
               <Button asChild variant="outline">
-                <a href="/apps/">Connect an app</a>
+                <Link href="/apps/">Connect an app</Link>
               </Button>
             )
           }

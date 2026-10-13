@@ -85,7 +85,7 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import loop_watchdog, video_extend
+from gateway import loop_watchdog, request_connections, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject
 from gateway import video_job_records, prompt_metadata_migration
@@ -12694,16 +12694,28 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _initialize_stores() -> None:
+    """Initialize the independent store files side by side on worker threads.
+
+    Startup waits for the slowest store, and the event loop stays free. Provider
+    spend recovery writes through the stores, so it starts only after all of them
+    are ready: a store that fails aborts startup before it runs.
+    """
+    await asyncio.gather(
+        asyncio.to_thread(ADMIN_STORE.init_db),
+        asyncio.to_thread(responses_store.init_db),
+        asyncio.to_thread(receipt_store.init_db),
+        asyncio.to_thread(media_jobs.init_db),
+    )
+    await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
-    ADMIN_STORE.init_db()
-    responses_store.init_db()
-    receipt_store.init_db()
-    media_jobs.init_db()
-    providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
+    await _initialize_stores()
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -12727,7 +12739,7 @@ async def lifespan(app: FastAPI):
     # timeline survive proxy restarts. The window stays bounded at 24h; older
     # records are filtered out at replay time.
     try:
-        replay_stats = firehose_metrics.replay_persisted()
+        replay_stats = await asyncio.to_thread(firehose_metrics.replay_persisted)
         print(
             f"[proxy] firehose replay: requests={replay_stats.get('requests_replayed')} "
             f"events={replay_stats.get('events_replayed')} skipped={replay_stats.get('skipped')}",
@@ -13548,6 +13560,43 @@ def _capability_for_profile(
 
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
+    """Every capability, with this identity's policy view.
+
+    The catalog before the policy view depends on the plan's target visibility
+    and the identity's remote decision models, not on the identity itself. One
+    request therefore builds each distinct catalog once, however many keys and
+    plans Home evaluates.
+    """
+    visibility = _profile_target_visibility(auth_context)
+    live_registry, base = request_connections.memo(
+        ("capability-catalog-base", visibility), lambda: _gateway_catalog_base(visibility))
+    remote = [
+        decision_provider_execution.capability_for(provider, model.id)
+        for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context), live_registry)
+        for provider in [decision_provider_execution.systemone_provider_for_model(live_registry, model.id)]
+        if provider
+    ]
+    capabilities = request_connections.memo(
+        ("capability-catalog", visibility, tuple((c.backend, c.model) for c in remote)),
+        lambda: _gateway_catalog_finish(live_registry, base, remote),
+    )
+    admin_state: dict[str, Mapping[str, Any]] = {}
+
+    def provider_admin_state() -> Mapping[str, Any]:
+        if "value" not in admin_state:
+            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
+        return admin_state["value"]
+
+    return [
+        _capability_for_profile(
+            capability, auth_context,
+            registry=live_registry, provider_admin_state=provider_admin_state,
+        )
+        for capability in capabilities
+    ]
+
+
+def _gateway_catalog_base(visibility: str) -> tuple[Mapping[str, Any], list[Capability]]:
     try:
         live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
@@ -13573,14 +13622,16 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
     decision_capabilities = DECISION_RUNTIME.capabilities()
-    if _profile_target_visibility(auth_context) == "available":
+    if visibility == "available":
         decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
     capabilities.extend(decision_capabilities)
+    return live_registry, capabilities
 
-    for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
-        provider = decision_provider_execution.systemone_provider_for_model(live_registry, model.id)
-        if provider:
-            capabilities.append(decision_provider_execution.capability_for(provider, model.id))
+
+def _gateway_catalog_finish(
+    live_registry: Mapping[str, Any], base: list[Capability], remote: list[Capability],
+) -> list[Capability]:
+    capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13611,20 +13662,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         )
     ]
 
-    admin_state: dict[str, Mapping[str, Any]] = {}
-
-    def provider_admin_state() -> Mapping[str, Any]:
-        if "value" not in admin_state:
-            admin_state["value"] = ADMIN_STORE.get_provider_admin_state()
-        return admin_state["value"]
-
-    return [
-        _capability_for_profile(
-            capability, auth_context,
-            registry=live_registry, provider_admin_state=provider_admin_state,
-        )
-        for capability in capabilities
-    ]
+    return capabilities
 
 
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
@@ -14455,10 +14493,13 @@ async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -
     return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
 
 
-def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+def _remote_decision_models(
+    auth: AuthContext, profile: Any, registry: Mapping[str, Any] | None = None,
+) -> list[decisions_api.DecisionModel]:
     if not auth.identity or not auth.identity.app_id:
         return []
-    registry = ADMIN_STORE.get_service_registry()
+    if registry is None:
+        registry = ADMIN_STORE.get_service_registry()
     rows: list[decisions_api.DecisionModel] = []
     for provider in decision_provider_execution.systemone_providers(registry):
         try:
@@ -15576,7 +15617,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             status_code=401,
         )
     default_profile_id = (await asyncio.to_thread(_default_profile_id_for_session, session))
-    user_snapshot = build_user_portal_snapshot(
+    user_snapshot = await asyncio.to_thread(
+        build_user_portal_snapshot,
         session,
         default_profile_id=default_profile_id,
         path=ADMIN_STORE.path,
@@ -15587,7 +15629,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    auth_contexts = auth_contexts_from_user_snapshot(
+    auth_contexts = await asyncio.to_thread(
+        auth_contexts_from_user_snapshot,
         user_snapshot,
         default_profile_id=default_profile_id,
         profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
@@ -15602,41 +15645,50 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         for capability_set in capability_sets
         for capability in capability_set
     ]
-    activity = build_user_activity_snapshot(
-        session,
-        limit=50,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
-    scope = {
-        "app_ids": None
-        if activity.get("scope") == "instance"
-        else [
-            str(app["id"])
-            for app in user_snapshot.get("apps") or []
-            if isinstance(app, Mapping) and app.get("id")
-        ]
-    }
-    jobs = media_jobs.recent(
-        limit=50,
-        audience="internal",
-        path=media_jobs.DB_PATH,
-        **scope,
-    )
-    service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
-    capabilities = project_capabilities(
-        capabilities, service_records=service_records,
-        evidence=await _capabilities_availability_evidence(capabilities, service_records),
-        workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
-    )
-    return build_workflows_catalog(
-        records=GATEWAY_WORKFLOW_REGISTRY.records(),
-        capabilities=capabilities,
-        aliases=_gateway_aliases_provider(),
-        recent_receipts=activity.get("receipts") or (),
-        recent_jobs=jobs,
-        base_url=_public_base_url(request),
-    )
+    def read_activity_and_jobs():
+        activity = build_user_activity_snapshot(
+            session,
+            limit=50,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+        )
+        scope = {
+            "app_ids": None
+            if activity.get("scope") == "instance"
+            else [
+                str(app["id"])
+                for app in user_snapshot.get("apps") or []
+                if isinstance(app, Mapping) and app.get("id")
+            ]
+        }
+        jobs = media_jobs.recent(
+            limit=50,
+            audience="internal",
+            path=media_jobs.DB_PATH,
+            **scope,
+        )
+        service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
+        return activity, jobs, service_records
+
+    activity, jobs, service_records = await asyncio.to_thread(read_activity_and_jobs)
+    evidence = await _capabilities_availability_evidence(capabilities, service_records)
+
+    def build_catalog() -> dict[str, Any]:
+        projected = project_capabilities(
+            capabilities, service_records=service_records,
+            evidence=evidence,
+            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+        )
+        return build_workflows_catalog(
+            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            capabilities=projected,
+            aliases=_gateway_aliases_provider(),
+            recent_receipts=activity.get("receipts") or (),
+            recent_jobs=jobs,
+            base_url=_public_base_url(request),
+        )
+
+    return await asyncio.to_thread(build_catalog)
 
 
 app.include_router(create_workflows_catalog_router(_user_workflows_catalog_payload))
@@ -15656,7 +15708,8 @@ async def user_portal_activity(request: Request):
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = build_user_activity_snapshot(
+    snapshot = await asyncio.to_thread(
+        build_user_activity_snapshot,
         session,
         limit=limit if limit else 20,
         path=ADMIN_STORE.path,
@@ -15679,7 +15732,8 @@ async def user_portal_receipt_detail(request_id: str, request: Request):
     """
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        receipt = get_user_receipt(
+        receipt = await asyncio.to_thread(
+            get_user_receipt,
             session,
             request_id,
             path=ADMIN_STORE.path,
@@ -17225,7 +17279,7 @@ def _drain_authorize(request: Request, *, write: bool) -> Response | None:
 
 @app.get("/admin/api/drain", include_in_schema=False)
 async def admin_drain_status(request: Request):
-    denied = _drain_authorize(request, write=False)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=False)
     if denied is not None:
         return denied
     return JSONResponse(DRAIN_STATE.snapshot())
@@ -17234,7 +17288,7 @@ async def admin_drain_status(request: Request):
 @app.post("/admin/api/drain", include_in_schema=False)
 async def admin_drain_set(request: Request):
     """Set or clear the draining flag. Body: {"draining": bool, "ttl_s": num, "reason": str}."""
-    denied = _drain_authorize(request, write=True)
+    denied = await asyncio.to_thread(_drain_authorize, request, write=True)
     if denied is not None:
         return denied
     try:
@@ -17665,34 +17719,38 @@ async def list_voices(request: Request):
     if policy_response is not None:
         return policy_response
 
-    # Every voice that ?model= (by default the model a request without one uses) accepts: the
-    # voices its engines list, in engine order, then the other spellings that resolve to them.
-    model = request.query_params.get("model") or "tts-1"
-    try:
-        specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
-    except ModelCompatibilityError as exc:
-        if "model" in request.query_params:
-            return model_compatibility_error(exc)
-        specs = []
-    voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
-    # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
-    try:
-        after, limit = voices_api.parse_page_args(request)
-        mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
-    except custom_voices.VoiceError as exc:
-        return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
-    engines = _custom_voice_engines()
-    engines = [engine for engine in engines if _category_entry_visible(
-        auth_context, {"id": engine, "operation": "speech"},
-    )]
-    if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
-        mine, has_more = [], False
-    page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
-    if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
-        voices = []
-    engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
-                     if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
-    return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+    def build_listing():
+        # Every voice that ?model= (by default the model a request without one uses) accepts: the
+        # voices its engines list, in engine order, then the other spellings that resolve to them.
+        model = request.query_params.get("model") or "tts-1"
+        try:
+            specs = [spec for _engine, spec in _speech_model_engines(resolve_model_for_operation("speech", model))]
+        except ModelCompatibilityError as exc:
+            if "model" in request.query_params:
+                return model_compatibility_error(exc)
+            specs = []
+        voices = speech_voices.voice_listing(specs, _speech_voice_aliases())
+        # The caller's own custom voices, in OpenAI's list shape (object, data, first_id, last_id, has_more).
+        try:
+            after, limit = voices_api.parse_page_args(request)
+            mine, has_more = _voice_store().list_voices(_asset_owner_key(auth_context), after=after, limit=limit)
+        except custom_voices.VoiceError as exc:
+            return openai_error_response(exc.message, status_code=exc.status, param=exc.param, code=exc.code)
+        engines = _custom_voice_engines()
+        engines = [engine for engine in engines if _category_entry_visible(
+            auth_context, {"id": engine, "operation": "speech"},
+        )]
+        if not engines and not category_enforcement.visible(auth_context.identity, make_policy_request()):
+            mine, has_more = [], False
+        page = voices_api.list_page(mine, has_more, lambda meta: voices_api.voice_view(meta, engines))
+        if not _category_entry_visible(auth_context, {"id": model, "operation": "speech"}):
+            voices = []
+        engine_voices = {engine: view for engine, view in _speech_engine_voices().items()
+                         if _category_entry_visible(auth_context, {"id": engine, "operation": "speech"})}
+        return {"default_voice": specs[0].get("default_voice") if specs else None, "voices": voices, "engines": engine_voices, **page}
+
+    # Voice stores and category checks read SQLite and files: keep them off the event loop.
+    return await asyncio.to_thread(build_listing)
 
 
 @app.post("/openai/v1/audio/speech", openapi_extra=AUDIO_SPEECH_OPENAPI, response_class=Response)
@@ -26410,7 +26468,7 @@ async def retrieve_response(response_id: str, request: Request):
     if decision.denied:
         return _policy_denied_response(decision)
     try:
-        row = responses_store.get(response_id)
+        row = await asyncio.to_thread(responses_store.get, response_id)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] responses_store.get failed: {e}", flush=True)
         return _responses_error(f"Internal error: {e}", code="internal_error", status=500)
@@ -26441,7 +26499,7 @@ async def list_response_input_items(response_id: str, request: Request):
     )
     if decision.denied:
         return _policy_denied_response(decision)
-    row = responses_store.get(response_id)
+    row = await asyncio.to_thread(responses_store.get, response_id)
     if not _responses_row_visible(row, auth_context):
         return _responses_error(
             f"Response with id '{response_id}' not found.",
@@ -29068,6 +29126,8 @@ from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
+from gateway.request_connections import RequestConnectionsMiddleware
+app.add_middleware(RequestConnectionsMiddleware)
 
 
 # =============================================================================

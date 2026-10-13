@@ -21,7 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import admin_store, request_connections, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -1263,8 +1263,12 @@ def _usage_summary(
             )
             params.extend(sorted(owner_keys))
         clauses.append("(" + " OR ".join(ownership_clauses) + ")" if ownership_clauses else "0")
+    # The job list does not depend on the receipts, so read it while they load.
+    succeeded_jobs = request_connections.submit(
+        lambda: media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
+                                  status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path))
     # Aggregate every retained row in the period, rather than a recent-feed cap.
-    with sqlite_startup.connect_readonly(receipts_path) as conn:
+    with receipt_store.reader(receipts_path) as conn:
         rows = conn.execute(
             "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
             + " ORDER BY created_at DESC, request_id DESC", params,
@@ -1332,8 +1336,7 @@ def _usage_summary(
     receipts_by_id: dict[str, Mapping[str, Any]] = {}
     for receipt in receipts:
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
-    for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
-                                 status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
+    for job in succeeded_jobs.result():
         job_receipt = None
         for request_id in _job_receipt_ids(job):
             job_receipt = receipts_by_id.get(request_id)

@@ -313,7 +313,7 @@ test("Usage announces loading with the shared Busy status and no invented totals
   expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
   await act(async () => pending.resolve(Response.json({ media_count: 0, requests: 0 })));
   expect(await screen.findByText("No requests in this period")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/apps/");
+  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/apps");
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
