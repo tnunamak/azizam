@@ -1081,14 +1081,26 @@ if "-w" in args:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS models without key (required)", result.stdout)
 
-    def test_mode_mismatch_or_malformed_json_fails(self):
-        for kwargs in ({"mode": "required"}, {"status": 401, "body": '{"error":{}}'},
-                       {"body": "not json"}, {"body": '{"object":"list","data":[]}'},
-                       {"mode": "required", "status": 401, "body": "{}"}):
-            with self.subTest(kwargs=kwargs):
-                result = self.smoke(**kwargs)
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn("FAIL models without key", result.stdout)
+    def _assert_models_check_fails(self, **kwargs):
+        result = self.smoke(**kwargs)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL models without key", result.stdout)
+
+    # One method per case: each is a full smoke run, so they spread over workers.
+    def test_required_auth_rejects_success_response(self):
+        self._assert_models_check_fails(mode="required")
+
+    def test_bypass_rejects_unauthorized_response(self):
+        self._assert_models_check_fails(status=401, body='{"error":{}}')
+
+    def test_bypass_rejects_malformed_json(self):
+        self._assert_models_check_fails(body="not json")
+
+    def test_bypass_rejects_empty_model_list(self):
+        self._assert_models_check_fails(body='{"object":"list","data":[]}')
+
+    def test_required_auth_rejects_missing_json_error(self):
+        self._assert_models_check_fails(mode="required", status=401, body="{}")
 
     def test_unknown_auth_mode_is_usage_error(self):
         result = self.smoke(mode="auto")
