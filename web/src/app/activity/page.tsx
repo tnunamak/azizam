@@ -405,24 +405,32 @@ export default function ActivityPage() {
               title={
                 category || actor
                   ? "No matching changes"
-                  : "No changes yet"
+                  : automatedCount > 0 && !showAutomated
+                    ? "No visible changes"
+                    : "No changes yet"
               }
               description={
                 category || actor
-                  ? "Clear filters to see other changes."
-                  : "Changes to apps, keys and access plans appear here."
+                  ? "Changes to apps, keys and access plans appear here; none match these filters."
+                  : automatedCount > 0 && !showAutomated
+                    ? "Changes to apps, keys and access plans appear here; automated changes are currently hidden."
+                    : "Changes to apps, keys and access plans appear here."
               }
               action={
                 category || actor ? (
                   <Button
-                    variant="outline"
+                    size="sm"
                     onClick={clearFilters}
                   >
                     Clear filters
                   </Button>
+                ) : automatedCount > 0 && !showAutomated ? (
+                  <Button size="sm" onClick={() => setShowAutomated(true)}>
+                    Show automated changes
+                  </Button>
                 ) : (
-                  <Button asChild variant="outline">
-                    <Link prefetch={false} href="/apps/?action=create-key">Create an app</Link>
+                  <Button asChild size="sm">
+                    <Link prefetch={false} href="/">Go to Home</Link>
                   </Button>
                 )
               }

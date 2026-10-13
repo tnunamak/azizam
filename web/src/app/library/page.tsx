@@ -2844,16 +2844,16 @@ export default function LibraryPage() {
             title={activeFilters ? "No matching creations" : "No creations yet"}
             description={
               activeFilters
-                ? "Clear filters to see more."
+                ? "Your generated images, video and audio appear here; no creations match these filters."
                 : "Images, video and audio made through the gateway appear here."
             }
             action={
               activeFilters ? (
-                <Button variant="outline" onClick={clearFilters}>
+                <Button size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
               ) : (
-                <Button asChild>
+                <Button asChild size="sm">
                   <Link prefetch={false} href="/try/?capability=image">Make an image</Link>
                 </Button>
               )

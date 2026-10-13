@@ -332,18 +332,22 @@ export function Requests() {
               ? "No matching requests"
               : "No request receipts yet"
           }
-          description="Requests from apps and devices on your trusted network appear here."
+          description={
+            person || source !== "all"
+              ? "Receipts show request outcomes from your apps and devices; none match these filters."
+              : "Requests from apps and devices on your trusted network appear here."
+          }
           action={
             person || source !== "all" ? (
               <Button
-                variant="outline"
+                size="sm"
                 onClick={clearFilters}
               >
                 Clear filters
               </Button>
             ) : (
-              <Button asChild variant="outline">
-                <Link prefetch={false} href="/">Connect an app</Link>
+              <Button asChild size="sm">
+                <Link prefetch={false} href="/">Go to Home</Link>
               </Button>
             )
           }

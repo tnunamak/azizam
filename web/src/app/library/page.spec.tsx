@@ -627,6 +627,25 @@ describe("Library honesty and access", () => {
     vi.useRealTimers();
   });
 
+  test.each(["owner", "member"])("empty Library has a purpose and a reversible primary action for %s", async (role) => {
+    session.viewer = { role, name: "Alex" };
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([]) : undefined);
+    renderLibrary();
+    const empty = await screen.findByRole("region", { name: "No creations yet" });
+    expect(empty).toHaveAccessibleDescription("Images, video and audio made through the gateway appear here.");
+    expect(within(empty).getAllByRole("link")).toHaveLength(1);
+    expect(within(empty).getByRole("link", { name: "Make an image" })).toHaveAttribute("href", "/try?capability=image");
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
+    const filtered = await screen.findByRole("region", { name: "No matching creations" });
+    expect(filtered).toHaveAccessibleDescription("Your generated images, video and audio appear here; no creations match these filters.");
+    expect(within(filtered).getAllByRole("button")).toHaveLength(1);
+    expect(within(filtered).queryByRole("link")).toBeNull();
+    await userEvent.setup().click(within(filtered).getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByRole("region", { name: "No creations yet" })).toBeVisible();
+    if (role === "member") expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+  });
+
   test("two workflows sharing an intent keep their own name in the viewer", async () => {
     session.home = { receipts: [], capabilities: [{ use_name: "audio.generate.first-music", use_names: ["audio.generate.first-music", "audio.generate.yue2-song"], recommended_model: "First music model" }] };
     routeFetch((path) => path.startsWith("/me/api/media?")

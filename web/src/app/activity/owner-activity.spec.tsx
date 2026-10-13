@@ -235,12 +235,12 @@ it("announces loading changes without claiming that an empty list is ready", () 
   expect(screen.queryByText("Ready")).toBeNull();
 });
 
-it("keeps the shared page header and empty panel with its existing action", async () => {
+it("keeps the shared page header and empty panel with a role-safe action", async () => {
   mount();
   expect(screen.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
   const label = await screen.findByText("No changes yet");
   expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
-  expect(screen.getByRole("link", { name: "Create an app" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Go to Home" })).toBeVisible();
 });
 
 it("names a changes load error in an alert and retries the same query", async () => {
@@ -291,7 +291,7 @@ it("keeps request errors distinct from empty results and retries", async () => {
   const label = await screen.findByText("No request receipts yet");
   expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
   expect(screen.getByText("Requests from apps and devices on your trusted network appear here.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/");
+  expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -474,12 +474,12 @@ it("COPY-10 filtered changes guidance", async () => {
   const user = userEvent.setup();
   mount();
   expect(await screen.findByText("Changes to apps, keys and access plans appear here.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Create an app" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Go to Home" })).toBeVisible();
   await user.click(screen.getByRole("combobox", { name: "Change type" }));
   await user.click(screen.getByRole("option", { name: "Apps" }));
   expect(await screen.findByText("No matching changes")).toBeVisible();
-  expect(screen.getByText("Clear filters to see other changes.")).toBeVisible();
-  expect(screen.queryByRole("link", { name: "Create an app" })).toBeNull();
+  expect(screen.getByText("Changes to apps, keys and access plans appear here; none match these filters.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Go to Home" })).toBeNull();
   expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(2);
 });
 
