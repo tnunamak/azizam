@@ -6,6 +6,7 @@ All backend I/O is a recording tripwire; this module never contacts a model.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import socket
@@ -54,6 +55,11 @@ class _BoundedApp:
     past it comes back as an empty 500. HTTP gets a far larger bound: under
     load, POST /me/api/make/jobs (several SQLite commits plus the worker's
     refusal in the same event loop) took longer than 3 s.
+
+    A queued make job runs as a task on this request's event loop, and
+    TestClient closes that loop (cancelling the task) once the app returns.
+    So wait here for the jobs this request scheduled to settle; otherwise the
+    inventory reads a job that is still running.
     """
 
     def __init__(self, app):
@@ -63,6 +69,10 @@ class _BoundedApp:
         limit = REQUEST_TIMEOUT if scope["type"] == "websocket" else HTTP_REQUEST_TIMEOUT
         with anyio.fail_after(limit):
             await self.app(scope, receive, send)
+            loop = asyncio.get_running_loop()
+            jobs = [task for task in proxy._image_media_job_tasks if task.get_loop() is loop]
+            if jobs:
+                await asyncio.wait(jobs)
 
 
 @pytest.fixture
@@ -1265,6 +1275,41 @@ def test_http_category_resolved_check_inventory(gateway, monkeypatch):
     _http_inventory(gateway, title="Category resolved-service check")
     jobs = gateway.member_client.get("/me/api/make/jobs", headers=gateway.session_headers).json()["jobs"]
     assert all(job["status"] != "succeeded" and not job.get("assets") for job in jobs), jobs
+
+
+def _after_loop_turns(turns):
+    """A future that resolves once the event loop has run ``turns`` more times."""
+    loop = asyncio.get_running_loop()
+    done = loop.create_future()
+
+    def turn(left):
+        if left:
+            loop.call_soon(turn, left - 1)
+        else:
+            done.set_result(None)
+
+    loop.call_soon(turn, turns)
+    return done
+
+
+def test_queued_make_job_is_read_after_the_worker_settles_it(gateway, monkeypatch):
+    # The worker refuses the job after the request is done (10k loop turns is
+    # far more than the request awaits after it queues the job); the
+    # inventory must judge the settled job, not one still running.
+    execute = proxy._SessionMakeRuntime.execute
+
+    async def execute_late(self, payload):
+        await _after_loop_turns(10_000)
+        return await execute(self, payload)
+
+    monkeypatch.setattr(proxy._SessionMakeRuntime, "execute", execute_late)
+    response = gateway.member_client.post(
+        "/me/api/make/jobs", headers=gateway.session_headers,
+        json={"intent": "image.generate", "model": "image", "prompt": "hi"},
+    )
+    assert response.status_code == 202, response.text
+    job = media_jobs.get(response.json()["job"]["job_id"], path=gateway.paths["media_jobs"])
+    assert job["status"] == media_jobs.STATUS_FAILED, job
 
 
 def _websocket_inventory(gateway, title=None):
