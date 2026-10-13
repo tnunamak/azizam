@@ -24,7 +24,8 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, mcp_oauth, media_jobs
+from gateway import accounts, admin_store, mcp_oauth, media_jobs
+from tests.support.access import store_plan
 
 BASE = "https://gw.test"
 CALLBACK = "https://client.example/callback"
@@ -46,8 +47,6 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         for target, name, value in (
             (proxy.ADMIN_STORE, "path", self.admin),
             (media_jobs, "DB_PATH", root / "jobs.db"),
-            (proxy, "AUTH_ENABLED", True),
-            (proxy, "LAN_BYPASS_ENABLED", False),
             (proxy, "_public_base_url", lambda request: BASE),
             (proxy, "_oidc_session_from_request",
              lambda request: SimpleNamespace(subject=request.headers["x-test-person"])
@@ -59,6 +58,9 @@ class McpAuthorizationWiringTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
         proxy.MCP_OAUTH.register_limit = mcp_oauth._RateLimit(1000, 3600)
         self.person = admin_store.upsert_oidc_user("issuer", "ann", email="ann@example.test", path=self.admin)
+        accounts.initialize(self.admin)
+        self.plan = store_plan("Ann's plan", path=self.admin)
+        accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=self.plan["id"])
         self.client = TestClient(proxy.app, base_url=BASE, follow_redirects=False)
 
     # ---- client side of the protocol
@@ -161,7 +163,8 @@ class McpAuthorizationWiringTests(unittest.TestCase):
         self.assertEqual(metadata["code_challenge_methods_supported"], ["S256"])
 
     def test_api_key_mode_still_works(self) -> None:
-        app = admin_store.create_app("Key app", kind="personal", owner_user_id=self.person["id"], path=self.admin)
+        app = admin_store.create_app("Key app", kind="personal", owner_user_id=self.person["id"],
+                                     access_plan="person", path=self.admin)
         key = "opk_" + secrets.token_urlsafe(24)
         admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"],
                                            hash=proxy.hash_api_key(key), prefix=key[:8], path=self.admin)
@@ -219,7 +222,31 @@ class McpAuthorizationWiringTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self.post(token, "tools/list", modern=True).status_code, 403)
 
-    def test_invalid_oauth_token_never_falls_through_to_lan_bypass(self) -> None:
-        with patch.object(proxy, "_client_is_lan", lambda request: True):
-            resp = self.post(mcp_oauth.ACCESS_TOKEN_PREFIX + "forged", "tools/list", modern=True)
+    def test_invalid_oauth_token_is_never_treated_as_an_app_key(self) -> None:
+        resp = self.post(mcp_oauth.ACCESS_TOKEN_PREFIX + "forged", "tools/list", modern=True)
         self.assertEqual(resp.status_code, 401)
+
+    def test_a_person_without_an_access_plan_cannot_connect(self) -> None:
+        accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=None)
+        metadata = self.discover()
+        verifier = secrets.token_urlsafe(48)
+        start = self.client.get(urlsplit(metadata["authorization_endpoint"]).path, params={
+            "response_type": "code", "client_id": self.register(metadata), "redirect_uri": CALLBACK, "state": "s",
+            "code_challenge": create_s256_code_challenge(verifier), "code_challenge_method": "S256",
+            "resource": f"{BASE}/mcp", "scope": "mcp"})
+        request_id = parse_qs(urlsplit(start.headers["location"]).query)["request"][0]
+        details = self.client.get(f"/me/api/mcp/requests/{request_id}", headers={"x-test-person": self.person["id"]})
+        self.assertEqual(details.status_code, 200, details.text)
+        self.assertFalse(details.json()["can_connect"])
+        self.assertEqual(details.json()["plan"]["name"], "No access plan")
+
+    def test_token_work_runs_under_the_persons_current_access_plan(self) -> None:
+        metadata = self.discover()
+        token = self.sign_in(metadata, self.register(metadata))["access_token"]
+        dispatched = {"authorization": f"Bearer {token}", "x-azizam-mcp-dispatch": proxy._MCP_DISPATCH_SECRET}
+        accounts.change_person(self.person["id"], "test", path=self.admin, plan_id=None)
+        # Deny by default: with no plan, a core route refuses the token's work.
+        refused = self.client.post("/v1/chat/completions", headers=dispatched,
+                                   json={"model": "default", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertEqual(refused.json()["error"]["code"], "no_access_plan")

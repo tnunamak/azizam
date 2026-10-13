@@ -21,7 +21,7 @@ import httpx
 import pytest
 
 import proxy
-from gateway import admin_store, receipt_store
+from gateway import accounts, admin_store, receipt_store
 from gateway.runtime_auth import hash_api_key
 from gateway.admin_oidc import CookieConfig, encode_session_cookie, session_from_claims
 from tests.test_proxy_admin_integration import _test_backend_grid, _test_status_projection
@@ -68,7 +68,6 @@ def gateway(tmp_path, monkeypatch):
     admin_store.init_db(db)
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", _test_status_projection)
     monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", _test_backend_grid)
     monkeypatch.setattr(proxy, "currently_loaded_model", lambda *a, **k: None)
@@ -86,6 +85,8 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", cookie)
     user = admin_store.upsert_oidc_user("https://idp.example", "owner", email="owner@example.com", path=db)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"], granted_by="test", path=db)
+    accounts.initialize(db)
+    admin_store.seed_first_owner_plan(user["id"], path=db)
     app = admin_store.ensure_personal_app_for_user(user["id"], path=db)
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("guard-key"),
                                        prefix="masked", path=db)
