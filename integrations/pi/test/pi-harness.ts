@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -20,10 +20,21 @@ export interface PiSession {
 	close(): Promise<void>;
 }
 
+/**
+ * Pi guards its stores with proper-lockfile directories (`<store>.lock`, stale after 30 s). A Pi that exits while it is
+ * between creating a lock directory and registering it for exit cleanup leaves the directory behind, and the next Pi
+ * on the same agent dir then waits up to 30 s for it with no output (the 20 s waitFor timeout, `last=[]`).
+ * The owner has exited by the time close() gets here, so no live process can hold these locks: remove them.
+ */
+function removeOrphanedLocks(agentDir: string): void {
+	if (!existsSync(agentDir)) return;
+	for (const name of readdirSync(agentDir)) if (name.endsWith(".lock")) rmSync(join(agentDir, name), { recursive: true, force: true });
+}
+
 /** Start `pi --mode rpc --no-session` with an isolated agent dir and the extension loaded from source. */
-export function startPi(options: { agentDir: string; env?: Record<string, string>; args?: string[]; viaPackage?: boolean; noExtension?: boolean }): PiSession {
+export function startPi(options: { agentDir: string; env?: Record<string, string>; args?: string[]; viaPackage?: boolean; noExtension?: boolean; bin?: string }): PiSession {
 	const child: ChildProcessWithoutNullStreams = spawn(
-		findPi()!,
+		options.bin ?? findPi()!,
 		["--mode", "rpc", "--no-session", ...(options.viaPackage || options.noExtension ? [] : ["--extension", ENTRY]), ...(options.args ?? [])],
 		{ env: { ...process.env, PI_CODING_AGENT_DIR: options.agentDir, ...options.env }, stdio: "pipe" },
 	);
@@ -63,11 +74,15 @@ export function startPi(options: { agentDir: string; env?: Record<string, string
 			child.stdin.write(`${JSON.stringify({ id, ...command })}\n`);
 			return waitFor((e) => e.type === "response" && e.id === id);
 		},
-		close: () => new Promise((done) => {
-			if (child.exitCode !== null) return done();
-			child.once("exit", () => done());
-			child.stdin.end();
-			setTimeout(() => child.kill("SIGKILL"), 3000).unref();
-		}),
+		close: async () => {
+			if (child.exitCode === null) {
+				await new Promise<void>((done) => {
+					child.once("exit", () => done());
+					child.stdin.end();
+					setTimeout(() => child.kill("SIGKILL"), 3000).unref();
+				});
+			}
+			removeOrphanedLocks(options.agentDir);
+		},
 	};
 }

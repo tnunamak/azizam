@@ -25,7 +25,7 @@ playwright = 445  # +20 G2-FIN intercept-oracle spec, -1 voiceover case moved to
 # cases (tests/showcase/core.test.mjs). 5 + 78 + 20 = 103. The showcase file's
 # Python wrapper (test_node_suite_passes, always skipped in the sandbox) is
 # deleted; pytest is left at its ceiling for S14 to lower.
-node = 103
+node = 104  # +1: FLAKEPI (integrations/pi/test/pi-harness.test.ts: close() removes an orphaned store lock)
 
 # Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
 # new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
