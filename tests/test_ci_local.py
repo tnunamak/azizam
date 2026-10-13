@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
+COPIED = ("scripts/ci-local", "scripts/low-priority", "scripts/ci/merge_cases.py", "scripts/ci/policy.py", "scripts/ci/prune_receipts.py", "scripts/ci/replay_scan.py", "scripts/ci/pi-unit")
 
 STUBS = {
     # Tools on PATH.
@@ -247,6 +247,36 @@ def test_only_the_latest_failed_run_directory_is_kept(world: World) -> None:
     assert world.run().returncode == 0
     assert world.run_dirs() == [newer]
     assert (world.receipts / "cases.jsonl").is_file()  # receipts live outside the run directory
+
+
+def test_a_killed_runs_directory_goes_at_the_next_start_and_the_kept_failure_stays(world: World) -> None:
+    failed = world.run(FAKE_VITEST_STATUS="failed")
+    [kept] = world.run_dirs()
+    assert f"kept the failed run's directory for debugging: {kept}" in failed.stdout
+    killed = world.home / ".tmp" / "azizam-ci-local.SIGKILLED"
+    (killed / "python").mkdir(parents=True)
+    (killed / ".ci-local-run").touch()
+    (killed / "python" / "copy").write_text("x")
+    assert world.run().returncode == 0
+    assert world.run_dirs() == [kept]
+
+
+def test_the_gate_compacts_old_receipts_at_start(world: World) -> None:
+    root = world.home / ".tmp" / "azizam-ci-receipts"
+    old = []
+    for index in range(25):
+        run = root / f"{index:040x}"
+        (run / "logs").mkdir(parents=True)
+        (run / "logs" / "a.log").write_text("log")
+        (run / "run.tsv").write_text("sha\tx\n")
+        (run / "PASS").write_text("x")
+        stamp = time.time() - (100 + index) * 3600
+        os.utime(run / "run.tsv", (stamp, stamp))
+        old.append(run)
+    assert world.run().returncode == 0
+    assert (old[0] / "logs" / "a.log").is_file() and (old[18] / "logs" / "a.log").is_file()
+    assert not (old[24] / "logs").exists() and (old[24] / "PASS").is_file() and (old[24] / "run.tsv").is_file()
+    assert (world.receipts / "cases.jsonl").is_file()
 
 
 # ci-local writes "pid <pid> sha ..." into the lock file it holds.

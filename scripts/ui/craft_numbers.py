@@ -254,6 +254,9 @@ def stop_fixture(server: subprocess.Popen) -> None:
 
 
 def main() -> int:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import scratch_owner
+    scratch_owner.exit_on_signals()  # TERM must reach the finally below, which removes the work directory
     cfg = json.loads(CONFIG.read_text())
     fail = "--fail" in sys.argv
     routes = [r for r in (arg("--routes") or "").split(",") if r] or (

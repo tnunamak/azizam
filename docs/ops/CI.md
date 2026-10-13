@@ -29,6 +29,17 @@ were still stored.
   ci-local then keeps it, prints its path and records it in
   `~/.tmp/azizam-ci-local.kept`; the next failed run deletes it. A run
   directory left by a killed `ci-local` is deleted by the next run.
+- At the start of each run, receipts are pruned (`scripts/ci/prune_receipts.py`):
+  the newest 20 runs, and any run with a signoff receipt from the last 7 days,
+  keep everything. Older runs keep only `run.tsv`, `PASS`, `FAIL` and
+  `signoff-*.tsv`.
+- Every test harness deletes its own scratch directory when it ends (trap on
+  EXIT, HUP, INT and TERM). A SIGKILL runs no trap, so each directory holds a
+  `.scratch-owner` marker (`<pid>-<start time>`) and the next start of that
+  harness deletes the directories whose owner is dead
+  (`scripts/lib/scratch.sh`, `scripts/scratch_owner.py`). A new harness that
+  makes a scratch directory must use one of them. Fixture gateways and copies
+  of owner data must never outlive the run.
 - Only one `ci-local` runs at a time on the host: it holds
   `flock ~/.tmp/azizam-ci.lock` for the whole run, and a second run waits
   (the lock file names the last `ci-local` that held it). Every job inherits

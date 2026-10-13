@@ -28,6 +28,8 @@ import zlib
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
+from scripts import scratch_owner  # noqa: E402
+
 OWNER_EMAIL = "owner-live-data@example.test"
 MEMBER_EMAIL = "member-live-data@example.test"
 PASSWORD = "Live data browser password 2026"
@@ -252,9 +254,12 @@ def serve(state_base: Path, port: int, copy_from: Path | None = None, restarted:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if copy_from is None:
+        scratch_owner.sweep(state_base, "live-data-")  # what a SIGKILLed server left
     holder = _copy_state_dir() if copy_from is not None else tempfile.TemporaryDirectory(prefix="live-data-", dir=state_base)
     with holder as temp:
         state = Path(temp)
+        scratch_owner.mark(state)
         if copy_from is not None:
             # Copy mode: production data, copied; the gateway runs behind the connection guard.
             from scripts.ui import live_data_copy

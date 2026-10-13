@@ -358,6 +358,13 @@ def ffmpeg_concat_audio(parts: list[bytes], pad_s: float = 0.4) -> bytes:
     tmp = Path(os.environ.get("HOME", ".")) / ".tmp" / "showcase-concat"
     tmp.mkdir(parents=True, exist_ok=True)
     names = []
+    try:
+        return _concat(parts, pad_s, tmp, names)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _concat(parts: list[bytes], pad_s: float, tmp: Path, names: list[Path]) -> bytes:
     for i, p in enumerate(parts):
         f = tmp / f"p{i}.mp3"
         f.write_bytes(p)
@@ -367,9 +374,7 @@ def ffmpeg_concat_audio(parts: list[bytes], pad_s: float = 0.4) -> bytes:
     filt += "".join(f"[a{i}]" for i in range(len(names))) + f"concat=n={len(names)}:v=0:a=1[o]"
     out = tmp / "out.wav"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", filt, "-map", "[o]", str(out)], check=True)
-    data = out.read_bytes()
-    shutil.rmtree(tmp, ignore_errors=True)
-    return data
+    return out.read_bytes()
 
 
 def to_wav(mp3: bytes) -> bytes:

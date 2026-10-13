@@ -79,12 +79,17 @@ for env_name in AZIZAM_PORT HARNESS_PORT; do
 done
 
 # -- Temp workspace -------------------------------------------------------------
+source "$(dirname "${BASH_SOURCE[0]}")/lib/scratch.sh"
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   mkdir -p "$HOME/.tmp"
+  scratch_sweep "$HOME/.tmp" gw-ux-p1b-
   TMPDIR_ROOT=$(mktemp -d "$HOME/.tmp/gw-ux-p1b-XXXXXX")
 else
+  scratch_sweep /tmp azizam-fresh-
   TMPDIR_ROOT=$(mktemp -d /tmp/azizam-fresh-XXXXXX)
 fi
+scratch_mark "$TMPDIR_ROOT"
+scratch_on_signal
 
 cleanup_fixture() {
   if [[ "$FIXTURE_MODE" == 1 && -n "${PROXY_PID:-}" ]]; then

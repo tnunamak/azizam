@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove pytest tmpfs allocations whose runner is dead.  The runner names each allocation
+# Remove pytest allocations (tmpfs TMPDIR or disk state dirs) whose runner is dead.  The runner names each allocation
 # azizam-pytest.<runner pid>-<runner start time>.<random>; a SIGKILLed runner cannot run its
 # cleanup trap, so the next run sweeps what a dead owner left.  An allocation whose owner is
 # alive with the same start time (a concurrent run) is kept, as is any name without an owner.

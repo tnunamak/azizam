@@ -6,6 +6,7 @@ set -euo pipefail
 [[ -n ${AZIZAM_PRIORITY_SET:-} ]] || exec "${BASH_SOURCE[0]%/*}/low-priority" "${BASH_SOURCE[0]}" "$@"
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$repo_root/scripts/lib/scratch.sh"
 state_root="$HOME/.tmp"
 lock_file="$repo_root/tests/requirements-hermetic.lock"
 python_store="$state_root/azizam-hermetic-python"
@@ -40,11 +41,29 @@ input_sha256=$(sha256sum "$repo_root/tests/requirements-hermetic.in" | awk '{pri
 checkout_head=$(git -C "$repo_root" rev-parse HEAD)
 
 mkdir -p -- "$state_root"
-state_dir=$(mktemp -d "$state_root/azizam-pytest.XXXXXXXX")
+# Name each allocation after this runner (pid + start time) so a later run can
+# sweep what a SIGKILLed one left: an EXIT trap does not run on SIGKILL.
+read -r -a own_stat < <(sed 's/^.*) //' "/proc/$$/stat")  # start time is field 20 after "(comm)"
+owner_tag="$$-${own_stat[19]}"
+"$repo_root/scripts/sweep-stale-pytest-tmpfs.sh" "$state_root" 2>/dev/null || true
+state_dir=$(mktemp -d "$state_root/azizam-pytest.$owner_tag.XXXXXXXX")
 tmpfs_tmp=
 tmpfs_fallback=
-cleanup() { rm -rf -- "$state_dir" ${tmpfs_tmp:+"$tmpfs_tmp"}; if ((created_cache_mount_dir)); then rmdir -- "$repo_root/cache"; fi; }
-trap cleanup EXIT HUP INT TERM
+bwrap_pid=
+cleanup() {
+  trap '' HUP INT TERM
+  # bwrap runs in the background (below), so a signal reaches this trap at once and not after the tests end.
+  if [[ -n $bwrap_pid ]]; then
+    kill -TERM -- "$bwrap_pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do kill -0 -- "$bwrap_pid" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL -- "$bwrap_pid" 2>/dev/null || true
+    wait "$bwrap_pid" 2>/dev/null || true
+  fi
+  rm -rf -- "$state_dir" ${tmpfs_tmp:+"$tmpfs_tmp"}
+  if ((created_cache_mount_dir)); then rmdir -- "$repo_root/cache"; fi
+}
+trap cleanup EXIT
+scratch_on_signal
 checkout_root="$state_dir/checkout"
 mkdir -p -- "$checkout_root"
 git -C "$repo_root" archive --format=tar HEAD | tar -x -C "$checkout_root"
@@ -65,8 +84,6 @@ tmpfs_min_kib=${AZIZAM_PYTEST_TMPFS_MIN_KIB:-4194304}
 # A SIGKILLed runner leaves its allocation behind (no trap runs), so sweep dead owners first, before measuring free space.
 "$repo_root/scripts/sweep-stale-pytest-tmpfs.sh" "$tmpfs_root" 2>/dev/null || true
 tmpfs_free_kib=$(df --output=avail -k -- "$tmpfs_root" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
-read -r -a own_stat < <(sed 's/^.*) //' "/proc/$$/stat")  # start time is field 20 after "(comm)"
-owner_tag="$$-${own_stat[19]}"
 if [[ $(stat -f -c %T -- "$tmpfs_root" 2>/dev/null || true) == tmpfs && ${tmpfs_free_kib:-0} -ge $tmpfs_min_kib ]] \
    && tmpfs_tmp=$(mktemp -d "$tmpfs_root/azizam-pytest.$owner_tag.XXXXXXXX" 2>/dev/null); then
   tmpfs_source=$tmpfs_tmp
@@ -169,7 +186,10 @@ else
   fi
 fi
 rc=0
-bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}" || rc=$?
+bwrap "${bwrap_args[@]}" --chdir "$checkout_root" -- /bin/bash -ceu "$namespace_command" bash "${test_command[@]}" <&0 &
+bwrap_pid=$!
+wait "$bwrap_pid" || rc=$?
+bwrap_pid=
 if [[ -n $junit_out ]]; then
   if [[ -e $junit_out ]]; then
     echo "error: $junit_out appeared during the run; not replacing it" >&2; ((rc)) || rc=1

@@ -28,6 +28,10 @@ if not 18000 <= PORT < 18999:
 # Use a disk-backed, test-owned directory; do not inherit operator environment.
 state_base = Path(os.environ.get('UI_E2E_STATE_ROOT', str(REPO / '.ui-e2e-state')))
 state_base.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(REPO))
+from scripts import scratch_owner  # noqa: E402
+
+scratch_owner.sweep(state_base, 'run-')  # what a SIGKILLed server left
 children = []
 
 
@@ -39,6 +43,7 @@ signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     state = Path(temp)
+    scratch_owner.mark(state)
     home = state / 'home'
     home.mkdir()
     (state / 'images').mkdir()
