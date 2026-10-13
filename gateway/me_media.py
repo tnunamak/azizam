@@ -1427,7 +1427,8 @@ def _usage_summary(
     apps = _Apps(admin_db_path)  # apps and credential links, read once for the whole summary
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
-    clauses = ["created_at >= ?", "parent_request_id IS NULL"]
+    # The unary plus keeps SQLite on the created_at index: with it the planner reads every top-level receipt.
+    clauses = ["created_at >= ?", "+parent_request_id IS NULL"]
     params: list[Any] = [start]
     media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
     owner_keys = _credential_hashes_for_scope(media_scope, admin_db_path)

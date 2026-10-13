@@ -615,7 +615,9 @@ def recent(
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
     if outer_only:
-        clauses.append("parent_request_id IS NULL")
+        # The unary plus keeps SQLite on the created_at index. Without it the planner takes the
+        # parent_request_id index and sorts every top-level receipt to return a handful.
+        clauses.append("+parent_request_id IS NULL")
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
 

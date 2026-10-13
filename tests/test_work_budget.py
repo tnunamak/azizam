@@ -524,3 +524,40 @@ def test_the_newest_external_request_is_found_in_constant_work(tmp_path: Path) -
     assert small["recorded"] and large["recorded"]
     assert small["observed_at_s"] == 1_700_000_000 + 199 and large["observed_at_s"] == 1_700_000_000 + 3999
     assert large_steps <= small_steps + 5, f"{small_steps} steps for 200 receipts, {large_steps} for 4000"
+
+
+# -- receipt queries: the plan must not read every top-level receipt ---------------------
+
+def test_receipt_queries_use_the_created_at_index_not_the_parent_index(tmp_path: Path) -> None:
+    import sqlite3
+    import time as _time
+    from unittest.mock import patch
+
+    from gateway import availability
+
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = int(_time.time())
+    for n in range(300):
+        receipt_store.record(RouteReceipt(
+            protocol="openai.chat", intent="chat", path="/v1/chat/completions", request_id=f"req_plan_{n}",
+            requested_model="m", resolved_model="m", status="succeeded", accepted_at_ms=(now - n) * 1000,
+        ), path=db, created_at=now - n)
+    seen: list[str] = []
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        connection = real(*args, **kwargs)
+        connection.set_trace_callback(seen.append)
+        return connection
+
+    with patch.object(sqlite3, "connect", connect):
+        receipt_store.recent(limit=5, path=db)
+        availability.evidence_from_receipt_store(db)
+    queries = [statement for statement in seen if "FROM receipts" in statement and "parent_request_id" in statement]
+    assert len(queries) >= 2, queries
+    with sqlite3.connect(db) as conn:
+        for statement in queries:
+            plan = " ".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + statement))
+            assert "receipts_parent" not in plan, f"reads every top-level receipt: {statement[:90]} -> {plan}"
+            assert "receipts_created_at" in plan, plan

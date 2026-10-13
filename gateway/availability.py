@@ -340,7 +340,9 @@ def evidence_from_receipt_store(
         for (request_id, created_at, status, service_id, service_dash, backend, updated_ms,
              accepted_ms, status_code, metadata_code) in conn.execute(
             f"SELECT {_EVIDENCE_COLUMNS} FROM receipts "
-            "WHERE parent_request_id IS NULL AND created_at >= ? "
+            # The unary plus keeps SQLite on the created_at index; without it the planner reads
+            # and sorts every top-level receipt ever recorded.
+            "WHERE +parent_request_id IS NULL AND created_at >= ? "
             "ORDER BY created_at DESC, request_id DESC LIMIT ?",
             (now_s - max_age_s - EVIDENCE_SCAN_SLACK_S, int(scan_limit)),
         ):
