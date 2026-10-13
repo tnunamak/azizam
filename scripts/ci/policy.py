@@ -33,7 +33,15 @@ merge_cases.py. Rules, each failing the step with one line per violation:
 - hygiene: in browser test code (web/e2e and *.e2e.* / *.playwright.* files
   under web/src) each pattern of TEST_STRATEGY.md 3.4 rules 1-3 occurs no
   more often than its tests/budgets.toml [hygiene] ceiling. The ceilings only
-  fall; S14 takes them to 0.
+  fall; they are all 0 (malformed_stub counts the stubs that say why they are
+  unlike the server).
+- replay: no credential prefix (opk_, oak_, sk-), bearer token, home path or
+  private (LAN) address in a replay transcript, its media or any fixtures
+  directory; at most 256 KiB of metadata per transcript and 20 MiB for the whole
+  corpus (scripts/ci/replay_scan.py, TEST_STRATEGY.md 4.7). A line names the
+  file and the category, never the value. Every synthetic request set also has
+  one cell in tests/live/rp_cells.toml: recorded (its transcript exists) or
+  pending with owner, reason and an unexpired expires_on within 90 days.
 """
 
 from __future__ import annotations
@@ -47,6 +55,9 @@ import sys
 import tomllib
 from collections import defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import replay_scan  # noqa: E402
 
 # Dependencies and tool output only: a pruned name hides any test file below it.
 PRUNED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".ci-fresh-venv",
@@ -81,7 +92,15 @@ HYGIENE_PATTERNS = {
     # lets two copies of a case overwrite each other.
     "absolute_home_path": re.compile(r"""["'`]/home/[A-Za-z0-9_.-]+/"""),
     "bare_isVisible": re.compile(r"\??\.isVisible\s*\("),
+    # A stub answered with route.fulfill() skips the check against the real
+    # gateway that web/e2e/fixtures/intercept.ts (fulfilJson, fulfilBytes) makes.
+    "raw_fulfil": re.compile(r"\.fulfill\s*\("),
+    # A JSON stub marked as deliberately unlike the server (a resilience test).
+    "malformed_stub": re.compile(r"\bmalformed\s*:"),
 }
+# Patterns that look only at TypeScript files outside the intercept helper.
+INTERCEPT_HELPER = "web/e2e/fixtures/intercept"
+STUB_PATTERNS = {"raw_fulfil", "malformed_stub"}
 BROWSER_CODE = re.compile(r"\.(e2e|playwright)\.|\.household\.ts$")
 QUARANTINE_MARKER = re.compile(r"\bmark\.quarantine\b|@quarantine\b|\btest(\.describe)?\.quarantine\b")
 
@@ -256,7 +275,10 @@ def check_hygiene(root: Path, files: list[str], budgets: dict) -> tuple[list[str
     counts = dict.fromkeys(HYGIENE_PATTERNS, 0)
     for relative in browser_code(files):
         text = read(root, relative)
+        stubs_checked = relative.endswith((".ts", ".tsx")) and not relative.startswith(INTERCEPT_HELPER)
         for name, pattern in HYGIENE_PATTERNS.items():
+            if name in STUB_PATTERNS and not stubs_checked:
+                continue
             counts[name] += len(pattern.findall(text))
     ceilings = budgets.get("hygiene", {})
     problems = []
@@ -305,7 +327,8 @@ def main() -> None:
     hygiene_problems, hygiene = check_hygiene(root, files, budgets)
     problems = (check_retries(root, code, cases) + check_discovery(tests, cases, suites, args.today)
                 + check_skips(cases, suites) + check_quarantine(root, files, code) + count_problems
-                + hygiene_problems + check_fixture_import(root, files))
+                + hygiene_problems + check_fixture_import(root, files) + replay_scan.check_root(root)
+                + replay_scan.check_cells(root, args.today))
     for problem in problems:
         print(f"policy: {problem}")
     summary = ", ".join(f"{framework} {count}" for framework, count in counts.items())

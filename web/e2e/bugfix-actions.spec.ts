@@ -1,4 +1,5 @@
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_STATE_TAG }, async ({
   page,
@@ -66,11 +67,10 @@ test("audio capability never selects an image-only workflow", async ({
   page,
 }) => {
   await page.route("**/me/api/models/catalog", (route) =>
-    route.fulfill({ json: { aliases: [], models: [] } }),
+    fulfilJson(route, { aliases: [], models: [] }),
   );
   await page.route("**/me/api/workflows", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         workflows: [
           {
             id: "image-only",
@@ -79,8 +79,7 @@ test("audio capability never selects an image-only workflow", async ({
             inputs: [],
           },
         ],
-      },
-    }),
+      }),
   );
   await page.goto("/try/?capability=audio&model=audio");
   await expect(

@@ -1,13 +1,13 @@
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("health popover explains a measured outage and links to Status", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         status: {
           current_health: {
             state: "warn",
@@ -31,8 +31,7 @@ test("health popover explains a measured outage and links to Status", async ({
             ],
           },
         },
-      },
-    }),
+      }),
   );
   // The fixture gateway measures every capability it offers (its composed
   // workflows read their own engines). Add one Images capability with no
@@ -52,7 +51,7 @@ test("health popover explains a measured outage and links to Status", async ({
         reason_code: "unknown",
       },
     ];
-    await route.fulfill({ json: home });
+    await fulfilJson(route, home);
   });
   await page.goto("/models/");
   // The owner alert reports the engine fault, while the capability has no

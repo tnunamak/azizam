@@ -57,6 +57,14 @@ _TRANSFORMS = _REPO_ROOT / "gateway" / "transforms.py"
 _QUARANTINE = _REPO_ROOT / "gateway" / "engine_quarantine.py"
 
 _FAKE_UPSTREAM = _REPO_ROOT / "tests" / "support" / "fake_upstream"
+# The replay machinery (recorder, allowlists, normalizers, live canaries) is scanned
+# like core code too: it branches on protocol, capability and step type only.
+_REPLAY_CODE = [
+    *sorted((_REPO_ROOT / "tests" / "support" / "replay").rglob("*.py")),
+    *sorted((_REPO_ROOT / "tests" / "live").rglob("*.py")),
+    _REPO_ROOT / "scripts" / "record-upstream",
+    _REPO_ROOT / "scripts" / "ci" / "replay_scan.py",
+]
 
 
 def _core_files() -> list[Path]:
@@ -69,6 +77,7 @@ def _core_files() -> list[Path]:
         _PROXY,
         *sorted((_REPO_ROOT / "gateway").rglob("*.py")),
         *sorted(_FAKE_UPSTREAM.rglob("*.py")),
+        *_REPLAY_CODE,
     ]
 
 
@@ -750,6 +759,17 @@ class TestEngineKnowledgeBoundary:
             _source_lines=[("tests/support/fake_upstream/app.py", ['if upstream.engine == "ollama": pass'])]
         )
         assert [v.split(": ", 1)[0] for v in violations] == ["tests/support/fake_upstream/app.py:1"]
+
+    def test_guard_scans_the_replay_recorder_and_normalizers(self) -> None:
+        """The RP recorder, allowlists, canaries validator and scan are scanned like core code."""
+        scanned = {path.relative_to(_REPO_ROOT).as_posix() for path in _core_files()}
+        for expected in ("tests/support/replay/recorder.py", "tests/support/replay/allowlist.py",
+                         "tests/support/replay/canaries.py", "scripts/record-upstream", "scripts/ci/replay_scan.py"):
+            assert expected in scanned, expected
+        violations = _check_engine_named_branches(
+            _source_lines=[("tests/support/replay/recorder.py", ['if service["engine"] == "vllm": pass'])]
+        )
+        assert [v.split(": ", 1)[0] for v in violations] == ["tests/support/replay/recorder.py:1"]
 
     def test_multiline_and_expression_engine_branches_are_caught(self) -> None:
         sources = [("gateway/new_adapter.py", [

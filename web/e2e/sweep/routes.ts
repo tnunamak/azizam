@@ -171,8 +171,9 @@ export const ROUTES: SweepRoute[] = [
         act: async (page) => {
           await page.getByLabel("Email", { exact: true }).fill("nobody@example.test");
           await page.getByLabel("Password", { exact: true }).fill("not the password");
+          const answered = page.waitForResponse((response) => response.request().method() === "POST");
           await page.getByRole("button", { name: "Sign in", exact: true }).click();
-          await page.waitForTimeout(1_000);
+          await answered;
           return true;
         },
       },

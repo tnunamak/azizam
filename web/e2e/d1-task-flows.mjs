@@ -5,6 +5,7 @@
 import { chromium } from "@playwright/test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { quiet } from "./capture-settle.mjs";
 
 const base = process.env.D1_BASE;
 const manifestPath = process.env.D1_MANIFEST;
@@ -41,8 +42,7 @@ async function open(role, width, theme) {
 }
 
 async function settle(page) {
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(800);
+  await quiet(page);
 }
 
 /** Each flow is a list of [step name, action]; a screenshot follows every action. */
@@ -56,8 +56,9 @@ const flows = {
       await prompt.fill("An apple tart cooling on the kitchen table");
     }],
     ["result", async (page) => {
+      const posted = page.waitForResponse(response => response.request().method() === "POST");
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await page.waitForTimeout(4000);
+      await posted;
     }],
     ["library", async (page) => page.goto(`${base}/library/`)],
   ]],
@@ -68,8 +69,9 @@ const flows = {
     ["result", async (page) => {
       const text = page.getByRole("textbox").first();
       await text.fill("Dinner is ready in ten minutes.");
+      const posted = page.waitForResponse(response => response.request().method() === "POST");
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await page.waitForTimeout(4000);
+      await posted;
     }],
   ]],
   // A member listens to a clip in Library.
@@ -83,7 +85,7 @@ const flows = {
     ["library", async (page) => page.goto(`${base}/library/`)],
     ["person", async (page) => {
       const picker = page.getByRole("combobox", { name: /Person|Everyone/ });
-      if (await picker.isVisible().catch(() => false)) {
+      if (await picker.count()) {
         await picker.click();
         await page.getByRole("option", { name: /Robin/ }).click();
       } else {

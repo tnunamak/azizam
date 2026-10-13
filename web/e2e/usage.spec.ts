@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const seededSummary = {
   requests: 4,
@@ -71,7 +72,7 @@ async function expectNoHorizontalOverflow(
 test("usage light at 1440px has no serious axe violation", async ({ page }) => {
   await prepareUsageViewport(page, "light", 1440);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: seededSummary }),
+    fulfilJson(route, seededSummary),
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
@@ -85,7 +86,7 @@ test("usage light at 1440px has no serious axe violation", async ({ page }) => {
 test("usage dark at 390px fits the phone and has no serious axe violation", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: seededSummary }),
+    fulfilJson(route, seededSummary),
   );
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
@@ -99,8 +100,7 @@ test("usage dark at 390px fits the phone and has no serious axe violation", asyn
 test("usage empty dark at 390px fits the phone and has no serious axe violation", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         requests: 0,
         media_count: 0,
         remote_spend: 0,
@@ -109,8 +109,7 @@ test("usage empty dark at 390px fits the phone and has no serious axe violation"
         by_day: [],
         by_model: [],
         receipts: [],
-      },
-    }),
+      }),
   );
   await page.goto("/usage/");
   await expect(
@@ -123,10 +122,7 @@ test("usage empty dark at 390px fits the phone and has no serious axe violation"
 test("usage error light at 1440px has no serious axe violation", async ({ page }) => {
   await prepareUsageViewport(page, "light", 1440);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Unavailable for this test" } },
-    }),
+    fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 }),
   );
   await page.goto("/usage/");
   await expect(
@@ -219,7 +215,7 @@ const phoneSummary = {
 test("usage fits a 390 px phone with long model names", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: phoneSummary }),
+    fulfilJson(route, phoneSummary),
   );
   await page.goto("/usage/");
   await expect(page.getByText("Top models by requests")).toBeVisible();
@@ -280,7 +276,7 @@ const manySources = [
 test("usage Source list stays on screen, scrolls inside itself and never widens the phone page", async ({ page }) => {
   await prepareUsageViewport(page, "dark", 390);
   await page.route("**/me/api/usage/summary?**", (route) =>
-    route.fulfill({ json: { ...phoneSummary, sources: manySources } }),
+    fulfilJson(route, { ...phoneSummary, sources: manySources }),
   );
   await page.goto("/usage/");
   await expect(page.getByText("Top models by requests")).toBeVisible();

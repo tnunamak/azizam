@@ -1,0 +1,51 @@
+{
+  "_doc": "Per wire protocol: the only response fields a transcript keeps. A leaf is one of scalar (kept as is), model (a path echoed by the upstream keeps only its last segment), id (renamed to a stable rp-id-N), time (zeroed), url (host, query and fragment dropped). An object keeps only the keys listed; a one-item list applies its item to every element; an empty list must be empty (an idle queue). Everything else is dropped. Models and semantic parameters are never normalized.",
+  "request_headers": {
+    "openai-compatible": ["content-type"],
+    "anthropic": ["content-type", "anthropic-version"],
+    "ollama": ["content-type"],
+    "comfyui": ["content-type"]
+  },
+  "response_headers": ["content-type", "retry-after"],
+  "response_shapes": {
+    "openai-compatible": {
+      "id": "id", "object": "scalar", "created": "time", "model": "model",
+      "choices": [{
+        "index": "scalar", "finish_reason": "scalar",
+        "message": {"role": "scalar", "content": "scalar", "reasoning_content": "scalar", "refusal": "scalar"},
+        "delta": {"role": "scalar", "content": "scalar", "reasoning_content": "scalar", "refusal": "scalar"}
+      }],
+      "usage": {"prompt_tokens": "scalar", "completion_tokens": "scalar", "total_tokens": "scalar"},
+      "data": [{"index": "scalar", "object": "scalar", "embedding": ["scalar"]}],
+      "error": {"type": "scalar", "code": "scalar", "message": "scalar"}
+    },
+    "anthropic": {
+      "id": "id", "type": "scalar", "role": "scalar", "model": "model",
+      "content": [{"type": "scalar", "text": "scalar"}],
+      "stop_reason": "scalar", "stop_sequence": "scalar",
+      "usage": {"input_tokens": "scalar", "output_tokens": "scalar"},
+      "message": {
+        "id": "id", "type": "scalar", "role": "scalar", "model": "model",
+        "content": [{"type": "scalar", "text": "scalar"}],
+        "stop_reason": "scalar", "stop_sequence": "scalar",
+        "usage": {"input_tokens": "scalar", "output_tokens": "scalar"}
+      },
+      "index": "scalar",
+      "content_block": {"type": "scalar", "text": "scalar"},
+      "delta": {"type": "scalar", "text": "scalar", "stop_reason": "scalar", "stop_sequence": "scalar"},
+      "error": {"type": "scalar", "message": "scalar"}
+    },
+    "ollama": {
+      "model": "model", "created_at": "time",
+      "message": {"role": "scalar", "content": "scalar", "thinking": "scalar"},
+      "response": "scalar", "thinking": "scalar", "done": "scalar", "done_reason": "scalar",
+      "prompt_eval_count": "scalar", "eval_count": "scalar",
+      "total_duration": "time", "load_duration": "time", "prompt_eval_duration": "time", "eval_duration": "time",
+      "embeddings": [["scalar"]], "embedding": ["scalar"], "error": "scalar"
+    },
+    "comfyui": {
+      "queue_running": [], "queue_pending": [],
+      "system": {"comfyui_version": "scalar"}
+    }
+  }
+}

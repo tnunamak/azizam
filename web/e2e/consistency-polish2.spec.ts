@@ -1,12 +1,12 @@
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 test("Providers presents the current API shape without inventing readiness or names", async ({
   page,
 }) => {
   await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         global: {
           spend: { status: "unknown", monthly_usd: 888 },
         },
@@ -27,8 +27,7 @@ test("Providers presents the current API shape without inventing readiness or na
             spend: { status: "unknown", monthly_usd: 999 },
           },
         ],
-      },
-    }),
+      }),
   );
   // Names, readiness words and spend rules are asserted in
   // src/app/providers/consistency.spec.tsx; the browser keeps phone geometry
@@ -76,12 +75,10 @@ test("legacy email names remain contact details on People and in search", async 
     requests_this_month: null,
   };
   await page.route("**/admin/api/people", (route) =>
-    route.fulfill({ json: { people: [person], profiles: [] } }),
+    fulfilJson(route, { people: [person], profiles: [] }),
   );
   await page.route("**/admin/api/users", (route) =>
-    route.fulfill({
-      json: { users: [{ ...person, display_name: person.email }] },
-    }),
+    fulfilJson(route, { users: [{ ...person, display_name: person.email }] }),
   );
   await page.goto("/people/");
   await expect(page.getByText(person.email, { exact: true })).toHaveCount(1);
@@ -119,20 +116,18 @@ test("personal access app hides only its exact generated email-based name", asyn
     name: `${email} personal access app`,
   };
   await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         authenticated: true,
         csrf_token: "test-csrf",
         user: { id: "owner", email, name: "", role: "owner" },
         apps: [personalApp, customApp],
-      },
-    }),
+      }),
   );
   await page.route("**/.well-known/azizam", (route) =>
-    route.fulfill({ json: { recipes: {} } }),
+    fulfilJson(route, { recipes: {} }),
   );
   await page.route("**/me/api/apps/app-personal/keys", (route) =>
-    route.fulfill({ json: { credential: { api_key: "test-key" } } }),
+    fulfilJson(route, { credential: { api_key: "test-key" } }),
   );
 
   await page.goto("/apps/");

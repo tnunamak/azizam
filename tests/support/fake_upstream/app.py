@@ -16,7 +16,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qsl
 
 from .clock import ClockClosed, VirtualClock
-from .scenario import Exchange, Scenario, matches
+from .scenario import Exchange, Scenario, matches, matches_transcript
 
 VIOLATION_STATUS = 599
 
@@ -66,6 +66,8 @@ class FakeUpstream:
         self._background = [e for e in self.scenario.exchanges if e.repeat]
         self._pointer = 0
         self._waived: set[str] = set()
+        # A transcript is a recording of what the real client sent: match it exactly.
+        self._match = matches_transcript if self.scenario.provenance.get("source") == "transcript" else matches
 
     def calls(self, exchange_id: str) -> list[RecordedRequest]:
         if exchange_id not in self._counts:
@@ -96,7 +98,7 @@ class FakeUpstream:
             index = self._pointer
             while index < len(self._ordered):
                 exchange = self._ordered[index]
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     self._counts[exchange.id] += 1
                     self._pointer = index + 1 if self._counts[exchange.id] == exchange.times else index
                     return exchange, None
@@ -104,11 +106,11 @@ class FakeUpstream:
                     break
                 index += 1
             for exchange in self._background:
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     self._counts[exchange.id] += 1
                     return exchange, None
             for exchange in self._ordered:
-                if matches(exchange.match, actual):
+                if self._match(exchange.match, actual):
                     if self._counts[exchange.id] >= exchange.times:
                         return None, f"exchange {exchange.id!r} called more than {exchange.times} time(s)"
                     return None, f"exchange {exchange.id!r} called out of order"

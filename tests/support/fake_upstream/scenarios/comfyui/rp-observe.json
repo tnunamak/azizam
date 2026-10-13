@@ -1,0 +1,40 @@
+{
+  "protocol": "comfyui",
+  "name": "rp-observe",
+  "description": "Recorded request set 'observe': observe.",
+  "provenance": {
+    "source": "transcript",
+    "reference": "scripts/record-upstream request set comfyui/observe",
+    "protocol": "comfyui",
+    "engine": "UNVERIFIED",
+    "engine_version": "UNVERIFIED",
+    "identity_source": "UNVERIFIED",
+    "recorded_on": "2026-10-12",
+    "request_set_hash": "f67490bb3290f6cb2093688b4a638fb024c405bc79a8c4692f7456be97e1b6a2",
+    "recorder_version": "rp1/1",
+    "owner": "tnunamak",
+    "review_by": "2027-04-10"
+  },
+  "exchanges": [
+    {
+      "id": "observe-1",
+      "match": {
+        "method": "GET",
+        "path": "/queue",
+        "query": {},
+        "headers": {},
+        "json": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "json": {
+          "queue_running": [],
+          "queue_pending": []
+        }
+      }
+    }
+  ]
+}

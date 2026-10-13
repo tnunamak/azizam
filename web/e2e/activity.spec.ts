@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 test("requests refresh visible content on focus and keep metadata on one line", async ({ page }) => {
   let refreshed = false;
@@ -8,8 +9,7 @@ test("requests refresh visible content on focus and keep metadata on one line", 
   await page.clock.setFixedTime(new Date("2026-10-12T12:00:00Z"));
   await page.route("**/admin/api/activity/requests?*", (route) => {
     loads += 1;
-    return route.fulfill({
-      json: {
+    return fulfilJson(route, {
         records: [{
           person_label: refreshed ? "After focus" : "Before focus",
           app_label: refreshed ? "Fresh notebook" : "Original notebook",
@@ -25,8 +25,7 @@ test("requests refresh visible content on focus and keep metadata on one line", 
         }],
         people: [],
         next_cursor: null,
-      },
-    });
+      });
   });
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -136,7 +135,7 @@ test("request errors retry and audit details use readable timestamps", async ({
 }) => {
   let fail = true;
   await page.route("**/admin/api/activity/requests?*", (route) =>
-    fail ? route.fulfill({ status: 503, body: "{}" }) : route.continue(),
+    fail ? fulfilBytes(route, { status: 503, body: "{}" }) : route.continue(),
   );
   await page.goto("/activity/");
   await page.getByRole("tab", { name: "Changes", exact: true }).click();

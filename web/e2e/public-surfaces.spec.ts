@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const builtInOptions = {
   built_in: true,
@@ -31,13 +32,11 @@ for (const { surface, theme } of surfaces) {
     );
     if (surface === "setup") {
       await page.route("**/setup/api/state", (route) =>
-        route.fulfill({
-          json: { owner_exists: true, oidc_enabled: false, can_recover: true },
-        }),
+        fulfilJson(route, { owner_exists: true, oidc_enabled: false, can_recover: true }),
       );
     } else {
       await page.route("**/auth/api/options*", (route) =>
-        route.fulfill({ json: builtInOptions }),
+        fulfilJson(route, builtInOptions),
       );
     }
     await page.goto(`/${surface}/`);
@@ -70,7 +69,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
 }) => {
   await context.clearCookies();
   await page.route("**/auth/api/options*", (route) =>
-    route.fulfill({ json: builtInOptions }),
+    fulfilJson(route, builtInOptions),
   );
   await page.goto("/sign-in/");
   await page.getByLabel("Email", { exact: true }).fill("unknown@example.test");
@@ -120,9 +119,7 @@ for (const theme of ["light", "dark"] as const) {
       theme,
     );
     await page.route("**/setup/api/state", (route) =>
-      route.fulfill({
-        json: { owner_exists: true, oidc_enabled: false, can_recover: true },
-      }),
+      fulfilJson(route, { owner_exists: true, oidc_enabled: false, can_recover: true }),
     );
     await page.goto("/setup/");
     await page

@@ -1,6 +1,7 @@
 import { type Locator, type Page, type Route } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
 
 const serviceRegistry = {
   schema_version: 1,
@@ -100,33 +101,26 @@ const status = {
 
 async function mockEngineApis(page: Page) {
   await page.route("**/admin/api/status", (route) =>
-    route.fulfill({ json: { status } }),
+    fulfilJson(route, { status }),
   );
   await page.route("**/admin/api/operator/service-presets", (route) =>
-    route.fulfill({ json: { presets: [] } }),
+    fulfilJson(route, { presets: [] }),
   );
   await page.route("**/admin/api/operator/service-registry", (route) =>
-    route.fulfill({
-      json: { service_registry: serviceRegistry },
-      headers: { etag: "test-etag" },
-    }),
+    fulfilJson(route, { service_registry: serviceRegistry }, { headers: { etag: "test-etag" } }),
   );
   await page.route("**/admin/api/operator/services/test", (route: Route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         probe: {
           ok: true,
           status: 200,
           error: "",
           url: "http://127.0.0.1:18081/v1/health",
         },
-      },
-    }),
+      }),
   );
   await page.route("**/admin/api/operator/services/detect-models", (route) =>
-    route.fulfill({
-      json: { detected: { ok: true, models: ["demo-chat"], error: "" } },
-    }),
+    fulfilJson(route, { detected: { ok: true, models: ["demo-chat"], error: "" } }),
   );
 }
 

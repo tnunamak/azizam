@@ -7,6 +7,7 @@ import { chromium } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { quiet } from "./capture-settle.mjs";
 
 const base = process.env.D1_BASE ?? "http://127.0.0.1:18431";
 const manifest = JSON.parse(await readFile(process.env.D1_MANIFEST ?? `${process.env.HOME}/.tmp/azizam-redesign/d1-work/manifest-18431.json`, "utf8"));
@@ -93,9 +94,7 @@ for (const role of ["owner", "member"]) {
         page.on("console", m => { if (m.type() === "error") consoleErrors.push(m.text()); });
         page.on("response", r => { if (r.status() >= 400 && r.url().startsWith(base)) consoleErrors.push(`${r.status()} ${r.url().replace(base, "")}`); });
         await page.goto(`${base}${route}`);
-        await page.waitForLoadState("networkidle");
-        await page.evaluate(() => document.fonts.ready);
-        await page.waitForTimeout(400);
+        await quiet(page);
         const result = await inspect(page, `${role} ${surface} ${theme} ${width}`, width);
         result.errors = consoleErrors;
         results.push(result);
@@ -103,7 +102,8 @@ for (const role of ["owner", "member"]) {
           const open = page.getByRole("button", { name: /^Open / }).first();
           if (await open.count()) {
             await open.click();
-            await page.waitForTimeout(800);
+            await page.locator("[role=dialog]").first().waitFor({ state: "visible" });
+            await quiet(page);
             const viewer = await inspect(page, `${role} library-viewer ${theme} ${width}`, width);
             viewer.errors = [];
             results.push(viewer);

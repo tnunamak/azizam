@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import path from "node:path";
+import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
 const mediaFixture = {
   assets: [
@@ -77,7 +78,7 @@ test("library loading stays accessible while media is pending", async ({
   });
   await page.route("**/me/api/media?**", async (route) => {
     await ready;
-    await route.fulfill({ json: mediaFixture });
+    await fulfilJson(route, mediaFixture);
   });
   await page.goto("/library/", { waitUntil: "domcontentloaded" });
   await expect(
@@ -97,9 +98,9 @@ for (const mode of ["light", "dark"] as const) {
       const mediaRequests: string[] = [];
       await page.route("**/me/api/media?**", (route) => {
         mediaRequests.push(route.request().url());
-        return route.fulfill({ json: mediaFixture });
+        return fulfilJson(route, mediaFixture);
       });
-      await page.route("**/me/api/media/asset_image_1/download?*", (route) => route.fulfill({ json: { download_url: mediaFixture.assets[0].download_url } }));
+      await page.route("**/me/api/media/asset_image_1/download?*", (route) => fulfilJson(route, { download_url: mediaFixture.assets[0].download_url }));
       await page.goto("/library/");
       // Tiles are named by their prompt; the caption shows its subject.
       const tile = page.getByRole("button", {
@@ -157,7 +158,7 @@ for (const mode of ["light", "dark"] as const) {
     test(`library empty ${mode} ${width}`, async ({ page }) => {
       await setTheme(page, mode, width);
       await page.route("**/me/api/media?**", (route) =>
-        route.fulfill({ json: { assets: [], models: [], next_cursor: null } }),
+        fulfilJson(route, { assets: [], models: [], next_cursor: null }),
       );
       await page.goto("/library/");
       await expect(page.getByText("No creations yet")).toBeVisible();
@@ -178,12 +179,9 @@ for (const mode of ["light", "dark"] as const) {
       await page.route("**/me/api/media?**", (route) => {
         if (failed) {
           failed = false;
-          return route.fulfill({
-            status: 503,
-            json: { error: { message: "Unavailable for this test" } },
-          });
+          return fulfilJson(route, { error: { message: "Unavailable for this test" } }, { status: 503 });
         }
-        return route.fulfill({ json: mediaFixture });
+        return fulfilJson(route, mediaFixture);
       });
       await page.goto("/library/");
       await expect(
@@ -217,23 +215,21 @@ test("library delete confirms before mutation", async ({ page }) => {
   await setTheme(page, "light", 1440);
   let deleted = false;
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: deleted
+    fulfilJson(route, deleted
         ? {
             ...mediaFixture,
             assets: mediaFixture.assets.filter(
               (asset) => asset.asset_id !== "asset_image_1",
             ),
           }
-        : mediaFixture,
-    }),
+        : mediaFixture),
   );
   await page.route("**/me/api/media/asset_image_1", (route) => {
     if (route.request().method() !== "DELETE") return route.continue();
     expect(route.request().headers()["x-azizam-user-action"]).toBe("1");
     expect(route.request().headers()["x-azizam-csrf"]).toBeTruthy();
     deleted = true;
-    return route.fulfill({ json: { ok: true } });
+    return fulfilJson(route, { ok: true });
   });
   await page.goto("/library/");
   await page.getByRole("combobox", { name: "Person", exact: true }).click();
@@ -277,8 +273,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await page.route("**/me/api/media?**", (route) => {
     const url = route.request().url();
     requests.push(url);
-    return route.fulfill({
-      json: url.includes("cursor=")
+    return fulfilJson(route, url.includes("cursor=")
         ? {
             assets: [
               {
@@ -290,8 +285,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
             models: ["image"],
             next_cursor: null,
           }
-        : mediaFixture,
-    });
+        : mediaFixture);
   });
   await page.goto("/library/");
   await expect(
@@ -357,8 +351,7 @@ test("library audio plays independently and video uses its recorded poster", asy
   const audioRenewals: string[] = [];
   const renewedAudioUrl = "/test-audio.wav?renewed=1";
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         ...mediaFixture,
         assets: mediaFixture.assets.map((asset) =>
           asset.kind === "video"
@@ -367,20 +360,19 @@ test("library audio plays independently and video uses its recorded poster", asy
               ? { ...asset, download_url: "/test-audio.wav" }
               : asset,
         ),
-      },
-    }),
+      }),
   );
   await page.route("**/test-audio.wav*", (route) =>
-    route.fulfill({ contentType: "audio/wav", body: wav }),
+    fulfilBytes(route, { contentType: "audio/wav", body: wav }),
   );
   // Opening the viewer renews playback independently of the tile's URL.
   await page.route("**/me/api/media/asset_audio_1/download?*", (route) => {
     audioRenewals.push(route.request().url());
-    return route.fulfill({ json: { download_url: renewedAudioUrl } });
+    return fulfilJson(route, { download_url: renewedAudioUrl });
   });
   await page.route("**/me/api/media/video-poster/download*", (route) => {
     posterRequests.push(route.request().url());
-    return route.fulfill({ json: { download_url: posterUrl } });
+    return fulfilJson(route, { download_url: posterUrl });
   });
   await page.goto("/library/");
   const audio = page.locator("article audio");
@@ -460,12 +452,8 @@ for (const width of [390, 1440]) {
       if (new URL(route.request().url()).searchParams.has("cursor")) {
         attempts++;
         return attempts === 1
-          ? route.fulfill({
-              status: 503,
-              json: { error: { message: "Page unavailable" } },
-            })
-          : route.fulfill({
-              json: {
+          ? fulfilJson(route, { error: { message: "Page unavailable" } }, { status: 503 })
+          : fulfilJson(route, {
                 assets: [
                   {
                     ...mediaFixture.assets[0],
@@ -474,15 +462,12 @@ for (const width of [390, 1440]) {
                   },
                 ],
                 next_cursor: null,
-              },
-            });
+              });
       }
-      return route.fulfill({
-        json: {
+      return fulfilJson(route, {
           assets: [{ ...mediaFixture.assets[0], prompt }],
           next_cursor: "next",
-        },
-      });
+        });
     });
     await page.goto("/library/");
     await page.getByRole("button", { name: "Load more", exact: true }).click();
@@ -515,22 +500,20 @@ test("Library failed preview retries in place with the same URL", async ({
 }) => {
   let broken = true;
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           { ...mediaFixture.assets[0], download_url: "/azizam-retry.png" },
         ],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/media/asset_image_1/download*", (route) =>
-    route.fulfill({ json: { download_url: "/azizam-retry.png" } }),
+    fulfilJson(route, { download_url: "/azizam-retry.png" }),
   );
   await page.route("**/azizam-retry.png", (route) =>
     broken
-      ? route.fulfill({ status: 503, body: "Unavailable" })
-      : route.fulfill({
+      ? fulfilBytes(route, { status: 503, body: "Unavailable" })
+      : fulfilBytes(route, {
           body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="teal"/></svg>',
           contentType: "image/svg+xml",
         }),
@@ -557,8 +540,7 @@ test("Library waits for posters and exposes recovery after both candidates fail"
   });
   let videoRequests = 0;
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             ...mediaFixture.assets[1],
@@ -567,21 +549,18 @@ test("Library waits for posters and exposes recovery after both candidates fail"
           },
         ],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/me/api/media/azizam-poster/download*", async (route) => {
     await pending;
-    await route.fulfill({
-      json: { download_url: "/azizam-broken-poster.png" },
-    });
+    await fulfilJson(route, { download_url: "/azizam-broken-poster.png" });
   });
   await page.route("**/azizam-broken-poster.png", (route) =>
-    route.fulfill({ status: 404, body: "Unavailable" }),
+    fulfilBytes(route, { status: 404, body: "Unavailable" }),
   );
   await page.route("**/azizam-broken.mp4", (route) => {
     videoRequests++;
-    return route.fulfill({ status: 404, body: "Unavailable" });
+    return fulfilBytes(route, { status: 404, body: "Unavailable" });
   });
   await page.goto("/library/", { waitUntil: "domcontentloaded" });
   await expect(
@@ -603,11 +582,9 @@ for (const [mode, width] of [
   test(`library filtered empty ${mode} ${width}`, async ({ page }) => {
     await setTheme(page, mode, width);
     await page.route("**/me/api/media?**", (route) =>
-      route.fulfill({
-        json: new URL(route.request().url()).searchParams.get("kind")
+      fulfilJson(route, new URL(route.request().url()).searchParams.get("kind")
           ? { assets: [], models: [], next_cursor: null }
-          : mediaFixture,
-      }),
+          : mediaFixture),
     );
     await page.goto("/library/");
     await expect(
@@ -627,8 +604,7 @@ test("library video without a poster decodes a real first frame", async ({
 }) => {
   await setTheme(page, "dark", 390);
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({
-      json: {
+    fulfilJson(route, {
         assets: [
           {
             asset_id: "asset_video_noposter",
@@ -642,11 +618,10 @@ test("library video without a poster decodes a real first frame", async ({
         ],
         models: ["video"],
         next_cursor: null,
-      },
-    }),
+      }),
   );
   await page.route("**/fixture-preview.mp4", (route) =>
-    route.fulfill({
+    fulfilBytes(route, {
       path: path.join(__dirname, "fixtures", "preview-test.mp4"),
       contentType: "video/mp4",
     }),
@@ -681,7 +656,7 @@ test("library audio tile play control is at least 44 px on a phone", async ({
 }) => {
   await setTheme(page, "light", 390);
   await page.route("**/me/api/media?**", (route) =>
-    route.fulfill({ json: mediaFixture }),
+    fulfilJson(route, mediaFixture),
   );
   await page.goto("/library/");
   const play = page.getByRole("button", {

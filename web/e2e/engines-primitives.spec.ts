@@ -43,9 +43,8 @@ for (const scale of [1, 2]) {
     const name = dialog.getByLabel(/^Name/);
     await expect(name).toBeVisible();
     for (const control of await dialog
-      .locator('button, input:not([aria-hidden="true"])')
+      .locator('button:visible, input:not([aria-hidden="true"]):visible')
       .all()) {
-      if (!(await control.isVisible())) continue;
       const box = await control.boundingBox();
       expect(box!.height).toBeGreaterThanOrEqual(44);
       expect(box!.width).toBeGreaterThanOrEqual(44);

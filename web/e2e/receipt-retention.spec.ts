@@ -43,7 +43,11 @@ for (const width of [1440, 390]) {
         app_id: "receipt-fixture-app",
         status: "succeeded",
       });
+      // The gateway's own writer can hold the lock for a moment: wait for it
+      // to be released (busy timeout), never fail on a transient lock.
       execFileSync("sqlite3", [
+        "-cmd",
+        ".timeout 10000",
         db,
         `INSERT INTO receipts(request_id,created_at,app_id,status,receipt_json) VALUES('${id}',${now - age * 86400},'receipt-fixture-app','succeeded','${json}');`,
       ]);
