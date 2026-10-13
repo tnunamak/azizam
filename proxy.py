@@ -6326,6 +6326,16 @@ def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
             current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
+async def _warm_video_owner_keys(auth_context: AuthContext | None) -> None:
+    """Resolve the caller's owner keys (SQLite) off the loop, once per request.
+
+    `_video_job_access_allowed` reads them through the request memo, so the
+    synchronous video checks that follow hit the memo instead of the database.
+    """
+    if auth_context is not None:
+        await asyncio.to_thread(_asset_read_owner_keys, auth_context)
+
+
 def _asset_metadata_path(asset_id: str) -> Path | None:
     parsed = _parse_asset_id(asset_id)
     if parsed is None:
@@ -9616,6 +9626,7 @@ async def _resolve_gateway_media_url(
     request: Request | None = None,
 ) -> media_fetch.FetchedMedia | None:
     """Resolve our own content URLs with signatures and caller ownership."""
+    await _warm_video_owner_keys(auth_context)
     parsed = urlsplit(url)
     public_urls = [
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
@@ -9865,6 +9876,7 @@ async def _load_completed_video_bytes(
     visible to the caller; an untracked id (gateway restarted since submit)
     falls through to ComfyUI's history, as the status route does.
     """
+    await _warm_video_owner_keys(auth_context)
     param = "video"
     prompt_id = _prompt_id_from_video_id(video_id)
     if not prompt_id:
@@ -11307,6 +11319,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
     (overlap window, default 1), `model`, `seed`, `size`, `negative_prompt`, and
     `extensions.com.azizam.workflow.{state_ledger,context_strength}`.
     """
+    await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.extend', auth_context=auth_context, service_id="comfyui",
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -11371,6 +11384,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
 
 async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> Response:
     """GET /v1/videos/{video_id} — poll status."""
+    await _warm_video_owner_keys(auth_context)
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -11506,6 +11520,7 @@ async def proxy_comfy_video_content(
     Full delivery requires a retained maker prompt record. Cached asset bytes
     are stripped before storage.
     """
+    await _warm_video_owner_keys(auth_context)
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -11718,6 +11733,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
     which entries came from this route) and it does not see jobs created
     through the separate `/gateway/v1/media/jobs` durable job store.
     """
+    await _warm_video_owner_keys(auth_context)
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -11880,6 +11896,7 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
     same as "unknown id", and whose retention we don't control) is the
     source of truth for every read route.
     """
+    await _warm_video_owner_keys(auth_context)
     if not COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
@@ -12121,6 +12138,7 @@ async def proxy_comfy_video_remix(
     resource reports `video-remix`. Gateway extras (`seed`, `seconds`, `size`,
     `negative_prompt`) are accepted as top-level fields.
     """
+    await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.remix', auth_context=auth_context, service_id="comfyui",
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -12179,6 +12197,7 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     completed gateway video (`{"id": ...}` as JSON, or `video[id]` in a form).
     An uploaded clip gives `remixed_from_video_id: null`.
     """
+    await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.edit', auth_context=auth_context, service_id="comfyui",
         service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
