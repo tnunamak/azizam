@@ -62,6 +62,10 @@ def _go_cold(tmp_path, monkeypatch) -> None:
                 monkeypatch.setattr(module, attr, type(value)())
 
 
+_OWNED_VIDEO_PROMPT_ID = "guardownedvideo"
+_OWNED_VIDEO_ID = f"{proxy.VIDEO_ID_PREFIX}{_OWNED_VIDEO_PROMPT_ID}"
+
+
 @pytest.fixture
 def gateway(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
@@ -91,6 +95,10 @@ def gateway(tmp_path, monkeypatch):
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("guard-key"),
                                        prefix="masked", path=db)
     session = session_from_claims({"sub": user["id"], "email": "owner@example.com"}, role="owner", cookie=cookie)
+    # An owned video job makes the /v1/videos routes resolve owner keys (SQLite)
+    # on every run, not only when an earlier test left a record behind.
+    monkeypatch.setitem(proxy._video_job_records, _OWNED_VIDEO_PROMPT_ID,
+                        {"owner_key_hash": "guard-other-owner", "created_at": 1.0, "status": "completed"})
     return {"cookies": {cookie.name: encode_session_cookie(session, signing_key=key)},
             "bearer": {"Authorization": "Bearer guard-key"}}
 
@@ -216,7 +224,8 @@ def test_every_get_route_leaves_the_loop_free(gateway, route):
         transport = httpx.ASGITransport(app=proxy.app, client=("127.0.0.1", 50000), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://t", cookies=gateway["cookies"],
                                      timeout=20) as client:
-            return (await client.get(_concrete(route), headers=gateway["bearer"])).status_code
+            return (await client.get(_concrete(route).replace("/v1/videos/x", f"/v1/videos/{_OWNED_VIDEO_ID}"),
+                                     headers=gateway["bearer"])).status_code
 
     with _loop_thread_work(loop_calls):
         asyncio.run(call())
