@@ -121,6 +121,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, default=Path.home() / "applications" / "azizam")
     parser.add_argument("--state", type=Path, default=None, help="state directory (default: fresh under ~/.tmp)")
     parser.add_argument("--reuse", action="store_true", help="serve the existing --state copy instead of copying again")
+    parser.add_argument("--prepare-only", action="store_true", help="copy the data into --state, write the manifest and exit (a pristine copy to run two versions against)")
     args = parser.parse_args()
     if not 18000 <= args.port < 18998:
         raise SystemExit("port must be between 18000 and 18998")
@@ -130,6 +131,11 @@ def main() -> None:
     if not args.reuse:
         shutil.rmtree(state, ignore_errors=True)
         state.mkdir(parents=True)
+    if args.prepare_only:
+        manifest = prepare(state, args.port, args.port + 1, args.source)
+        (state / "perf-manifest.json").write_text(json.dumps({**manifest, "port": args.port}), encoding="utf-8")
+        print(json.dumps(manifest))
+        return
     serve(state, args.port, args.source, args.reuse)
 
 
