@@ -4,6 +4,8 @@ import Link from "next/link";
 import { JobResult } from "@/components/jobs/job-notices";
 
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -106,6 +108,7 @@ import {
   modelDisplayName,
   tileDate,
   captionTitle,
+  thumbnailSize,
   type CapabilityNameRow,
 } from "./library-format";
 
@@ -968,6 +971,9 @@ function Preview({
   // The server's small preview stands in as the video poster too: no
   // per-tile poster link, and no video bytes until the person presses play.
   const thumbUrl = asset.thumbnail_url && !thumbFailed && !retrySrc ? asset.thumbnail_url : undefined;
+  const previewSize = thumbUrl
+    ? thumbnailSize(asset.width, asset.height)
+    : { width: asset.width ?? 1024, height: asset.height ?? 768 };
   const posterUrl = thumbUrl ?? poster?.download_url;
   const effectivePosterUrl = posterFailed ? undefined : posterUrl;
   const currentSrc = retrySrc ?? src;
@@ -1046,8 +1052,8 @@ function Preview({
         unoptimized
         loading="lazy"
         decoding="async"
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
+        width={large ? (asset.width ?? 1024) : previewSize.width}
+        height={large ? (asset.height ?? 768) : previewSize.height}
         src={imageSrc}
         alt={assetTitle(asset)}
         onError={() => (imageSrc === thumbUrl ? setThumbFailed(true) : setMediaFailed(true))}
@@ -1117,8 +1123,8 @@ function Preview({
             unoptimized
             loading="lazy"
             decoding="async"
-            width={asset.width ?? 1024}
-            height={asset.height ?? 768}
+            width={previewSize.width}
+            height={previewSize.height}
             src={effectivePosterUrl}
             alt={assetTitle(asset)}
             onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
@@ -1184,8 +1190,8 @@ function Preview({
         unoptimized
         loading="lazy"
         decoding="async"
-        width={asset.width ?? 1024}
-        height={asset.height ?? 768}
+        width={previewSize.width}
+        height={previewSize.height}
         src={effectivePosterUrl}
         alt={assetTitle(asset)}
         onError={() => (effectivePosterUrl === thumbUrl ? setThumbFailed(true) : setPosterFailed(true))}
@@ -1248,18 +1254,32 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
         .filter((person) => person.name && !person.name.includes("@")),
     [users],
   );
-  const lookup: PersonLookup = (asset) => {
+  // Preserve the first match, as find() did, including an absent app id.
+  const ownersByApp = useMemo(() => {
+    const owners = new Map<string | undefined, string | null | undefined>();
+    for (const source of sources) {
+      if (!owners.has(source.app_id))
+        owners.set(source.app_id, source.owner_user_id);
+    }
+    return owners;
+  }, [sources]);
+  const namesById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of people) {
+      if (!names.has(person.id)) names.set(person.id, person.name);
+    }
+    return names;
+  }, [people]);
+  const lookup: PersonLookup = useCallback((asset) => {
     if (asset.owner_name) return asset.owner_name;
     const appId =
       asset.source?.app_id ??
       (asset.source?.id?.startsWith("app:")
         ? asset.source.id.slice(4)
         : undefined);
-    const owner = sources.find(
-      (source) => source.app_id === appId,
-    )?.owner_user_id;
-    return people.find((person) => person.id === owner)?.name ?? null;
-  };
+    const owner = ownersByApp.get(appId);
+    return owner == null ? null : namesById.get(owner) ?? null;
+  }, [ownersByApp, namesById]);
   return { people, lookup, query: { isError, isFetching, refetch } };
 }
 
@@ -1276,19 +1296,22 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function AssetTile({
+const AssetTile = memo(function AssetTile({
   asset,
   onOpen,
   everyone,
   person,
   selected,
   day,
+  today,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
   person: string | null;
   selected: boolean;
+  /** Local day boundary; unchanged during unrelated page updates. */
+  today: number;
   /** The day label, on the first tile of each day only. */
   day?: string | null;
 }) {
@@ -1302,7 +1325,7 @@ function AssetTile({
   // The first tile of a day already wears the day chip.
   const hoverDate = day
     ? null
-    : tileDate(toDateValue(asset.created_at), new Date());
+    : tileDate(toDateValue(asset.created_at), new Date(today));
   return (
     <article
       className="group relative min-w-0"
@@ -1331,6 +1354,9 @@ function AssetTile({
       />
       <div
         ref={visibilityRef}
+        // The square keeps its size while off-screen content skips layout/paint.
+        // All tiles stay mounted for keyboard navigation and focus restoration.
+        style={{ contentVisibility: "auto" }}
         className={cn(
           "rounded-media relative aspect-square overflow-hidden",
           selected && "outline-ring outline-2 outline-offset-2",
@@ -1407,7 +1433,7 @@ function AssetTile({
       </div>
     </article>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Filters                                                             */
@@ -2179,13 +2205,13 @@ export default function LibraryPage() {
     setOwner("default");
     setSource("all");
   }
-  function openAsset(asset: MediaAsset) {
+  const openAsset = useCallback((asset: MediaAsset) => {
     setClosedDeepLinkId(null);
     setSelected(asset);
     const params = new URLSearchParams(window.location.search);
     params.set("asset", asset.asset_id);
     window.history.replaceState(null, "", `?${params.toString()}`);
-  }
+  }, []);
   function closeAsset() {
     setClosedDeepLinkId(selected?.asset_id ?? deepLinkedAssetId);
     setSelected(null);
@@ -2355,19 +2381,23 @@ export default function LibraryPage() {
     if (runningMedia.length < runningCount.current) void refetch();
     runningCount.current = runningMedia.length;
   }, [refetch, runningMedia.length]);
-  const goneConfirmed = goneAssets.every((asset) =>
-    confirmedGone(asset.unavailable_reason),
+  const goneConfirmed = useMemo(
+    () => goneAssets.every((asset) => confirmedGone(asset.unavailable_reason)),
+    [goneAssets],
   );
   const [goneOpen, setGoneOpen] = useState(false);
-  const visiblePeople = instanceView
-    ? Array.from(
-        new Set(
-          [...storedAssets, ...(goneOpen ? goneAssets : [])]
-            .map(personFor)
-            .filter((person): person is string => Boolean(person)),
-        ),
-      )
-    : [];
+  const visiblePeople = useMemo(
+    () => instanceView
+      ? Array.from(
+          new Set(
+            [...storedAssets, ...(goneOpen ? goneAssets : [])]
+              .map(personFor)
+              .filter((person): person is string => Boolean(person)),
+          ),
+        )
+      : [],
+    [instanceView, storedAssets, goneOpen, goneAssets, personFor],
+  );
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2525,9 +2555,44 @@ export default function LibraryPage() {
       ) : null}
     </>
   );
-  const days = dayMarks(
-    storedAssets.map((asset) => toDateValue(asset.created_at)),
-    new Date(),
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const days = useMemo(
+    () => dayMarks(
+      storedAssets.map((asset) => toDateValue(asset.created_at)),
+      new Date(today),
+    ),
+    [storedAssets, today],
+  );
+  const selectedId = selected?.asset_id;
+  const storedTiles = useMemo(
+    () => storedAssets.map((asset, index) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        day={days[index]}
+        today={today}
+      />
+    )),
+    [storedAssets, openAsset, instanceView, personFor, selectedId, days, today],
+  );
+  const goneTiles = useMemo(
+    () => goneAssets.map((asset) => (
+      <AssetTile
+        key={asset.asset_id}
+        asset={asset}
+        onOpen={openAsset}
+        everyone={instanceView}
+        person={instanceView ? personFor(asset) : null}
+        selected={selectedId === asset.asset_id}
+        today={today}
+      />
+    )),
+    [goneAssets, openAsset, instanceView, personFor, selectedId, today],
   );
   const selectedPerson = selected
     ? instanceView
@@ -2748,17 +2813,7 @@ export default function LibraryPage() {
               {inProgress.map((item) => (
                 <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />
               ))}
-              {storedAssets.map((asset, index) => (
-                <AssetTile
-                  key={asset.asset_id}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                  day={days[index]}
-                />
-              ))}
+              {storedTiles}
             </div>
           </div>
         ) : null}
@@ -2800,16 +2855,7 @@ export default function LibraryPage() {
               Show them
             </summary>
             <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-              {goneAssets.map((asset) => (
-                <AssetTile
-                  key={asset.asset_id}
-                  asset={asset}
-                  onOpen={openAsset}
-                  everyone={instanceView}
-                  person={instanceView ? personFor(asset) : null}
-                  selected={selected?.asset_id === asset.asset_id}
-                />
-              ))}
+              {goneTiles}
             </div>
           </details>
         </section>

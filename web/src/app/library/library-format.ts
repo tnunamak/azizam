@@ -6,6 +6,19 @@
 
 const DAY_MS = 86_400_000;
 
+/** Match the thumbnail's 480 px bounding box without upscaling small originals. */
+export function thumbnailSize(width?: number | null, height?: number | null) {
+  const known = typeof width === "number" && Number.isFinite(width) && width > 0 &&
+    typeof height === "number" && Number.isFinite(height) && height > 0;
+  const w = known ? width : 1024;
+  const h = known ? height : 768;
+  const scale = Math.min(1, 480 / Math.max(w, h));
+  return {
+    width: Math.max(1, Math.round(w * scale)),
+    height: Math.max(1, Math.round(h * scale)),
+  };
+}
+
 function startOfDay(date: Date): number {
   return new Date(
     date.getFullYear(),
