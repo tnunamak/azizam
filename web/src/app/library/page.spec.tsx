@@ -1612,3 +1612,170 @@ describe("Library response and media boundaries", () => {
     queryClient.clear();
   });
 });
+
+describe("Library accessibility", () => {
+  const originalShare = Object.getOwnPropertyDescriptor(navigator, "share");
+  beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
+    session.viewer = { role: "member", name: "Alex" };
+    session.home = { receipts: [] };
+    window.history.replaceState(null, "", "/library/");
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    if (originalShare) Object.defineProperty(navigator, "share", originalShare);
+    else Reflect.deleteProperty(navigator, "share");
+  });
+
+  test("names images and open buttons from the permitted prompt, never the file path", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([
+          picture("opaque-file-name.png", "  A red kite over the sea  "),
+          picture("hidden-prompt-file.png", "", { prompt: null }),
+        ])
+      : undefined);
+    renderLibrary();
+    expect(await screen.findByRole("img", { name: "A red kite over the sea" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open A red kite over the sea" })).toBeEnabled();
+    expect(screen.getByRole("img", { name: /^Picture, / })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Open Picture, / })).toBeEnabled();
+    expect(screen.queryByRole("img", { name: /opaque-file-name|hidden-prompt/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /opaque-file-name|hidden-prompt/ })).toBeNull();
+  });
+
+  test("moves through responsive tile rows with arrows and Home/End, without opening", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list(Array.from({ length: 7 }, (_, i) => picture(`p${i}`, `Picture ${i}`)))
+      : undefined);
+    renderLibrary();
+    const grid = await screen.findByRole("group", { name: "Creations" });
+    const tiles = within(grid).getAllByRole("button", { name: /^Open / });
+    tiles.forEach((tile, i) => {
+      const left = (i % 3) * 110;
+      const top = Math.floor(i / 3) * 110;
+      vi.spyOn(tile, "getBoundingClientRect").mockReturnValue({
+        left, top, right: left + 100, bottom: top + 100, width: 100, height: 100,
+        x: left, y: top, toJSON: () => ({}),
+      });
+    });
+    tiles[0].focus();
+    await userEvent.keyboard("{ArrowRight}{ArrowDown}");
+    expect(tiles[4]).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}{ArrowLeft}");
+    expect(tiles[0]).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(tiles[6]).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}{ArrowRight}");
+    expect(tiles[6]).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(tiles[0]).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    expect(tiles[0]).toHaveFocus();
+    grid.style.direction = "rtl";
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(tiles[1]).toHaveFocus();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(tiles[0]).toHaveClass("focus-visible:outline-2", "focus-visible:outline-offset-2", "focus-visible:outline-ring", "min-h-6", "min-w-6");
+  });
+
+  test("keeps playback controls in the Tab order and does not steal their arrow keys", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([{ ...audioAsset, prompt: "Keyboard audio" }, picture("next", "Next picture")])
+      : undefined);
+    renderLibrary();
+    const open = await screen.findByRole("button", { name: "Open Keyboard audio" });
+    const play = screen.getByRole("button", { name: "Play Keyboard audio" });
+    open.focus();
+    await userEvent.tab();
+    expect(play).toHaveFocus();
+    const event = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    expect(play.dispatchEvent(event)).toBe(true);
+    expect(play).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Open Next picture" })).toHaveFocus();
+  });
+
+  test("also navigates the expanded unavailable group", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("gone1", "Gone one", { available: false }), picture("gone2", "Gone two", { available: false })])
+      : undefined);
+    renderLibrary();
+    fireEvent.click(await screen.findByText("Show them"));
+    const grid = screen.getByRole("group", { name: "Unavailable creations" });
+    const tiles = within(grid).getAllByRole("button", { name: /^Open / });
+    tiles[0].focus();
+    await userEvent.keyboard("{End}");
+    expect(tiles[1]).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(tiles[0]).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Refresh library" })).toHaveClass("min-h-6", "min-w-6");
+    expect(screen.getByRole("button", { name: "2 unavailable" })).toHaveClass("min-h-6", "min-w-6");
+  });
+
+  test("focuses the named dialog, traps Tab in both directions and restores focus on repeated opens", async () => {
+    Object.defineProperty(navigator, "share", { configurable: true, value: vi.fn() });
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("focus", "Focus picture")]) : undefined);
+    renderLibrary();
+    const open = await screen.findByRole("button", { name: "Open Focus picture" });
+    for (let i = 0; i < 2; i += 1) {
+      await userEvent.click(open);
+      const dialog = await screen.findByRole("dialog", { name: "Focus picture" });
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(within(dialog).getByRole("heading", { name: "Focus picture" })).toHaveFocus();
+      expect(within(dialog).getByRole("button", { name: "Download" })).toBeEnabled();
+      expect(within(dialog).getByRole("button", { name: "Share" })).toBeEnabled();
+      const first = within(dialog).getAllByRole("button", { name: "Close" })[0];
+      const last = within(dialog).getByText("Details");
+      last.focus();
+      await userEvent.tab();
+      expect(first).toHaveFocus();
+      await userEvent.tab({ shift: true });
+      expect(last).toHaveFocus();
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(open).toHaveFocus());
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+  });
+
+  test("a portalled action menu keeps arrow navigation instead of changing the selected creation", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("menu1", "Menu one"), picture("menu2", "Menu two")]) : undefined);
+    renderLibrary();
+    await userEvent.click(await screen.findByRole("button", { name: "Open Menu one" }));
+    const dialog = await screen.findByRole("dialog", { name: "Menu one" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Actions for Menu one" }));
+    const remove = await screen.findByRole("menuitem", { name: "Delete" });
+    remove.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(within(dialog).getByRole("heading", { name: "Menu one", hidden: true })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("heading", { name: "Menu two", hidden: true })).toBeNull();
+  });
+
+  test("a deep-linked collapsed unavailable tile returns focus to a visible tile", async () => {
+    navigation.searchParams = new URLSearchParams("asset=gone-focus");
+    routeFetch((path) => path.startsWith("/me/api/media?")
+      ? list([picture("visible", "Visible picture"), picture("gone-focus", "Hidden picture", { available: false })])
+      : path.startsWith("/me/api/media/gone-focus") && !path.includes("/download?")
+        ? Response.json({ asset: picture("gone-focus", "Hidden picture", { available: false }) })
+        : undefined);
+    renderLibrary();
+    const dialog = await screen.findByRole("dialog", { name: "Hidden picture" });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open Visible picture" })).toHaveFocus());
+    expect(dialog).not.toBeInTheDocument();
+  });
+
+  test("provides reduced-motion overrides on the viewer and hover captions", async () => {
+    routeFetch((path) => path.startsWith("/me/api/media?") ? list([picture("motion", "Still picture")]) : undefined);
+    renderLibrary();
+    const open = await screen.findByRole("button", { name: "Open Still picture" });
+    expect(open.closest("article")!.querySelector(".transition-opacity")).toHaveClass("motion-reduce:transition-none");
+    fireEvent.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Still picture" });
+    expect(dialog).toHaveClass("motion-reduce:animate-none");
+    expect(document.querySelector(".bg-overlay")).toHaveClass("motion-reduce:animate-none");
+  });
+});

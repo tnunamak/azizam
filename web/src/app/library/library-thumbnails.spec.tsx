@@ -75,9 +75,8 @@ describe("Library tiles load small previews", () => {
       item(`pic-${index}`, "image", { thumbnail_url: `/signed/pic-${index}/thumb` }),
     );
     const requested = renderLibrary(assets);
-    const last = await screen.findByAltText("Prompt pic-239");
+    await screen.findByAltText("Prompt pic-239");
     expect(document.querySelectorAll("[data-asset-open]")).toHaveLength(240);
-    expect(last.parentElement?.style.contentVisibility).toBe("auto");
     const renders = imageRenders.length;
     const nodes = Array.from(document.querySelectorAll("[data-asset-open]"));
     fireEvent.click(screen.getByRole("button", { name: "Search" }));

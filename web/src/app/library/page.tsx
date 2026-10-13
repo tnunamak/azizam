@@ -10,6 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -1296,6 +1297,45 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * Supplement native Tab/Enter/Space with spatial navigation on tile open
+ * buttons only. Playback controls retain their own keyboard behavior.
+ * Keep native button semantics: this is not an ARIA composite grid.
+ */
+function navigateTiles(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return;
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement) || !target.hasAttribute("data-asset-open"))
+    return;
+  const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  const tiles = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("[data-asset-open]"));
+  const index = tiles.indexOf(target);
+  if (index < 0) return;
+  event.preventDefault();
+  let next = target;
+  if (event.key === "Home") next = tiles[0];
+  else if (event.key === "End") next = tiles[tiles.length - 1];
+  else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const step = (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
+    next = tiles[index + step] ?? target;
+  } else {
+    // Use rendered rows, including any in-progress tiles and responsive gaps.
+    const rect = target.getBoundingClientRect();
+    const down = event.key === "ArrowDown";
+    const candidates = tiles.map((tile) => ({ tile, rect: tile.getBoundingClientRect() }))
+      .filter((item) => down ? item.rect.top > rect.top + 1 : item.rect.top < rect.top - 1);
+    candidates.sort((a, b) =>
+      Math.abs(a.rect.top - rect.top) - Math.abs(b.rect.top - rect.top) ||
+      Math.abs(a.rect.left + a.rect.width / 2 - rect.left - rect.width / 2) -
+        Math.abs(b.rect.left + b.rect.width / 2 - rect.left - rect.width / 2));
+    next = candidates[0]?.tile ?? target;
+  }
+  next.focus();
+}
+
 const AssetTile = memo(function AssetTile({
   asset,
   onOpen,
@@ -1346,7 +1386,7 @@ const AssetTile = memo(function AssetTile({
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
-        className="rounded-media absolute inset-0 z-10"
+        className="rounded-media absolute inset-0 z-10 min-h-6 min-w-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         aria-label={`Open ${assetTitle(asset)}`}
         aria-describedby={
           everyone && person && makerTooltip ? `maker-${asset.asset_id}` : undefined
@@ -1354,9 +1394,6 @@ const AssetTile = memo(function AssetTile({
       />
       <div
         ref={visibilityRef}
-        // The square keeps its size while off-screen content skips layout/paint.
-        // All tiles stay mounted for keyboard navigation and focus restoration.
-        style={{ contentVisibility: "auto" }}
         className={cn(
           "rounded-media relative aspect-square overflow-hidden",
           selected && "outline-ring outline-2 outline-offset-2",
@@ -1416,7 +1453,7 @@ const AssetTile = memo(function AssetTile({
           <div
             aria-hidden="true"
             className={cn(
-              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) motion-reduce:transition-none group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
               asset.kind === "image" ? "bottom-0" : "bottom-14",
             )}
           >
@@ -1692,6 +1729,7 @@ function CreationViewer({
       ),
     retry: false,
   });
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const prompt = asset.prompt?.trim() ?? "";
   // The maker of an item with no prompt learns why, when their settings say.
   const viewer = useViewer();
@@ -1744,16 +1782,24 @@ function CreationViewer({
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50" />
+        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none fixed inset-0 z-50" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          aria-modal="true"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            titleRef.current?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             onReturnFocus(asset.asset_id);
           }}
           onKeyDown={(event) => {
             const target = event.target;
-            if (target instanceof HTMLMediaElement) return;
+            // Portalled menus and media controls own their arrow keys.
+            if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
+              !(target instanceof Element) || !event.currentTarget.contains(target) ||
+              target instanceof HTMLMediaElement) return;
             if (
               target instanceof Element &&
               target.closest(
@@ -1761,10 +1807,16 @@ function CreationViewer({
               )
             )
               return;
-            if (event.key === "ArrowLeft" && previous) onSelect(previous);
-            if (event.key === "ArrowRight" && next) onSelect(next);
+            if (event.key === "ArrowLeft" && previous) {
+              event.preventDefault();
+              onSelect(previous);
+            }
+            if (event.key === "ArrowRight" && next) {
+              event.preventDefault();
+              onSelect(next);
+            }
           }}
-          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:animate-none motion-reduce:data-[state=open]:animate-none md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
         >
           <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
             <div
@@ -1842,7 +1894,7 @@ function CreationViewer({
                 </p>
               ) : null}
               <div className="flex items-start justify-between gap-3">
-                <DialogPrimitive.Title className="text-verdict min-w-0 text-balance break-words">
+                <DialogPrimitive.Title ref={titleRef} tabIndex={-1} className="text-verdict min-w-0 text-balance break-words">
                   {title}
                 </DialogPrimitive.Title>
                 <div className="-mt-1 -mr-1.5 flex shrink-0 items-center gap-1">
@@ -2125,7 +2177,8 @@ function focusTile(
 ) {
   const tiles = Array.from(
     document.querySelectorAll<HTMLElement>("[data-asset-open]"),
-  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? ""));
+  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? "") &&
+    !tile.closest("details:not([open]), [hidden]"));
   (
     tiles.find((tile) => tile.dataset.assetOpen === assetId) ??
     tiles[0] ??
@@ -2164,6 +2217,7 @@ export default function LibraryPage() {
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [closedDeepLinkId, setClosedDeepLinkId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const [deleteAnnouncement, setDeleteAnnouncement] = useState("");
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
@@ -2482,7 +2536,7 @@ export default function LibraryPage() {
     },
     onSuccess: (_result, asset) => {
       removedAssetIds.current.add(asset.asset_id);
-      toast.success("Deleted from your library.");
+      setDeleteAnnouncement("Deleted from your library.");
       closeAsset();
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
@@ -2628,7 +2682,7 @@ export default function LibraryPage() {
                 .getElementById("gone-files")
                 ?.scrollIntoView({ block: "start" });
             }}
-            className="text-link text-meta ml-3 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+            className="text-link text-meta ml-3 min-h-6 min-w-6 font-medium underline-offset-4 hover:underline max-sm:min-h-11"
           >
             {goneAssets.length === 1
               ? goneConfirmed
@@ -2640,6 +2694,9 @@ export default function LibraryPage() {
           </button>
         ) : null}
       </header>
+      <p role="status" aria-live="polite" aria-atomic="true" className="text-meta">
+        {deleteAnnouncement}
+      </p>
       {/* The toolbar and the grid it filters are one block, 24 apart. */}
       <div>
         <section
@@ -2765,7 +2822,7 @@ export default function LibraryPage() {
               phone squares jumped to three). */}
             <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
               {Array.from({ length: 12 }).map((_, index) => (
-                <Skeleton key={index} className="rounded-media aspect-square" />
+                <Skeleton key={index} className="rounded-media aspect-square motion-reduce:animate-none" />
               ))}
             </div>
           </div>
@@ -2809,7 +2866,12 @@ export default function LibraryPage() {
           <div aria-busy={updating}>
             {/* One continuous grid, newest first (D1.6: date groups left
               part-filled rows); the day rides on its first tile. */}
-            <div className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}>
+            <div
+              role="group"
+              aria-label="Creations"
+              onKeyDown={navigateTiles}
+              className={cn("grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6", mediaGridGap)}
+            >
               {inProgress.map((item) => (
                 <MakingTile key={item.id} kind={item.kind} startedAt={item.startedAt} />
               ))}
@@ -2840,7 +2902,7 @@ export default function LibraryPage() {
             </p>
             <Button
               variant="link"
-              className="h-auto px-0"
+              className="h-auto min-h-6 min-w-6 px-0"
               onClick={() => void refetch()}
             >
               Refresh library
@@ -2854,7 +2916,12 @@ export default function LibraryPage() {
             <summary className="text-link text-meta flex min-h-8 w-fit cursor-pointer items-center font-medium max-sm:min-h-11">
               Show them
             </summary>
-            <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+            <div
+              role="group"
+              aria-label="Unavailable creations"
+              onKeyDown={navigateTiles}
+              className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
+            >
               {goneTiles}
             </div>
           </details>
@@ -2939,7 +3006,10 @@ export default function LibraryPage() {
             );
           }}
           onDelete={
-            madeByViewer(selected) ? (asset) => setConfirming(asset) : null
+            madeByViewer(selected) ? (asset) => {
+              setDeleteAnnouncement("");
+              setConfirming(asset);
+            } : null
           }
           onReturnFocus={returnFocus}
         />
