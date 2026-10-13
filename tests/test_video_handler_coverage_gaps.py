@@ -188,8 +188,8 @@ def _comfy_state_fake(fake_upstreams, monkeypatch, *, queue=None, history=None):
                          "GET /history (a JSON object keyed by prompt id) (ComfyUI server.py)",
         },
         "exchanges": [
-            {"id": "queue", "match": {"method": "GET", "path": "/queue"}, "response": queue or healthy_queue},
-            {"id": "history", "match": {"method": "GET", "path": "/history"}, "response": history or healthy_history},
+            {"id": "queue", "repeat": True, "match": {"method": "GET", "path": "/queue"}, "response": queue or healthy_queue},
+            {"id": "history", "repeat": True, "match": {"method": "GET", "path": "/history"}, "response": history or healthy_history},
         ],
     }))
     monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
