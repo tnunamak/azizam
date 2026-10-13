@@ -10,12 +10,13 @@ their code:
   requirements, in plan, row and first-occurrence subject order.
 * ``category_enforcement``: a truth table over gate state, governance,
   resolved target and the kernel model above.
-* ``policy``: an ordered guard list from ``evaluate``'s docstring, with a
-  hand-written table for native-operation scopes.
+* ``policy``: the written rules of one access plan, applied to both the
+  person's and the app's plan (design v4 §2.6), with a hand-written table for
+  direct-engine operation scopes.
 
-Metamorphic relations need no model: tightening an allow-list, adding a plan,
-a deny row or a requirement never turns a denial into an allow, and a guard
-after the first failed one never changes the denial.
+Metamorphic relations need no model: adding a plan, a deny row or a
+requirement never turns a denial into an allow, and a gain on one side of
+the two plans never widens the other.
 
 Hypothesis profiles live in tests/conftest.py (gate: 100 examples, nightly:
 2,000; both derandomized). Boundary cases and every shrunk counterexample
@@ -30,20 +31,8 @@ import pytest
 from hypothesis import example, given, strategies as st
 
 from gateway import category_enforcement, category_policy as kernel
-from gateway.policy import (
-    ALLOWED,
-    DENIED,
-    NOT_EVALUATED,
-    AppProfile,
-    CapabilitySelector,
-    FallbackPolicy,
-    NativePassthroughPolicy,
-    PolicyDecision,
-    PolicyRequest,
-    RemoteProviderPolicy,
-    StatusVisibilityPolicy,
-    evaluate as profile_evaluate,
-)
+from gateway.access_plans import AccessPlan, CapabilityGrant, DirectEngineAccess
+from gateway.policy import ALLOWED, DENIED, EffectiveAccess, PolicyDecision, PolicyRequest, evaluate, matches_operation
 
 
 # --------------------------------------------------------------------------
@@ -449,7 +438,7 @@ def enforcement_case(draw):
                             workflow=None if early else draw(st.sampled_from(targets)),
                             model=None if early else draw(st.sampled_from(targets)))
     prior = PolicyDecision(
-        decision=draw(st.sampled_from([ALLOWED, ALLOWED, DENIED, NOT_EVALUATED])),
+        decision=draw(st.sampled_from([ALLOWED, ALLOWED, DENIED, "not_evaluated"])),
         sources=tuple(draw(st.lists(st.sampled_from(["profile:x", "policy:y"]), max_size=2))),
         reasons=tuple(draw(st.lists(st.sampled_from(["r1", "r2"]), max_size=2))),
         visibility_level=draw(st.sampled_from(["none", "basic", "full"])),
@@ -568,12 +557,13 @@ def test_early_category_check_passes_when_any_service_is_granted(granted, ungran
 
 
 # --------------------------------------------------------------------------
-# policy: the ordered guard list
+# policy: two access plans (design v4 §2.5, §2.6)
 # --------------------------------------------------------------------------
 
 OPS = ("GET /v1/models", "POST /v1/chat/completions", "GET /api/tags")
-# Hand-written from _matches_native_operation's docstring: exact strings, "*",
-# "METHOD *", path-only legacy scopes, and prefix scopes ending in "*".
+# Hand-written from matches_operation's docstring: exact strings, "*",
+# "METHOD *", path-only scopes and prefix scopes ending in "*". An empty
+# scope set matches nothing.
 SCOPE_MATCHES = {
     "*": set(OPS),
     "GET *": {"GET /v1/models", "GET /api/tags"},
@@ -584,305 +574,113 @@ SCOPE_MATCHES = {
     "/v1/*": {"GET /v1/models", "POST /v1/chat/completions"},
     "POST /v1/chat/completions": {"POST /v1/chat/completions"},
 }
-
-# (dimension, request field, match kind, extra source, reason prefix), in the
-# documented evaluation order.
-GUARDS = (
-    ("protocols", "protocol", "family", None, "protocol "),
-    ("workflows", "workflow", "exact", None, "workflow "),
-    ("models", "model", "exact", None, "model "),
-    ("backends", "backend", "exact", None, "backend "),
-    ("intents", "intent", "family", "policy:capability-selectors", "intent "),
-    ("exposure", "capability_exposure", "exact", "policy:capability-selectors", "exposure "),
-    ("trust_tiers", "capability_trust_tier", "exact", "policy:capability-selectors", "trust tier "),
-    ("resource_tiers", "capability_resource_tier", "exact", "policy:capability-selectors", "resource tier "),
-    ("tags", "capability_tags", "any", "policy:capability-selectors", "capability tags "),
-    ("cloud", None, None, "policy:local-only", "cloud fallback "),
-    ("remote_providers", None, None, "policy:remote-provider", "remote provider "),
-    ("remote_paid", None, None, "policy:remote-provider", "paid fallback "),
-    ("native_enabled", None, None, "policy:native-passthrough", "native passthrough disabled"),
-    ("native_backends", None, None, "policy:native-passthrough", "native passthrough backend "),
-    ("native_operations", None, None, "policy:native-passthrough", "native passthrough operation "),
-)
-GUARD_INDEX = {guard[0]: index for index, guard in enumerate(GUARDS)}
-SELECTORS = {"intents", "exposure", "trust_tiers", "resource_tiers", "tags"}
-UNIVERSE = {
-    "protocols": ("openai", "openai.chat", "anthropic"),
-    "workflows": ("w1", "w2"), "models": ("m1", "m2"), "backends": ("b1", "b2"),
-    "intents": ("image", "image.generate", "chat"),
-    "exposure": ("public", "private"), "trust_tiers": ("t1", "t2"),
-    "resource_tiers": ("r1", "r2"), "tags": ("x", "y"),
-}
-REQUEST_VALUES = {
-    "protocol": ("openai", "openai.chat", "openai.images.edit", "anthropic", "openaix"),
-    "workflow": ("w1", "w2", "w3"), "model": ("m1", "m3"), "backend": ("b1", "b3"),
-    "intent": ("image", "image.generate", "image.generate.x", "chat", "imagex"),
-    "capability_exposure": ("public", "private"), "capability_trust_tier": ("t1", "t3"),
-    "capability_resource_tier": ("r1", "r2"),
-}
-
-
-def _optional_subset(values):
-    return st.one_of(st.none(), st.frozensets(st.sampled_from(values)))
+CAPS = ("chat", "image", "embed")
+INTENTS = {"chat": "chat.completions", "image": "image.generate", "embed": "text.embeddings"}
+ITEMS = ("m1", "m2")
+ENGINES = ("b1", "b2")
+PROVIDERS = ("openrouter", "typesafe")
 
 
 @st.composite
-def profiles(draw) -> AppProfile:
-    dims = {name: draw(_optional_subset(values)) for name, values in UNIVERSE.items()}
-    return AppProfile(
-        id="prop",
-        protocols=dims["protocols"], workflows=dims["workflows"],
-        models=dims["models"], backends=dims["backends"],
-        allow=CapabilitySelector(intents=dims["intents"], exposure=dims["exposure"],
-                                 trust_tiers=dims["trust_tiers"],
-                                 resource_tiers=dims["resource_tiers"], tags=dims["tags"]),
-        fallback=FallbackPolicy(cloud_allowed=draw(st.booleans())),
-        remote=RemoteProviderPolicy(providers=draw(st.frozensets(st.sampled_from(["openai", "anthropic"]))),
-                                    allow_paid_fallback=draw(st.booleans())),
-        native_passthrough=NativePassthroughPolicy(
-            enabled=draw(st.sampled_from([True, True, False])),
-            allowed_backends=draw(st.frozensets(st.sampled_from(["b1", "b2"]))),
-            allowed_operations=draw(st.frozensets(st.sampled_from(sorted(SCOPE_MATCHES)), max_size=3)),
+def access_plans(draw, plan_id="prop") -> AccessPlan:
+    can_use = {}
+    for cap in draw(st.frozensets(st.sampled_from(CAPS))):
+        if draw(st.booleans()):
+            can_use[cap] = CapabilityGrant(all_items=True)
+        else:
+            can_use[cap] = CapabilityGrant(models=draw(st.frozensets(st.sampled_from(ITEMS))))
+    all_engines = draw(st.booleans())
+    return AccessPlan(
+        id=plan_id, name=plan_id, can_use=can_use,
+        direct_engine_access=DirectEngineAccess(
+            all_engines=all_engines,
+            engines=frozenset() if all_engines else draw(st.frozensets(st.sampled_from(ENGINES))),
+            operations=draw(st.frozensets(st.sampled_from(sorted(SCOPE_MATCHES)), max_size=3)),
         ),
-        status_visibility=StatusVisibilityPolicy(level=draw(st.sampled_from(["none", "basic", "full"]))),
+        paid_providers=draw(st.frozensets(st.sampled_from(PROVIDERS))),
+        provider_fallback=draw(st.booleans()),
+        can_load_models=draw(st.booleans()),
+        receipt_detail=draw(st.sampled_from(["none", "basic", "standard", "full"])),
+        media_metadata=draw(st.sampled_from(["none", "full"])),
     )
 
 
 @st.composite
-def requests(draw) -> PolicyRequest:
-    # "late" requests omit every allow-list dimension so the cloud and remote
-    # guards are reached often; "native" requests also skip those, so the
-    # native-passthrough guards are reached often.
-    focus = draw(st.sampled_from(["all", "all", "late", "native"]))
-    early_none = focus != "all"
-    fields = {name: None if early_none else draw(st.one_of(st.none(), st.sampled_from(values)))
-              for name, values in REQUEST_VALUES.items()}
-    native_only = focus == "native"
+def plan_requests(draw) -> PolicyRequest:
+    if draw(st.integers(0, 3)) == 0:
+        return PolicyRequest(intent="provider.native", native_passthrough=True,
+                             native_backend=draw(st.sampled_from(ENGINES + ("b3",))),
+                             native_operation=draw(st.one_of(st.none(), st.sampled_from(OPS))))
+    cap = draw(st.sampled_from(CAPS + ("video",)))
     return PolicyRequest(
-        **fields,
-        capability_tags=None if early_none else draw(
-            st.one_of(st.none(), st.frozensets(st.sampled_from(["x", "y", "z"])))),
-        requires_cloud_fallback=False if native_only else draw(st.booleans()),
-        remote_provider=None if native_only else draw(
-            st.one_of(st.none(), st.sampled_from(["openai", "openai", "anthropic", "mistral"]))),
+        intent=INTENTS.get(cap, "video.generate"),
+        model=draw(st.one_of(st.none(), st.sampled_from(ITEMS + ("m3",)))),
+        remote_provider=draw(st.one_of(st.none(), st.sampled_from(PROVIDERS + ("other",)))),
         remote_paid_fallback=draw(st.booleans()),
-        native_passthrough=True if native_only else draw(st.booleans()),
-        native_operation=draw(st.one_of(st.none(), st.sampled_from(OPS))),
-        native_backend=draw(st.one_of(st.none(), st.sampled_from(["b1", "b3"]))),
     )
 
 
-def _allowed_list(profile: AppProfile, name: str):
-    return getattr(profile.allow, name) if name in SELECTORS else getattr(profile, name)
+def one_plan_allows(plan: AccessPlan, request: PolicyRequest) -> bool:
+    """The written rules of one plan (design §2.1, §2.7), independent of the code."""
+    if request.native_passthrough:
+        direct = plan.direct_engine_access
+        engine_ok = direct.all_engines or request.native_backend in direct.engines
+        if not engine_ok or not direct.operations or not (direct.all_engines or direct.engines):
+            return False
+        return request.native_operation is None or any(
+            request.native_operation in SCOPE_MATCHES[scope] for scope in direct.operations)
+    cap = next((c for c, intent in INTENTS.items() if intent == request.intent), None)
+    grant = plan.can_use.get(cap) if cap else None
+    if grant is None:
+        return False
+    if not grant.all_items:
+        if request.model is None:
+            if not grant.models:
+                return False
+        elif request.model not in grant.models:
+            return False
+    if request.remote_provider is not None and request.remote_provider not in plan.paid_providers:
+        return False
+    if request.remote_paid_fallback and not plan.provider_fallback:
+        return False
+    return True
 
 
-def first_failed_guard(profile: AppProfile, request: PolicyRequest) -> str | None:
-    """The documented guard order; None when every guard passes."""
-    for name, field, kind, _source, _prefix in GUARDS:
-        if field is not None:
-            allowed, value = _allowed_list(profile, name), getattr(request, field)
-            if allowed is None or value is None:
-                continue
-            if kind == "family":
-                ok = value in allowed or any(value.startswith(item + ".") for item in allowed)
-            elif kind == "any":
-                ok = bool(value & allowed)
-            else:
-                ok = value in allowed
-            if not ok:
-                return name
-        elif name == "cloud":
-            if request.requires_cloud_fallback and not profile.fallback.cloud_allowed:
-                return name
-        elif name == "remote_providers":
-            if request.remote_provider is not None and request.remote_provider not in profile.remote.providers:
-                return name
-        elif name == "remote_paid":
-            if (request.remote_provider is not None and request.remote_paid_fallback
-                    and not profile.remote.allow_paid_fallback):
-                return name
-        elif request.native_passthrough:
-            native = profile.native_passthrough
-            if name == "native_enabled" and not native.enabled:
-                return name
-            backend = request.native_backend or request.backend
-            if (name == "native_backends" and backend is not None and native.allowed_backends
-                    and backend not in native.allowed_backends):
-                return name
-            if (name == "native_operations" and request.native_operation is not None
-                    and native.allowed_operations
-                    and not any(request.native_operation in SCOPE_MATCHES[scope]
-                                for scope in native.allowed_operations)):
-                return name
-    return None
+@given(access_plans("p"), access_plans("a"), plan_requests())
+def test_a_request_runs_only_when_both_plans_allow_it(person, app, request):
+    decision = evaluate(EffectiveAccess(person_plan=person, app_plan=app), request)
+    assert decision.allowed == (one_plan_allows(person, request) and one_plan_allows(app, request))
+    if decision.denied:
+        assert decision.side == ("person" if not one_plan_allows(person, request) else "app")
 
 
-def _guard_of(decision: PolicyDecision) -> str:
-    matches = [g[0] for g in GUARDS if decision.reasons and decision.reasons[0].startswith(g[4])]
-    assert len(matches) == 1, decision.reasons
-    return matches[0]
+@given(access_plans("p"), access_plans("a"), plan_requests())
+def test_a_missing_plan_on_either_side_denies_everything(person, app, request):
+    for effective in (EffectiveAccess(person, None), EffectiveAccess(None, app), EffectiveAccess(None, None)):
+        assert evaluate(effective, request).code == "no_access_plan"
 
 
-@given(profiles(), requests())
-@example(  # A family scope matches "openai.chat" but not "openaix".
-    AppProfile(id="prop", protocols=frozenset({"openai"})), PolicyRequest(protocol="openaix"))
-@example(  # Shrunk (nightly): with workflow and model both refused, the workflow guard decides.
-    AppProfile(id="prop", workflows=frozenset(), models=frozenset()), PolicyRequest(workflow="w1", model="m1"))
-def test_profile_decision_is_the_first_failed_guard(profile, request):
-    decision = profile_evaluate(profile, request)
-    failed = first_failed_guard(profile, request)
-    assert decision.visibility_level == profile.status_visibility.level
-    if failed is None:
-        assert decision.decision == ALLOWED, decision.reasons
-        return
-    assert decision.decision == DENIED
-    assert _guard_of(decision) == failed
-    extra = GUARDS[GUARD_INDEX[failed]][3]
-    assert decision.sources == ("profile:prop", *((extra,) if extra else ()))
+@given(access_plans("p"), access_plans("a"))
+def test_settings_compose_to_the_lower_of_both_plans(person, app):
+    effective = EffectiveAccess(person, app)
+    order = ("none", "basic", "standard", "full")
+    assert order.index(effective.receipt_detail) == min(order.index(person.receipt_detail),
+                                                       order.index(app.receipt_detail))
+    assert effective.paid_providers == person.paid_providers & app.paid_providers
+    assert effective.can_load_models == (person.can_load_models and app.can_load_models)
+    assert effective.provider_fallback == (person.provider_fallback and app.provider_fallback)
 
 
-@given(
-    enabled=st.sampled_from([True, True, True, False]),
-    backends=st.frozensets(st.sampled_from(["b1", "b2"])),
-    scopes=st.frozensets(st.sampled_from(sorted(SCOPE_MATCHES)), max_size=3),
-    backend=st.one_of(st.none(), st.sampled_from(["b1", "b2", "b3"])),
-    native_backend=st.one_of(st.none(), st.sampled_from(["b1", "b3"])),
-    operation=st.one_of(st.none(), st.sampled_from(OPS)),
-)
-@example(enabled=True, backends=frozenset(), scopes=frozenset({"/v1/*"}), backend=None,
-         native_backend=None, operation="GET /api/tags")  # a path prefix, not a method prefix
-def test_native_passthrough_guards_follow_the_scope_table(enabled, backends, scopes, backend,
-                                                          native_backend, operation):
-    """Native guards only: empty allow-lists mean unrestricted, scopes per SCOPE_MATCHES."""
-    profile = AppProfile(id="prop", native_passthrough=NativePassthroughPolicy(
-        enabled=enabled, allowed_backends=backends, allowed_operations=scopes))
-    request = PolicyRequest(backend=backend, native_passthrough=True, native_backend=native_backend,
-                            native_operation=operation)
-    decision = profile_evaluate(profile, request)
-    failed = first_failed_guard(profile, request)
-    assert (decision.decision == ALLOWED) == (failed is None)
-    if failed is not None:
-        assert _guard_of(decision) == failed
+@given(access_plans("p"), access_plans("a"), access_plans("wide"), plan_requests())
+def test_a_gain_on_one_side_never_widens_the_other(person, app, wide, request):
+    """Swapping the app's plan for any other never allows what the person's plan denies."""
+    if not one_plan_allows(person, request):
+        assert evaluate(EffectiveAccess(person, wide), request).denied
+        assert evaluate(EffectiveAccess(person, app), request).denied
 
 
-LIST_GUARDS = [g[0] for g in GUARDS if g[1] is not None]
-
-
-@given(name=st.sampled_from(LIST_GUARDS), data=st.data())
-def test_each_allow_list_guard_alone_follows_its_match_rule(name, data):
-    """One allow-list dimension set on the profile and on the request, all else open."""
-    field, kind = GUARDS[GUARD_INDEX[name]][1:3]
-    allowed = data.draw(st.frozensets(st.sampled_from(UNIVERSE[name])), label="allowed")
-    if kind == "any":
-        value = data.draw(st.frozensets(st.sampled_from(["x", "y", "z"])), label="value")
-    else:
-        value = data.draw(st.sampled_from(REQUEST_VALUES[field]), label="value")
-    profile = (AppProfile(id="prop", allow=CapabilitySelector(**{name: allowed})) if name in SELECTORS
-               else AppProfile(id="prop", **{name: allowed}))
-    request = PolicyRequest(**{field: value})
-    decision = profile_evaluate(profile, request)
-    assert (decision.decision == ALLOWED) == (first_failed_guard(profile, request) is None)
-
-
-@given(
-    cloud_allowed=st.booleans(), providers=st.frozensets(st.sampled_from(["openai", "anthropic"])),
-    paid_allowed=st.booleans(), requires_cloud=st.booleans(),
-    provider=st.one_of(st.none(), st.sampled_from(["openai", "anthropic", "mistral"])), paid=st.booleans(),
-)
-def test_cloud_and_remote_guards_alone_follow_their_rules(cloud_allowed, providers, paid_allowed,
-                                                         requires_cloud, provider, paid):
-    profile = AppProfile(id="prop", fallback=FallbackPolicy(cloud_allowed=cloud_allowed),
-                         remote=RemoteProviderPolicy(providers=providers, allow_paid_fallback=paid_allowed))
-    request = PolicyRequest(requires_cloud_fallback=requires_cloud, remote_provider=provider,
-                            remote_paid_fallback=paid)
-    decision = profile_evaluate(profile, request)
-    failed = first_failed_guard(profile, request)
-    assert (decision.decision == ALLOWED) == (failed is None)
-    if failed is not None:
-        assert _guard_of(decision) == failed
-
-
-# How to make each guard fail on its own: (profile settings, request fields).
-FAILING = {
-    **{name: ({name: frozenset()}, {field: (frozenset({"x"}) if kind == "any" else REQUEST_VALUES[field][0])})
-       for name, field, kind, _source, _prefix in GUARDS if field is not None},
-    "cloud": ({"fallback": FallbackPolicy(cloud_allowed=False)}, {"requires_cloud_fallback": True}),
-    "remote_providers": ({"remote": RemoteProviderPolicy(providers=frozenset())}, {"remote_provider": "openai"}),
-    "native_enabled": ({"native_passthrough": NativePassthroughPolicy(enabled=False)}, {"native_passthrough": True}),
-}
-
-
-@given(pair=st.lists(st.sampled_from(sorted(FAILING)), min_size=2, max_size=2, unique=True))
-def test_of_two_failing_guards_the_earlier_one_decides(pair):
-    profile_settings, selector, fields = {}, {}, {}
-    for name in pair:
-        settings_for, request_fields = FAILING[name]
-        for key, value in settings_for.items():
-            (selector if key in SELECTORS else profile_settings)[key] = value
-        fields.update(request_fields)
-    profile = AppProfile(id="prop", allow=CapabilitySelector(**selector), **profile_settings)
-    decision = profile_evaluate(profile, PolicyRequest(**fields))
-    assert decision.decision == DENIED
-    assert _guard_of(decision) == min(pair, key=GUARD_INDEX.get)
-
-
-def _tighten(draw, profile: AppProfile, names) -> AppProfile:
-    """One restriction on one guard named in ``names``.
-
-    For profile allow-lists, None means no opinion, so None -> any set and
-    set -> subset both tighten. Native allow-lists are the exception: an empty
-    set means unrestricted, so only a non-empty subset of a non-empty set
-    tightens them.
-    """
-    name = draw(st.sampled_from(sorted(names)))
-    if name in UNIVERSE:
-        current = _allowed_list(profile, name)
-        pool = sorted(current) if current is not None else list(UNIVERSE[name])
-        tighter = draw(st.frozensets(st.sampled_from(pool))) if pool else frozenset()
-        if name in SELECTORS:
-            return replace(profile, allow=replace(profile.allow, **{name: tighter}))
-        return replace(profile, **{name: tighter})
-    if name == "cloud":
-        return replace(profile, fallback=FallbackPolicy(cloud_allowed=False))
-    if name == "remote_providers":
-        pool = sorted(profile.remote.providers)
-        return replace(profile, remote=replace(
-            profile.remote, providers=draw(st.frozensets(st.sampled_from(pool))) if pool else frozenset()))
-    if name == "remote_paid":
-        return replace(profile, remote=replace(profile.remote, allow_paid_fallback=False))
-    native = profile.native_passthrough
-    if name == "native_enabled":
-        return replace(profile, native_passthrough=replace(native, enabled=False))
-    if name == "native_backends":
-        pool = sorted(native.allowed_backends) or ["b1", "b2"]
-        subset = draw(st.frozensets(st.sampled_from(pool), min_size=1))
-        return replace(profile, native_passthrough=replace(native, allowed_backends=subset))
-    pool = sorted(native.allowed_operations) or sorted(SCOPE_MATCHES)
-    subset = draw(st.frozensets(st.sampled_from(pool), min_size=1))
-    return replace(profile, native_passthrough=replace(native, allowed_operations=subset))
-
-
-@given(profiles(), requests(), st.data())
-def test_tightening_a_profile_never_grants(profile, request, data):
-    tight = _tighten(data.draw, profile, GUARD_INDEX)
-    if profile_evaluate(tight, request).decision == ALLOWED:
-        assert profile_evaluate(profile, request).decision == ALLOWED
-
-
-def test_an_empty_profile_allow_list_denies_all_while_none_has_no_opinion():
-    """The boundary of the tightening relation: None -> {w1} -> {} for one workflow."""
-    request = PolicyRequest(workflow="w1")
-    decisions = [profile_evaluate(AppProfile(id="prop", workflows=allowed), request).decision
-                 for allowed in (None, frozenset({"w1"}), frozenset())]
-    assert decisions == [ALLOWED, ALLOWED, DENIED]
-
-
-@given(profiles(), requests(), st.data())
-def test_guards_after_the_first_failure_do_not_change_the_denial(profile, request, data):
-    decision = profile_evaluate(profile, request)
-    if decision.decision != DENIED:
-        return
-    later = {name for name in GUARD_INDEX if GUARD_INDEX[name] > GUARD_INDEX[_guard_of(decision)]}
-    if not later:
-        return
-    assert profile_evaluate(_tighten(data.draw, profile, later), request) == decision
+@given(enabled_ops=st.frozensets(st.sampled_from(sorted(SCOPE_MATCHES)), max_size=3),
+       operation=st.sampled_from(OPS))
+def test_operation_scopes_follow_the_scope_table(enabled_ops, operation):
+    assert matches_operation(operation, enabled_ops) == any(
+        operation in SCOPE_MATCHES[scope] for scope in enabled_ops)

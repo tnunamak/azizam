@@ -8,25 +8,20 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import admin_store
 from gateway.runtime_auth import hash_api_key
+from tests.support.access import service_app
 
 
-def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path, monkeypatch):
+def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immediate(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    owner = admin_store.create_service_account("chat-test-owner", path=db)
-    profile = admin_store.create_profile("chat-test-profile", {}, path=db)
-    app = admin_store.create_app(
-        "chat-test-app", kind="service", owner_service_account_id=owner["id"], path=db,
-    )
+    app = service_app("chat-test-app", path=db)
     key = "hotpath-http-fixture"
     credential = admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"],
-        hash=hash_api_key(key), prefix="fixture", profile_id=profile["id"], path=db,
+        hash=hash_api_key(key), prefix="fixture", path=db,
     )
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"})
     monkeypatch.setattr(proxy, "get_active_backend", AsyncMock(return_value="kobold"))
     monkeypatch.setattr(proxy, "current_llm_model_for_backend", AsyncMock(return_value="fixture-model"))
@@ -46,29 +41,29 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
     body = {"model": "current", "messages": [{"role": "user", "content": "ping"}]}
     headers = {"authorization": f"Bearer {key}"}
 
+    lookups = []
+    real_scope = admin_store.runtime_auth_connection
+
     @contextmanager
-    def separate_connections(path):
-        # The original resolver opened a separate connection in each helper.
-        yield None
+    def counted(path=admin_store.DB_PATH):
+        lookups.append(path)
+        with real_scope(path) as connection:
+            yield connection
 
     # The process stamps a key's last use once a minute (admin_store._LAST_TOUCH); start from a key
-    # not yet stamped so the first request pays for its stamp, as the original resolver did.
+    # not yet stamped so both requests are measured the same way.
     admin_store._LAST_TOUCH.clear()
-    with patch.object(admin_store, "runtime_auth_connection", separate_connections), patch.object(
-        admin_store, "_conn", wraps=admin_store._conn,
-    ) as connections:
-        before = client.post("/v1/chat/completions", json=body, headers=headers)
-        before_count = connections.call_count
-    with patch.object(admin_store, "_conn", wraps=admin_store._conn) as connections:
-        after = client.post("/v1/chat/completions", json=body, headers=headers)
-        after_count = connections.call_count
+    with patch.object(admin_store, "runtime_auth_connection", counted):
+        first = client.post("/v1/chat/completions", json=body, headers=headers)
+        first_count = len(lookups)
+        second = client.post("/v1/chat/completions", json=body, headers=headers)
+        second_count = len(lookups) - first_count
 
-    assert before.status_code == after.status_code == 200
-    assert before.json()["choices"] == after.json()["choices"]
-    # Both the handler and firehose resolve this four-lookup identity: 8 -> 2. The process stamps
-    # a key's last use once a minute, so the second resolution skips its stamp (admin_store._LAST_TOUCH):
-    # the original resolver's 8 connections are 7 here, 2 with the shared connection.
-    assert before_count - after_count == 5
+    assert first.status_code == second.status_code == 200
+    assert first.json()["choices"] == second.json()["choices"]
+    # The identity (credential, App, accountable person and both plans) is one
+    # SELECT on one connection; the handler and the firehose each resolve it.
+    assert first_count == second_count == 2, (first_count, second_count)
     assert len(forwarded) == 2
     admin_store.revoke_credential(credential["id"], path=db)
     denied = client.post("/v1/chat/completions", json=body, headers=headers)

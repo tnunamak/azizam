@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import accounts, admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from tests.support.access import store_plan  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
 MADE_PNG = base64.b64decode(
@@ -52,6 +53,9 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         proxy.asset_cache_path(SOURCE).write_bytes(PNG)
         self.root = root
         self.user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=self.admin)
+        accounts.initialize(self.admin)
+        accounts.change_person(self.user["id"], "test", path=self.admin,
+                               plan_id=store_plan("Everything", path=self.admin)["id"])
         self.app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         self.runtime = proxy._SessionMakeRuntime()
         # The source picture is in the person's Library: an earlier job of theirs made it.
@@ -137,7 +141,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
                                         "response_format": "url"})
 
     def test_only_the_persons_own_enabled_session_app_can_run(self) -> None:
-        other = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], path=self.admin)
+        other = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         stranger = admin_store.upsert_oidc_user("issuer", "stranger", email="s@example.test", path=self.admin)
         cases = {
             "ordinary App": {"app_id": other["id"], "person_id": self.user["id"]},
@@ -473,7 +477,7 @@ class SessionMakeRuntimeTests(unittest.TestCase):
 
         async def route(request, auth_context, receipt=None):
             # What the image route does: a remembered prompt, then the picture.
-            context = media_delivery.begin(profile_default=None)
+            context = media_delivery.begin(plan_bound=None)
             context.person_id = user_id
             context.prompt_decision = prompt_memory.Decision(user_id, True, "test", None, int(time.time()))
             context.prompt_text = "private make prompt"
@@ -621,7 +625,7 @@ class SessionAppStoreTests(unittest.TestCase):
                     actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"admin"})),
                 )
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
-        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], path=self.admin)
+        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
                                            hash="o" * 64, prefix="opk_o", path=self.admin)
 
@@ -634,7 +638,7 @@ class SessionAppStoreTests(unittest.TestCase):
 
     def test_startup_revokes_existing_session_app_keys(self) -> None:
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
-        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], path=self.admin)
+        ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         kept = admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
                                                   hash="o" * 64, prefix="opk_o", path=self.admin)
         legacy = self._legacy_session_app_key(app["id"], "s" * 64)

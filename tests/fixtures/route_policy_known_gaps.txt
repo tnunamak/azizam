@@ -53,7 +53,7 @@ POST /v1/audio/transcriptions 404                              # not exercised: 
 POST /openai/v1/audio/transcriptions 404                       # not exercised: was: HTTP status in DENIED
 POST /v1/audio/translations 404                                # not exercised: was: HTTP status in DENIED
 POST /openai/v1/audio/translations 404                         # not exercised: was: HTTP status in DENIED
-GET /gateway/v1/media/jobs/{job_id}/content 403                # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/content 404                # not exercised: a missing job answers 404 before any model is considered
 GET /v1/assets/{asset_id}/thumbnail 403                    # not exercised: was: HTTP status in DENIED (signed URL, not category-governed, like the content route)
 GET /v1/images/{image_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /openai/v1/images/{image_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
@@ -126,7 +126,7 @@ POST /v1/audio/translations 404                                # not exercised: 
 POST /openai/v1/audio/translations 404                         # not exercised: was: HTTP status in DENIED
 POST /v1/rerank 404                                            # not exercised: was: HTTP status in DENIED
 POST /openai/v1/rerank 404                                     # not exercised: was: HTTP status in DENIED
-GET /gateway/v1/media/jobs/{job_id}/content 403                # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/content 404                # not exercised: a missing job answers 404 before any model is considered
 GET /v1/assets/{asset_id}/thumbnail 403                    # not exercised: was: HTTP status in DENIED (signed URL, not category-governed, like the content route)
 GET /v1/images/{image_id}/content 400                          # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /openai/v1/images/{image_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
@@ -176,6 +176,4 @@ PATCH /gateway/v1/providers/{provider}/{native_path:path} 404  # not exercised: 
 POST /gateway/v1/providers/{provider}/{native_path:path} 404   # not exercised: was: HTTP status in DENIED
 PUT /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/receipts 200                                   # not exercised: only the blanket decoy GET rule covered it
-GET /api/version 200                                           # not exercised: only the blanket decoy GET rule covered it
-GET /ollama/api/version 200                                    # not exercised: only the blanket decoy GET rule covered it
 GET /gateway/v1/providers 200                                  # not exercised: only the blanket decoy GET rule covered it

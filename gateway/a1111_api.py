@@ -39,7 +39,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from gateway import category_enforcement
+from gateway.runtime_auth import discovery_allows
 from gateway.policy import PolicyRequest
 from gateway.workflow_call import BuiltRequest, CallError, build_request, effective_schema, error_from, validate_inputs
 
@@ -381,7 +381,7 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
                 by_title.setdefault(title, entry)
         return JSONResponse([{"title": t, "model_name": t, "hash": None, "sha256": None, "filename": t, "config": None}
                              for t in model_titles(deps, entries=entries)
-                             if category_enforcement.visible(getattr(auth, "identity", None), PolicyRequest(
+                             if discovery_allows(getattr(auth, "identity", None), PolicyRequest(
                                  protocol="openai.images", intent="image.generate",
                                  model=t, workflow=by_title[t]["id"],
                              ))])

@@ -14,6 +14,7 @@ import proxy
 from gateway import admin_store, media_delivery, media_jobs, media_metadata, prompt_memory
 
 from PIL import Image
+from tests.support.access import service_app, auth_identity
 _buffer = BytesIO()
 Image.new("RGB", (2, 2), (1, 2, 3)).save(_buffer, format="PNG")
 PNG = _buffer.getvalue()
@@ -35,9 +36,9 @@ def stores(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=admin)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=user["id"], path=admin)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=user["id"], access_plan="person", path=admin)
     admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash="sha256:maker", prefix="test", app_id=app["id"], created_by=user["id"], path=admin)
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Try", key_hash="sha256:maker", app_id=app["id"], person_id=user["id"]))
+    auth = proxy.AuthContext(identity=auth_identity(name="Try", key_hash="sha256:maker", app_id=app["id"], person_id=user["id"]))
     return tmp_path, admin, jobs, user, app, auth
 
 
@@ -52,8 +53,8 @@ def test_normal_async_spool_survives_memory_loss(stores, caller):
         auth = proxy.NO_AUTH_CONTEXT
     elif caller == "service":
         account = admin_store.create_service_account("Automation", path=admin)
-        service = admin_store.create_app("Automation", kind="service", owner_service_account_id=account["id"], path=admin)
-        auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Automation", key_hash="sha256:automation", app_id=service["id"]))
+        service = service_app("Automation", path=admin)
+        auth = proxy.AuthContext(identity=auth_identity(name="Automation", key_hash="sha256:automation", app_id=service["id"]))
     body = {"prompt": "restart durability sentinel", "model": "test"}
     proxy._persist_image_media_job_payload("mj_durable", body=body, request=request(), auth_context=auth)
     path = proxy._image_media_job_payload_path("mj_durable")
@@ -72,8 +73,8 @@ def test_explicit_forget_never_creates_durable_execution_spool(stores, caller):
         auth = proxy.NO_AUTH_CONTEXT
     elif caller == "service":
         account = admin_store.create_service_account("Automation", path=admin)
-        service = admin_store.create_app("Automation", kind="service", owner_service_account_id=account["id"], path=admin)
-        auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Automation", key_hash="sha256:automation", app_id=service["id"]))
+        service = service_app("Automation", path=admin)
+        auth = proxy.AuthContext(identity=auth_identity(name="Automation", key_hash="sha256:automation", app_id=service["id"]))
     sentinel = "forget durable spool sentinel"
     proxy._persist_image_media_job_payload("mj_forget", body={"prompt": sentinel, "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}}}, request=request(), auth_context=auth)
     assert not proxy._image_media_job_payload_path("mj_forget").exists()

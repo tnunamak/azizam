@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import proxy
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.admin_oidc import CookieConfig, session_from_claims
 
 
@@ -33,10 +34,7 @@ def request(path="/gateway/v1/receipts", *, who="a", headers=None):
 def context(name):
     return proxy.AuthContext(identity=SimpleNamespace(
         name=name, key_hash=f"fixture-hash-{name}", app_id=f"app-{name}",
-        profile=SimpleNamespace(
-            id=f"profile-{name}",
-            status_visibility=SimpleNamespace(level="standard"),
-        ),
+        access=access(plan_for(f"plan-{name}", receipts="standard")),
     ))
 
 
@@ -185,7 +183,7 @@ def test_native_policy_denial_is_owned_durable_attempt_and_never_dispatches(
 
     def refuse(identity, policy_request, receipt):
         decisions.append((identity, policy_request, receipt))
-        return SimpleNamespace(denied=True, reasons=("fixture policy refusal",))
+        return SimpleNamespace(denied=True, reasons=("fixture policy refusal",), code="policy_denied", side=None, sources=())
 
     def record(receipt):
         records.append(receipt)
@@ -203,7 +201,7 @@ def test_native_policy_denial_is_owned_durable_attempt_and_never_dispatches(
     assert response.status_code == 403
     assert json.loads(response.body)["error"] == {
         "message": "fixture policy refusal",
-        "type": "permission_error", "code": "policy_denied",
+        "type": "access_error", "code": "policy_denied",
     }
     assert len(decisions) == len(records) == 1
     identity, policy_request, receipt = decisions[0]
@@ -217,7 +215,7 @@ def test_native_policy_denial_is_owned_durable_attempt_and_never_dispatches(
     assert receipt.status == "denied"
     assert receipt.app_id == "app-a"
     assert receipt.owner_key_hash == "fixture-hash-a"
-    assert receipt.app_profile == "profile-a"
+    assert receipt.app_profile == "plan-a"
     forbidden.assert_not_called()
 
 
@@ -263,7 +261,6 @@ def test_user_action_requires_current_session_nonempty_csrf(monkeypatch):
 def test_telemetry_never_masks_response_error_or_cancellation(
     monkeypatch, outcome, sink_fails,
 ):
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "_FIREHOSE_NO_RECORD_EXACT", set())
     monkeypatch.setattr(proxy, "_FIREHOSE_NO_RECORD_PREFIXES", ())
     monkeypatch.setattr(proxy.ui_routes, "classify", lambda path: None)

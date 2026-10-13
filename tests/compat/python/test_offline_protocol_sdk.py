@@ -6,6 +6,8 @@ payload, and the policy, translator and SDK response parsing are the real code.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import json
 import tempfile
 import unittest
@@ -16,8 +18,8 @@ import httpx
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated, plan_for, access# noqa: E402
 from gateway import media_jobs, receipt_store
-from gateway.policy import AppProfile
 from gateway.protocols.anthropic import (
     AnthropicTranslationError,
     messages_request_to_canonical,
@@ -37,7 +39,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             patch.object(receipt_store, "DB_PATH", receipt_db),
             patch.object(media_jobs, "DB_PATH", jobs_db),
             patch.object(proxy, "IMAGE_CACHE_DIR", root / "images"),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -71,23 +73,12 @@ class TestOfflineProtocolSDK(unittest.TestCase):
             name="compat-chat-only",
             key_hash=key_hash,
             downstream={},
-            profile=AppProfile(
-                id="compat-chat-only",
-                protocols=frozenset({"openai.chat"}),
-            ),
-        )
-        lookup = Mock(
-            side_effect=lambda candidate_hash, **kwargs:
-            identity if candidate_hash == key_hash else None
+            access=access(plan_for("compat-chat-only", caps=("chat",))),
         )
         backend = AsyncMock(
             side_effect=AssertionError("Denied request reached backend selection")
         )
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(
-            proxy, "LAN_BYPASS_ENABLED", False
-        ), patch.object(
-            proxy, "runtime_identity_for_app_credential_hash", lookup
-        ), patch.object(proxy, "get_active_backend", backend):
+        with authenticated(identity), patch.object(proxy, "get_active_backend", backend):
             response = self.gateway.post(
                 "/v1/images/generations",
                 headers={"Authorization": f"Bearer {raw_key}"},
@@ -98,11 +89,7 @@ class TestOfflineProtocolSDK(unittest.TestCase):
                 },
             )
         self.assertEqual(response.status_code, 403, response.text)
-        self.assertEqual(response.json()["error"]["code"], "policy_denied")
-        self.assertTrue(
-            any(call.args and call.args[0] == key_hash for call in lookup.call_args_list),
-            "The intended runtime identity was never resolved",
-        )
+        self.assertEqual(response.json()["error"]["code"], "not_in_access_plan")
         backend.assert_not_awaited()
 
     def test_openai_responses_sdk_preserves_text_and_usage(self):

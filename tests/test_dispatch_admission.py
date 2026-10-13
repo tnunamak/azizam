@@ -21,8 +21,8 @@ from fastapi.testclient import TestClient
 from starlette.responses import Response
 
 import proxy
+from tests.support.access import authenticated, identity, plan_for  # noqa: E402
 from gateway import media_jobs, receipt_store, receipts, media_ingestion
-from gateway.policy import AppProfile
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 
 CASES = [
@@ -58,7 +58,8 @@ class _DispatchCalls(list):
 
 @pytest.fixture
 def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
-    monkeypatch.setattr(proxy, 'AUTH_ENABLED', False)
+    signed_in = authenticated(identity(plan_for('test')))
+    signed_in.start()
     monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {})
     monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})
     monkeypatch.setattr(proxy, 'PROXY_PORT', 19999)
@@ -86,7 +87,6 @@ def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     speech = fake_upstreams.asgi(load_scenario('openai-compatible/dispatch-admission-speech'), host='speech.test')
     fake_upstreams.router.add('127.0.0.1:19999', proxy.app)
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=True, base_url=engine.base_url, api_key='test', service_id='test-service'))
-    monkeypatch.setattr(proxy, '_profile_for_auth_context', lambda _: AppProfile(id='test'))
     monkeypatch.setattr(proxy, '_azizam_policy_decision', lambda *a, **kw: None)
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: {'services': {}})
     monkeypatch.setattr(proxy, '_ensure_speech_service_ready', AsyncMock(return_value=None))
@@ -108,7 +108,8 @@ def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
         return proxy.decisions_api.DecisionDispatchResult(body={'model': 'test', 'usage': {}, 'answers': {'q': {'type': 'choice', 'choice': 'a', 'confidence': 1.0, 'probabilities': {'a': 1.0, 'b': 0.0}}}})
     monkeypatch.setattr(proxy.DECISION_RUNTIME, 'dispatch', systemone)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, 'resolve', lambda _: SimpleNamespace(service='test-service'))
-    return TestClient(proxy.app), calls
+    yield TestClient(proxy.app), calls
+    signed_in.stop()
 
 
 def snapshot(response):

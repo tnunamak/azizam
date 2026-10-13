@@ -238,6 +238,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
     from starlette.requests import Request
 
     from gateway import stt_chunking
+    from tests.support.access import access_context
     from tests.voice_test_audio import speechlike
 
     audio = speechlike(1)
@@ -296,7 +297,7 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
             stack.enter_context(patch.object(stt_chunking, "extract_segment", extract))
             stack.enter_context(patch.object(proxy.receipt_store, "begin"))
             stack.enter_context(patch.object(proxy.receipt_store, "finalize", return_value=True))
-            response = await proxy.proxy_stt_request(request, proxy.NO_AUTH_CONTEXT)
+            response = await proxy.proxy_stt_request(request, access_context())
         out[f"{service_id} {kind} x{chunks}"] = {
             "response": {"status": response.status_code, "body": bytes(response.body).decode("utf-8", "replace")},
             "upstream": upstream.take(),
@@ -361,6 +362,7 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
     from fastapi.testclient import TestClient
 
     from gateway import media_jobs, media_metadata, receipt_store, voices_api
+    from tests.support.access import authenticated
     from tests.route_matrix import one_portal
 
     with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
@@ -378,7 +380,7 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
         merged = _overlaid_config(proxy.config, fixture, str(root / "voices"))
         for patcher in (
             patch.dict(proxy.config, merged, clear=True),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", side_effect=upstream.client),

@@ -626,9 +626,9 @@ it("COPY-18 access plan names", async () => {
   const user = userEvent.setup();
   await screen.findByRole("heading", { name: "Example Provider" });
   await user.click(screen.getByText("Manage"));
-  await user.click(screen.getByRole("button", { name: "Edit access plans" }));
-  expect(screen.getByText("No access plans selected. Paid requests will be denied.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save access plans" })).toBeVisible();
+  // Read-only: an access plan's Paid providers decide who can use a provider.
+  expect(screen.queryByRole("button", { name: "Edit access plans" })).toBeNull();
+  expect(screen.getAllByText("No access plan includes Example Provider.")[0]).toBeInTheDocument();
 });
 
 it("COPY-19 backend access guidance", () => {

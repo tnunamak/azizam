@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway.speech_voices import resolve_voice, voice_records  # noqa: E402
 from tests.test_openai_compat_validation import _FakeTTSAsyncClient  # noqa: E402
@@ -83,7 +84,7 @@ class VoiceRouteTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
         self.patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSAsyncClient),

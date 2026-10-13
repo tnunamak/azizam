@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
@@ -121,7 +122,7 @@ class AudioGenerateGraphTests(unittest.IsolatedAsyncioTestCase):
             proxy, "_service_availability_response", return_value=None
         ), patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy.proxy_audio_generate(
-                _JsonRequest(body), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _JsonRequest(body), access_context()  # type: ignore[arg-type]
             )
         return response, (submitted[0] if submitted else None)
 

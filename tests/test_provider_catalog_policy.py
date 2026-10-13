@@ -4,17 +4,17 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.capabilities import Capability
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
+from tests.support.access import access, access_context, plan_for  # noqa: E402
 
 
-@pytest.mark.parametrize(("granted", "allowed_plans", "visible"), [
-    (True, ["member-plan"], True),
-    (False, ["member-plan"], False),
-    (True, [], False),
-    (True, ["another-plan"], False),
+@pytest.mark.parametrize(("person_lists", "app_lists", "visible"), [
+    (True, True, True),
+    (False, True, False),
+    (True, False, False),
+    (False, False, False),
 ])
-def test_catalog_uses_canonical_provider_and_both_plan_gates(
-    monkeypatch: pytest.MonkeyPatch, granted: bool, allowed_plans: list[str], visible: bool,
+def test_catalog_uses_canonical_provider_and_both_plans(
+    monkeypatch: pytest.MonkeyPatch, person_lists: bool, app_lists: bool, visible: bool,
 ) -> None:
     import proxy
     registry = {"services": {"legacy-row-id": {
@@ -26,16 +26,22 @@ def test_catalog_uses_canonical_provider_and_both_plan_gates(
             "credential_origin": "http://127.0.0.1:18395",
         },
     }}}
-    profile = DEFAULT_PROFILE.with_overrides(
-        id="member-plan",
-        remote=RemoteProviderPolicy(providers=frozenset({"cloud-canonical"} if granted else set())),
-    )
-    monkeypatch.setattr(proxy, "_profile_for_auth_context", lambda _auth: profile)
-    monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(
-        get_service_registry=lambda: registry,
-        get_provider_admin_state=lambda: {"providers": {"cloud-canonical": {"allowed_plans": allowed_plans}}},
-    ))
+    person = plan_for("person-plan", paid=["cloud-canonical"] if person_lists else [])
+    app = plan_for("app-plan", paid=["cloud-canonical"] if app_lists else [])
+    monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(get_service_registry=lambda: registry))
     cap = Capability(intent="chat.completions", backend="legacy-row-id", model="cloud-canonical/test", tags=("remote",))
-    projected = proxy._capability_for_profile(cap, object())
+    projected = proxy._capability_for_access(cap, access_context(access(person, app)))
     assert projected.policy_available is visible
     assert projected.backend == "legacy-row-id"
+
+
+def test_no_identity_sees_no_remote_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    import proxy
+    registry = {"services": {"cloud": {
+        "id": "cloud", "kind": "provider", "enabled": True,
+        "config": {"remote_provider": True, "protocol": "openai-compatible", "api_key_env": "K",
+                   "base_url": "http://127.0.0.1:18395/v1", "credential_origin": "http://127.0.0.1:18395"},
+    }}}
+    monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(get_service_registry=lambda: registry))
+    cap = Capability(intent="chat.completions", backend="cloud", model="cloud/test", tags=("remote",))
+    assert proxy._capability_for_access(cap, proxy.AuthContext()).policy_available is False

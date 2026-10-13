@@ -97,12 +97,7 @@ def write_config(state: Path, port: int, engine_port: int) -> Path:
         if name in config:
             config[name] = _retarget(config[name], engine_port, engine_url)
     config["proxy"] = {"host": "127.0.0.1", "port": port}
-    config["auth"] = {
-        "enabled": True,
-        "public_paths": ["/health"],
-        "lan_bypass_enabled": True,
-        "lan_bypass_cidrs": ["127.0.0.0/8", "::1/128"],
-    }
+    config["auth"] = {"public_paths": ["/health"]}
     admin = dict(config.get("admin") or {})
     admin["db_path"] = str(state / "admin.db")
     admin["oidc"] = {"cookie": {"secure": False}}

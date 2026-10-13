@@ -157,7 +157,10 @@ class GatewayFacts(TypedDict):
 class HomeProjection(TypedDict):
     # NotRequired: older gateways omit these.
     gateway: NotRequired[GatewayFacts]
-    # The member's own plan; null when that plan cannot be loaded.
+    # False when the signed-in person has no access plan: they cannot generate.
+    has_access_plan: bool
+    # The member's own spending against their plan's caps (their total across
+    # every App they answer for); null when they have no plan.
     plan_spend: NotRequired[list[PlanSpend] | None]
     csrf_token: str
     public_base_url: str

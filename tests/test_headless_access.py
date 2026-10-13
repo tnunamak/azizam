@@ -235,8 +235,11 @@ def principals():
         accounts.initialize(case.db)
         providers.ensure_ledger(path=proxy.ADMIN_DB_PATH.parent / "provider_spend.db")
         receipt_store.init_db()
-        app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "auth-fixture"})
-        assert app.status_code == 201
+        accountable = admin_store.upsert_oidc_user("https://idp.example", "headless-accountable",
+                                                  email="accountable@example.com", path=case.db)
+        app = case.client.post("/admin/api/apps", headers=case._auth(), json={
+            "name": "auth-fixture", "access_plan": "person", "owner_user_id": accountable["id"]})
+        assert app.status_code == 201, app.text
         minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
                                  headers=case._auth(), json={"label": "auth-fixture"})
         assert minted.status_code == 201
@@ -265,7 +268,7 @@ def _request(row):
     path = re.sub(r"\{(?:reservation_id|event_id)\}", "1", row["path"])
     path = re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
     # Supply valid typed bodies so the request reaches auth instead of 422.
-    body = {"profile_id": "default-local"} if path == "/admin/api/invites" else {}
+    body = {"access_plan": "plan-missing"} if path == "/admin/api/invites" else {}
     if path == "/admin/api/operator/sign-in":
         body = {"mode": "both"}
     return path, body
@@ -387,12 +390,12 @@ class OwnerOperationReached(Exception):
 
 HANDLER_ERRORS = {
     "invalid_json", "invalid_request", "invalid_expiry", "empty_update",
-    "app_not_found", "profile_not_found", "credential_not_found", "provider_not_found",
-    "account_not_found", "invite_not_found", "link_unavailable", "runtime_mapping_not_found", "extension_package_not_found",
+    "app_not_found", "access_plan_not_found", "credential_not_found", "provider_not_found",
+    "account_not_found", "invalid_defaults", "invite_not_found", "link_unavailable", "extension_package_not_found",
     "revision_not_found", "no_active_snapshot", "invalid_retention",
     "settings_revision_required", "registry_revision_required", "litellm_unconfigured",
     "generation_mismatch", "audit_event_not_found", "person_not_found",
-    "invalid_defaults", "invalid_instance", "invalid_lan_placeholder_keys", "invalid_prompt_memory",
+    "invalid_instance", "invalid_prompt_memory",
 }
 
 

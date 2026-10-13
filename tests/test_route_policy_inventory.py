@@ -24,7 +24,7 @@ from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
-from gateway import admin_store, category_enforcement, category_policy, me_make, media_jobs, receipt_store
+from gateway import accounts, admin_store, category_enforcement, category_policy, me_make, media_jobs, receipt_store
 from gateway.admin_oidc import (
     AdminSession, CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims,
 )
@@ -33,6 +33,7 @@ from gateway.category_store import CategoryStore
 from gateway.policy import ALLOWED, DENIED as POLICY_DENIED, PolicyRequest
 from gateway import runtime_auth
 from gateway.user_runtime import mint_user_app_key
+from tests.support.access import access_context, store_plan
 
 
 DENIED = {401, 403, 404, 405}
@@ -100,11 +101,8 @@ def gateway(monkeypatch, tmp_path, request):
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "image_media_jobs")
     monkeypatch.setattr(proxy, "IMAGE_SIGNED_URL_SECRET_CFG", "inventory-test-only")
     monkeypatch.setattr(proxy, "_image_url_signing_secret", None)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
-    monkeypatch.setattr(proxy, "_client_is_lan", lambda _request: False)
-    monkeypatch.setattr(proxy, "PATH_TOKENS", {})
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
 
     calls = []
@@ -152,17 +150,13 @@ def gateway(monkeypatch, tmp_path, request):
         "restricted-workflow" if restricted_workflow
         else "grant-everything" if category_mode or mode == "discovery" else "grant-nothing"
     )
-    # Missing allow/protocol/workflow/model/backend restrictions means
-    # unrestricted access; a wildcard allow-list is not the same profile.
-    profile_body = {"id": profile_id, "native_passthrough": {"enabled": category_mode or mode == "discovery"}}
     if restricted_workflow:
-        profile_body["allow"] = {"intents": ["image.edit", "image.variation"]}
-        profile_body["workflows"] = ["no-inventory-request-uses-this-workflow"]
-    elif not category_mode and mode != "discovery":
-        profile_body["allow"] = {"intents": []}
-    profile = admin_store.create_profile(
-        profile_id, profile_body, path=paths["admin"],
-    )
+        plan_kwargs = {"caps": ("image",), "workflows": ["no-inventory-request-uses-this-workflow"]}
+    elif category_mode or mode == "discovery":
+        plan_kwargs = {"engines": "all", "operations": ["*"]}
+    else:
+        plan_kwargs = {"caps": ()}
+    profile = store_plan(profile_id, path=paths["admin"], **plan_kwargs)
     user = admin_store.upsert_oidc_user(
         "https://inventory.test", "member", email="member@example.test", path=paths["admin"],
     )
@@ -170,17 +164,15 @@ def gateway(monkeypatch, tmp_path, request):
         subject=user["id"], email=user["email"], role="none",
         issued_at=1, expires_at=4_000_000_000,
     )
+    accounts.change_person(user["id"], "owner", path=paths["admin"], plan_id=profile["id"])
     app = admin_store.create_app(
         "Inventory", kind="personal", owner_user_id=user["id"],
-        default_profile_id=profile["id"], path=paths["admin"],
+        access_plan="person", path=paths["admin"],
     )
     key = mint_user_app_key(session, app["id"], path=paths["admin"])["api_key"]
     # Session routes (/me/api/make/jobs) act as the person's keyless session
-    # App, which otherwise inherits the person's plan rather than this one.
-    session_app = admin_store.ensure_session_app_for_user(
-        user["id"], name=me_make.APP_NAME, path=paths["admin"],
-    )
-    admin_store.update_app(session_app["id"], default_profile_id=profile["id"], path=paths["admin"])
+    # App, which uses the person's plan: the same plan as this key's App.
+    session_app = admin_store.ensure_session_app_for_user(user["id"], name=me_make.APP_NAME, path=paths["admin"])
     headers = {"Authorization": f"Bearer {key}"}
     request = Request({
         "type": "http", "method": "GET", "path": "/v1/models", "query_string": b"",
@@ -190,7 +182,7 @@ def gateway(monkeypatch, tmp_path, request):
     auth = proxy.authenticate_request(request, "/v1/models")
     assert isinstance(auth, proxy.AuthContext), "inventory key must authenticate"
     assert auth.identity.app_id == app["id"]
-    assert auth.identity.profile.id == profile_id
+    assert auth.identity.access.plan_ids == (profile["id"],)
     assert auth.identity.person_id == user["id"]
     if restricted_workflow:
         assert category_enforcement._GATE is None
@@ -201,7 +193,7 @@ def gateway(monkeypatch, tmp_path, request):
         )
         decision = runtime_auth.evaluate_and_apply(auth.identity, resolved)
         assert decision.decision == POLICY_DENIED
-        assert any("workflow" in reason.lower() for reason in decision.reasons)
+        assert decision.code == "not_in_access_plan"
         assert category_enforcement.SOURCE not in decision.sources
     if category_mode:
         # Prove that a valid active deny-all snapshot, rather than the ordinary
@@ -686,6 +678,8 @@ _METADATA_CONTRACT = {
     ("GET", "/gateway/v1/extensions"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases"): _DISCOVERY,
     ("GET", "/gateway/v1/aliases/resolve"): _DISCOVERY,
+    ("GET", "/api/version"): "a constant: the Ollama API version the adapter speaks",
+    ("GET", "/ollama/api/version"): "a constant: the Ollama API version the adapter speaks",
     ("GET", "/sdapi/v1/options"): _A1111_METADATA,
     ("GET", "/sdapi/v1/sd-models"): _A1111_METADATA,
     ("GET", "/sdapi/v1/samplers"): _A1111_METADATA,
@@ -1200,8 +1194,10 @@ def test_image_workflow_refusal_precedes_upload(gateway, prefix, operation):
             reasons.append(value)
 
     collect_reasons(response.json())
-    assert any("workflow" in reason.lower() for reason in reasons), (
-        f"{path}: no workflow restriction in error reasons: {response.json()!r}"
+    error = response.json()["error"]
+    assert error["code"] == "not_in_access_plan", f"{path}: {error}"
+    assert any("flux2-klein-4b" in reason for reason in reasons), (
+        f"{path}: the refusal does not name the workflow: {reasons!r}"
     )
     assert not any("category rules:" in reason for reason in reasons), reasons
 
@@ -1574,7 +1570,8 @@ def test_category_discovery_does_not_treat_nameless_rows_as_early_checks(gateway
     auth = proxy.authenticate_request(_probe_request(gateway.headers), "/v1/models")
     filtered, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], auth)
     assert filtered == []
-    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], proxy.NO_AUTH_CONTEXT)
+    # An App and person the snapshot does not list are not governed by it.
+    ungoverned, _ = anyio.run(proxy._filter_model_list_for_profile, [entry], access_context())
     assert ungoverned == [entry]
 
 

@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, media_jobs, prompt_memory, receipt_store
-from gateway.policy import DEFAULT_PROFILE
+from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
+from gateway import accounts, admin_store, media_jobs, prompt_memory, receipt_store
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 from tests.test_anthropic_schema_conformance import chat_completion
 
@@ -45,8 +45,10 @@ def responses_gateway(tmp_path, monkeypatch):
     user = admin_store.upsert_oidc_user(
         "local", "maker", email="maker@example.test", path=admin_db
     )
+    accounts.initialize(admin_db)
+    accounts.change_person(user["id"], "test", path=admin_db, plan_id=store_plan("Everything", path=admin_db)["id"])
     app = admin_store.create_app(
-        "Maker app", kind="personal", owner_user_id=user["id"], path=admin_db
+        "Maker app", kind="personal", owner_user_id=user["id"], access_plan="person", path=admin_db
     )
     raw_key = "prompt-memory-responses-key"
     key_hash = hash_api_key(raw_key)
@@ -54,7 +56,7 @@ def responses_gateway(tmp_path, monkeypatch):
         name="Maker app key",
         key_hash=key_hash,
         downstream={},
-        profile=DEFAULT_PROFILE,
+        access=access(plan_for("everything")),
         app_id=app["id"],
         person_id=user["id"],
     )
@@ -71,8 +73,6 @@ def responses_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(media_jobs, "DB_PATH", media_db)
     monkeypatch.setattr(prompt_memory, "DB_PATH", media_db)
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
 
     sent: list[dict] = []
@@ -233,23 +233,21 @@ def test_response_reads_delete_and_continuation_use_person_and_app(responses_gat
     assert response.status_code == expected, response.text
 
 
-@pytest.mark.parametrize("scope", ["service_app", "legacy_key", "lan", "no_auth"])
+@pytest.mark.parametrize("scope", ["service_app", "legacy_key"])
 @pytest.mark.parametrize("explicit_store", [False, True])
 def test_no_person_requires_explicit_store_and_durable_scope(responses_gateway, monkeypatch, scope, explicit_store):
     identity = responses_gateway["identity"]
     candidate = replace(identity, person_id=None)
     if scope == "legacy_key":
         candidate = replace(candidate, app_id=None)
-    elif scope == "lan":
-        candidate = proxy._identity_for("lan-bypass", "lan")
-    auth = proxy.NO_AUTH_CONTEXT if scope == "no_auth" else proxy.AuthContext(identity=candidate)
+    auth = proxy.AuthContext(identity=candidate)
     monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, **_kw: auth)
     body = {"input": "no-person-response-prompt"}
     if explicit_store:
         body["store"] = True
     response = _post_response(responses_gateway, body)
     assert response.status_code == 200, response.text
-    stored = explicit_store and scope in {"service_app", "legacy_key"}
+    stored = explicit_store
     row = proxy.responses_store.get(response.json()["id"], path=responses_gateway["responses_db"])
     assert (row is not None) == stored
     assert response.json()["store"] is stored
@@ -341,7 +339,7 @@ def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses
     owner = admin_store.upsert_oidc_user("local", "minting-owner", path=path)
     if app_kind == "service":
         sa = admin_store.ensure_service_account("shared-responses", path=path)
-        app = admin_store.create_app("Shared", kind="service", owner_service_account_id=sa["id"], path=path)
+        app = service_app("Shared", path=path)
     else:
         app = admin_store.get_app(gateway["app_id"], path=path)
     key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(

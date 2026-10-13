@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.capabilities import summarize_capability
+from tests.support.access import plan_for, access  # noqa: E402
 from gateway.decision_routing import DecisionRuntime
 from gateway.decisions_api import DecisionsError
 from gateway.receipts import RouteReceipt
@@ -52,6 +53,9 @@ def test_aliases_and_no_implicit_remote():
     assert resolve_alias(cfg, "decisions", "typesafe/jev-latest") is None
 
 
+LOCAL = access(plan_for("local"))  # may load models, as an App on a plan that allows it
+
+
 def runtime(cfg=None, authorize=None, ensure=None):
     cfg = cfg or config()
     obj = DecisionRuntime(lambda: cfg, authorize or (lambda *args: True), ensure or AsyncMock(return_value=None))
@@ -63,7 +67,7 @@ def test_policy_denied_before_start():
     ensure = AsyncMock(return_value=None)
     rt = runtime(authorize=lambda *args: False, ensure=ensure)
     with pytest.raises(DecisionsError) as error:
-        asyncio.run(rt.dispatch(None, None, BODY, "r"))
+        asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert error.value.status == 403
     ensure.assert_not_called()
 
@@ -78,7 +82,7 @@ def test_free_fallback_observes_engine_and_model():
             return httpx.Response(529, json={"error": {"message": "Busy"}})
         return httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 9, "output_tokens": 0}}, headers={"x-decision-engine": "cpu"})
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
-        result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": "decide-quality"}, "r"))
     assert [call["model"] for call in calls] == ["large-v1", "small-v1"]
     assert result.engine == "cpu" and result.cost_usd == 0
     assert result.fallback_reasons == ("large:overloaded",)
@@ -108,7 +112,7 @@ def test_configured_fallback_discloses_skipped_primary_in_http_and_receipt(monke
 @pytest.mark.parametrize("model", ["decide", "small", "small-v1"])
 def test_unavailable_single_target_returns_503_without_substitution(model):
     rt = runtime(ensure=AsyncMock(return_value=False))
-    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": model}, "r"))
+    result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": model}, "r"))
     assert result.status_code == 503
     assert result.body["error"]["code"] == "model_not_deployed"
     assert "No fallback is configured" in result.body["error"]["message"]
@@ -129,7 +133,7 @@ def test_backend_cannot_substitute_undeclared_decision_model():
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "different-v1", "answers": {"q": {"type": "noul", "noul": .9}}})))):
         with pytest.raises(DecisionsError) as error:
-            asyncio.run(rt.dispatch(None, None, BODY, "r"))
+            asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert error.value.status == 503
     assert error.value.code == "model_not_deployed"
 
@@ -139,7 +143,7 @@ def test_malformed_backend_rejected():
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "x", "answers": {}})))):
         with pytest.raises(DecisionsError) as error:
-            asyncio.run(rt.dispatch(None, None, BODY, "r"))
+            asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert error.value.status == 502
 
 
@@ -183,24 +187,15 @@ def test_mounted_gateway_path_and_owned_receipt(monkeypatch):
 
 
 def test_existing_only_plan_never_starts_service():
-    from types import SimpleNamespace
     ensure = AsyncMock(return_value=None)
     rt = runtime(ensure=ensure)
     real = httpx.AsyncClient
-    profile = SimpleNamespace(target_policy=SimpleNamespace(activation="existing_only"))
+    cannot_load = access(plan_for("existing", load=False))
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(503, json={})))):
-        result = asyncio.run(rt.dispatch(None, profile, BODY, "r"))
+        result = asyncio.run(rt.dispatch(None, cannot_load, BODY, "r"))
     assert result.status_code == 503 and result.headers["retry-after"] == "5"
     assert result.fallback_reasons == ("small:overloaded",)
     ensure.assert_not_called()
-
-
-def test_available_only_models_hide_cold_engines():
-    from types import SimpleNamespace
-    rt = runtime()
-    rt.observed = {key: (__import__('time').monotonic(), None) for key in config()["backends"]}
-    profile = SimpleNamespace(target_policy=SimpleNamespace(visibility="available"))
-    assert rt.models_for(None, profile) == []
 
 
 def test_receipt_usage_rejects_untrusted_fields():
@@ -241,7 +236,7 @@ def test_exhausted_fallback_retains_attempt_receipt_context():
     rt = runtime()
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"message": "Busy"}})))):
-        result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:overloaded", "small:overloaded")
     assert result.headers["x-azizam-fallback"] == "large:overloaded,small:overloaded"
@@ -269,32 +264,28 @@ def test_all_alias_candidates_unavailable_have_retry_hint():
 
 
 @pytest.mark.parametrize("model", ["decide", "small", "small-v1", "jev-latest"])
-def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
+def test_dispatch_and_discovery_share_plan_restrictions(monkeypatch, model):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
     from gateway.runtime_auth import RuntimeIdentity
     cfg = config()
     monkeypatch.setattr(proxy, "config", cfg)
     auth = proxy.AuthContext(RuntimeIdentity(
-        "restricted", "hash", profile=AppProfile(
-            id="restricted", allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
-        ),
+        "restricted", "hash", access=access(plan_for("restricted", caps=("chat",))),
     ))
     cap = proxy.DECISION_RUNTIME.capabilities()[0]
-    assert proxy._capability_for_profile(cap, auth).policy_available is False
+    assert proxy._capability_for_access(cap, auth).policy_available is False
     ensure = AsyncMock(return_value=None)
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", ensure)
     assert proxy._decision_authorized(auth, model, "small") is False
-    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access) == []
     with pytest.raises(DecisionsError) as error:
-        asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, {**BODY, "model": model}, "r"))
+        asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.access, {**BODY, "model": model}, "r"))
     assert error.value.status == 403
     ensure.assert_not_called()
 
 
 def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -304,11 +295,7 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     auth = proxy.AuthContext(RuntimeIdentity(
         "restricted",
         "hash",
-        profile=AppProfile(
-            id="restricted",
-            allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("restricted", caps=("chat",), load=False)),
     ))
     def observed(_service, *, fresh=False):
         if fresh:
@@ -318,12 +305,11 @@ def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
 
     assert proxy._decision_authorized(auth, "decide", "small") is False
-    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access) == []
 
 
 def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -333,11 +319,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
     auth = proxy.AuthContext(RuntimeIdentity(
         "cpu",
         "hash",
-        profile=AppProfile(
-            id="cpu",
-            allow=CapabilitySelector(tags=frozenset({"engine:cpu"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("cpu", load=False)),
     ))
 
     def observed(_service, *, fresh=False):
@@ -347,7 +329,7 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
 
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
 
-    models = proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile)
+    models = proxy.DECISION_RUNTIME.models_for(auth, auth.identity.access)
 
     assert {model.id for model in models} >= {"decide", "small", "small-v1", "jev-latest"}
     assert all(model.engine == "cpu" for model in models)
@@ -356,7 +338,6 @@ def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatc
 def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypatch):
     import time
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
     from gateway.runtime_auth import RuntimeIdentity
 
     cfg = config()
@@ -366,11 +347,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     auth = proxy.AuthContext(RuntimeIdentity(
         "gpu",
         "hash",
-        profile=AppProfile(
-            id="gpu",
-            allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
-            target_policy=TargetPolicy(activation="existing_only"),
-        ),
+        access=access(plan_for("gpu", load=False)),
     ))
     def observed(service, *, fresh=False):
         if fresh:
@@ -383,7 +360,7 @@ def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypa
     monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", AsyncMock(return_value=AssertionError("must not activate")))
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}}, headers={"x-decision-engine": "gpu"})))):
-        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, BODY, "r"))
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.access, BODY, "r"))
 
     assert result.status_code == 200
     assert result.engine == "gpu"
@@ -397,7 +374,7 @@ def test_dispatch_propagates_remaining_deadline_to_engine():
         captured.append(float(request.headers.get("x-decision-deadline-ms", "0")))
         return httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}})
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
-        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert result.status_code == 200
     assert 0 < captured[0] <= 15000
 
@@ -418,7 +395,7 @@ def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
             cancelled.append(True)
             raise
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
-        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert result.status_code == 503
     assert cancelled == [True]
 
@@ -457,18 +434,16 @@ def test_dispatch_deadline_includes_lifecycle_health_timeout(monkeypatch):
         "gateway.decision_routing.httpx.AsyncClient",
         lambda **kw: real(transport=httpx.MockTransport(handler)),
     ):
-        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
 
     assert result.status_code == 200
     assert started == [True]
 
 
-@pytest.mark.parametrize("app_key", [False, True])
-def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, app_key):
+def test_configured_timeout_allows_on_demand_start_for_an_app_key(monkeypatch):
     import gateway.decision_routing as routing
     import gateway.lifecycle_drivers as lifecycle
     import proxy
-    from gateway.policy import AppProfile
     from gateway.runtime_auth import RuntimeIdentity
 
     # Scale seconds down: startup exceeds the default routing deadline, but
@@ -494,11 +469,11 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
             return True
 
     monkeypatch.setattr(lifecycle, "driver_for_service", lambda *args: Driver())
-    profile = AppProfile(id="local")
-    auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", profile=profile)) if app_key else proxy.AuthContext()
+    profile = plan_for("local")
+    auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", access=access(profile)))
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "large-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
-        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, {**BODY, "model": "decide-quality"}, "r"))
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, access(profile), {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 200
     assert starts == [30]
 
@@ -519,7 +494,7 @@ def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
             raise
 
     rt = runtime(cfg=cfg, ensure=ensure)
-    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+    result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:deadline_exceeded",)
     assert cancelled == ["large"]
@@ -538,7 +513,7 @@ def test_explicit_timeout_bounds_lifecycle_and_fallback_budget(monkeypatch):
 
     ensure = AsyncMock(side_effect=start)
     rt = runtime(cfg=cfg, ensure=ensure)
-    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+    result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:deadline_exceeded",)
     ensure.assert_awaited_once_with("large")
@@ -548,44 +523,20 @@ def test_engine_deadline_response_is_retryable_and_preserves_reason():
     rt = runtime()
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(504, json={"error": {"code": "deadline_exceeded"}})))):
-        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+        result = asyncio.run(rt.dispatch(None, LOCAL, BODY, "r"))
     assert result.status_code == 503
     assert result.fallback_reasons == ("small:deadline_exceeded",)
 
 
 def test_allowed_local_tag_agrees_for_discovery_and_direct_dispatch(monkeypatch):
     import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
     from gateway.runtime_auth import RuntimeIdentity
     monkeypatch.setattr(proxy, "config", config())
-    auth = proxy.AuthContext(RuntimeIdentity("local", "hash", profile=AppProfile(
-        id="local", allow=CapabilitySelector(tags=frozenset({"local"})),
-    )))
+    auth = proxy.AuthContext(RuntimeIdentity("local", "hash", access=access(plan_for("local"))))
     for name in ("decide", "small", "small-v1", "jev-latest"):
         cap = proxy.DECISION_RUNTIME.capability_for(name, "small")
-        assert proxy._capability_for_profile(cap, auth).policy_available is True
+        assert proxy._capability_for_access(cap, auth).policy_available is True
         assert proxy._decision_authorized(auth, name, "small") is True
-
-
-def test_fallback_authorization_uses_fallback_engine_metadata(monkeypatch):
-    import proxy
-    from gateway.policy import AppProfile, CapabilitySelector
-    from gateway.runtime_auth import RuntimeIdentity
-    import time
-    monkeypatch.setattr(proxy, "config", config())
-    rt = proxy.DECISION_RUNTIME
-    monkeypatch.setattr(rt, "observed", {"large": (time.monotonic(), "gpu"), "small": (time.monotonic(), "cpu")})
-    ensure = AsyncMock(return_value=None)
-    monkeypatch.setattr(rt, "ensure_ready", ensure)
-    auth = proxy.AuthContext(RuntimeIdentity("gpu", "hash", profile=AppProfile(
-        id="gpu", allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
-    )))
-    real = httpx.AsyncClient
-    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(529, json={"error": {"code": "overloaded"}})))):
-        with pytest.raises(DecisionsError) as error:
-            asyncio.run(rt.dispatch(auth, auth.identity.profile, {**BODY, "model": "decide-quality"}, "r"))
-    assert error.value.status == 403
-    ensure.assert_awaited_once_with("large")
 
 
 def test_admission_rechecks_selected_fallback_before_backend_dispatch():
@@ -603,7 +554,7 @@ def test_admission_rechecks_selected_fallback_before_backend_dispatch():
         sent.append(request.url.port)
         return httpx.Response(529, json={'error': {'message': 'Busy'}})
     with patch('gateway.decision_routing.httpx.AsyncClient', lambda **kw: real(transport=httpx.MockTransport(handler))):
-        result = asyncio.run(rt.dispatch(None, None, {**BODY, 'model': 'decide-quality'}, 'r'))
+        result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, 'model': 'decide-quality'}, 'r'))
     assert admitted == ['large', 'large', 'small']
     assert sent == [18092]
     assert result.status_code == 503

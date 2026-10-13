@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, lan_auth_policy, prompt_memory, receipt_store
+from gateway import admin_store, prompt_memory, receipt_store
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 
 INSTANCE_SETTING_KEY = "instance_presentation"
@@ -123,13 +123,6 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         if record:
             value.update(record["value"])
         return JSONResponse({"instance": value, "revision": admin_store.operator_setting_revision(record), "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
-
-    def lan_placeholder_keys_response() -> JSONResponse:
-        return JSONResponse({
-            "lan_placeholder_keys": lan_auth_policy.lan_placeholder_keys(admin_path),
-            "source": "admin.db",
-            "apply_mode": "live",
-        }, headers={"Cache-Control": "no-store"})
 
     def prompt_memory_response(*, extra: Mapping[str, Any] | None = None,
                                status_code: int = 200) -> JSONResponse:
@@ -341,9 +334,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         return instance_response()
 
     def defaults_response() -> JSONResponse:
-        mappings = admin_store.list_runtime_profile_mappings(path=admin_path)
-        universal = next((m for m in mappings if m["source_kind"] == "all_users"), None)
-        return JSONResponse({"defaults": {"profile_id": universal["profile_id"] if universal else None},
+        return JSONResponse({"defaults": {"invite_access_plan": admin_store.invite_access_plan(path=admin_path)},
                              "source": "admin.db", "apply_mode": "live",
                              "aliases": redact_config(config_provider().get("model_aliases", {})), "aliases_writable": False},
                             headers={"Cache-Control": "no-store"})
@@ -353,60 +344,28 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         ctx = guard(request)
         return ctx if isinstance(ctx, JSONResponse) else defaults_response()
 
-    @router.get("/lan-placeholder-keys")
-    def get_lan_placeholder_keys(request: Request):
-        ctx = guard(request)
-        return ctx if isinstance(ctx, JSONResponse) else lan_placeholder_keys_response()
-
-    @router.put("/lan-placeholder-keys")
-    async def put_lan_placeholder_keys(request: Request):
-        ctx = guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await request.json()
-            if not isinstance(body, dict) or set(body) != {lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY}:
-                raise lan_auth_policy.LanPlaceholderKeysError("supply lan_placeholder_keys")
-            values = lan_auth_policy.validate_lan_placeholder_keys(
-                body[lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY]
-            )
-        except (TypeError, ValueError):
-            return JSONResponse({
-                "error": {
-                    "code": "invalid_lan_placeholder_keys",
-                    "message": "Supply a list of 0-64 placeholder key strings.",
-                }
-            }, status_code=400)
-        admin_store.put_operator_setting_with_audit(
-            lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY,
-            {lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY: values},
-            updated_by=ctx.subject,
-            audit_action="operator.lan_placeholder_keys.update",
-            audit_actor_kind=ctx.actor_kind,
-            audit_actor_id=ctx.audit_actor_id,
-            audit_actor_label=ctx.actor_label,
-            audit_target_kind="operator_setting",
-            audit_target_id=lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY,
-            audit_metadata={"count": len(values)},
-            path=admin_path,
-        )
-        return lan_placeholder_keys_response()
-
     @router.put("/defaults")
     async def put_defaults(request: Request):
+        """Set the plan preselected for new invitations (null: "Ask each time")."""
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await request.json()
-            if not isinstance(body, dict) or set(body) != {"profile_id"}:
+            if not isinstance(body, dict) or set(body) != {"invite_access_plan"}:
                 raise ValueError()
-            profile_id = body["profile_id"]
-            if profile_id is not None and (not isinstance(profile_id, str) or not profile_id):
+            plan_id = body["invite_access_plan"]
+            if plan_id is not None and (not isinstance(plan_id, str) or admin_store.get_access_plan(plan_id, path=admin_path) is None):
                 raise ValueError()
-            admin_store.replace_default_runtime_profile_mapping(profile_id=profile_id, actor=ctx, path=admin_path)
         except (ValueError, TypeError):
             return JSONResponse({"error": {"code": "invalid_defaults", "message": "Choose an existing access plan or null"}}, status_code=400)
+        admin_store.put_operator_setting_with_audit(
+            admin_store.INVITE_ACCESS_PLAN_SETTING_KEY, {"plan_id": plan_id}, updated_by=ctx.subject,
+            audit_action="operator.invite_access_plan.update", audit_actor_kind=ctx.actor_kind,
+            audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+            audit_target_kind="operator_setting", audit_target_id=admin_store.INVITE_ACCESS_PLAN_SETTING_KEY,
+            audit_metadata={"plan_id": plan_id}, path=admin_path,
+        )
         return defaults_response()
 
     def effective() -> dict[str, Any]:
@@ -414,10 +373,6 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         snapshot["instance"] = instance()
         snapshot["receipt_retention"] = {"retention_days": receipt_store.retention_days(admin_path)}
         snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
-        snapshot["runtime_profile_mappings"] = admin_store.list_runtime_profile_mappings(path=admin_path)
-        snapshot["auth_policy"] = {
-            "lan_placeholder_keys": lan_auth_policy.lan_placeholder_keys(admin_path),
-        }
         return {"config": redact_config(snapshot), "read_only": True, "redacted": True,
                 "export_url": "/admin/api/settings/effective/export"}
 

@@ -270,15 +270,12 @@ def litellm_headers(
     *,
     api_key: str = "",
     gateway_metadata: Mapping[str, str] | None = None,
-    delegated_api_key: str = "",
 ) -> dict[str, str]:
     headers: dict[str, str] = {
         "content-type": _header(source_headers, "content-type") or "application/json",
         "accept": _header(source_headers, "accept") or "application/json",
     }
-    if delegated_api_key:
-        headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {delegated_api_key}"
-    elif api_key:
+    if api_key:
         headers[LITELLM_DELEGATED_KEY_HEADER] = f"Bearer {api_key}"
 
     for name, value in (gateway_metadata or {}).items():

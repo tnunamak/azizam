@@ -17,8 +17,8 @@ import httpx
 from starlette.requests import Request
 
 from gateway import provider_execution, providers, receipt_store
+from tests.support.access import identity as identity_of, plan_for  # noqa: E402
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig, sanitize_litellm_execution_request
-from gateway.policy import AppProfile, RemoteProviderPolicy
 from gateway.providers import ProviderRef
 
 
@@ -102,16 +102,12 @@ def _profile(
     *,
     providers: set[str] | None = None,
     allow_paid_fallback: bool = False,
-) -> AppProfile:
-    return AppProfile(
-        id="paid-app",
-        remote=RemoteProviderPolicy(
-            providers=frozenset({"openrouter"} if providers is None else providers),
-            max_usd_per_request=Decimal("1.00"),
-            budget_usd_per_day=Decimal("5.00"),
-            budget_usd_per_month=Decimal("20.00"),
-            allow_paid_fallback=allow_paid_fallback,
-        ),
+) -> "AccessPlan":
+    return plan_for(
+        "paid-app",
+        paid=sorted({"openrouter"} if providers is None else providers),
+        fallback=allow_paid_fallback,
+        usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00",
     )
 
 
@@ -166,7 +162,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.env_patch.stop()
         self.tmp.cleanup()
 
-    async def _execute(self, *, send=None, **kwargs):
+    async def _execute(self, *, send=None, app_id="app_test", **kwargs):
         send = send or AsyncMock(
             return_value=(
                 _Client(),
@@ -195,7 +191,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 request_path="/v1/chat/completions",
                 body=self.body,
                 provider=self.provider,
-                profile=self.profile,
+                identity=identity_of(self.profile, name="paid-app", app_id=app_id, accountable_person_id="usr_test"),
                 runtime=self.runtime,
                 ledger_path=self.ledger,
                 **kwargs,
@@ -227,8 +223,6 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         send.assert_not_called()
 
     async def test_owner_category_rules_deny_a_governed_app_before_provider_call(self) -> None:
-        from types import SimpleNamespace
-
         from gateway import category_enforcement
         from tests.test_category_enforcement import _activate, _snapshot
 
@@ -238,36 +232,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(category_enforcement.configure, None)
         send = AsyncMock()
 
-        response, send = await self._execute(
-            send=send, identity=SimpleNamespace(person_id=None, app_id="family-app"))
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
-        send.assert_not_called()
-
-    async def test_owner_category_rules_govern_an_app_id_without_identity(self) -> None:
-        from gateway import category_enforcement
-        from tests.test_category_enforcement import _activate, _snapshot
-
-        path = Path(self.tmp.name) / "categories.db"
-        _activate(path, _snapshot())  # governs family-app
-        category_enforcement.configure(path)
-        self.addCleanup(category_enforcement.configure, None)
-        send = AsyncMock()
-
         response, send = await self._execute(send=send, app_id="family-app")
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("category rules:", (await _body(response)).decode())
-        send.assert_not_called()
-
-    async def test_delegated_litellm_request_is_denied_before_provider_call(self) -> None:
-        send = AsyncMock()
-
-        response, send = await self._execute(send=send, delegated=True)
-
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("remote_provider_not_allowed", (await _body(response)).decode())
+        self.assertIn("category rules: NO_GRANT", (await _body(response)).decode())
         send.assert_not_called()
 
     async def test_unknown_remote_model_is_denied_before_provider_call(self) -> None:
@@ -394,14 +362,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 },
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
-                max_usd_per_request=Decimal("0.0001"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=["openrouter"], usd_per_request="0.0001", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "openrouter/openai/gpt-4.1-mini",
             "messages": [{"role": "user", "content": "hi"}],
@@ -437,16 +398,16 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         providers.ensure_ledger(self.ledger)
         with sqlite3.connect(self.ledger) as conn:
             conn.execute(
-                "INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
-                "VALUES ('openrouter', 'paid-app', 'settled', '5.00', '5.00', 'test', ?)",
-                (int(time.time()) - 60,),
+                "INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                "VALUES ('openrouter', ?, ?, 'settled', '5.00', '5.00', 'test', ?)",
+                ("usr_test", "app_test", int(time.time()) - 60),
             )
         send = AsyncMock()
         response, _ = await self._execute(send=send)
         self.assertEqual(response.status_code, 402)
         send.assert_not_called()
         client = self.receipts[-1].to_dict("client")
-        self.assertEqual(client["refusal"], {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "plan"}})
+        self.assertEqual(client["refusal"], {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "person"}})
         self.assertNotIn("5.00", json.dumps(client["refusal"]))
 
     async def test_paid_invalid_output_limits_are_rejected_before_dispatch(self) -> None:
@@ -545,14 +506,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         },
                     },
                 )
-                self.profile = self.profile.with_overrides(
-                    remote=RemoteProviderPolicy(
-                        providers=frozenset({"openrouter"}),
-                        max_usd_per_request=Decimal("0.002"),
-                        budget_usd_per_day=Decimal("5.00"),
-                        budget_usd_per_month=Decimal("20.00"),
-                    )
-                )
+                self.profile = plan_for(self.profile.id, paid=["openrouter"], usd_per_request="0.002", usd_per_day="5.00", usd_per_month="20.00")
                 self.body = {
                     "model": option.get("model", "openrouter/openai/gpt-4.1-mini"),
                     "messages": [{"role": "user", "content": "hi"}],
@@ -931,14 +885,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "anthropic/claude-sonnet-4-5-20250929",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"anthropic"}),
-                max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=["anthropic"], usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "anthropic/claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "hi"}],
@@ -1018,15 +965,8 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openai"}),
-                max_usd_per_request=Decimal("1.00"),
-                # One SDK-priced search fits; a second needs its full search fee.
-                budget_usd_per_day=Decimal("0.036"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        # One SDK-priced search fits; a second needs its full search fee.
+        self.profile = plan_for(self.profile.id, paid=["openai"], usd_per_request="1.00", usd_per_day="0.036", usd_per_month="20.00")
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
@@ -1160,14 +1100,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
-        self.profile = self.profile.with_overrides(
-            remote=RemoteProviderPolicy(
-                providers=frozenset({"openai"}),
-                max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("5.00"),
-                budget_usd_per_month=Decimal("20.00"),
-            )
-        )
+        self.profile = plan_for(self.profile.id, paid=["openai"], usd_per_request="1.00", usd_per_day="5.00", usd_per_month="20.00")
         self.body = {
             "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
@@ -1388,7 +1321,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         response, send = await self._execute(send=send, paid_fallback=True)
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("paid fallback disabled", (await _body(response)).decode())
+        self.assertIn("remote_provider_not_allowed", (await _body(response)).decode())
         send.assert_not_called()
 
     async def test_paid_fallback_opt_in_can_succeed(self) -> None:

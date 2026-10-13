@@ -159,7 +159,16 @@ def baseline(app, client, admin_key: str, app_key: str, extra_paths=()) -> dict:
 
 
 def mint_app_key(case) -> str:
-    app = case.client.post("/admin/api/apps", headers=case._auth(), json={"name": "route-matrix"})
+    from gateway import accounts, admin_store
+    from tests.support.access import store_plan
+
+    person = admin_store.upsert_oidc_user("https://route-matrix.test", "route-matrix", path=case.db)
+    plan = store_plan("Route matrix", path=case.db, engines="all", operations=["*"])
+    accounts.initialize(case.db)
+    accounts.change_person(person["id"], "route-matrix", path=case.db, plan_id=plan["id"])
+    app = case.client.post("/admin/api/apps", headers=case._auth(), json={
+        "name": "route-matrix", "owner_user_id": person["id"], "access_plan": plan["id"],
+    })
     assert app.status_code == 201, app.text
     minted = case.client.post(f'/admin/api/apps/{app.json()["app"]["id"]}/keys',
                               headers=case._auth(), json={"label": "route-matrix"})

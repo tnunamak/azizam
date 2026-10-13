@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 import io
 import os
@@ -15,7 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import admin_store  # noqa: E402
+from gateway import accounts, admin_store  # noqa: E402
+from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from gateway.admin_oidc import (  # noqa: E402
     CookieConfig,
     OIDCConfig,
@@ -53,7 +55,7 @@ def _patch(case: unittest.TestCase, patcher):
     return started
 
 
-class ProxyAdminIntegrationTests(unittest.TestCase):
+class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
     def setUp(self) -> None:
         # Every mutation registers its undo at acquisition, so a failure part-way
         # through setUp still restores the process-wide proxy state.
@@ -68,7 +70,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         _patch(self, patch.object(proxy.ADMIN_AUTH, "signing_key", proxy.ADMIN_AUTH.signing_key))
         _patch(self, patch.object(proxy.ADMIN_AUTH, "cookie", proxy.ADMIN_AUTH.cookie))
         _patch(self, patch.object(proxy, "ADMIN_OIDC_STATES", {}))
-        _patch(self, patch.object(proxy, "AUTH_ENABLED", True))
         _patch(self, patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         ))
@@ -206,11 +207,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         overview = self.client.get("/admin/api/overview", headers=self._auth())
         self.assertEqual(overview.status_code, 200, overview.text)
 
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "brother-laptop"},
-            headers=self._auth(),
-        )
+        created = self._create_app("brother-laptop")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
@@ -258,25 +255,13 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertIn("cannot start with '-'", stderr.getvalue())
         self.assertEqual(len(admin_store.list_credentials(path=self.db)), before)
 
-    def test_admin_created_app_key_authenticates_runtime_with_profile(self) -> None:
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "chat-only",
-                "profile": {
-                    "id": "chat-only",
-                    "protocols": ["openai.chat"],
-                    "fallback": {"cloud_allowed": False},
-                    "status_visibility": {"level": "basic"},
-                },
-            },
+    def test_admin_created_app_key_authenticates_runtime_with_its_access_plan(self) -> None:
+        plan = self.client.post(
+            "/admin/api/access-plans",
+            json=plan_document("Chat only", caps=("chat",)),
             headers=self._auth(),
-        ).json()["profile"]
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "brother-chat", "profile_id": profile["id"]},
-            headers=self._auth(),
-        )
+        ).json()["access_plan"]
+        created = self._create_app("brother-chat", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
         key_response = self.client.post(
@@ -299,7 +284,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             headers={"Authorization": f"Bearer {app_key}"},
         )
         self.assertEqual(denied.status_code, 403, denied.text)
-        self.assertEqual(denied.json()["error"]["code"], "policy_denied")
+        self.assertEqual(denied.json()["error"]["code"], "not_in_access_plan")
+        self.assertEqual(denied.json()["error"]["details"]["side"], "app")
 
         admin_key_on_runtime = self.client.get(
             "/gateway/v1/capabilities",
@@ -469,7 +455,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual({role["role"] for role in roles}, {"admin"})
 
-    def test_oidc_login_auto_provision_persists_resolved_default_profile(self) -> None:
+    def test_oidc_login_without_an_invitation_creates_a_person_with_no_plan(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -484,11 +470,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
-        )
-        profile = admin_store.create_profile(
-            "OIDC user default",
-            {"id": "oidc-user-default", "protocols": ["openai.chat"]},
-            path=self.db,
         )
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
@@ -514,15 +495,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             }
 
         self.assertEqual(login.status_code, 302, login.text)
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {
-                "self_service_apps": True,
-                "auto_create_personal_app": True,
-                "default_profile_id": profile["id"],
-            },
-        ), patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
+        with patch.object(proxy, "_oidc_exchange_code", fake_exchange), patch.object(
             proxy, "_oidc_verify_id_token", fake_verify
         ):
             callback = self.client.get(
@@ -537,9 +510,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             if user["issuer"] == "https://idp.example"
             and user["subject"] == "oidc-auto-subject"
         )
+        # No invitation, so no plan (design N3); the personal App is "Same as
+        # its person", so it denies until the owner chooses a plan.
         apps = admin_store.list_apps_for_user(user["id"], path=self.db)
         self.assertEqual(len(apps), 1)
-        self.assertEqual(apps[0]["default_profile_id"], profile["id"])
+        self.assertEqual(apps[0]["access_plan"], "person")
+        self.assertIsNone(admin_store.person_plan_id(user["id"], path=self.db))
 
     def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
         cfg = OIDCConfig(
@@ -656,11 +632,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
 
     def test_v1_status_rejects_app_runtime_key(self) -> None:
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "status-not-admin"},
-            headers=self._auth(),
-        )
+        created = self._create_app("status-not-admin")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
         key_response = self.client.post(
@@ -882,10 +854,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         with patch.object(
             proxy,
-            "_default_profile_id_for_session",
-            return_value="default-local",
-        ), patch.object(
-            proxy,
             "_gateway_capabilities_for_auth_context",
             side_effect=AssertionError("deleted users must not get default catalog capabilities"),
         ):
@@ -895,7 +863,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "not_authenticated")
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
-    def test_user_models_catalog_uses_app_profile_and_own_receipts(self) -> None:
+    def test_user_models_catalog_uses_the_apps_access_and_own_receipts(self) -> None:
         from gateway import receipt_store
         from gateway.capabilities import Capability
         from gateway.receipts import RouteReceipt
@@ -932,34 +900,12 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             display_name="Other Models User",
             path=self.db,
         )
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "Models profile",
-                "profile": {"id": "models-profile", "models": ["allowed-model"]},
-            },
-            headers=self._auth(),
-        ).json()["profile"]
-        app = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "models-app",
-                "kind": "personal",
-                "owner_user_id": user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        ).json()["app"]
-        other_app = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "other-models-app",
-                "kind": "personal",
-                "owner_user_id": other_user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        ).json()["app"]
+        accounts.initialize(self.db)
+        models_plan = store_plan("Models plan", path=self.db, models=["allowed-model"])
+        for person in (user, other_user):
+            accounts.change_person(person["id"], "test", path=self.db, plan_id=models_plan["id"])
+        app = self._create_app("models-app", kind="personal", owner_user_id=user["id"]).json()["app"]
+        other_app = self._create_app("other-models-app", kind="personal", owner_user_id=other_user["id"]).json()["app"]
         receipts_db = Path(self.tmp.name) / "models-receipts.db"
         old_receipts_path = receipt_store.DB_PATH
         receipt_store.DB_PATH = receipts_db
@@ -1002,7 +948,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
             def capabilities_for(auth_context):
                 return [
-                    proxy._capability_for_profile(
+                    proxy._capability_for_access(
                         Capability(
                             intent="chat.completions",
                             backend="svc",
@@ -1012,7 +958,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                         ),
                         auth_context,
                     ),
-                    proxy._capability_for_profile(
+                    proxy._capability_for_access(
                         Capability(
                             intent="chat.completions",
                             backend="svc",
@@ -1057,7 +1003,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertTrue(body["aliases"][0]["recent_receipts"])
         self.assertNotIn("req_other", response.text)
 
-    def test_user_models_catalog_fails_closed_for_missing_or_disabled_app_profiles(self) -> None:
+    def test_user_models_catalog_fails_closed_for_apps_without_resolvable_access(self) -> None:
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
@@ -1076,34 +1022,21 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
+        user = admin_store.upsert_oidc_user(
+            issuer=cfg.issuer, subject="user-no-plan", email="noplan@example.com", path=self.db)
+        accounts.initialize(self.db)
+        # The person has no plan, and one of their Apps is switched off.
+        app = admin_store.create_app("no-plan", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db)
+        off = admin_store.create_app("off", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db)
+        admin_store.disable_app(off["id"], path=self.db)
         session = session_from_claims(
-            {"sub": "user-missing-profile", "email": "missing@example.com"},
-            role="none",
-            cookie=cfg.cookie,
-        )
-        self.client.cookies.set(
-            cfg.cookie.name,
-            encode_session_cookie(session, signing_key=cfg.signing_key),
-        )
+            {"sub": user["id"], "email": "noplan@example.com"}, role="none", cookie=cfg.cookie)
+        self.client.cookies.set(cfg.cookie.name, encode_session_cookie(session, signing_key=cfg.signing_key))
 
         with patch.object(
             proxy,
-            "build_user_portal_snapshot",
-            return_value={
-                "authenticated": True,
-                "apps": [
-                    {"id": "disabled", "effective_profile_id": "family", "self_service_enabled": False},
-                    {"id": "missing", "effective_profile_id": "missing-profile"},
-                ],
-            },
-        ), patch.object(
-            proxy.ADMIN_STORE,
-            "profile_for_id",
-            return_value=None,
-        ), patch.object(
-            proxy,
             "_gateway_capabilities_for_auth_context",
-            side_effect=AssertionError("missing profiles must not produce catalog contexts"),
+            side_effect=AssertionError("an App without access must not produce catalog contexts"),
         ), patch.object(
             proxy,
             "_models_catalog_health_evidence",
@@ -1118,6 +1051,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["aliases"], [])
         self.assertEqual(response.json()["models"], [])
+        self.assertTrue(app["id"])
 
     def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
         cfg = OIDCConfig(
@@ -1146,27 +1080,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             display_name="Brother",
             path=self.db,
         )
-        profile = self.client.post(
-            "/admin/api/profiles",
-            json={
-                "name": "brother-chat",
-                "profile": {
-                    "id": "brother-chat",
-                    "protocols": ["openai.chat"],
-                },
-            },
-            headers=self._auth(),
-        ).json()["profile"]
-        created = self.client.post(
-            "/admin/api/apps",
-            json={
-                "name": "brother-laptop",
-                "kind": "personal",
-                "owner_user_id": user["id"],
-                "profile_id": profile["id"],
-            },
-            headers=self._auth(),
-        )
+        accounts.initialize(self.db)
+        chat_plan = store_plan("brother-chat", path=self.db, caps=("chat",))
+        accounts.change_person(user["id"], "test", path=self.db, plan_id=chat_plan["id"])
+        created = self._create_app("brother-laptop", kind="personal", owner_user_id=user["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
@@ -1272,10 +1189,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 cfg.issuer, "bob-sub", email="bob@example.com", path=self.db
             )
             app_a = admin_store.create_app(
-                "Alice App", kind="personal", owner_user_id=alice["id"], path=self.db
+                "Alice App", kind="personal", owner_user_id=alice["id"], access_plan="person", path=self.db
             )
             app_b = admin_store.create_app(
-                "Bob App", kind="personal", owner_user_id=bob["id"], path=self.db
+                "Bob App", kind="personal", owner_user_id=bob["id"], access_plan="person", path=self.db
             )
 
             # Two receipts for Alice, one for Bob, one unattributed.
@@ -1363,11 +1280,6 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
         proxy.ADMIN_AUTH.cookie = cfg.cookie
-        profile = admin_store.create_profile(
-            "portal matrix",
-            {"id": "portal-matrix", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
         user_a = admin_store.upsert_oidc_user(
             cfg.issuer, "user-a", email="a@example.com", path=self.db
         )
@@ -1378,15 +1290,13 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "User A App",
             kind="personal",
             owner_user_id=user_a["id"],
-            default_profile_id=profile["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         app_b = admin_store.create_app(
             "User B App",
             kind="personal",
             owner_user_id=user_b["id"],
-            default_profile_id=profile["id"],
-            path=self.db,
+            access_plan="person", path=self.db,
         )
         credential_a = admin_store.create_credential_hash(
             subject_kind="app",
@@ -1652,7 +1562,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 cfg.issuer, "ada-sub", email="ada@example.com", path=self.db
             )
             app = admin_store.create_app(
-                "Ada App", kind="personal", owner_user_id=user["id"], path=self.db
+                "Ada App", kind="personal", owner_user_id=user["id"], access_plan="person", path=self.db
             )
             rcpt = RouteReceipt(
                 protocol="openai.chat", intent="chat.completions",
@@ -1735,12 +1645,18 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             },
         )
         self.assertEqual(requested.status_code, 201, requested.text)
-        self.assertFalse(requested.json()["app"]["profile_required"])
-        self.assertEqual(
-            requested.json()["app"]["effective_profile_id"],
-            "default-local",
-        )
+        # The person has no plan yet, so the new App denies until the owner chooses one.
+        self.assertIsNone(requested.json()["app"]["access_plan"])
         self.assertEqual(requested.json()["app"]["name"], "New user laptop")
+        admin_store_app = admin_store.get_app(requested.json()["app"]["id"], path=self.db)
+        self.assertEqual(admin_store_app["access_plan"], "person")
+        chat_plan = store_plan("New user plan", path=self.db, caps=("chat",))
+        accounts.initialize(self.db)
+        accounts.change_person(user["id"], "test", path=self.db, plan_id=chat_plan["id"])
+        listed = self.client.get("/me/api/session").json()["apps"]
+        [shown] = [app for app in listed if app["id"] == requested.json()["app"]["id"]]
+        self.assertEqual(shown["access_plan"]["name"], "New user plan")
+        self.assertTrue(shown["access_plan"]["same_as_person"])
 
         minted = self.client.post(
             f"/me/api/apps/{requested.json()['app']['id']}/keys",
@@ -1777,127 +1693,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(session_resp.status_code, 200, session_resp.text)
         self.assertEqual(session_resp.json()["apps"], [])
 
-    def test_user_self_service_flag_blocks_app_and_key_mutations(self) -> None:
-        cfg = OIDCConfig(
-            enabled=True,
-            issuer="https://idp.example",
-            client_id="azizam",
-            client_secret="secret",
-            redirect_uri="http://testserver/admin/oidc/callback",
-            scopes=("openid", "email", "profile"),
-            allowed_email_domains=frozenset({"example.com"}),
-            admin_emails=frozenset({"owner@example.com"}),
-            signing_key=b"s" * 32,
-            cookie=CookieConfig(secure=False),
-            authorization_endpoint="https://idp.example/authorize",
-            token_endpoint="https://idp.example/token",
-            jwks_uri="https://idp.example/jwks",
-        )
-        proxy.ADMIN_OIDC_CONFIG = cfg
-        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
-        proxy.ADMIN_AUTH.cookie = cfg.cookie
-        user = admin_store.upsert_oidc_user(
-            cfg.issuer,
-            "limited-subject",
-            email="limited@example.com",
-            display_name="Limited",
-            path=self.db,
-        )
-        app = admin_store.create_app(
-            "limited-laptop",
-            kind="personal",
-            owner_user_id=user["id"],
-            path=self.db,
-        )
-        session = session_from_claims(
-            {"sub": user["id"], "email": "limited@example.com"},
-            role="none",
-            cookie=cfg.cookie,
-        )
-        self.client.cookies.set(
-            cfg.cookie.name,
-            encode_session_cookie(session, signing_key=cfg.signing_key),
-        )
-        csrf = csrf_token_for_session(session, signing_key=cfg.signing_key)
-
-        with patch.object(proxy, "user_defaults_cfg", {"self_service_apps": False}):
-            created = self.client.post(
-                "/me/api/apps",
-                json={"name": "Blocked"},
-                headers={
-                    "x-azizam-user-action": "1",
-                    "x-azizam-csrf": csrf,
-                },
-            )
-            self.assertEqual(created.status_code, 403)
-            self.assertEqual(created.json()["error"]["code"], "self_service_disabled")
-
-            minted = self.client.post(
-                f"/me/api/apps/{app['id']}/keys",
-                json={"label": "Blocked"},
-                headers={
-                    "x-azizam-user-action": "1",
-                    "x-azizam-csrf": csrf,
-                },
-            )
-            self.assertEqual(minted.status_code, 403)
-            self.assertEqual(minted.json()["error"]["code"], "self_service_disabled")
-
-            deleted = self.client.delete(
-                f"/me/api/apps/{app['id']}",
-                headers={
-                    "x-azizam-user-action": "1",
-                    "x-azizam-csrf": csrf,
-                },
-            )
-            self.assertEqual(deleted.status_code, 403)
-            self.assertEqual(deleted.json()["error"]["code"], "self_service_disabled")
-
-    def test_self_service_flag_blocks_dynamic_legacy_profile_inheritance(self) -> None:
-        user = admin_store.upsert_oidc_user(
-            "https://idp.example",
-            "existing-subject",
-            email="existing@example.com",
-            display_name="Existing",
-            path=self.db,
-        )
-        profile = admin_store.create_profile(
-            "Existing user default",
-            {"id": "existing-user-default", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        app = admin_store.create_app(
-            "existing-laptop",
-            kind="personal",
-            owner_user_id=user["id"],
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {
-                "self_service_apps": True,
-                "default_profile_id": profile["id"],
-            },
-        ):
-            self.assertEqual(proxy._inherited_profile_id_for_app(app), profile["id"])
-
-        self.assertIsNone(
-            admin_store.get_app(app["id"], path=self.db)["default_profile_id"]
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {
-                "self_service_apps": False,
-                "default_profile_id": profile["id"],
-            },
-        ):
-            self.assertIsNone(proxy._inherited_profile_id_for_app(app))
-
-    def test_startup_auto_provision_persists_resolved_default_profile(self) -> None:
+    def test_startup_provisioning_creates_same_as_person_apps(self) -> None:
         user = admin_store.upsert_oidc_user(
             "https://idp.example",
             "startup-subject",
@@ -1905,209 +1701,11 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             display_name="Startup",
             path=self.db,
         )
-        profile = admin_store.create_profile(
-            "Startup user default",
-            {"id": "startup-user-default", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {
-                "self_service_apps": True,
-                "auto_create_personal_app": True,
-                "default_profile_id": profile["id"],
-            },
-        ):
-            self.assertEqual(proxy._provision_existing_user_personal_apps(), 1)
+        self.assertEqual(proxy._provision_existing_user_personal_apps(), 1)
 
         apps = admin_store.list_apps_for_user(user["id"], path=self.db)
         self.assertEqual(len(apps), 1)
-        self.assertEqual(apps[0]["default_profile_id"], profile["id"])
-
-    def test_runtime_profile_mapping_from_oidc_group_overrides_yaml_defaults(self) -> None:
-        profile = admin_store.create_profile(
-            "Trusted users",
-            {"id": "trusted-users", "protocols": ["openai"]},
-            path=self.db,
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="oidc_group",
-            source_value="/trusted-users",
-            profile_id=profile["id"],
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {"default_profile_id": "default-local"},
-        ):
-            self.assertEqual(
-                proxy._default_profile_id_for_user(
-                    email="simon@example.com",
-                    role="none",
-                    oidc_groups=["trusted-users"],
-                ),
-                profile["id"],
-            )
-
-    def test_bootstrap_user_defaults_seed_admin_db_runtime_policy_once(self) -> None:
-        family = admin_store.create_profile(
-            "Family",
-            {"id": "family", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        admin = admin_store.create_profile(
-            "Admin",
-            {"id": "admin-runtime", "protocols": ["openai"]},
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {
-                "self_service_apps": False,
-                "auto_create_personal_app": False,
-                "default_profile_id": family["id"],
-                "role_profile_ids": {"admin": admin["id"]},
-                "domain_profile_ids": {"example.com": family["id"]},
-            },
-        ):
-            seeded = proxy._seed_user_defaults_from_bootstrap_config()
-            self.assertEqual(seeded, {"settings": 1, "mappings": 3})
-
-            setting = admin_store.get_operator_setting(
-                proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
-                path=self.db,
-            )
-            self.assertIsNotNone(setting)
-            self.assertFalse(setting["value"]["self_service_apps"])  # type: ignore[index]
-            self.assertFalse(
-                proxy._runtime_user_access_defaults()["self_service_apps"]
-            )
-
-            mappings = admin_store.list_runtime_profile_mappings(path=self.db)
-            observed = {
-                (
-                    row["source_kind"],
-                    row["source_value"],
-                    row["profile_id"],
-                )
-                for row in mappings
-            }
-            self.assertIn(("all_users", "*", family["id"]), observed)
-            self.assertIn(("gateway_role", "admin", admin["id"]), observed)
-            self.assertIn(("domain", "example.com", family["id"]), observed)
-
-            seeded_again = proxy._seed_user_defaults_from_bootstrap_config()
-            self.assertEqual(seeded_again, {"settings": 0, "mappings": 0})
-
-        actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
-        self.assertIn("operator.user_access_defaults.seed", actions)
-        self.assertIn("runtime_profile_mapping.seed", actions)
-
-    def test_env_user_defaults_seed_admin_db_without_remaining_runtime_override(self) -> None:
-        with patch.object(proxy, "user_defaults_cfg", {}), patch.dict(
-            os.environ,
-            {
-                "AZIZAM_USER_SELF_SERVICE": "false",
-                "AZIZAM_AUTO_CREATE_PERSONAL_APP": "false",
-            },
-            clear=False,
-        ):
-            seeded = proxy._seed_user_defaults_from_bootstrap_config()
-            self.assertEqual(seeded, {"settings": 1, "mappings": 0})
-
-        setting = admin_store.get_operator_setting(
-            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
-            path=self.db,
-        )
-        self.assertIsNotNone(setting)
-        self.assertFalse(setting["value"]["self_service_apps"])  # type: ignore[index]
-
-        with patch.dict(
-            os.environ,
-            {"AZIZAM_USER_SELF_SERVICE": "true"},
-            clear=False,
-        ):
-            self.assertFalse(proxy._user_self_service_enabled())
-
-    def test_partial_bootstrap_seed_recovers_missing_runtime_mappings(self) -> None:
-        family = admin_store.create_profile(
-            "Family",
-            {"id": "family", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        admin_store.put_operator_setting(
-            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
-            {"self_service_apps": True, "auto_create_personal_app": True},
-            updated_by="test",
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {"domain_profile_ids": {"example.com": family["id"]}},
-        ):
-            seeded = proxy._seed_user_defaults_from_bootstrap_config()
-            resolved = proxy._default_profile_id_for_user(
-                email="person@example.com",
-                role="none",
-            )
-
-        self.assertEqual(seeded, {"settings": 0, "mappings": 1})
-        self.assertEqual(resolved, family["id"])
-
-    def test_runtime_user_access_defaults_db_wins_over_bootstrap_config(self) -> None:
-        admin_store.put_operator_setting(
-            proxy.USER_ACCESS_DEFAULTS_SETTING_KEY,
-            {"self_service_apps": False, "auto_create_personal_app": False},
-            updated_by="test",
-            path=self.db,
-        )
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {"self_service_apps": True, "auto_create_personal_app": True},
-        ):
-            self.assertFalse(proxy._user_self_service_enabled())
-            self.assertFalse(proxy._auto_create_personal_app_enabled())
-
-    def test_disabled_seeded_mapping_is_not_reenabled_by_bootstrap_defaults(self) -> None:
-        profile = admin_store.create_profile(
-            "Family",
-            {"id": "family", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        mapping = admin_store.create_runtime_profile_mapping(
-            source_kind="domain",
-            source_value="example.com",
-            profile_id=profile["id"],
-            path=self.db,
-        )
-        admin_store.disable_runtime_profile_mapping(mapping["id"], path=self.db)
-
-        with patch.object(
-            proxy,
-            "user_defaults_cfg",
-            {"domain_profile_ids": {"example.com": profile["id"]}},
-        ):
-            seeded = proxy._seed_user_defaults_from_bootstrap_config()
-            resolved = proxy._default_profile_id_for_user(
-                email="person@example.com",
-                role="none",
-            )
-
-        self.assertEqual(seeded, {"settings": 1, "mappings": 0})
-        self.assertIsNone(resolved)
-        active = admin_store.list_runtime_profile_mappings(path=self.db)
-        self.assertEqual(active, [])
-
+        self.assertEqual(apps[0]["access_plan"], "person")
 
 class SetupRouteIntegrationTests(unittest.TestCase):
     """Route-level tests for `/setup`.
@@ -2126,7 +1724,6 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         _patch(self, patch.object(proxy.ADMIN_AUTH, "signing_key", b"s" * 32))
         _patch(self, patch.object(proxy.ADMIN_AUTH, "cookie", CookieConfig(secure=False)))
         _patch(self, patch.object(proxy, "ADMIN_OIDC_STATES", {}))
-        _patch(self, patch.object(proxy, "AUTH_ENABLED", True))
         _patch(self, patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         ))
@@ -2319,6 +1916,12 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
+        # The App answers to the gateway owner (a person) and follows their plan.
+        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="o@example.com", path=self.db)
+        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=self.db)
+        accounts.initialize(self.db)
+        accounts.change_person(owner["id"], "test", path=self.db,
+                               plan_id=store_plan("Everything", path=self.db)["id"])
         admin_key, _, _ = create_admin_service_account_key(
             "real-owner",
             path=self.db,
@@ -2362,9 +1965,10 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer", created.text)
             self.assertIn("setup-copy-btn", created.text)
 
-            apps = admin_store.list_apps(path=self.db)
+            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "service"]
             self.assertEqual(len(apps), 1)
-            self.assertEqual(apps[0]["kind"], "service")
+            self.assertEqual(apps[0]["owner_user_id"], owner["id"])
+            self.assertEqual(apps[0]["access_plan"], "person")
             credentials = [
                 credential
                 for credential in admin_store.list_credentials(path=self.db)
@@ -2438,12 +2042,29 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         # The persisted verifier is never the plaintext password.
         self.assertNotIn("correct-horse-battery", str(verifier))
 
+        # A fresh gateway has no built-in default, so the first owner holds one
+        # ordinary starting plan and their personal App follows it.
+        plan_id = admin_store.person_plan_id(users[0]["id"], path=self.db)
+        self.assertIsNotNone(plan_id)
+        self.assertEqual([p["id"] for p in admin_store.list_access_plans(path=self.db)], [plan_id])
+        self.assertEqual(admin_store.get_access_plan(plan_id, path=self.db)["name"], "Local only")
+        [personal] = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+        self.assertEqual(personal["access_plan"], "person")
+
         # The freshly-created owner is signed in with an owner session.
         self.assertEqual(self.client.get("/admin/api/session").status_code, 200)
         try:
             self.client.cookies.clear()
         except Exception:
             pass
+
+    def test_second_person_on_a_fresh_gateway_gets_no_plan(self) -> None:
+        self.client.post("/setup/local-owner", data={
+            "email": "owner@example.com", "password": "correct-horse-battery",
+            "password_confirm": "correct-horse-battery"}, follow_redirects=False)
+        member = admin_store.upsert_oidc_user("https://idp.example", "member", email="m@example.com", path=self.db)
+        self.assertIsNone(admin_store.seed_first_owner_plan(member["id"], path=self.db))
+        self.assertIsNone(admin_store.person_plan_id(member["id"], path=self.db))
 
     def test_setup_local_owner_accepts_plain_username_without_at_sign(self) -> None:
         # A self-hoster shouldn't have to invent an email for a break-glass
@@ -2707,7 +2328,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
 
 
-class AdminEffectiveProfileTests(unittest.TestCase):
+class AdminEffectiveAccessPlanTests(AdminAppFixtures, unittest.TestCase):
     """effective_profile_* fields on admin app responses."""
 
     def setUp(self) -> None:
@@ -2726,43 +2347,39 @@ class AdminEffectiveProfileTests(unittest.TestCase):
     def _auth(self):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
-    def test_app_without_profile_gets_fallback_effective_profile(self) -> None:
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "No Profile App"},
-            headers=self._auth(),
-        )
+    def test_same_as_person_app_reports_the_persons_plan(self) -> None:
+        created = self._create_app("Same App")
         self.assertEqual(created.status_code, 201, created.text)
         app = created.json()["app"]
-        self.assertIsNone(app.get("default_profile_id"))
-        self.assertEqual(app["effective_profile_id"], "default-local")
-        self.assertEqual(app["effective_profile_source"], "fallback")
+        self.assertTrue(app["same_as_person"])
+        self.assertEqual(app["access_plan_name"], "Everything")
+        self.assertEqual(app["accountable_person"]["id"], self.accountable["id"])
 
         listed = self.client.get("/admin/api/apps", headers=self._auth())
-        self.assertEqual(listed.status_code, 200)
         match = next(a for a in listed.json()["apps"] if a["id"] == app["id"])
-        self.assertEqual(match["effective_profile_id"], "default-local")
-        self.assertEqual(match["effective_profile_source"], "fallback")
+        self.assertEqual(match["effective_access_plan_id"], app["effective_access_plan_id"])
 
-    def test_app_with_explicit_profile_gets_app_default_effective_profile(self) -> None:
-        profile = admin_store.create_profile(
-            "Test Profile",
-            {"id": "test-profile", "protocols": ["openai.chat"]},
-            path=self.db,
-        )
-        created = self.client.post(
-            "/admin/api/apps",
-            json={"name": "Profiled App", "profile_id": profile["id"]},
-            headers=self._auth(),
-        )
+    def test_app_with_its_own_plan_reports_that_plan(self) -> None:
+        plan = store_plan("Chat only", path=self.db, caps=("chat",))
+        created = self._create_app("Planned App", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app = created.json()["app"]
-        self.assertEqual(app["effective_profile_id"], profile["id"])
-        self.assertEqual(app["effective_profile_name"], "Test Profile")
-        self.assertEqual(app["effective_profile_source"], "app_default")
+        self.assertFalse(app["same_as_person"])
+        self.assertEqual(app["effective_access_plan_id"], plan["id"])
+        self.assertEqual(app["access_plan_name"], "Chat only")
+
+    def test_same_as_person_app_of_a_person_without_a_plan_reports_no_plan(self) -> None:
+        from gateway import accounts
+
+        created = self._create_app("Stranded App")
+        accounts.change_person(self.accountable["id"], "test", path=self.db, plan_id=None)
+        app = next(a for a in self.client.get("/admin/api/apps", headers=self._auth()).json()["apps"]
+                   if a["id"] == created.json()["app"]["id"])
+        self.assertIsNone(app["effective_access_plan_id"])
+        self.assertIsNone(app["access_plan_name"])
 
 
-class AdminCredentialDeleteAliasTests(unittest.TestCase):
+class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
     """DELETE /admin/api/credentials/{id} as alias for revoke."""
 
     def setUp(self) -> None:
@@ -2782,9 +2399,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
     def test_delete_credential_revokes_it(self) -> None:
-        app = self.client.post(
-            "/admin/api/apps", json={"name": "App"}, headers=self._auth()
-        ).json()["app"]
+        app = self._create_app("App").json()["app"]
         cred = self.client.post(
             f"/admin/api/apps/{app['id']}/keys",
             json={"display_name": "key1"},
@@ -2807,9 +2422,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         self.assertEqual(resp.json()["error"]["code"], "credential_not_found")
 
     def test_post_revoke_still_works(self) -> None:
-        app = self.client.post(
-            "/admin/api/apps", json={"name": "App2"}, headers=self._auth()
-        ).json()["app"]
+        app = self._create_app("App2").json()["app"]
         cred = self.client.post(
             f"/admin/api/apps/{app['id']}/keys",
             json={"display_name": "key2"},
@@ -2824,7 +2437,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         self.assertIsNotNone(resp.json()["credential"].get("revoked_at"))
 
 
-class AdminAuditEventsEndpointTests(unittest.TestCase):
+class AdminAuditEventsEndpointTests(AdminAppFixtures, unittest.TestCase):
     """GET /admin/api/audit-events as queryable audit log."""
 
     def setUp(self) -> None:
@@ -2844,9 +2457,7 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         return {"Authorization": f"Bearer {self.admin_key}"}
 
     def test_audit_events_returns_recent_events(self) -> None:
-        self.client.post(
-            "/admin/api/apps", json={"name": "Audit App"}, headers=self._auth()
-        )
+        self._create_app("Audit App")
         resp = self.client.get(
             "/admin/api/audit-events?show_automated=true", headers=self._auth()
         )
@@ -2933,7 +2544,6 @@ class ConfigExportTests(unittest.TestCase):
             (proxy.ADMIN_STORE, "path", self.db),
             (proxy.ADMIN_AUTH, "signing_key", proxy.ADMIN_AUTH.signing_key),
             (proxy.ADMIN_AUTH, "cookie", proxy.ADMIN_AUTH.cookie),
-            (proxy, "AUTH_ENABLED", True),
         ):
             patcher = patch.object(target, name, value)
             patcher.start()

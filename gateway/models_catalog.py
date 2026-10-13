@@ -1101,39 +1101,35 @@ def _status_from_health_payload(payload: Mapping[str, Any]) -> str:
 def auth_contexts_from_user_snapshot(
     snapshot: Mapping[str, Any],
     *,
-    default_profile_id: str | None,
-    profile_loader: Callable[[str], Any | None],
-    context_for_profile: Callable[[Any, str], Any],
+    access_for_app: Callable[[str], Any | None],
+    person_access: Any,
+    context_for_access: Callable[[Any], Any],
 ) -> list[Any]:
-    """Build fail-closed catalog auth contexts from a user portal snapshot."""
+    """Build fail-closed catalog auth contexts from a user portal snapshot.
 
-    profile_ids: list[str] = []
+    One context per distinct pair of plans the person's enabled Apps run
+    under; with no App, the access a new "Same as my access plan" App would
+    have. An App whose access cannot be resolved contributes nothing.
+    """
+    accesses: list[Any] = []
     saw_enabled_app = False
-    saw_default_app = False
     for app_record in snapshot.get("apps") or ():
-        if not isinstance(app_record, Mapping):
-            continue
-        if app_record.get("disabled_at") or app_record.get("self_service_enabled") is False:
+        if not isinstance(app_record, Mapping) or app_record.get("disabled_at"):
             continue
         saw_enabled_app = True
-        profile_id = str(app_record.get("effective_profile_id") or app_record.get("profile_id") or "").strip()
-        if profile_id == "default-local":
-            saw_default_app = True
-            profile_ids.append("default-local")
-        elif profile_id:
-            profile_ids.append(profile_id)
-    if not profile_ids and default_profile_id and not saw_enabled_app:
-        profile_ids.append(default_profile_id)
+        access = access_for_app(str(app_record.get("id") or ""))
+        if access is not None:
+            accesses.append(access)
+    if not saw_enabled_app:
+        accesses.append(person_access)
     contexts: list[Any] = []
-    seen: set[str] = set()
-    for profile_id in profile_ids:
-        if profile_id in seen:
+    seen: set[tuple[str, ...]] = set()
+    for access in accesses:
+        key = tuple(getattr(access, "plan_ids", ()))
+        if not getattr(access, "complete", False) or key in seen:
             continue
-        seen.add(profile_id)
-        profile = profile_loader(profile_id)
-        if profile is None:
-            continue
-        contexts.append(context_for_profile(profile, profile_id))
+        seen.add(key)
+        contexts.append(context_for_access(access))
     return contexts
 
 

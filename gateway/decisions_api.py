@@ -1,6 +1,6 @@
 """TypeSafe System One and reserved OpenAI Decisions facade routes.
 
-The gateway owns authentication, profile policy, routing and receipts; the
+The gateway owns authentication, access plans, routing and receipts; the
 decision backend owns prompt/readout/model knowledge. This module only validates
 the TypeSafe wire shape, calls an injected backend dispatcher, and returns the
 backend's TypeSafe-shaped body.

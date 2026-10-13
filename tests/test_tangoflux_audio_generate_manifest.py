@@ -38,6 +38,7 @@ from gateway.audio_extensions import (  # noqa: E402
     detect_unknown_audio_fields,
 )
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 
 
 MANIFEST_PATH = ROOT / "manifests/workflows/tangoflux.yml"
@@ -541,7 +542,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         ), patch.object(proxy.asyncio, "sleep", no_sleep):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest(body),  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
             )
         return response, captured
 
@@ -572,7 +573,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         ):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest({"model": "no-such-audio-model", "prompt": "x"}),  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
             )
 
         self.assertEqual(response.status_code, 404)
@@ -672,7 +673,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         ):
             response = await proxy.proxy_audio_generate(
                 _JsonRequest({"model": "tangoflux", "prompt": "x", "duration": 0.5}),  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
             )
 
         self.assertEqual(response.status_code, 400)

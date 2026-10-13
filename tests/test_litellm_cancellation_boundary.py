@@ -61,6 +61,7 @@ import firehose_metrics
 import metrics_sampler
 import metrics_store
 import proxy
+from tests.support.access import authenticated  # noqa: E402
 from gateway.backends.cancellation import cancellation_registry
 from gateway.litellm_substrate import compile_litellm_substrate_config
 
@@ -537,7 +538,7 @@ async def _boot_harness() -> None:
 
     env_patch = patch.dict(os.environ, {"LITELLM_MASTER_TEST": "sk-master"}, clear=False)
     env_patch.start()
-    auth_patch = patch.object(proxy, "AUTH_ENABLED", False)
+    auth_patch = authenticated()
     auth_patch.start()
     registry_patch = patch.object(
         proxy.ADMIN_STORE,
@@ -953,7 +954,7 @@ async def _boot_composed_harness() -> None:
         clear=False,
     )
     env_patch.start()
-    auth_patch = patch.object(proxy, "AUTH_ENABLED", False)
+    auth_patch = authenticated()
     auth_patch.start()
     backend_hosts_patch = patch.dict(
         proxy.LLM_BACKEND_HOSTS, {_COMPOSED_BACKEND_NAME: backend_url}, clear=False

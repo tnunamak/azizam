@@ -6,8 +6,6 @@ from gateway import service_registry
 from gateway.admin_catalog import (
     admin_api_surfaces,
     load_admin_surfaces_catalog,
-    load_profile_policy_catalog,
-    profile_policy_catalog,
 )
 
 
@@ -94,94 +92,3 @@ def test_admin_control_surface_is_catalog_data() -> None:
 
 def test_admin_surfaces_catalog_ignores_missing_file(tmp_path: Path) -> None:
     assert load_admin_surfaces_catalog(tmp_path / "missing.yml") == []
-
-
-def test_profile_policy_catalog_loads_from_registry_yaml() -> None:
-    catalog = profile_policy_catalog()
-
-    assert catalog["protocols"][0] == {
-        "id": "openai",
-        "label": "OpenAI-compatible",
-        "summary_label": "OpenAI-compatible",
-        "description": "/openai/v1 and /v1 SDKs",
-        "default": True,
-    }
-    assert [option["id"] for option in catalog["target_visibility"]] == [
-        "catalog",
-        "available",
-    ]
-    provider_native = next(
-        option for option in catalog["protocols"] if option["id"] == "provider-native"
-    )
-    assert provider_native["profile_form"] is False
-    assert provider_native["simulator"] is False
-    assert [option["id"] for option in catalog["status_visibility"]] == [
-        "none",
-        "basic",
-        "standard",
-        "full",
-    ]
-
-
-def test_profile_policy_catalog_returns_deep_copy() -> None:
-    catalog = profile_policy_catalog()
-    catalog["protocols"][0]["label"] = "Mutated"
-
-    assert profile_policy_catalog()["protocols"][0]["label"] == "OpenAI-compatible"
-
-
-def test_profile_policy_catalog_accepts_override_directory(tmp_path: Path) -> None:
-    (tmp_path / "profile_policy_catalog.yml").write_text(
-        """
-protocols:
-  - id: acme
-    label: Acme API
-    summary_label: Acme API
-    description: /acme/v1 clients
-target_visibility:
-  - id: catalog
-    label: Allowed catalog
-""",
-        encoding="utf-8",
-    )
-
-    catalog = profile_policy_catalog(catalog_dir=tmp_path)
-
-    assert catalog["protocols"] == [
-        {
-            "id": "acme",
-            "label": "Acme API",
-            "summary_label": "Acme API",
-            "description": "/acme/v1 clients",
-        }
-    ]
-    assert catalog["target_visibility"] == [
-        {"id": "catalog", "label": "Allowed catalog"}
-    ]
-
-
-def test_profile_policy_catalog_override_directory_falls_back_to_bundled(
-    tmp_path: Path,
-) -> None:
-    catalog = profile_policy_catalog(catalog_dir=tmp_path)
-
-    assert catalog["protocols"][0]["id"] == "openai"
-
-
-def test_profile_policy_catalog_rejects_unknown_code_owned_enum(tmp_path: Path) -> None:
-    path = tmp_path / "profile_policy_catalog.yml"
-    path.write_text(
-        """
-target_activation:
-  - id: surprise
-    label: Surprise
-""",
-        encoding="utf-8",
-    )
-
-    try:
-        load_profile_policy_catalog(path)
-    except ValueError as exc:
-        assert "unsupported id 'surprise'" in str(exc)
-    else:
-        raise AssertionError("expected invalid target_activation id to fail")

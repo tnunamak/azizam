@@ -55,13 +55,13 @@ class TemporaryProviderAdminStore:
             "providers": {},
             "global_caps": {},
         }
-        self.profiles = [{"id": "default-local", "name": "Default local"}]
+        self.access_plans = [{"id": "plan_local", "name": "Local only", "plan": {"paid_providers": []}}]
 
     def get_service_registry(self) -> dict[str, Any]:
         return self.registry
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        return self.profiles
+    def list_access_plans(self) -> list[dict[str, Any]]:
+        return self.access_plans
 
     def get_provider_admin_state(self) -> dict[str, Any]:
         return self.provider_admin_state

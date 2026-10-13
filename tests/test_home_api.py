@@ -7,13 +7,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, receipt_store
+from gateway import accounts, admin_store, receipt_store
+from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_oidc import AdminSession
 from gateway.capabilities import Capability, capability_with_policy_view
 from gateway.home_api import create_home_router, _resolved_capabilities, _declared_local_fast
 from gateway.local_capabilities import build_alias_capabilities
-from gateway.profiles import load_profile
 from gateway.product_contracts import HomeCapability, HomeProjection, MemberStatus, SetupEvidenceResponse, SetupProgress
 from gateway.request_source import current_gateway_ui
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
@@ -28,12 +28,16 @@ def home_case(tmp_path):
     db, receipts = tmp_path / "admin.db", tmp_path / "receipts.db"
     admin_store.init_db(db)
     receipt_store.init_db(receipts)
+    accounts.initialize(db)
     user = admin_store.upsert_oidc_user("https://example.test", "one", email="one@example.test", path=db)
     other = admin_store.upsert_oidc_user("https://example.test", "two", email="two@example.test", path=db)
+    everything = store_plan("Everything", path=db)
+    for person in (user, other):
+        accounts.change_person(person["id"], "test", path=db, plan_id=everything["id"])
     session = AdminSession(subject=user["id"], email=user["email"], role="owner", issued_at=1, expires_at=4_000_000_000)
     personal = admin_store.ensure_personal_app_for_user(user["id"], path=db)
     client_app = create_user_app(session, name="Open WebUI", path=db)["app"]
-    outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], path=db)
+    outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], access_plan="person", path=db)
     def credential(app, key, **kwargs):
         return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs)
     key = "test-home-key"
@@ -43,10 +47,9 @@ def home_case(tmp_path):
                            client_app=client_app, outsider=outsider, key=key, cred=cred,
                            other_cred=other_cred, calls=[], logged_in=True, owner=True,
                            health={"backends": [{"key": "service", "live_status": "up"}]},
-                           fast=True, health_error=False, inherited_profile=None, prospective_profile=None,
-                           self_service=True, capabilities_override=None, aliases_override=None,
-                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}},
-                           ledger=tmp_path / "provider_spend.db")
+                           fast=True, health_error=False, plan=everything, ledger=tmp_path / "provider_spend.db",
+                           capabilities_override=None, aliases_override=None,
+                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
     def require_session(request):
         if not case.logged_in:
             raise UserPortalError("login_required", "Sign in.", status_code=401)
@@ -61,7 +64,7 @@ def home_case(tmp_path):
     def capabilities(identity):
         if case.capabilities_override is not None:
             return case.capabilities_override(identity)
-        allowed = identity.profile.id != "no-chat"
+        allowed = identity.access.complete and "chat" in identity.access.app_plan.can_use and "chat" in identity.access.person_plan.can_use
         alias_caps = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}}) if case.fast else []
         return [Capability(intent="chat.completions", backend="service", model="demo", policy_available=allowed),
                 *alias_caps,
@@ -74,9 +77,7 @@ def home_case(tmp_path):
     app.include_router(create_home_router(store=SimpleNamespace(path=db, get_service_registry=lambda: case.registry),
                                          receipts_path=lambda: receipts, require_session=require_session,
                                          require_action=action, csrf_token=lambda _session: "csrf",
-                                         default_profile_id=lambda _session: case.prospective_profile, capabilities=capabilities,
-                                         inherited_profile_id_for_app=lambda _app: case.inherited_profile,
-                                         self_service_enabled=lambda: case.self_service,
+                                         capabilities=capabilities,
                                          aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
                                          public_base_url=lambda _request: "https://gateway.example",
                                          status_provider=status, admin_auth=admin_auth,
@@ -93,6 +94,12 @@ def home_case(tmp_path):
     async def models(request: Request):
         case.calls.append((request.url.path, dict(request.headers), None))
         return {"object": "list", "data": []}
+    def give_person(plan):
+        """The plan the signed-in person (and every App that is "Same as its person") holds."""
+        accounts.change_person(user["id"], "test", path=db, plan_id=plan["id"])
+    def give_app(app_row, plan):
+        admin_store.update_app(app_row["id"], access_plan=plan["id"], path=db)
+    case.give_person, case.give_app = give_person, give_app
     case.http = TestClient(app, raise_server_exceptions=False)
     case.headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf"}
     yield case
@@ -124,7 +131,7 @@ def test_home_owner_recent_defaults_to_instance_activity(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "succeeded"}, created_at=10, path=c.receipts)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "api_key_name": "Daisy", "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
@@ -145,7 +152,7 @@ def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
 
@@ -306,7 +313,7 @@ def test_setup_explicit_first_app_use_does_not_prove_external_client(home_case):
 
 def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
     c = home_case
-    named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], path=c.db)
+    named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
     admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
     cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db)
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
@@ -351,7 +358,7 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_setup_daisy", path=c.db)
-    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    service = service_app("Daisy", path=c.db)
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
@@ -377,9 +384,8 @@ def test_setup_actual_invitation_completes_optional_step(home_case):
     from gateway import accounts
     c = home_case
     accounts.initialize(c.db)
-    profile = admin_store.create_profile("Member", {"id": "member"}, path=c.db)
     # Creating the invitation is the recorded milestone; accepting is separate.
-    accounts.create_link("invite", c.user["id"], profile_id=profile["id"], path=c.db)
+    accounts.create_link("invite", c.user["id"], plan_id=c.plan["id"], path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
     assert next(step for step in steps if step["id"] == "invite_someone")["done"]
 
@@ -416,29 +422,43 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert c.http.get("/me/api/status").status_code == 401
 
 
-def test_home_and_connection_use_credential_profile_override(home_case):
+def test_home_and_connection_use_the_apps_own_access_plan(home_case):
     c = home_case
-    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
-    c.prospective_profile = restricted["id"]
+    no_chat = store_plan("no-chat", path=c.db, caps=())
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.revoke_credential(c.cred["id"], path=c.db)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", profile_id=restricted["id"], path=c.db)
+    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db)
+    c.give_app(c.client_app, no_chat)
     data = c.http.get("/me/api/home").json()
-    assert data["capabilities"] == [] and data["aliases"] == []
+    assert data["credential_aliases"][restricted["id"]] == []
+    # What a new App of this person could use is still listed.
+    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
     result = c.http.post("/me/api/connection-test", json={"api_key": "restricted-key"}, headers=c.headers).json()
     assert result["path"] == "/v1/models" and result["model"] is None
     assert [call[0] for call in c.calls] == ["/v1/models"]
 
 
-def test_home_and_connection_use_live_app_inheritance_policy(home_case):
+def test_home_and_connection_follow_the_persons_plan_for_same_as_person_apps(home_case):
     c = home_case
-    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
-    c.inherited_profile = restricted["id"]
-    c.prospective_profile = restricted["id"]
+    c.give_person(store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
     assert data["capabilities"] == [] and data["aliases"] == []
     result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
     assert result["path"] == "/v1/models"
+
+
+def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
+    c = home_case
+    accounts.change_person(c.user["id"], "test", path=c.db, plan_id=None)
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["has_access_plan"] is False
+    assert data["capabilities"] == [] and data["aliases"] == [] and data["new_app_aliases"] == []
+    assert c.http.get("/me/api/status").json()["capabilities"] == []
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "/v1/models" and response.json()["model"] is None
 
 
 def test_setup_receipt_success_is_not_limited_to_last_five(home_case):
@@ -451,8 +471,8 @@ def test_setup_receipt_success_is_not_limited_to_last_five(home_case):
 
 
 def test_real_alias_discovery_uses_concrete_policy_and_health_target():
-    profile = load_profile({"id": "restricted", "protocols": ["openai"], "models": ["demo-chat"], "backends": ["local-service"]})
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=profile)
+    profile = access(plan_for("restricted", models=["demo-chat"]))
+    identity = RuntimeIdentity(name="Test", key_hash="", access=profile)
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     concrete = Capability(intent="chat.completions", backend="local-service", model="demo-chat", health="healthy")
     raw = [capability_with_policy_view(cap, profile, request=make_policy_request(protocol="openai.chat", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in [concrete, *aliases]]
@@ -465,15 +485,15 @@ def test_real_alias_discovery_uses_concrete_policy_and_health_target():
 
 
 def test_alias_ambiguous_backends_fail_closed():
-    identity = RuntimeIdentity(name="Test", key_hash="")
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("everything")))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     raw = [Capability(intent="chat.completions", backend=backend, model="demo-chat", health="healthy") for backend in ("one", "two")] + aliases
     fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
     assert not fast.policy_available
 
 
-def test_alias_cannot_use_a_forbidden_resolved_backend():
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=load_profile({"id": "denied", "backends": ["different-service"]}))
+def test_alias_of_a_model_outside_the_plan_is_not_available():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for(models=["other-chat"])))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     raw = [Capability(intent="chat.completions", backend="forbidden-service", model="demo-chat", health="healthy"), *aliases]
     fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
@@ -488,7 +508,7 @@ def test_declared_healthy_capability_without_measured_service_is_unknown():
 
 
 def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():
-    identity = RuntimeIdentity(name="Test", key_hash="", profile=load_profile({"id": "restricted", "models": ["demo-chat"], "backends": ["capture-engine"]}))
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("restricted", models=["demo-chat"])))
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
     raw = [Capability(intent="chat.completions", backend="capture-engine"), *aliases]
     registry = {"services": {"capture-engine": {"enabled": True, "config": {"models": [{"id": "demo-chat", "upstream_model": "demo-chat", "local_lifecycle": True}]}}}}
@@ -518,7 +538,7 @@ def test_connection_alias_precedence_never_uses_same_named_local_model(home_case
 
 
 def test_workflow_and_service_aliases_preserve_permissions():
-    identity = RuntimeIdentity(name="Test", key_hash="")
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("everything")))
     views = {
         "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]},
         "speech": {"stable": [{"alias": "tts", "resolves_to": "voice-option", "engine": "voice-option", "service": "voice-service"}]},
@@ -530,41 +550,35 @@ def test_workflow_and_service_aliases_preserve_permissions():
     aliases = {cap.model: cap for cap in caps if "alias" in cap.tags}
     assert aliases["image"].policy_available and aliases["image"].backend == "image-service"
     assert aliases["tts"].policy_available and aliases["tts"].backend == "voice-service"
-    denied = RuntimeIdentity(name="Denied", key_hash="", profile=load_profile({"id": "deny", "backends": []}))
-    denied_raw = [capability_with_policy_view(cap, denied.profile, request=make_policy_request(protocol="openai.audio", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in raw]
+    denied = RuntimeIdentity(name="Denied", key_hash="", access=access(plan_for("deny", caps=())))
+    denied_raw = [capability_with_policy_view(cap, denied.access, request=make_policy_request(protocol="openai.audio", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in raw]
     assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
 
 
-def test_recipe_aliases_are_credential_scoped_and_new_app_uses_default(home_case):
+def test_recipe_aliases_are_app_scoped_and_new_app_follows_the_persons_plan(home_case):
     c = home_case
-    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
-    c.prospective_profile = restricted["id"]
-    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", profile_id=restricted["id"], path=c.db)
+    narrow_app = admin_store.create_app("Narrow", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
+    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=narrow_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", path=c.db)
+    c.give_app(narrow_app, store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
     assert [alias["id"] for alias in data["aliases"]] == ["fast"]
     assert [alias["id"] for alias in data["credential_aliases"][c.cred["id"]]] == ["fast"]
     assert data["credential_aliases"][narrow["id"]] == []
-    assert data["new_app_aliases"] == []
+    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
     assert c.other_cred["id"] not in data["credential_aliases"]
 
 
-def test_capability_union_includes_available_new_app_default(home_case):
+def test_capability_union_includes_what_a_new_app_could_use(home_case):
     c = home_case
-    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
-    c.inherited_profile = restricted["id"]
+    c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
     assert data["credential_aliases"][c.cred["id"]] == []
     assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
     assert data["capabilities"] and data["aliases"]
-    c.self_service = False
-    data = c.http.get("/me/api/home").json()
-    assert data["new_app_aliases"] == [] and data["aliases"] == []
 
 
 def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
     import proxy
-    from gateway.policy import DEFAULT_PROFILE
-
     receipt_db = tmp_path / "public-header-receipts.db"
     receipt_store.init_db(receipt_db)
     original_begin, original_finalize = receipt_store.begin, receipt_store.finalize
@@ -577,8 +591,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_ups
     async def prepare(_auth_context, **kwargs):
         return None, kwargs["body_json"]
 
-    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), profile=DEFAULT_PROFILE, app_id="header-app")
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
+    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), access=access(plan_for("local")), app_id="header-app", accountable_person_id="usr_header")
     monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lambda *_args, **_kwargs: identity)
     monkeypatch.setattr(proxy, "_prepare_litellm_local_llm_request", prepare)
     monkeypatch.setitem(proxy.config, "model_aliases", {})
@@ -602,8 +615,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_ups
 
 def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_case):
     c = home_case
-    profile = admin_store.create_profile("Chat targets", {"id": "chat-targets", "protocols": ["openai"], "models": ["demo-chat"]}, path=c.db)
-    c.inherited_profile = c.prospective_profile = profile["id"]
+    c.give_person(store_plan("Chat targets", path=c.db, models=["demo-chat"]))
     views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]},
              "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]}}
     c.aliases_override = views
@@ -617,7 +629,7 @@ def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_
                Capability(intent="image.generate", backend="art-service"),
                Capability(intent="image.generate", backend="art-service", workflow="draw"),
                *build_alias_capabilities(views)]
-        return [capability_with_policy_view(cap, identity.profile, request=make_policy_request(
+        return [capability_with_policy_view(cap, identity.access, request=make_policy_request(
             protocol="openai.chat" if cap.intent.startswith("chat") else "openai.images",
             intent=cap.intent, model=cap.model, workflow=cap.workflow, backend=cap.backend)) for cap in raw]
     c.capabilities_override = provider
@@ -636,7 +648,7 @@ def test_disabled_service_is_unavailable_even_when_probe_endpoint_answers(home_c
 
 
 def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "fast-only", "models": ["fast"]}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("fast-only", models=["fast"])))
     views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
     raw = [Capability(intent="chat.completions", backend="local"),
            Capability(intent="chat.completions", backend="remote", model="paid-model"),
@@ -645,23 +657,20 @@ def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
                              "remote": {"config": {"models": [{"id": "paid-model"}]}}}}
     caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
     assert not next(cap for cap in caps if cap.backend == "local").policy_available
-    allowed = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "plain-only", "models": ["plain"]}))
+    allowed = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("plain-only", models=["plain"])))
     registry["services"]["local"]["config"]["models"] = [{"id": "plain"}]
     caps = _resolved_capabilities(allowed, lambda _identity: raw[:1], registry)
     assert caps[0].policy_available  # A real permitted registry target is sufficient.
 
 
-@pytest.mark.parametrize("restriction", ["no_remote_grant", "disallowed_provider_plan", "allowed_canonical_grant"])
+@pytest.mark.parametrize("restriction", ["no_remote_grant", "allowed_canonical_grant"])
 @pytest.mark.parametrize("remote_tags", [True, False])
 def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_case, monkeypatch, restriction, remote_tags):
     import proxy
     from gateway.capabilities import resolve_capability_targets
     from gateway.models_catalog import registered_model_capabilities
     c = home_case
-    profile_record = admin_store.create_profile("Remote policy", {
-        "id": "remote-policy", "remote": {"providers": [] if restriction == "no_remote_grant" else ["openrouter"]},
-    }, path=c.db)
-    c.inherited_profile = c.prospective_profile = profile_record["id"]
+    c.give_person(store_plan("Remote policy", path=c.db, paid=[] if restriction == "no_remote_grant" else ["openrouter"]))
     c.registry = {"services": {"cloud-service": {"id": "cloud-service", "enabled": True, "config": {
         "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
         "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
@@ -670,13 +679,9 @@ def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_c
     c.aliases_override = {"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/visible"}]}}
     c.health = {"backends": [{"key": "cloud-service", "live_status": "up"}]}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
-    monkeypatch.setattr(proxy.ADMIN_STORE, "get_provider_admin_state", lambda: {
-        "providers": {"openrouter": {"allowed_plans": ["remote-policy"]} if restriction == "allowed_canonical_grant" else
-                     {"allowed_plans": ["another-plan"]} if restriction == "disallowed_provider_plan" else {}},
-    })
     def upstream_projection(identity):
         raw = [*registered_model_capabilities(c.registry), *build_alias_capabilities(c.aliases_override)]
-        projected = [proxy._capability_for_profile(cap, proxy.AuthContext(identity=identity))
+        projected = [proxy._capability_for_access(cap, proxy.AuthContext(identity=identity))
                      for cap in resolve_capability_targets(raw, c.registry)]
         assert all(cap.policy_available == (restriction == "allowed_canonical_grant") for cap in projected)
         if not remote_tags:
@@ -708,21 +713,20 @@ def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(hom
     assert concrete == []
     resolved = resolve_capability_targets([*concrete, *aliases], c.registry)
     assert resolved[0].backend == "gateway"
-    profile = load_profile({"id": "no-remote"})
-    identity = RuntimeIdentity(name="No remote", key_hash="", profile=profile)
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(plan_for("no-remote")))
     home_caps = _resolved_capabilities(identity, lambda _: aliases, c.registry)
     assert home_caps[0].policy_available is False
 
 
 def test_disabled_registry_model_does_not_prove_generic_endpoint_usable():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "disabled-only", "models": ["disabled"]}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("disabled-only", models=["disabled"])))
     registry = {"services": {"service": {"config": {"models": [{"id": "disabled", "enabled": False}]}}}}
     caps = _resolved_capabilities(identity, lambda _: [Capability(intent="chat.completions", backend="service")], registry)
     assert caps[0].policy_available is False
 
 
 def test_bound_remote_alias_cannot_override_denied_concrete_target():
-    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "no-remote"}))
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("no-remote")))
     raw = [Capability(intent="chat.completions", backend="cloud-service", model="provider/model",
                       tags=("remote",), policy_available=False),
            Capability(intent="chat.completions", backend="cloud-service", model="fast",
@@ -744,7 +748,7 @@ def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capabilit
     }}}
     assert registered_model_capabilities(registry) == []
     aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "typesafe/jev"}]}})
-    identity = RuntimeIdentity(name="No remote", key_hash="", profile=load_profile({"id": "no-remote"}))
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(plan_for("no-remote")))
     if surface == "home":
         home_caps = _resolved_capabilities(identity, lambda _: aliases, registry)
         assert home_caps[0].policy_available is False
@@ -753,16 +757,13 @@ def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capabilit
         assert resolved[0].backend == "gateway"
 
 
-@pytest.mark.parametrize("permission", ["no_remote_grant", "disallowed_provider_plan", "allowed_canonical_grant"])
+@pytest.mark.parametrize("permission", ["no_remote_grant", "allowed_canonical_grant"])
 def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_case, monkeypatch, permission):
     import proxy
     from gateway import service_registry
     c = home_case
-    profile_document = {"id": "service-policy", "remote": {
-        "providers": [] if permission == "no_remote_grant" else ["openrouter"],
-    }}
-    profile_record = admin_store.create_profile("Service policy", profile_document, path=c.db)
-    c.inherited_profile = c.prospective_profile = profile_record["id"]
+    paid = [] if permission == "no_remote_grant" else ["openrouter"]
+    c.give_person(store_plan("Service policy", path=c.db, paid=paid))
     c.registry = {"services": {"voice-cloud": {"id": "voice-cloud", "enabled": True, "config": {
         "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
         "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
@@ -773,9 +774,6 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
     monkeypatch.setattr(proxy, "config", {"model_aliases": alias_config,
                                          "backends": service_registry.runtime_backends(c.registry)})
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
-    monkeypatch.setattr(proxy.ADMIN_STORE, "get_provider_admin_state", lambda: {"providers": {"openrouter": {
-        "allowed_plans": ["another-plan"] if permission == "disallowed_provider_plan" else ["service-policy"],
-    }}})
     resolution = proxy.resolve_model_for_operation("speech", "voice")
     assert resolution.alias.service == "voice-cloud"
     assert resolution.effective_model == "voice-model"
@@ -784,10 +782,10 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
     assert aliases[0].backend == "voice-cloud"
     assert "engine:provider-option" in aliases[0].tags
     assert "remote" not in aliases[0].tags
-    identity = RuntimeIdentity(name="Service policy", key_hash="", profile=load_profile(profile_document))
+    identity = RuntimeIdentity(name="Service policy", key_hash="", access=access(plan_for("service-policy", paid=paid)))
     expected = permission == "allowed_canonical_grant"
-    assert proxy._capability_for_profile(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
-    c.capabilities_override = lambda caller: [proxy._capability_for_profile(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
+    assert proxy._capability_for_access(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
+    c.capabilities_override = lambda caller: [proxy._capability_for_access(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
     c.health = {"backends": [{"key": "voice-cloud", "live_status": "up"}]}
     for path in ("/me/api/home", "/me/api/status"):
         response = c.http.get(path)
@@ -957,22 +955,22 @@ def test_home_and_member_status_name_the_gateway_owner(home_case):
     assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
 
 
-def test_home_reports_the_members_own_plan_spend(home_case):
+def test_home_reports_the_members_own_spend_against_their_plans_caps(home_case):
     import sqlite3
     import time as _time
     from gateway.providers import ensure_ledger
     c = home_case
     c.owner = False
-    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the default plan has no caps
-    plan = admin_store.create_profile("Everyone", {"id": "everyone", "remote": {
-        "providers": ["typesafe"], "budget_usd_per_day": "1", "budget_usd_per_month": "8"}}, path=c.db)
-    c.prospective_profile = plan["id"]
-    ensure_ledger(c.ledger)
+    ledger = c.db.parent / "provider_spend.db"
+    c.ledger = ledger
+    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the plan has no caps
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1", usd_per_month="8"))
+    ensure_ledger(ledger)
     now = int(_time.time())
-    with sqlite3.connect(c.ledger) as conn:
-        for profile_id, usd in (("everyone", "0.30"), ("other-plan", "5.00")):
-            conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
-                         "VALUES ('typesafe', ?, 'settled', ?, ?, 'test', ?)", (profile_id, usd, usd, now - 60))
+    with sqlite3.connect(ledger) as conn:
+        for person_id, app_id, usd in ((c.user["id"], "any-app", "0.30"), ("someone-else", "other-app", "5.00")):
+            conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                         "VALUES ('typesafe', ?, ?, 'settled', ?, ?, 'test', ?)", (person_id, app_id, usd, usd, now - 60))
     data = c.http.get("/me/api/home").json()
     TypeAdapter(HomeProjection).validate_python(data)
     daily = next(entry for entry in data["plan_spend"] if entry["period"] == "daily")
@@ -981,6 +979,21 @@ def test_home_reports_the_members_own_plan_spend(home_case):
     monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
     assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
     assert "5.00" not in str(data["plan_spend"])
+
+
+def test_spend_is_unknown_not_zero_while_a_charge_needs_reconciliation(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.ledger = c.db.parent / "provider_spend.db"
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1"))
+    ensure_ledger(c.ledger)
+    with sqlite3.connect(c.ledger) as conn:
+        conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, cost_source, created_at) "
+                     "VALUES ('typesafe', ?, 'a', 'needs_reconciliation', '0.1', 'unknown', ?)", (c.user["id"], int(_time.time()) - 60))
+    [entry] = c.http.get("/me/api/home").json()["plan_spend"]
+    assert entry["spent_usd"] is None and entry["unknown_reason"] == "needs_reconciliation"
 
 
 def test_owner_name_never_publishes_an_email(home_case):

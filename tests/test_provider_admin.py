@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store, service_registry, secret_store  # noqa: E402
+from tests.support.access import identity as identity_of, plan_for  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext  # noqa: E402
 from gateway.provider_admin import (  # noqa: E402
     PROVIDER_ADMIN_SETTING_KEY,
@@ -29,7 +30,6 @@ from gateway.provider_admin import (  # noqa: E402
     provider_admin_setting_to_store,
     provider_ledger_spending_snapshot,
 )
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
 from gateway.providers import Cost, ProviderError, ProviderRef, reserve_provider_spend  # noqa: E402
 
 
@@ -45,33 +45,24 @@ def _member_auth(request: Request) -> AdminContext:
 
 
 class SqliteProviderAdminStore:
-    def __init__(self, *, path: Path, registry: dict[str, Any], profiles: list[dict[str, Any]]) -> None:
+    def __init__(self, *, path: Path, registry: dict[str, Any], access_plans: list[dict[str, Any]]) -> None:
         self.path = path
         self.registry = registry
-        self.profiles = profiles
+        self.access_plans = access_plans
 
     def get_service_registry(self) -> dict[str, Any]:
         return self.registry
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        return list(self.profiles)
+    def list_access_plans(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self.access_plans]
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
-        for row in self.profiles:
-            if row.get("id") == profile_id or row.get("record_id") == profile_id:
-                return dict(row)
-        return None
-
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        for index, row in enumerate(self.profiles):
-            if row.get("id") == profile_id or row.get("record_id") == profile_id:
-                updated = dict(row)
-                updated.update(data)
-                self.profiles[index] = updated
-                self.audit.append({"action": "profile.update", "actor": actor.subject})
-                return updated
+        for index, row in enumerate(self.access_plans):
+            if row["id"] == plan_id:
+                self.access_plans[index] = {**row, "plan": dict(data)}
+                return self.access_plans[index]
         return None
 
     def get_provider_admin_state(self) -> dict[str, Any]:
@@ -151,10 +142,10 @@ class FakeProviderAdminStore:
                 },
             },
         }
-        self.profiles = [
-            {"id": "default-local", "name": "Default local"},
-            {"id": "builders", "name": "Builders"},
-            {"id": "prof_row", "name": "Row backed", "profile": {"id": "policy-plan"}},
+        self.access_plans = [
+            {"id": "plan_local", "name": "Local only", "plan": {"paid_providers": []}},
+            {"id": "plan_paid", "name": "Local and paid",
+             "plan": {"paid_providers": ["openrouter", "openrouter-canonical", "typesafe"]}},
         ]
         self.provider_admin_state: dict[str, Any] = {
             "schema_version": 1,
@@ -166,25 +157,17 @@ class FakeProviderAdminStore:
     def get_service_registry(self) -> dict[str, Any]:
         return self.registry
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        return list(self.profiles)
+    def list_access_plans(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self.access_plans]
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
-        for row in self.profiles:
-            if row.get("id") == profile_id or row.get("record_id") == profile_id:
-                return dict(row)
-        return None
-
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        for index, row in enumerate(self.profiles):
-            if row.get("id") == profile_id or row.get("record_id") == profile_id:
-                updated = dict(row)
-                updated.update(data)
-                self.profiles[index] = updated
-                self.audit.append({"action": "profile.update", "actor": actor.subject})
-                return updated
+        for index, row in enumerate(self.access_plans):
+            if row["id"] == plan_id:
+                self.access_plans[index] = {**row, "plan": dict(data)}
+                self.audit.append({"action": "access_plan.update", "actor": actor.subject})
+                return self.access_plans[index]
         return None
 
     def get_provider_admin_state(self) -> dict[str, Any]:
@@ -535,7 +518,6 @@ class ProviderAdminApiTests(unittest.TestCase):
                             },
                         }
                     ],
-                    "allowed_plans": ["builders"],
                 },
             )
 
@@ -560,10 +542,6 @@ class ProviderAdminApiTests(unittest.TestCase):
             "sk-replacement-openrouter",
         )
         self.assertIn("openrouter", store.registry["services"])
-        self.assertEqual(
-            store.provider_admin_state["providers"]["openrouter"]["allowed_plans"],
-            ["builders"],
-        )
 
     def test_set_rotate_and_delete_provider_key_never_returns_secret_value(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -596,6 +574,20 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(second.json()["key_status"]["suffix"], "beef")
         self.assertEqual(deleted.json()["key_status"]["state"], "missing")
         self.assertNotIn("sk-test", first.text + second.text + deleted.text)
+
+    def test_removing_a_provider_removes_it_from_every_plans_paid_providers(self) -> None:
+        store = FakeProviderAdminStore()
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        app = FastAPI()
+        app.include_router(create_provider_admin_router(
+            store, auth=_auth, ledger_path=Path(tmpdir.name) / "absent-ledger.db",
+            spending_provider=lambda: {}))
+        response = TestClient(app).delete(
+            "/admin/api/providers/typesafe", headers={"authorization": "Bearer admin"})
+        self.assertEqual(response.status_code, 200, response.text)
+        paid = {row["id"]: row["plan"]["paid_providers"] for row in store.access_plans}
+        self.assertEqual(paid, {"plan_local": [], "plan_paid": ["openrouter", "openrouter-canonical"]})
 
     def test_provider_test_requires_configured_key_and_reports_model_listing_only(self) -> None:
         store = FakeProviderAdminStore()
@@ -686,7 +678,7 @@ class ProviderAdminApiTests(unittest.TestCase):
                 "error": "ledger_missing",
             },
         )
-        self.assertIn({"id": "builders", "record_id": "builders", "name": "Builders"}, body["available_plans"])
+        self.assertNotIn("available_plans", body)
         self.assertNotIn("sk-live-secret", response.text)
         self.assertNotIn("TABBY_API_KEY", response.text)
 
@@ -750,10 +742,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         ledger_db = Path(tmpdir.name) / "provider_spend.db"
-        profile = DEFAULT_PROFILE.with_overrides(
-            id="builders",
-            remote=RemoteProviderPolicy(providers=frozenset({"openrouter"})),
-        )
+        profile = identity_of(plan_for("builders", paid=sorted({"openrouter"})))
         provider = ProviderRef(
             id="openrouter",
             base_url="https://openrouter.test",
@@ -808,7 +797,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["provider"]["key_status"]["state"], "missing")
 
-    def test_caps_and_allowed_plans_are_crud_state(self) -> None:
+    def test_caps_are_crud_state_and_plans_that_can_use_the_provider_are_read_only(self) -> None:
         store = FakeProviderAdminStore()
         client = _client(
             store,
@@ -826,16 +815,8 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(caps.status_code, 200)
         self.assertEqual(caps.json()["provider"]["caps"], {"daily_usd": 2.0, "monthly_usd": 20.0})
         self.assertEqual(caps.json()["provider"]["spend"]["daily_usd"], 1.25)
-
-        plans = client.put(
-            "/admin/api/providers/openrouter/allowed-plans",
-            headers={"authorization": "Bearer admin"},
-            json={"allowed_plans": ["builders"]},
-        )
-        self.assertEqual(plans.status_code, 200)
-        self.assertEqual(plans.json()["provider"]["allowed_plans"], ["builders"])
-        builders = next(row for row in store.profiles if row["id"] == "builders")
-        self.assertEqual(builders["profile"]["remote"]["providers"], ["openrouter"])
+        self.assertEqual(caps.json()["provider"]["access_plans"], [{"id": "plan_paid", "name": "Local and paid"}])
+        self.assertNotIn("allowed_plans", caps.json()["provider"])
 
         cleared = client.delete(
             "/admin/api/providers/openrouter/caps",
@@ -845,45 +826,31 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(cleared.json()["provider"]["caps"], {})
         self.assertEqual(
             [event["action"] for event in store.audit].count("operator.provider_admin.update"),
-            3,
+            2,
         )
 
-    def test_persisting_provider_caps_preserves_absent_allowed_plans_restriction(self) -> None:
+    def test_provider_with_no_plan_lists_no_plans(self) -> None:
+        store = FakeProviderAdminStore()
+        store.access_plans[1]["plan"]["paid_providers"] = ["typesafe"]
+        response = _client(store).get(
+            "/admin/api/providers/openrouter", headers={"authorization": "Bearer admin"})
+        self.assertEqual(response.json()["provider"]["access_plans"], [])
+
+    def test_allowed_plans_endpoint_is_gone(self) -> None:
+        response = _client(FakeProviderAdminStore()).put(
+            "/admin/api/providers/openrouter/allowed-plans",
+            headers={"authorization": "Bearer admin"},
+            json={"allowed_plans": ["plan_paid"]},
+        )
+        self.assertIn(response.status_code, (404, 405))
+
+    def test_stored_allowed_plans_are_dropped_when_provider_state_is_read(self) -> None:
         persisted = normalize_provider_admin_state({
             "schema_version": 1,
-            "providers": {"openrouter": {"caps": {"daily_usd": 2}}},
+            "providers": {"openrouter": {"caps": {"daily_usd": 2}, "allowed_plans": ["owner-local"]}},
             "global_caps": {},
         })
-
-        provider_policy = persisted["providers"]["openrouter"]
-        self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
-        self.assertNotIn("allowed_plans", provider_policy)
-
-    def test_provider_api_distinguishes_unrestricted_from_explicit_empty_allowed_plans(self) -> None:
-        store = FakeProviderAdminStore()
-        store.provider_admin_state = normalize_provider_admin_state({
-            "schema_version": 1,
-            "providers": {
-                "openrouter": {"caps": {"daily_usd": 2}},
-                "typesafe": {"allowed_plans": []},
-            },
-            "global_caps": {},
-        })
-        client = _client(store, spending=lambda: {"providers": {}, "global": {}})
-
-        openrouter = client.get(
-            "/admin/api/providers/openrouter",
-            headers={"authorization": "Bearer admin"},
-        )
-        typesafe = client.get(
-            "/admin/api/providers/typesafe",
-            headers={"authorization": "Bearer admin"},
-        )
-
-        self.assertEqual(openrouter.status_code, 200)
-        self.assertEqual(typesafe.status_code, 200)
-        self.assertIsNone(openrouter.json()["provider"]["allowed_plans"])
-        self.assertEqual(typesafe.json()["provider"]["allowed_plans"], [])
+        self.assertEqual(persisted["providers"]["openrouter"], {"caps": {"daily_usd": 2.0}})
 
     def test_cap_only_router_update_persists_no_plan_restriction_and_reservation_still_allowed(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -895,7 +862,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         store = SqliteProviderAdminStore(
             path=admin_db,
             registry=fake.registry,
-            profiles=fake.profiles,
+            access_plans=fake.access_plans,
         )
         client = _client(store, spending=lambda: {"providers": {}, "global": {}})
 
@@ -908,14 +875,9 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         stored = admin_store.get_operator_setting(PROVIDER_ADMIN_SETTING_KEY, path=admin_db)
         assert stored is not None
-        provider_policy = stored["value"]["providers"]["typesafe"]
-        self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
-        self.assertNotIn("allowed_plans", provider_policy)
+        self.assertEqual(stored["value"]["providers"]["typesafe"], {"caps": {"daily_usd": 2.0}})
 
-        profile = DEFAULT_PROFILE.with_overrides(
-            id="builders",
-            remote=RemoteProviderPolicy(providers=frozenset({"typesafe"})),
-        )
+        identity = identity_of(plan_for("builders", paid=sorted({"typesafe"})))
         provider = ProviderRef(
             id="typesafe",
             base_url="https://typesafe.test",
@@ -927,7 +889,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         )
         with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}, clear=False):
             reserve_provider_spend(
-                profile,
+                identity,
                 provider,
                 Cost(Decimal("0.01"), "price-table", "typesafe"),
                 path=ledger_db,
@@ -935,7 +897,7 @@ class ProviderAdminApiTests(unittest.TestCase):
                 now=1_700_000_000,
             )
 
-    def test_provider_id_uses_execution_provider_id_and_plan_stores_policy_id(self) -> None:
+    def test_provider_id_uses_execution_provider_id(self) -> None:
         store = FakeProviderAdminStore()
         client = _client(store)
 
@@ -945,13 +907,12 @@ class ProviderAdminApiTests(unittest.TestCase):
         )
         self.assertEqual(missing_service_id.status_code, 404)
 
-        plans = client.put(
-            "/admin/api/providers/openrouter-canonical/allowed-plans",
+        canonical = client.get(
+            "/admin/api/providers/openrouter-canonical",
             headers={"authorization": "Bearer admin"},
-            json={"allowed_plans": ["prof_row"]},
         )
-        self.assertEqual(plans.status_code, 200)
-        self.assertEqual(plans.json()["provider"]["allowed_plans"], ["policy-plan"])
+        self.assertEqual(canonical.status_code, 200)
+        self.assertEqual(canonical.json()["provider"]["access_plans"], [{"id": "plan_paid", "name": "Local and paid"}])
 
     def test_global_caps_round_trip(self) -> None:
         store = FakeProviderAdminStore()
@@ -972,21 +933,13 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(cleared.status_code, 200)
         self.assertEqual(cleared.json()["global"]["caps"], {})
 
-    def test_rejects_non_admin_and_unknown_plan(self) -> None:
+    def test_rejects_non_admin(self) -> None:
         store = FakeProviderAdminStore()
         forbidden = _client(store, auth=_member_auth).put(
             "/admin/api/providers/openrouter/caps",
             json={"daily_usd": 2},
         )
         self.assertEqual(forbidden.status_code, 403)
-
-        unknown = _client(store).put(
-            "/admin/api/providers/openrouter/allowed-plans",
-            headers={"authorization": "Bearer admin"},
-            json={"allowed_plans": ["missing-plan"]},
-        )
-        self.assertEqual(unknown.status_code, 400)
-        self.assertEqual(unknown.json()["error"]["code"], "unknown_access_plan")
 
     def test_rejects_unknown_provider_and_bad_cap(self) -> None:
         store = FakeProviderAdminStore()

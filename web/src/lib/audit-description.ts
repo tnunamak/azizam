@@ -17,6 +17,10 @@ const PHRASES: Record<string, string> = {
   "app.enable": "Enabled an app",
   "credential.create": "Created a key",
   "credential.revoke": "Revoked a key",
+  "access_plan.create": "Created an access plan",
+  "access_plan.update": "Updated an access plan",
+  "access_plan.delete": "Deleted an access plan",
+  "access_plans.migrate": "Moved to access plans",
   "profile.create": "Created an access plan",
   "profile.update": "Updated an access plan",
   "profile.delete": "Deleted an access plan",
@@ -49,6 +53,7 @@ const VERBS: Record<string, string> = {
 const NOUNS: Record<string, string> = {
   app: "an app",
   credential: "a key",
+  access_plan: "an access plan",
   profile: "an access plan",
   runtime_profile_mapping: "an access assignment",
   admin_key: "an admin key",

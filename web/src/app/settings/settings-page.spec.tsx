@@ -92,7 +92,7 @@ function seed(state: State) {
   routes.set(
     "/admin/api/settings/defaults",
     reply({
-      defaults: { profile_id: state === "empty" ? null : "local" },
+      defaults: { invite_access_plan: state === "empty" ? null : "plan_local" },
       aliases: state === "empty" ? {} : { chat: "local-chat" },
     }),
   );
@@ -139,10 +139,6 @@ function seed(state: State) {
           state === "empty"
             ? {}
             : { max_queue_depth: 5, retry_after_seconds: 30 },
-        user_access_defaults: {
-          self_service_apps: true,
-          auto_create_personal_app: true,
-        },
       },
     }),
   );
@@ -164,20 +160,16 @@ function seed(state: State) {
       },
     }),
   );
-  routes.set(
-    "/admin/api/profiles",
-    reply({
-      profiles: [
-        {
-          id: "local",
-          name: "Local only",
-          description: "Fixture local access",
-          profile: {},
-        },
-      ],
-    }),
-  );
+  routes.set("/admin/api/access-plans", reply({ access_plans: [localPlan] }));
 }
+const localPlan = {
+  id: "plan_local",
+  name: "Local only",
+  created_at: 1,
+  updated_at: 1,
+  plan: { id: "plan_local", name: "Local only" },
+  summary: "Fixture local access",
+};
 
 beforeEach(() => {
   mocks.role = "owner";
@@ -261,8 +253,7 @@ const sent = (method: string, path: string) =>
 const SECTIONS = [
   "Instance",
   "Sign-in",
-  "Defaults",
-  "App creation",
+  "People and access",
   "Prompts",
   "Receipts",
   "Media admission",
@@ -343,10 +334,10 @@ describe("settings page states", () => {
     await user.click(screen.getByText("Effective configuration and export"));
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
-        10,
+        9,
       ),
     );
-    for (const name of ["Defaults", "App creation"]) {
+    for (const name of ["People and access"]) {
       const retry = within(region(name)).getByRole("button", {
         name: "Try again",
       });
@@ -436,20 +427,19 @@ describe("settings loading and failure", () => {
     );
   });
 
-  it("lists a built-in default plan that has no database profile row", async () => {
+  it("shows the saved access plan for new invitations by name", async () => {
     seed("seeded");
-    routes.set("/admin/api/settings/defaults", () => ({
-      json: { defaults: { profile_id: "default-local" }, aliases: {} },
-    }));
     mount();
     expect(
-      await screen.findByRole("combobox", { name: "Default access plan" }),
-    ).toHaveTextContent("Default local (built-in)");
+      await screen.findByRole("combobox", {
+        name: "Access plan for new invitations",
+      }),
+    ).toHaveTextContent("Local only");
   });
 });
 
 describe("settings roles", () => {
-  it("does not retry 403s and keeps administrator app defaults usable", async () => {
+  it("does not retry 403s and tells an administrator that access defaults are the owner's", async () => {
     mocks.role = "admin";
     seed("seeded");
     routes.set("/admin/api/settings/instance", () => ownerRequired);
@@ -465,14 +455,15 @@ describe("settings roles", () => {
     expect(
       screen.queryByRole("button", { name: "Save sign-in" }),
     ).not.toBeInTheDocument();
+    const access = await screen.findByRole("region", {
+      name: "People and access",
+    });
+    await waitFor(() =>
+      expect(access).toHaveTextContent("Only the owner can change this."),
+    );
     expect(
-      await screen.findByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "Save app defaults" }),
-    ).toBeEnabled();
+      within(access).queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
     expect(sent("GET", "/admin/api/settings/instance")).toHaveLength(1);
     expect(sent("GET", "/admin/api/operator/sign-in")).toHaveLength(1);
   });
@@ -495,15 +486,18 @@ describe("settings roles", () => {
     expect(
       screen.queryByRole("button", { name: "Save instance" }),
     ).not.toBeInTheDocument();
+    const access = await screen.findByRole("region", {
+      name: "People and access",
+    });
+    expect(access).toBeVisible();
+    await waitFor(() =>
+      expect(access).toHaveTextContent("Only the owner can change this."),
+    );
     expect(
-      await screen.findByRole("region", { name: "Defaults" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "Save default plan" }),
+      within(access).queryByRole("combobox", {
+        name: "Access plan for new invitations",
+      }),
     ).not.toBeInTheDocument();
-    expect(
-      await screen.findByRole("button", { name: "Save app defaults" }),
-    ).toBeEnabled();
   });
 });
 
@@ -635,66 +629,32 @@ describe("independent forms", () => {
       screen.getByText(/Once any grant exists, this list grants no role/),
     ).toBeVisible();
 
-    // Defaults: a plan save does not discard an unsaved app-creation toggle.
-    const apps = region("App creation");
-    const defaults = region("Defaults");
+    // People and access: saving the invitation plan keeps the other form's state.
+    const access = region("People and access");
     routes.set("/admin/api/settings/defaults", (request) =>
       request.method === "PUT"
         ? { json: {} }
         : {
             json: {
-              defaults: { profile_id: "local" },
+              defaults: { invite_access_plan: null },
               aliases: { chat: "local-chat" },
             },
           },
     );
-    await user.click(
-      within(apps).getByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    );
-    await chooseOption(
-      user,
-      "Default access plan",
-      "None — built-in local access",
-    );
-    await user.click(
-      within(defaults).getByRole("button", { name: "Save default plan" }),
-    );
+    await chooseOption(user, "Access plan for new invitations", "Ask each time");
+    await user.click(within(access).getByRole("button", { name: "Save" }));
     expect(
-      await within(defaults).findByText("Default access plan saved"),
+      await within(access).findByText("Access plan for new invitations saved"),
     ).toBeVisible();
-    expect(
-      within(apps).getByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    ).not.toBeChecked();
     expect(sent("PUT", "/admin/api/settings/defaults")[0].body).toEqual({
-      profile_id: null,
-    });
-    routes.set("/admin/api/operator/user-access-defaults", () => ({
-      json: {
-        user_access_defaults: {
-          self_service_apps: false,
-          auto_create_personal_app: true,
-        },
-      },
-    }));
-    await user.click(
-      within(apps).getByRole("button", { name: "Save app defaults" }),
-    );
-    expect(
-      await within(apps).findByText("Personal app defaults saved"),
-    ).toBeVisible();
-    expect(
-      sent("PUT", "/admin/api/operator/user-access-defaults")[0].body,
-    ).toEqual({
-      self_service_apps: false,
-      auto_create_personal_app: true,
+      invite_access_plan: null,
     });
     expect(
-      screen.getByRole("combobox", { name: "Default access plan" }),
-    ).toHaveTextContent("None — built-in local access");
+      screen.getByRole("combobox", { name: "Available sign-in methods" }),
+    ).toHaveTextContent("Built-in accounts only");
+    expect(
+      screen.getByRole("combobox", { name: "Access plan for new invitations" }),
+    ).toHaveTextContent("Ask each time");
   });
 });
 
@@ -723,51 +683,34 @@ describe("long values", () => {
 });
 
 describe("default access choices", () => {
-  it("explains 'none', previews a chosen plan, returns focus to the trigger and links to the plans tab", async () => {
+  it("starts at 'Ask each time', picks a plan by keyboard, returns focus to the trigger and links to the plans tab", async () => {
     seed("empty");
-    routes.set("/admin/api/profiles", () => ({
-      json: {
-        profiles: [
-          {
-            id: "local",
-            name: "Local only",
-            description: "Fixture local access",
-            profile: {},
-          },
-        ],
-      },
+    routes.set("/admin/api/access-plans", () => ({
+      json: { access_plans: [localPlan] },
     }));
     mount();
-    const defaults = await screen.findByRole("region", { name: "Defaults" });
-    const plan = await within(defaults).findByRole("combobox", {
-      name: "Default access plan",
+    const access = await screen.findByRole("region", {
+      name: "People and access",
     });
-    expect(plan).toHaveTextContent("None — built-in local access");
+    const plan = await within(access).findByRole("combobox", {
+      name: "Access plan for new invitations",
+    });
+    expect(plan).toHaveTextContent("Ask each time");
     expect(
-      within(defaults).getByText(/Choosing none does not block AI access/),
+      within(access).getByText(/Nobody has a plan until you choose one/),
     ).toBeVisible();
-    expect(
-      within(region("App creation")).getByRole("switch", {
-        name: "Create a personal app automatically",
-      }),
-    ).toBeChecked();
     const user = userEvent.setup();
     plan.focus();
     await user.keyboard("{Enter}");
     expect(
-      await screen.findByRole("option", {
-        name: "None — built-in local access",
-      }),
+      await screen.findByRole("option", { name: "Ask each time" }),
     ).toHaveFocus();
     await user.keyboard("{End}");
     expect(screen.getByRole("option", { name: "Local only" })).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(plan).toHaveTextContent("Local only");
     expect(plan).toHaveFocus();
-    expect(
-      within(defaults).getByText(/capabilities allowed by this plan/),
-    ).toBeVisible();
-    const link = within(defaults).getByRole("link", {
+    const link = within(access).getByRole("link", {
       name: "View and edit access plans",
     });
     expect(link.getAttribute("href")).toMatch(/^\/people\/?\?tab=plans$/);

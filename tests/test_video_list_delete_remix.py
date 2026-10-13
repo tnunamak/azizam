@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context, auth_identity  # noqa: E402
 
 
 class _StubListRequest:
@@ -124,15 +125,15 @@ class VideoRegistryTestCase(unittest.IsolatedAsyncioTestCase):
             "actual_seconds": 5.0,
             "created_at": 1000,
             "completed_at": None,
-            "owner_key_hash": None,
+            "owner_key_hash": "sha256:test",
             "deleted_at": None,
         }
         record.update(fields)
         proxy._video_job_records[prompt_id] = record
 
 
-ALICE = proxy.AuthContext(identity=proxy.AuthIdentity(name="alice", key_hash="sha256:alice"))
-BOB = proxy.AuthContext(identity=proxy.AuthIdentity(name="bob", key_hash="sha256:bob"))
+ALICE = proxy.AuthContext(identity=auth_identity(name="alice", key_hash="sha256:alice"))
+BOB = proxy.AuthContext(identity=auth_identity(name="bob", key_hash="sha256:bob"))
 
 
 class TestVideosStatusAndContent(VideoRegistryTestCase):
@@ -157,7 +158,7 @@ class TestVideosStatusAndContent(VideoRegistryTestCase):
 
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
 
         self.assertEqual(response.status_code, 200)
@@ -179,7 +180,7 @@ class TestVideosStatusAndContent(VideoRegistryTestCase):
 
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
 
         self.assertEqual(response.status_code, 200)
@@ -204,7 +205,7 @@ class TestVideosStatusAndContent(VideoRegistryTestCase):
 
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
 
         body = json.loads(response.body)
@@ -218,7 +219,7 @@ class TestVideosStatusAndContent(VideoRegistryTestCase):
 
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_content(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
 
         self.assertEqual(response.status_code, 404)
@@ -231,7 +232,7 @@ class TestVideosList(VideoRegistryTestCase):
     async def test_empty_list(self) -> None:
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: _FakeVideoAsyncClient()):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest(), access_context()  # type: ignore[arg-type]
             )
         self.assertEqual(response.status_code, 200)
         body = json.loads(response.body)
@@ -250,7 +251,7 @@ class TestVideosList(VideoRegistryTestCase):
         })
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest(), access_context()  # type: ignore[arg-type]
             )
         body = json.loads(response.body)
         ids = [item["id"] for item in body["data"]]
@@ -265,7 +266,7 @@ class TestVideosList(VideoRegistryTestCase):
         })
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest({"order": "asc"}), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest({"order": "asc"}), access_context()  # type: ignore[arg-type]
             )
         body = json.loads(response.body)
         ids = [item["id"] for item in body["data"]]
@@ -282,7 +283,7 @@ class TestVideosList(VideoRegistryTestCase):
         })
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest({"limit": "2"}), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest({"limit": "2"}), access_context()  # type: ignore[arg-type]
             )
         body = json.loads(response.body)
         self.assertEqual(len(body["data"]), 2)
@@ -300,7 +301,7 @@ class TestVideosList(VideoRegistryTestCase):
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
                 _StubListRequest({"after": proxy._video_id_from_prompt_id("p3")}),
-                proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                access_context(),  # type: ignore[arg-type]
             )
         body = json.loads(response.body)
         ids = [item["id"] for item in body["data"]]
@@ -308,21 +309,21 @@ class TestVideosList(VideoRegistryTestCase):
 
     async def test_bad_limit_rejected(self) -> None:
         response = await proxy.proxy_comfy_video_list(
-            _StubListRequest({"limit": "0"}), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            _StubListRequest({"limit": "0"}), access_context()  # type: ignore[arg-type]
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(json.loads(response.body)["error"]["param"], "limit")
 
     async def test_bad_order_rejected(self) -> None:
         response = await proxy.proxy_comfy_video_list(
-            _StubListRequest({"order": "sideways"}), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            _StubListRequest({"order": "sideways"}), access_context()  # type: ignore[arg-type]
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(json.loads(response.body)["error"]["param"], "order")
 
     async def test_bad_after_cursor_rejected(self) -> None:
         response = await proxy.proxy_comfy_video_list(
-            _StubListRequest({"after": "not-a-video-id"}), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            _StubListRequest({"after": "not-a-video-id"}), access_context()  # type: ignore[arg-type]
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(json.loads(response.body)["error"]["param"], "after")
@@ -332,7 +333,7 @@ class TestVideosList(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest(), access_context()  # type: ignore[arg-type]
             )
         entry = json.loads(response.body)["data"][0]
         self.assertEqual(entry["object"], "video")
@@ -354,7 +355,7 @@ class TestVideosList(VideoRegistryTestCase):
                 proxy, "_job_status_from_history", lambda _job: ("failed", 100)
             ), patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
                 response = await proxy.proxy_comfy_video_list(
-                    _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                    _StubListRequest(), access_context()  # type: ignore[arg-type]
                 )
         entry = json.loads(response.body)["data"][0]
         self.assertEqual(entry["status"], "failed")
@@ -365,7 +366,7 @@ class TestVideosList(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient(queue={"queue_running": [[0, "p1"]], "queue_pending": []})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest(), access_context()  # type: ignore[arg-type]
             )
         entry = json.loads(response.body)["data"][0]
         self.assertEqual(entry["status"], "running")
@@ -384,7 +385,7 @@ class TestVideosList(VideoRegistryTestCase):
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
                 _StubListRequest({"after": proxy._video_id_from_prompt_id("never-existed")}),
-                proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                access_context(),  # type: ignore[arg-type]
             )
         self.assertEqual(response.status_code, 400)
         body = json.loads(response.body)
@@ -397,7 +398,7 @@ class TestVideosList(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_list(
-                _StubListRequest(), proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+                _StubListRequest(), access_context()  # type: ignore[arg-type]
             )
         ids = [item["id"] for item in json.loads(response.body)["data"]]
         self.assertEqual(ids, [proxy._video_id_from_prompt_id("p1")])
@@ -425,13 +426,13 @@ class TestVideosList(VideoRegistryTestCase):
 class TestVideosDelete(VideoRegistryTestCase):
     async def test_unknown_id_is_404(self) -> None:
         response = await proxy.proxy_comfy_video_delete(
-            "video_does-not-exist", proxy.NO_AUTH_CONTEXT
+            "video_does-not-exist", access_context()
         )
         self.assertEqual(response.status_code, 404)
 
     async def test_invalid_id_is_400(self) -> None:
         response = await proxy.proxy_comfy_video_delete(
-            "not-a-video-id", proxy.NO_AUTH_CONTEXT
+            "not-a-video-id", access_context()
         )
         self.assertEqual(response.status_code, 400)
 
@@ -445,7 +446,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 200)
         body = json.loads(response.body)
@@ -455,7 +456,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         # story is coherent) but is no longer visible.
         self.assertIn("p1", proxy._video_job_records)
         self.assertIsNotNone(proxy._video_job_records["p1"]["deleted_at"])
-        self.assertFalse(proxy._video_job_visible("p1", proxy.NO_AUTH_CONTEXT))
+        self.assertFalse(proxy._video_job_visible("p1", access_context()))
         self.assertNotIn("p1", proxy._video_progress)
         self.assertNotIn("p1", proxy._video_workflows)
         # No cancel call for an already-terminal job -- only history delete.
@@ -471,7 +472,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient()
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 200)
 
@@ -483,7 +484,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient()
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 200)
         self.assertTrue(json.loads(response.body)["deleted"])
@@ -506,7 +507,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _FailingCancelClient()
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
@@ -532,7 +533,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _NoopCancelClient()
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(proxy._video_job_records["p1"]["deleted_at"])
@@ -545,13 +546,13 @@ class TestVideosDelete(VideoRegistryTestCase):
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             await proxy.proxy_comfy_video_delete(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
             status_response = await proxy.proxy_comfy_video_status(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
             content_response = await proxy.proxy_comfy_video_content(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(status_response.status_code, 404)
         self.assertEqual(content_response.status_code, 404)
@@ -608,18 +609,18 @@ class TestVideosOwnership(VideoRegistryTestCase):
     async def test_untracked_id_is_404_for_an_authenticated_key(self) -> None:
         """An id with no record (never tracked, or past its retention) has no
         owner. ComfyUI's /history is shared across keys, so falling through to
-        it let any key read it. Authenticated callers get 404; auth-disabled
-        deployments (nothing is owned) keep the history fallback."""
+        it let any key read it. Every caller gets 404: there is no auth-off
+        mode whose callers could keep the history fallback."""
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_comfy_video_status(
                 proxy._video_id_from_prompt_id("p1"), BOB
             )
-            open_response = await proxy.proxy_comfy_video_status(
-                proxy._video_id_from_prompt_id("p1"), proxy.NO_AUTH_CONTEXT
+            other_response = await proxy.proxy_comfy_video_status(
+                proxy._video_id_from_prompt_id("p1"), access_context()
             )
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(open_response.status_code, 200)
+        self.assertEqual(other_response.status_code, 404)
 
 
 class _JsonRemixRequest:
@@ -643,7 +644,7 @@ class TestVideosRemix(VideoRegistryTestCase):
         with patch.object(proxy.httpx, "AsyncClient", comfy.client_class()):
             response = await proxy.proxy_comfy_video_remix(
                 "video_does-not-exist",
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 _JsonRemixRequest({"prompt": "x"}),
             )
         self.assertEqual(response.status_code, 404)
@@ -654,7 +655,7 @@ class TestVideosRemix(VideoRegistryTestCase):
         with patch.object(proxy, "VIDEO_REMIX_WORKFLOW", None):
             response = await proxy.proxy_comfy_video_remix(
                 proxy._video_id_from_prompt_id("p1"),
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 _JsonRemixRequest({"prompt": "x"}),
             )
         self.assertEqual(response.status_code, 501)

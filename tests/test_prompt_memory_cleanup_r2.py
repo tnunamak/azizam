@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_jobs, media_metadata, prompt_memory
 from gateway import prompt_metadata_migration as pmm
 from gateway.admin_oidc import AdminSession
@@ -44,7 +45,7 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
     robin = admin_store.upsert_oidc_user("issuer", "robin", email="robin@example.test", path=admin)
-    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], path=admin)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], access_plan="person", path=admin)
     (tmp_path / "cache").mkdir()
     return SimpleNamespace(root=tmp_path, admin=admin, jobs=jobs, robin=robin, app=app)
 
@@ -345,7 +346,7 @@ def test_settings_api_reports_queued_file_cleanup_until_it_finishes(hh):
 
 def _spool(hh, job_id: str, created_at: int):
     import json
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = proxy.AuthContext(identity=auth_identity(
         name="Try", key_hash="sha256:robin", app_id=hh.app["id"], person_id=hh.robin["id"]))
     request = SimpleNamespace(headers={"host": "testserver"}, url=SimpleNamespace(scheme="http", netloc="testserver"))
     # An active job, so the orphan sweep keeps the spool.

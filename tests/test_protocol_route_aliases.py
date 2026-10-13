@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 
 
 def _iter_routes(routes):
@@ -70,7 +71,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         # The unauthenticated-client posture (uniform 401, no enumeration oracle)
         # is asserted in test_discovery_metadata.py.
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             for path in (
                 "/anthropic/v1/unknown",
                 "/ollama/api/unknown",
@@ -170,7 +171,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
             ("POST", "/gateway/v1/providers"),
         )
 
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             for method, path in cases:
                 with self.subTest(method=method, path=path):
                     response = client.request(method, path)
@@ -220,7 +221,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _Client(), _Response()
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", fake_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -245,7 +246,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
 
     def test_anthropic_count_tokens_has_anthropic_shape(self) -> None:
         client = TestClient(proxy.app)
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = client.post(
                 "/anthropic/v1/messages/count_tokens",
                 json={

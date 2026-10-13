@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context  # noqa: E402
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: E402,F401
 
 
@@ -63,7 +64,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
-                _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]
             )
 
         self.assertIsInstance(response, Response)
@@ -97,7 +98,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
-                _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]
             )
 
         self.assertEqual(response.status_code, 200, response.body)

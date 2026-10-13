@@ -1091,7 +1091,7 @@ A receipt for a request that a spending limit refused carries:
 ```json
 { "refusal": { "code": "budget_exceeded",
                "limit": { "period": "daily" | "monthly" | "request",
-                          "scope": "plan" | "provider" | "global" } | null } }
+                          "scope": "person" | "app" | "provider" | "global" } | null } }
 ```
 
 - `code` is the error code the caller received: `budget_exceeded`, or

@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, adminFetch, ApiError, type Profile } from "@/lib/api";
+import { api, adminFetch, ApiError, type AccessPlan } from "@/lib/api";
 import { ViewerContext } from "@/components/shell/session";
 import PeoplePage from "@/app/people/page";
 import SettingsPage from "@/app/settings/page";
@@ -20,21 +20,29 @@ vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   adminFetch: vi.fn(),
 }));
-const plan: Profile = {
+const plan: AccessPlan = {
   id: "local",
   name: "Local plan",
-  description: null,
   created_at: 1,
-  protocols: [],
-  workflows: [],
-  status_visibility: "full",
-  profile: {},
+  updated_at: 1,
+  summary: "Everything on this gateway. No paid models.",
+  plan: {
+    name: "Local plan",
+    can_use: { chat: { items: "all" } },
+    direct_engine_access: { engines: [], operations: [] },
+    paid_providers: [],
+    provider_fallback: false,
+    caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+    can_load_models: true,
+    receipt_detail: "full",
+    media_metadata: "none",
+  },
 };
 const person = {
   id: "morgan",
   name: "Morgan",
   email: "morgan@example.test",
-  profile_id: "local",
+  plan_id: "local",
   plan_name: "Local plan",
   disabled: false,
   last_active: null,
@@ -43,7 +51,7 @@ const person = {
 const invite = {
   id: "sam",
   email: "sam@example.test",
-  profile_id: "local",
+  plan_id: "local",
   plan_name: "Local plan",
   expires_at: Date.now() / 1000 + 86400,
   created_at: 1,
@@ -60,7 +68,6 @@ const oidc = {
   admin_groups: [],
   admin_roles: [],
 };
-const access = { self_service_apps: true, auto_create_personal_app: false };
 let responses: Record<string, unknown>;
 let client: QueryClient;
 function mount(node: React.ReactNode, role = "owner") {
@@ -103,8 +110,8 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = () => {};
 
   responses = {
-    "/admin/api/people": { people: [person], profiles: [plan] },
-    "/admin/api/invites": { invites: [invite], profiles: [plan] },
+    "/admin/api/people": { people: [person], access_plans: [plan] },
+    "/admin/api/invites": { invites: [invite], access_plans: [plan], invite_access_plan: null },
     "/admin/api/settings/instance": {
       instance: {
         name: "Gateway",
@@ -121,7 +128,7 @@ beforeEach(() => {
       oidc: false,
     },
     "/admin/api/settings/defaults": {
-      defaults: { profile_id: "local" },
+      defaults: { invite_access_plan: null },
       aliases: {},
     },
     "/admin/api/operator/overrides": {
@@ -148,28 +155,16 @@ beforeEach(() => {
     if (result instanceof Error) throw result;
     return result as never;
   });
-  vi.spyOn(api.profiles, "list").mockResolvedValue([plan]);
-  vi.spyOn(api.userAccessDefaults, "get").mockResolvedValue(access);
-  vi.spyOn(api.userAccessDefaults, "update").mockImplementation(
-    async (data) => ({ ...access, ...data }),
-  );
-  vi.spyOn(api.policyEditor, "get").mockResolvedValue({
-    profile: {
-      create: { profile: {} },
-      choices: Object.fromEntries(
-        [
-          "intents",
-          "exposure",
-          "models",
-          "protocols",
-          "workflows",
-          "trust_tiers",
-          "resource_tiers",
-          "tags",
-        ].map((key) => [key, []]),
-      ),
-    },
-  } as never);
+  vi.spyOn(api.accessPlans, "list").mockResolvedValue([plan]);
+  vi.spyOn(api.accessPlans, "editor").mockResolvedValue({
+    schema_version: 2,
+    capabilities: [{ id: "chat", label: "Chat", items: [] }],
+    engines: [],
+    paid_providers: [],
+    receipt_detail: [{ id: "full", label: "Full", description: null }],
+    media_metadata: [{ id: "none", label: "Strip", description: null }],
+    new_plan: { ...plan.plan, name: "", can_use: {} },
+  });
 });
 afterEach(() => {
   cleanup();
@@ -228,7 +223,7 @@ describe("People and Settings red-team regressions", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t load this");
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
-  it("shows owner-only states without retry and keeps administrator app defaults available", async () => {
+  it("shows owner-only states without retry to administrators", async () => {
     for (const path of [
       "/admin/api/settings/instance",
       "/admin/api/settings/defaults",
@@ -242,10 +237,8 @@ describe("People and Settings red-team regressions", () => {
       screen.queryByRole("button", { name: "Try again" }),
     ).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    ).toBeEnabled();
+      screen.queryByRole("switch", { name: "Let people create their own apps" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Save sign-in" }),
     ).not.toBeInTheDocument();
@@ -260,13 +253,10 @@ describe("People and Settings red-team regressions", () => {
     expect(
       screen.queryByRole("button", { name: "Save instance" }),
     ).not.toBeInTheDocument();
-    await screen.findByRole("region", { name: "Defaults" });
+    await screen.findByRole("region", { name: "People and access" });
     expect(
-      screen.queryByRole("button", { name: "Save default plan" }),
+      screen.queryByLabelText("Access plan for new invitations"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Save app defaults" }),
-    ).toBeEnabled();
   });
   it("waits for the configured public base URL before allowing a relative link to be copied", async () => {
     let resolveInstance!: (value: unknown) => void;
@@ -374,37 +364,15 @@ describe("People and Settings red-team regressions", () => {
       screen.getByLabelText("Available sign-in methods"),
     ).toHaveTextContent("Built-in accounts and OIDC");
   });
-  it("preserves app-option and default-plan drafts across independent saves", async () => {
+  it("keeps a dirty invitation-plan draft across a refresh", async () => {
     mount(<SettingsPage />);
-    await screen.findByRole("region", { name: "Defaults" });
-    await userEvent.click(
-      await screen.findByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save default plan" }),
-    );
+    await userEvent.click(await screen.findByLabelText("Access plan for new invitations"));
+    await userEvent.click(screen.getByRole("option", { name: "Local plan" }));
     await act(async () => {
       await client.invalidateQueries({ queryKey: ["settings", "defaults"] });
     });
-    expect(
-      await screen.findByRole("switch", {
-        name: "Let people create their own apps",
-      }),
-    ).not.toBeChecked();
-    await userEvent.click(screen.getByLabelText("Default access plan"));
-    await userEvent.click(
-      screen.getByRole("option", { name: "None — built-in local access" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save app defaults" }),
-    );
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: ["settings", "defaults"] });
-    });
-    expect(screen.getByLabelText("Default access plan")).toHaveTextContent(
-      "None — built-in local access",
+    expect(screen.getByLabelText("Access plan for new invitations")).toHaveTextContent(
+      "Local plan",
     );
   });
   it("updates clean forms on refresh while preserving dirty instance drafts", async () => {
@@ -430,32 +398,26 @@ describe("People and Settings red-team regressions", () => {
       "Refreshed draft",
     );
   });
-  it.each([
-    '{"models":"invalid"}',
-    '{"allow":{"intents":false}}',
-    '{"models":[4]}',
-    '{"allow":null}',
-    '{"fallback":{"cloud_allowed":"yes"}}',
-    "[]",
-  ])(
-    "rejects invalid policy shape %s without crashing or losing the draft",
+  const openDocument = async () => {
+    await screen.findByLabelText("Plan JSON");
+    await userEvent.click(screen.getByText("Details", { exact: true }));
+    await userEvent.click(
+      screen.getByText("Complete plan document", { exact: true }),
+    );
+    return screen.getByLabelText("Plan JSON");
+  };
+  it.each(["[]", '{"name":"x"}', "null", "{"])(
+    "rejects invalid plan document %s without crashing or losing the draft",
     async (raw) => {
       mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
-      await screen.findByLabelText("Policy JSON");
-      await userEvent.click(screen.getByText("Advanced", { exact: true }));
-      await userEvent.click(
-        screen.getByText("Complete policy document", { exact: true }),
-      );
-      const json = screen.getByLabelText("Policy JSON");
+      const json = await openDocument();
       fireEvent.change(json, { target: { value: raw } });
       expect(json).toHaveValue(raw);
       expect(screen.getByRole("alert")).toBeVisible();
       expect(
         screen.getByRole("button", { name: "Save access plan" }),
       ).toBeDisabled();
-      fireEvent.change(json, {
-        target: { value: '{"models":[],"operator_extension":{"keep":true}}' },
-      });
+      fireEvent.change(json, { target: { value: JSON.stringify(plan.plan) } });
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Save access plan" }),
@@ -463,108 +425,66 @@ describe("People and Settings red-team regressions", () => {
     },
   );
   it.each([
-    ["Restrict capabilities", { allow: { intents: [] } }],
-    ["Restrict models", { models: [] }],
-    ["Allow cloud fallback", { fallback: { cloud_allowed: true } }],
+    ["Chat", { can_use: {} }],
+    ["May load models that aren't running", { can_load_models: false }],
+    ["Use a paid provider when the engine is unavailable", { provider_fallback: true }],
   ])(
     "recovers from invalid JSON when changing %s",
-    async (label, expectedPolicy) => {
+    async (label, change) => {
       mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
-      const json = await screen.findByLabelText("Policy JSON");
-      await userEvent.click(screen.getByText("Advanced", { exact: true }));
-      await userEvent.click(
-        screen.getByText("Complete policy document", { exact: true }),
-      );
+      const json = await openDocument();
       const save = screen.getByRole("button", { name: "Save access plan" });
       fireEvent.change(json, { target: { value: "{" } });
       expect(save).toBeDisabled();
 
-      await userEvent.click(screen.getByLabelText(label as string));
+      await userEvent.click(screen.getByRole("checkbox", { name: label as string }));
 
-      expect(json).toHaveValue(JSON.stringify(expectedPolicy, null, 2));
+      expect(JSON.parse((json as HTMLTextAreaElement).value)).toEqual({
+        ...plan.plan,
+        ...(change as object),
+      });
       expect(json).toHaveAttribute("aria-invalid", "false");
-      expect(json).not.toHaveAttribute("aria-describedby");
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByText(/Save is blocked/)).not.toBeInTheDocument();
       expect(save).toBeEnabled();
     },
   );
-  it("discards invalid JSON back to the latest valid draft without losing saved fields", async () => {
+  it("discards invalid JSON back to the latest valid draft", async () => {
     mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
-    const json = await screen.findByLabelText("Policy JSON");
-    await userEvent.click(screen.getByText("Advanced", { exact: true }));
-    await userEvent.click(
-      screen.getByText("Complete policy document", { exact: true }),
-    );
-    const validDraft = {
-      models: [],
-      operator_extension: { keep: true },
-    };
-    fireEvent.change(json, {
-      target: { value: JSON.stringify(validDraft) },
-    });
+    const json = await openDocument();
+    const validDraft = { ...plan.plan, name: "Renamed" };
+    fireEvent.change(json, { target: { value: JSON.stringify(validDraft) } });
     const save = screen.getByRole("button", { name: "Save access plan" });
-
-    for (const invalidDraft of ["{", '{"models":"invalid"}']) {
+    for (const invalidDraft of ["{", '{"name":"x"}']) {
       fireEvent.change(json, { target: { value: invalidDraft } });
       expect(save).toBeDisabled();
       await userEvent.click(
         screen.getByRole("button", { name: "Discard invalid JSON changes" }),
       );
-
-      expect(json).toHaveValue(JSON.stringify(validDraft, null, 2));
-      expect(json).toHaveAttribute("aria-invalid", "false");
-      expect(json).not.toHaveAttribute("aria-describedby");
+      expect(JSON.parse((json as HTMLTextAreaElement).value)).toEqual(validDraft);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "Discard invalid JSON changes" }),
-      ).not.toBeInTheDocument();
       expect(save).toBeEnabled();
     }
   });
-  it("keeps the Save-block reason visible when Advanced is closed and links JSON errors", async () => {
+  it("keeps the Save-block reason visible when Details is closed", async () => {
     mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
-    const json = await screen.findByLabelText("Policy JSON");
-    const advanced = screen.getByText("Advanced", { exact: true });
-    await userEvent.click(advanced);
-    await userEvent.click(
-      screen.getByText("Complete policy document", { exact: true }),
-    );
+    const json = await openDocument();
     fireEvent.change(json, { target: { value: "{" } });
-    expect(json).toHaveAttribute("aria-invalid", "true");
     expect(json).toHaveAttribute("aria-describedby", "policy-json-error");
-    expect(screen.getByRole("alert")).toHaveAttribute(
-      "id",
-      "policy-json-error",
-    );
-    expect(json).toHaveAccessibleDescription(
-      "Enter a valid JSON object before saving.",
-    );
-
-    await userEvent.click(advanced);
-
+    await userEvent.click(screen.getByText("Details", { exact: true }));
     const save = screen.getByRole("button", { name: "Save access plan" });
-    const reason =
-      "Save is blocked. Fix or discard invalid JSON changes in Advanced.";
+    const reason = "Save is blocked. Fix or discard invalid JSON changes in Details.";
     expect(json).not.toBeVisible();
     expect(save).toBeDisabled();
     expect(screen.getByText(reason)).toBeVisible();
     expect(save).toHaveAccessibleDescription(reason);
-    expect(save).toHaveAttribute("aria-describedby", "plan-save-error");
-
-    await userEvent.click(advanced);
-    expect(json).toHaveValue("{");
-    fireEvent.change(json, { target: { value: "{}" } });
-    expect(screen.queryByText(reason)).not.toBeInTheDocument();
-    expect(save).not.toHaveAttribute("aria-describedby");
-    expect(save).toBeEnabled();
   });
   it.each([false, true])(
     "names the person in %s enable/disable confirmations",
     async (disabled) => {
       responses["/admin/api/people"] = {
         people: [{ ...person, disabled }],
-        profiles: [plan],
+        access_plans: [plan],
       };
       mount(<PeoplePage />);
       await userEvent.click(
@@ -706,7 +626,7 @@ describe("People and Settings red-team regressions", () => {
     ).toBeInTheDocument();
     expect(
       container.querySelectorAll("[data-slot=settings-section]"),
-    ).toHaveLength(9);
+    ).toHaveLength(8);
     const receipts = screen.getByRole("region", { name: "Receipts" });
     expect(
       within(receipts).getByRole("combobox", { name: "Keep receipts" }),
@@ -751,7 +671,7 @@ describe("People and Settings red-team regressions", () => {
       screen.getByRole("menuitem", { name: "Disable access" }),
     );
     await act(async () => {
-      client.setQueryData(["people", "list"], { people: [], profiles: [plan] });
+      client.setQueryData(["people", "list"], { people: [], access_plans: [plan] });
     });
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() =>
@@ -763,7 +683,7 @@ describe("People and Settings red-team regressions", () => {
       people: [
         { ...person, name: "n".repeat(300), plan_name: "p".repeat(300) },
       ],
-      profiles: [plan],
+      access_plans: [plan],
     };
     mount(<PeoplePage />);
     // Craft PR 3: a person row is two lines; a long name or plan is cut with
@@ -782,10 +702,10 @@ describe("People and Settings red-team regressions", () => {
   });
 
   describe("Invite action without access plans", () => {
-    const withoutPlans = (list: () => Promise<Profile[]>) => {
-      responses["/admin/api/people"] = { people: [person], profiles: [] };
-      responses["/admin/api/invites"] = { invites: [], profiles: [] };
-      vi.mocked(api.profiles.list).mockImplementation(list);
+    const withoutPlans = (list: () => Promise<AccessPlan[]>) => {
+      responses["/admin/api/people"] = { people: [person], access_plans: [] };
+      responses["/admin/api/invites"] = { invites: [], access_plans: [], invite_access_plan: null };
+      vi.mocked(api.accessPlans.list).mockImplementation(list);
     };
     const invite_ = () =>
       screen.getByRole("button", { name: "Invite someone" });
@@ -812,7 +732,7 @@ describe("People and Settings red-team regressions", () => {
         await screen.findByText("Access plans couldn’t be loaded"),
       ).toBeInTheDocument();
       expect(invite_()).toBeDisabled();
-      vi.mocked(api.profiles.list).mockResolvedValue([plan]);
+      vi.mocked(api.accessPlans.list).mockResolvedValue([plan]);
       await userEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() => expect(invite_()).toBeEnabled());
       expect(
@@ -830,11 +750,11 @@ describe("People and Settings red-team regressions", () => {
       expect(
         await screen.findByText("Access plans couldn’t be loaded"),
       ).toBeInTheDocument();
-      const calls = vi.mocked(api.profiles.list).mock.calls.length;
-      vi.mocked(api.profiles.list).mockResolvedValue([plan]);
+      const calls = vi.mocked(api.accessPlans.list).mock.calls.length;
+      vi.mocked(api.accessPlans.list).mockResolvedValue([plan]);
       await userEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() =>
-        expect(vi.mocked(api.profiles.list).mock.calls.length).toBeGreaterThan(
+        expect(vi.mocked(api.accessPlans.list).mock.calls.length).toBeGreaterThan(
           calls,
         ),
       );

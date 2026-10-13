@@ -19,7 +19,7 @@ const person = {
   id: "email-person",
   name: "person@example.test",
   email: "person@example.test",
-  profile_id: null,
+  plan_id: null,
   plan_name: null,
   disabled: false,
   last_active: null,
@@ -44,10 +44,10 @@ it("lists a person whose legacy name is an email once, as a contact detail", asy
     vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path.endsWith("/admin/api/people"))
-        return Response.json({ people: [person], profiles: [] });
+        return Response.json({ people: [person], access_plans: [] });
       if (path.endsWith("/admin/api/invites"))
-        return Response.json({ invites: [], profiles: [] });
-      if (path.endsWith("/admin/api/profiles")) return Response.json({ profiles: [] });
+        return Response.json({ invites: [], access_plans: [], invite_access_plan: null });
+      if (path.endsWith("/admin/api/access-plans")) return Response.json({ access_plans: [] });
       return Response.json({});
     }),
   );

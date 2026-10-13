@@ -23,8 +23,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.access import plan_for, access  # noqa: E402
 from gateway import admin_store, decision_provider_execution, providers, receipt_store
-from gateway.policy import AppProfile, CapabilitySelector, RemoteProviderPolicy
 from gateway.runtime_auth import RuntimeIdentity
 
 RAW_KEY = "opk_decisions_provider_integration"
@@ -67,30 +67,26 @@ def _provider_registry(*, provider_id="typesafe", protocols=("typesafe-systemone
     }
 
 
-def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> AppProfile:
-    return AppProfile(
-        id="paid-plan",
-        allow=CapabilitySelector(tags=frozenset(tags) if tags is not None else None),
-        models=frozenset(models) if models is not None else None,
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_usd_per_request,
-            budget_usd_per_day=budget_usd_per_day,
-            budget_usd_per_month=budget_usd_per_month,
-        ),
+def _profile(*, providers=frozenset({"typesafe", "openai"}), max_usd_per_request=None, budget_usd_per_day=Decimal("10"), budget_usd_per_month=Decimal("100"), tags=None, models=None) -> "AccessPlan":
+    # Capability tags are not access-plan parts; providers, listed models and
+    # spending caps are.
+    return plan_for(
+        "paid-plan", models=list(models) if models is not None else None, paid=sorted(providers),
+        usd_per_request=None if max_usd_per_request is None else str(max_usd_per_request),
+        usd_per_day=None if budget_usd_per_day is None else str(budget_usd_per_day),
+        usd_per_month=None if budget_usd_per_month is None else str(budget_usd_per_month),
     )
 
 
 @contextmanager
-def _authenticated(profile: AppProfile):
+def _authenticated(profile: "AccessPlan"):
     key_hash = proxy.hash_api_key(RAW_KEY)
-    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", profile=profile)
+    identity = RuntimeIdentity("provider-test", key_hash, app_id="app-123", accountable_person_id="usr-123", access=access(profile))
 
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(proxy, "AUTH_ENABLED", True)
         mp.setattr(proxy, "runtime_identity_for_app_credential_hash", lookup)
         yield identity, mp
 
@@ -108,7 +104,7 @@ def _install_registry(mp: pytest.MonkeyPatch, tmp_path, registry: dict | None = 
 
 def _ledger_rows(path):
     with sqlite3.connect(path) as conn:
-        return conn.execute("SELECT provider, profile_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
+        return conn.execute("SELECT provider, app_id, status, estimated_usd, actual_usd FROM provider_spend ORDER BY id").fetchall()
 
 
 def _capture_receipts(mp: pytest.MonkeyPatch) -> list:
@@ -223,8 +219,8 @@ def test_typesafe_prefixed_systemone_routes_to_paid_provider_and_records_owner_r
     assert all(auth == "Bearer ts_secret_test_key" for _url, auth, _body in seen)
     assert [body["model"] for _url, _auth, body in seen] == ["jev-latest", "jev-latest"]
     assert _ledger_rows(tmp_path / "provider_spend.db") == [
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.002000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.002000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.002000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.002000000"),
     ]
     assert len(receipts) == 2
     for receipt in receipts:
@@ -355,7 +351,6 @@ def test_local_unavailable_does_not_implicitly_fallback_to_paid_provider(tmp_pat
     [
         (_profile(providers=frozenset()), 403, "remote_provider_not_allowed"),
         (_profile(max_usd_per_request=Decimal("0.000001")), 402, "budget_exceeded"),
-        (_profile(tags=frozenset({"approved-chat"})), 403, "remote_provider_not_allowed"),
         (_profile(models={"typesafe/other-model"}), 403, "remote_provider_not_allowed"),
     ],
 )
@@ -399,7 +394,7 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
     assert response.status_code == 200, response.text
     assert response.headers["x-azizam-cost-usd"] == "unknown"
     assert "ts_secret_test_key" not in response.text
-    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "paid-plan", "needs_reconciliation", "0.000643000", None)]
+    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "app-123", "needs_reconciliation", "0.000643000", None)]
     projected = receipts[-1].to_dict(audience="client")
     assert projected["cost"] == {"usd": None, "source": "unknown", "cost_class": "paid-remote", "reconciliation_status": "needs_reconciliation"}
     assert "ts_secret_test_key" not in str(projected)
@@ -478,9 +473,9 @@ def test_typesafe_provider_concurrency_blocks_third_request_until_first_settles(
     assert retry.status_code == 200
     assert entered == ["jev-latest", "jev-latest", "jev-latest"]
     assert _ledger_rows(tmp_path / "provider_spend.db") == [
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
-        ("typesafe", "paid-plan", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
+        ("typesafe", "app-123", "settled", "0.000643000", "0.001000000"),
     ]
 
 
@@ -607,7 +602,7 @@ def test_openai_decisions_forwards_opaque_bytes_when_explicit_capability_configu
     assert stored["cost"]["usd"] == "0.004000000"
     assert stored["cost"]["reconciliation_status"] == "settled"
     assert _ledger_rows(tmp_path / "provider_spend.db") == [
-        ("openai", "paid-plan", "settled", "0E-9", "0.004000000")
+        ("openai", "app-123", "settled", "0E-9", "0.004000000")
     ]
     with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
         linked = conn.execute(

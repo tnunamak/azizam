@@ -1238,7 +1238,6 @@ def _media_sources(scope: _MediaScope, admin_db_path: Path) -> list[dict[str, An
             "label": str(app.get("name") or "App"),
             "app_id": app_id,
             "owner_user_id": app.get("owner_user_id"),
-            "owner_service_account_id": app.get("owner_service_account_id"),
         })
     return sources
 
@@ -1663,7 +1662,6 @@ def _usage_sources(admin_db_path: Path, *, app_ids: list[str] | None) -> list[di
                 "kind": "app",
                 "app_id": app_id,
                 "owner_user_id": app.get("owner_user_id"),
-                "owner_service_account_id": app.get("owner_service_account_id"),
                 "created_at": app.get("created_at"),
                 "disabled": app.get("disabled_at") is not None,
             })

@@ -14,6 +14,7 @@ import httpx
 from starlette.requests import Request
 
 import proxy
+from tests.support.access import access_context
 from gateway import speech_stream
 
 from tests.speech_tier_helpers import HAVE_FFMPEG, SttCase, _Chunks, _multipart, _wav_bytes
@@ -81,7 +82,7 @@ class SttServiceSelectionTests(SttCase):
         )
 
         async def dispatch_and_drain():
-            response = await proxy._dispatch_selected_stt_route(request, proxy.NO_AUTH_CONTEXT, operation=operation)
+            response = await proxy._dispatch_selected_stt_route(request, access_context(), operation=operation)
             captured = b""
             if getattr(response, "body_iterator", None) is not None:
                 captured = b"".join([chunk async for chunk in response.body_iterator])
@@ -109,6 +110,10 @@ class SttServiceSelectionTests(SttCase):
         seen = self._json_upstream()
 
         class Decision:
+            code = "not_in_access_plan"
+            side = "person"
+            sources: tuple[str, ...] = ()
+
             def __init__(self, denied):
                 self.denied = denied
                 self.reasons = ["target policy denied"] if denied else []

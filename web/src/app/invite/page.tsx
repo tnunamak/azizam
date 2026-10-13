@@ -13,9 +13,7 @@ import {
   RelativeTime,
   SecretReveal,
 } from "@/components/product";
-import { type ProfilePolicyDocument } from "@/lib/api";
 import { authFetch, continueTo, type SignInOptions } from "../sign-in/auth-api";
-import { inviteeSummary } from "../people/people-api";
 import { accountApi } from "@/lib/account-api";
 import {
   promptMemoryKey,
@@ -23,12 +21,8 @@ import {
   welcomePromptNote,
 } from "@/lib/prompt-memory";
 interface Invitation {
-  plan: {
-    id: string;
-    name: string;
-    description: string | null;
-    profile: ProfilePolicyDocument;
-  };
+  /** The plan the invitation gives, with its one-line summary. */
+  plan: { id: string; name: string; summary: string | null } | null;
   email: string | null;
   expires_at: number;
   owner_name: string;
@@ -182,11 +176,11 @@ export default function InvitePage() {
               <div className="bg-muted my-6 rounded-lg p-4">
                 <p className="flex items-center gap-2 text-sm font-medium">
                   <ShieldCheck className="size-4" aria-hidden="true" />
-                  {inviteData.plan.name}
+                  {inviteData.plan?.name ?? "Access plan"}
                 </p>
-                {inviteeSummary(inviteData.plan.profile) ? (
+                {inviteData.plan?.summary ? (
                   <p className="text-muted-foreground mt-2 text-xs leading-5 break-words">
-                    {inviteeSummary(inviteData.plan.profile)}
+                    {inviteData.plan.summary}
                   </p>
                 ) : null}
                 <p className="text-muted-foreground mt-3 text-xs">

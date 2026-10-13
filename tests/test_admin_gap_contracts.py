@@ -74,7 +74,7 @@ def test_all_admin_routes_guard_before_any_dependency(case, status_code, error_c
         litellm_key_client=ForbiddenDependency(),
         known_model_names_getter=forbidden_sync,
         effective_oidc_config_provider=forbidden_sync,
-        profile_resolver=forbidden_sync,
+        access_resolver=forbidden_sync,
     )
     app = FastAPI()
     app.include_router(router)

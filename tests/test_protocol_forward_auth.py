@@ -1,4 +1,4 @@
-"""Protocol frontends forward the selected real credential, not a LAN placeholder.
+"""Protocol frontends forward the selected real credential on the loopback hop.
 
 The Anthropic and Ollama frontends reach the chat and embeddings routes over
 the gateway's own loopback hop (served in process at 127.0.0.1:PROXY_PORT).
@@ -10,18 +10,18 @@ member key. Keys are minted and revoked in a real admin store.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 
 import httpx
 import pytest
 
 import proxy
-from gateway import admin_store
+from gateway import accounts, admin_store
 from gateway.admin_oidc import AdminSession
 from gateway.runtime_auth import hash_api_key
 from gateway.user_runtime import mint_user_app_key, revoke_user_app_key
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
 from tests.support.gateway import gateway_client, register_litellm, use_admin_db
+from tests.support.access import service_app, store_plan
 
 LAN_PEER = ("192.168.1.25", 41000)
 FRONTENDS = {
@@ -33,14 +33,10 @@ FRONTENDS = {
 @pytest.fixture
 def gateway(fake_upstreams, monkeypatch, tmp_path):
     db = use_admin_db(monkeypatch, tmp_path)
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_CIDRS", [ipaddress.ip_network("192.168.0.0/16")])
     monkeypatch.setattr(proxy, "TRUSTED_PROXIES", [])
     monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", False)
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
-    monkeypatch.setattr(proxy, "PATH_TOKENS", {})
     fake_upstreams.router.add(f"127.0.0.1:{proxy.PROXY_PORT}", proxy.app)
 
     def serve(scenario: str, **values):
@@ -53,7 +49,8 @@ def gateway(fake_upstreams, monkeypatch, tmp_path):
 
 def _member(db):
     user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=db)
-    app = admin_store.create_app("Member access", kind="personal", owner_user_id=user["id"], path=db)
+    accounts.change_person(user["id"], "owner", path=db, plan_id=store_plan("Member", path=db)["id"])
+    app = admin_store.create_app("Member access", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     session = AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
     return session, mint_user_app_key(session, app["id"], path=db)
 
@@ -61,28 +58,29 @@ def _member(db):
 def _post(path: str, body: dict, *, headers: list[tuple[str, str]], params: str = "") -> httpx.Response:
     async def call() -> httpx.Response:
         async with gateway_client(client=LAN_PEER) as client:
+            client.headers.pop("authorization", None)  # only the member's own credential goes out
             return await client.post(path + (f"?{params}" if params else ""), json=body, headers=headers)
 
     return asyncio.run(call())
 
 
 @pytest.mark.parametrize("forwarder", ["chat", "embeddings"])
-@pytest.mark.parametrize("source", ["duplicate-bearer", "api-key", "query"])
-def test_protocol_loopback_authenticates_as_the_member_not_the_lan_placeholder(gateway, monkeypatch, forwarder, source):
+@pytest.mark.parametrize("source", ["bearer", "api-key", "query"])
+def test_protocol_loopback_authenticates_as_the_member(gateway, monkeypatch, forwarder, source):
     db, serve = gateway
     _session, credential = _member(db)
     member_key = credential["api_key"]
     path, body, scenario = FRONTENDS[forwarder]
     litellm = serve(scenario, model=body["model"], key_prefix=hash_api_key(member_key)[:18])
     params = ""
-    if source == "duplicate-bearer":
-        headers = [("authorization", "Bearer dummy"), ("authorization", f"Bearer {member_key}")]
+    if source == "bearer":
+        headers = [("authorization", f"Bearer {member_key}")]
     elif source == "api-key":
-        headers = [("api-key", "dummy"), ("api-key", member_key)]
+        headers = [("api-key", member_key)]
     else:
         monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", True)
-        headers = [("authorization", "Bearer dummy")]
-        params = f"api_key=dummy&api_key={member_key}"
+        headers = []
+        params = f"api_key={member_key}"
 
     response = _post(path, body, headers=headers, params=params)
 
@@ -95,7 +93,18 @@ def test_protocol_loopback_authenticates_as_the_member_not_the_lan_placeholder(g
     assert forwarded.headers["x-azizam-app"] == "Member access"
     assert forwarded.headers["x-azizam-key-prefix"] == hash_api_key(member_key)[:18]
     assert "authorization" not in forwarded.headers and "api-key" not in forwarded.headers
-    assert member_key not in forwarded.body.decode() and "dummy" not in forwarded.body.decode()
+    assert member_key not in forwarded.body.decode()
+
+
+@pytest.mark.parametrize("forwarder", ["chat", "embeddings"])
+def test_a_placeholder_key_beside_the_member_key_is_refused(gateway, forwarder):
+    """The LAN placeholder keys are gone: "dummy" is an invalid key, not a skip."""
+    db, serve = gateway
+    _session, credential = _member(db)
+    path, body, _scenario = FRONTENDS[forwarder]
+    headers = [("authorization", "Bearer dummy"), ("authorization", f"Bearer {credential['api_key']}")]
+    response = _post(path, body, headers=headers)
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.parametrize("forwarder", ["chat", "embeddings"])
@@ -112,17 +121,15 @@ def test_revoked_member_key_gets_401_and_reaches_no_upstream(gateway, forwarder)
     assert litellm.requests == []
 
 
-def test_frontend_profile_without_openai_chat_still_reaches_chat_through_the_loopback(gateway):
-    """The frontend already applied the member's profile; the secret-bearing
-    loopback hop must not demand a second openai.chat permission."""
+def test_frontend_chat_reaches_chat_through_the_loopback_once(gateway):
+    """The frontend already applied the App's plan; the secret-bearing
+    loopback hop must not demand a second permission."""
     db, serve = gateway
-    profile = admin_store.create_profile("Anthropic only", {"protocols": ["anthropic"]}, path=db)
-    owner = admin_store.create_service_account("frontend-owner", path=db)
-    app = admin_store.create_app("Anthropic app", kind="service", owner_service_account_id=owner["id"], path=db)
+    app = service_app("Anthropic app", path=db, caps=("chat",))
     key = "frontend-only-key"
     admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], app_id=app["id"],
-        hash=hash_api_key(key), prefix="frontend", profile_id=profile["id"], path=db,
+        hash=hash_api_key(key), prefix="frontend", path=db,
     )
     path, body, scenario = FRONTENDS["chat"]
     litellm = serve(scenario, model=body["model"], key_prefix=hash_api_key(key)[:18])

@@ -7,15 +7,14 @@ import pytest
 from starlette.requests import Request
 
 import proxy
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway.outbound_request import backend_query_string, canonical_native_path
 from gateway.backends.llm_execution import litellm_url
 from gateway.realtime_proxy import upstream_url
-from gateway.policy import AppProfile, NativePassthroughPolicy, PolicyRequest, evaluate
+from gateway.policy import PolicyRequest, evaluate
 
 
-@pytest.mark.parametrize("auth_enabled", [True, False])
-def test_backend_headers_allow_only_representation_and_configured_auth(monkeypatch, auth_enabled):
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", auth_enabled)
+def test_backend_headers_allow_only_representation_and_configured_auth(monkeypatch):
     monkeypatch.setattr(proxy, "service_auth_config", lambda *_: {
         "headers": {"Authorization": "Bearer synthetic-backend-key"},
     })
@@ -64,14 +63,8 @@ def test_substrate_and_realtime_urls_strip_gateway_credentials():
 ])
 @pytest.mark.parametrize("scope", ["GET /v1/*", "*", "GET *"])
 def test_native_scope_rejects_ambiguous_paths(path, scope):
-    profile = AppProfile(
-        id="native-security", protocols=frozenset({"provider-native"}),
-        native_passthrough=NativePassthroughPolicy(
-            enabled=True, allowed_backends=frozenset({"test-backend"}),
-            allowed_operations=frozenset({scope}),
-        ),
-    )
-    decision = evaluate(profile, PolicyRequest(
+    plan = plan_for("native-security", caps=(), engines=["test-backend"], operations=[scope])
+    decision = evaluate(access(plan), PolicyRequest(
         protocol="provider-native", intent="provider.native", backend="test-backend",
         native_passthrough=True, native_backend="test-backend", native_operation=f"GET /{path.lstrip('/')}",
     ))

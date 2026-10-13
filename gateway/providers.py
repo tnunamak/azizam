@@ -2,8 +2,10 @@
 
 This module is intentionally a deep seam for paid remote providers. It does
 not read the operator's config files, does not know live auth, and does not
-import proxy.py. Callers pass normalized registry records, an AppProfile, and
-the already-resolved request facts.
+import proxy.py. Callers pass normalized registry records, the request's
+runtime identity (its access plans, App and accountable person) and the
+already-resolved request facts. Caps are per provider and for the gateway;
+plans cap the accountable person's and the App's totals (design §2.11).
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ from typing import Any, Mapping
 import httpx
 
 from gateway import admin_store, secret_store
-from gateway.policy import AppProfile, PolicyRequest, evaluate
+from gateway.access_plans import PlanCaps
+from gateway.policy import NO_ACCESS, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
 
 USD_QUANTUM = Decimal("0.000000001")
@@ -99,7 +102,7 @@ class BudgetExceeded(ProviderError):
     ) -> None:
         super().__init__(message, retry_after=retry_after)
         # Which spending limit refused the request: period is daily, monthly
-        # or request; scope is plan, provider or global. Both are None when
+        # or request; scope is person, app, provider or global. Both are None when
         # no single limit applies (for example, an unknown price).
         self.period = period
         self.scope = scope
@@ -186,7 +189,7 @@ class Usage:
 class Reservation:
     id: int
     provider: str
-    profile_id: str
+    app_id: str | None
     estimated_usd: Decimal
     cost_source: str
 
@@ -274,13 +277,14 @@ def provider_concurrency_limit(config: Mapping[str, Any]) -> int:
 
 
 def require_remote_allowed(
-    profile: AppProfile,
+    identity: Any,
     provider: ProviderRef,
     *,
     paid_fallback: bool = False,
 ) -> None:
+    """Both access plans of ``identity`` must list the provider (design §2.6)."""
     decision = evaluate(
-        profile,
+        getattr(identity, "access", None) or NO_ACCESS,
         PolicyRequest(
             remote_provider=canonical_provider_id(provider.id),
             remote_paid_fallback=paid_fallback,
@@ -294,8 +298,24 @@ def require_remote_allowed(
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
 
 
+def _backup_ledger_before_plan_migration(path: Path) -> None:
+    """Keep a copy of a ledger that still has ``profile_id`` before it is dropped."""
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path)) as source:
+        if "profile_id" not in {row[1] for row in source.execute("PRAGMA table_info(provider_spend)")}:
+            return
+        backup = path.with_name(f"{path.name}.bak.pre-access-plans")
+        if backup.exists():
+            return
+        with closing(sqlite3.connect(backup)) as target:
+            source.backup(target)
+        backup.chmod(0o600)
+
+
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _backup_ledger_before_plan_migration(path)
     with sqlite3.connect(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -303,7 +323,6 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             CREATE TABLE IF NOT EXISTS provider_spend (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider TEXT NOT NULL,
-                profile_id TEXT NOT NULL,
                 status TEXT NOT NULL,
                 estimated_usd TEXT NOT NULL,
                 actual_usd TEXT,
@@ -318,6 +337,18 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+        if "profile_id" in columns:
+            # Charges are no longer counted by plan: a plan change must never
+            # reset a counter. Old rows stay in provider and gateway totals.
+            conn.execute("DROP INDEX IF EXISTS idx_provider_spend_window")
+            conn.execute("DROP INDEX IF EXISTS idx_provider_spend_profile_window")
+            conn.execute("ALTER TABLE provider_spend DROP COLUMN profile_id")
+            columns.discard("profile_id")
+        # Each charge names its App and the App's accountable person, so a
+        # plan change never resets a counter (design §2.11).
+        for name in ("app_id", "person_id"):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} TEXT")
         ownership_columns = {"request_id", "generation_id", "process_generation", "expires_at"}
         if not ownership_columns.issubset(columns):
             # Older ledgers cannot distinguish in-flight work from completed
@@ -335,13 +366,15 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
                 conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} {column_type}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
-            "ON provider_spend(provider, profile_id, created_at, status)"
+            "ON provider_spend(provider, created_at, status)"
         )
-        # Profile-only window reads (plan caps, plan_spend) cannot use the
-        # provider-led index above.
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_provider_spend_profile_window "
-            "ON provider_spend(profile_id, created_at, status)"
+            "CREATE INDEX IF NOT EXISTS idx_provider_spend_person_window "
+            "ON provider_spend(person_id, created_at, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_spend_app_window "
+            "ON provider_spend(app_id, created_at, status)"
         )
 
 
@@ -377,7 +410,7 @@ def recover_provider_spend(
 
 
 def reserve_provider_spend(
-    profile: AppProfile,
+    identity: Any,
     provider: ProviderRef,
     estimated_cost: Cost,
     *,
@@ -387,27 +420,30 @@ def reserve_provider_spend(
     paid_fallback: bool = False,
     request_timeout_s: float = DEFAULT_PROVIDER_REQUEST_TIMEOUT_S,
 ) -> Reservation:
-    require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
+    require_remote_allowed(identity, provider, paid_fallback=paid_fallback)
     provider_admin = _provider_admin_snapshot(
         _effective_admin_db_path(admin_db_path, path)
     )
     provider_id = canonical_provider_id(provider.id)
-    _enforce_allowed_plan(profile, provider, provider_admin)
+    app_id = getattr(identity, "app_id", None)
+    person_id = getattr(identity, "accountable_person_id", None)
+    plan_caps = _plan_caps(identity)
     estimate = estimated_cost.usd
     if estimated_cost.source == "missing-provider-price":
         raise BudgetExceeded(f"paid provider {provider.id!r} requires known model prices")
     if estimate is None:
-        if _has_any_cap(profile, provider, provider_admin):
+        if _has_any_cap(provider, provider_admin, plan_caps):
             raise BudgetExceeded(
                 f"unknown cost is not allowed when provider {provider.id!r} has a spend cap"
             )
         estimate = Decimal("0")
     estimate = _quantize_usd(estimate)
-    if profile.remote.max_usd_per_request is not None and estimate > profile.remote.max_usd_per_request:
-        raise BudgetExceeded(
-            f"request estimate ${estimate} exceeds per-request cap ${profile.remote.max_usd_per_request}",
-            period="request", scope="plan",
-        )
+    for scope, caps in plan_caps:
+        if caps.usd_per_request is not None and estimate > caps.usd_per_request:
+            raise BudgetExceeded(
+                f"request estimate ${estimate} exceeds per-request cap ${caps.usd_per_request}",
+                period="request", scope=scope,
+            )
 
     ensure_ledger(path)
     timestamp = int(now if now is not None else time.time())
@@ -417,20 +453,20 @@ def reserve_provider_spend(
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            for scope, caps in plan_caps:
+                _enforce_window_cap(
+                    conn,
+                    provider=None,
+                    cap=caps.usd_per_day,
+                    since=timestamp - 24 * 60 * 60,
+                    estimate=estimate,
+                    label=f"daily {scope}",
+                    period="daily",
+                    scope=scope,
+                    **_counter(scope, person_id, app_id),
+                )
             _enforce_window_cap(
                 conn,
-                profile=profile,
-                provider=None,
-                cap=profile.remote.budget_usd_per_day,
-                since=timestamp - 24 * 60 * 60,
-                estimate=estimate,
-                label="daily profile",
-                period="daily",
-                scope="plan",
-            )
-            _enforce_window_cap(
-                conn,
-                profile=None,
                 provider=provider_id,
                 cap=_provider_cap(provider, "daily"),
                 since=timestamp - 24 * 60 * 60,
@@ -442,7 +478,6 @@ def reserve_provider_spend(
             )
             _enforce_window_cap(
                 conn,
-                profile=None,
                 provider=provider_id,
                 cap=_admin_provider_cap(provider_admin, provider_id, "daily"),
                 since=timestamp - 24 * 60 * 60,
@@ -454,7 +489,6 @@ def reserve_provider_spend(
             )
             _enforce_window_cap(
                 conn,
-                profile=None,
                 provider=None,
                 cap=_admin_global_cap(provider_admin, "daily"),
                 since=timestamp - 24 * 60 * 60,
@@ -464,20 +498,20 @@ def reserve_provider_spend(
                 scope="global",
             )
             month_start = _month_start_epoch(timestamp)
+            for scope, caps in plan_caps:
+                _enforce_window_cap(
+                    conn,
+                    provider=None,
+                    cap=caps.usd_per_month,
+                    since=month_start,
+                    estimate=estimate,
+                    label=f"monthly {scope}",
+                    period="monthly",
+                    scope=scope,
+                    **_counter(scope, person_id, app_id),
+                )
             _enforce_window_cap(
                 conn,
-                profile=profile,
-                provider=None,
-                cap=profile.remote.budget_usd_per_month,
-                since=month_start,
-                estimate=estimate,
-                label="monthly profile",
-                period="monthly",
-                scope="plan",
-            )
-            _enforce_window_cap(
-                conn,
-                profile=None,
                 provider=provider_id,
                 cap=_provider_cap(provider, "monthly"),
                 since=month_start,
@@ -489,7 +523,6 @@ def reserve_provider_spend(
             )
             _enforce_window_cap(
                 conn,
-                profile=None,
                 provider=provider_id,
                 cap=_admin_provider_cap(provider_admin, provider_id, "monthly"),
                 since=month_start,
@@ -501,7 +534,6 @@ def reserve_provider_spend(
             )
             _enforce_window_cap(
                 conn,
-                profile=None,
                 provider=None,
                 cap=_admin_global_cap(provider_admin, "monthly"),
                 since=month_start,
@@ -514,13 +546,14 @@ def reserve_provider_spend(
             cursor = conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at,
-                 process_generation, expires_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?, ?, ?)
+                (provider, app_id, person_id, status, estimated_usd, cost_source,
+                 created_at, process_generation, expires_at)
+                VALUES (?, ?, ?, 'reserved', ?, ?, ?, ?, ?)
                 """,
                 (
                     provider_id,
-                    profile.id,
+                    app_id,
+                    person_id,
                     str(estimate),
                     estimated_cost.source,
                     timestamp,
@@ -535,7 +568,7 @@ def reserve_provider_spend(
     return Reservation(
         id=int(cursor.lastrowid),
         provider=provider_id,
-        profile_id=profile.id,
+        app_id=app_id,
         estimated_usd=estimate,
         cost_source=estimated_cost.source,
     )
@@ -602,7 +635,7 @@ def list_provider_reconciliations(
             params.append(canonical_provider_id(provider_id))
         return [dict(row) for row in conn.execute(
             f"""
-            SELECT id, provider, profile_id, status, estimated_usd, actual_usd,
+            SELECT id, provider, app_id, person_id, status, estimated_usd, actual_usd,
                    cost_source, created_at, settled_at, request_id, generation_id
             FROM provider_spend WHERE {where} ORDER BY id
             """,
@@ -847,7 +880,7 @@ def _protocol_matches(requested: str, declared: tuple[str, ...]) -> bool:
 
 async def call_typesafe_systemone(
     provider: ProviderRef,
-    profile: AppProfile,
+    identity: Any,
     body: Mapping[str, Any],
     *,
     ledger_path: Path = DEFAULT_LEDGER_PATH,
@@ -857,12 +890,12 @@ async def call_typesafe_systemone(
     client: httpx.AsyncClient | None = None,
     request_id: str | None = None,
 ) -> tuple[dict[str, Any], Cost, Usage, Reservation]:
-    require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
+    require_remote_allowed(identity, provider, paid_fallback=paid_fallback)
     api_key = resolve_provider_api_key(provider, db_path=admin_db_path)
     if not api_key:
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
     reservation = reserve_provider_spend(
-        profile,
+        identity,
         provider,
         estimate_typesafe_cost(provider, body),
         path=ledger_path,
@@ -990,18 +1023,33 @@ def attach_cost_to_receipt(receipt: object, cost: Cost, usage: Usage | None = No
         )
 
 
+def _plan_caps(identity: Any) -> list[tuple[str, PlanCaps]]:
+    """The caps of the accountable person's plan (on the person's counter) and
+    of the App's plan (on the App's counter), as ``(scope, caps)`` pairs."""
+    access = getattr(identity, "access", None)
+    pairs = [("person", getattr(access, "person_plan", None)), ("app", getattr(access, "app_plan", None))]
+    return [(scope, plan.caps) for scope, plan in pairs if plan is not None and plan.caps.any()]
+
+
+def _counter(scope: str, person_id: str | None, app_id: str | None) -> dict[str, Any]:
+    """Which ledger rows a plan cap counts. An unnamed subject cannot be counted."""
+    subject = person_id if scope == "person" else app_id
+    if not subject:
+        raise BudgetExceeded(f"the {scope} cannot be identified, so its spending cap cannot be checked",
+                             period="daily", scope=scope)
+    return {"person_id": subject} if scope == "person" else {"app_id": subject}
+
+
 def _has_any_cap(
-    profile: AppProfile,
     provider: ProviderRef,
     provider_admin: Mapping[str, Any],
+    plan_caps: list[tuple[str, PlanCaps]] = (),  # type: ignore[assignment]
 ) -> bool:
-    remote = profile.remote
+    if plan_caps:
+        return True
     return any(
         cap is not None
         for cap in (
-            remote.max_usd_per_request,
-            remote.budget_usd_per_day,
-            remote.budget_usd_per_month,
             _provider_cap(provider, "daily"),
             _provider_cap(provider, "monthly"),
             _admin_provider_cap(provider_admin, provider.id, "daily"),
@@ -1015,8 +1063,9 @@ def _has_any_cap(
 def _enforce_window_cap(
     conn: sqlite3.Connection,
     *,
-    profile: AppProfile | None,
     provider: str | None,
+    person_id: str | None = None,
+    app_id: str | None = None,
     cap: Decimal | None,
     since: int,
     estimate: Decimal,
@@ -1031,23 +1080,19 @@ def _enforce_window_cap(
     # Only an actual settlement can establish how much budget remains.
     where = "status = 'needs_reconciliation'"
     params: list[Any] = []
-    if profile is not None:
-        where += " AND profile_id = ?"
-        params.append(profile.id)
     if provider is not None:
         where += " AND lower(provider) = ?"
         params.append(canonical_provider_id(provider))
+    for column, value in (("person_id", person_id), ("app_id", app_id)):
+        if value is not None:
+            where += f" AND {column} = ?"
+            params.append(value)
     if conn.execute(f"SELECT 1 FROM provider_spend WHERE {where} LIMIT 1", params).fetchone():
         raise ProviderNeedsReconciliation(
             f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests",
             period=period, scope=scope,
         )
-    provider_total = _window_total(
-        conn,
-        provider=provider,
-        profile_id=profile.id if profile is not None else None,
-        since=since,
-    )
+    provider_total = _window_total(conn, provider=provider, person_id=person_id, app_id=app_id, since=since)
     if provider_only:
         if provider_total >= cap or provider_total + estimate > cap:
             raise BudgetExceeded(
@@ -1056,24 +1101,27 @@ def _enforce_window_cap(
             )
         return
     if provider_total >= cap or provider_total + estimate > cap:
-        raise BudgetExceeded(f"{label} global cap would exceed ${cap}", period=period, scope=scope)
+        raise BudgetExceeded(f"{label} cap would exceed ${cap}" if scope in ("person", "app")
+                             else f"{label} global cap would exceed ${cap}", period=period, scope=scope)
 
 
 def _window_total(
     conn: sqlite3.Connection,
     *,
     provider: str | None,
-    profile_id: str | None,
+    person_id: str | None = None,
+    app_id: str | None = None,
     since: int,
 ) -> Decimal:
     where = "created_at >= ? AND status IN ('reserved', 'settled', 'needs_reconciliation')"
     params: list[Any] = [since]
-    if profile_id is not None:
-        where += " AND profile_id = ?"
-        params.append(profile_id)
     if provider is not None:
         where += " AND lower(provider) = ?"
         params.append(canonical_provider_id(provider))
+    for column, value in (("person_id", person_id), ("app_id", app_id)):
+        if value is not None:
+            where += f" AND {column} = ?"
+            params.append(value)
     rows = conn.execute(
         f"SELECT estimated_usd, actual_usd FROM provider_spend WHERE {where}",
         params,
@@ -1088,130 +1136,99 @@ def _window_total(
     return total
 
 
-def _month_start_epoch(timestamp: int) -> int:
-    parts = time.gmtime(timestamp)
-    return calendar.timegm((parts.tm_year, parts.tm_mon, 1, 0, 0, 0))
-
-
 def _next_month_start_epoch(timestamp: int) -> int:
     parts = time.gmtime(timestamp)
     year, month = (parts.tm_year + 1, 1) if parts.tm_mon == 12 else (parts.tm_year, parts.tm_mon + 1)
     return calendar.timegm((year, month, 1, 0, 0, 0))
 
 
-def plan_spend(
-    profile: AppProfile, *, path: Path | None, now: int | None = None
+def counter_spend(
+    caps: PlanCaps, *, column: str, subject_id: str | None, path: Path | None, now: int | None = None
 ) -> list[dict[str, Any]]:
-    """Spend against one plan's caps; see :func:`plan_spend_many`."""
-    return plan_spend_many([profile], path=path, now=now)[profile.id]
+    """Read-only spend of one person (``column="person_id"``) or App
+    (``"app_id"``) against the daily and monthly caps of their plan.
 
-
-def plan_spend_many(
-    profiles: list[AppProfile], *, path: Path | None, now: int | None = None
-) -> dict[str, list[dict[str, Any]]]:
-    """Read-only spend against each plan's daily and monthly caps.
-
-    Mirrors the reservation barrier: before it counts, ``recover_provider_spend``
-    turns every ``reserved`` row that is expired, has no owner generation, or
-    belongs to another process generation into ``needs_reconciliation``; then
-    ``_window_total`` counts reserved, settled and unreconciled rows. The
-    daily window is the rolling last 24 hours, the monthly window is the UTC
-    calendar month. One entry per period that has a cap.
+    Mirrors the reservation barrier: before it counts, rows that
+    ``recover_provider_spend`` would turn into ``needs_reconciliation`` are
+    treated as unknown; ``_window_total`` then counts reserved, settled and
+    unreconciled rows. The daily window is the rolling last 24 hours, the
+    monthly window is the UTC calendar month. One entry per period that has
+    a cap.
 
     ``spent_usd`` is ``None`` (with ``unknown_reason``) when the spend is not
-    known: no ledger was supplied or it cannot be read
-    (``ledger_unavailable``), or the plan has a charge whose cost is unknown,
-    including stale reservations (``needs_reconciliation``; the barrier
-    refuses all paid requests until an owner settles it). ``resets_at`` is then
-    ``None`` too. A missing ledger file means no paid request has reserved
-    spend yet, which the barrier also reads as 0. One read-only connection
-    serves all plans.
+    known: no ledger or an unreadable one (``ledger_unavailable``), or a
+    charge whose cost is unknown (``needs_reconciliation``; the barrier
+    refuses paid requests until an owner settles it). A missing ledger file
+    means no paid request has reserved spend yet, which the barrier also
+    reads as 0.
     """
+    assert column in ("person_id", "app_id")
     timestamp = int(now if now is not None else time.time())
+    periods = [(period, cap) for period, cap in (("daily", caps.usd_per_day), ("monthly", caps.usd_per_month))
+               if cap is not None]
+    if not periods:
+        return []
     since = {"daily": timestamp - 24 * 60 * 60, "monthly": _month_start_epoch(timestamp)}
-    capped = {
-        profile.id: [(period, cap) for period, cap in (
-            ("daily", profile.remote.budget_usd_per_day),
-            ("monthly", profile.remote.budget_usd_per_month),
-        ) if cap is not None]
-        for profile in profiles
-    }
-    facts: dict[str, tuple[str | None, dict[str, Decimal], int | None]] = {
-        profile_id: (None, {}, None) for profile_id in capped
-    }
-    wanted = [profile_id for profile_id, caps in capped.items() if caps]
-    if wanted and path is None:
-        facts.update({profile_id: ("ledger_unavailable", {}, None) for profile_id in wanted})
-    elif wanted and path.exists():
+    unknown: str | None = None
+    totals: dict[str, Decimal] = {}
+    oldest_daily: int | None = None
+    if path is None or not subject_id:
+        unknown = "ledger_unavailable"
+    elif path.exists():
         try:
             with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
-                for profile_id in wanted if columns else ():
-                    facts[profile_id] = _plan_spend_facts(
-                        conn, profile_id, columns=columns, since=since, now=timestamp)
+                if column in columns:
+                    if {"process_generation", "expires_at"} <= columns:
+                        # The rows recover_provider_spend would mark needs_reconciliation.
+                        stale = ("status = 'reserved' AND (process_generation IS NULL OR expires_at IS NULL "
+                                 "OR process_generation != ? OR expires_at <= ?)")
+                        stale_params: list[Any] = [current_process_generation(), timestamp]
+                    else:
+                        stale, stale_params = "status = 'reserved'", []
+                    if conn.execute(
+                        f"SELECT 1 FROM provider_spend WHERE {column} = ? AND "
+                        f"(status = 'needs_reconciliation' OR ({stale})) LIMIT 1",
+                        [subject_id, *stale_params],
+                    ).fetchone():
+                        unknown = "needs_reconciliation"
+                    else:
+                        scope = {"person_id": subject_id} if column == "person_id" else {"app_id": subject_id}
+                        totals = {period: _window_total(conn, provider=None, since=start, **scope)
+                                  for period, start in since.items()}
+                        oldest_daily = conn.execute(
+                            f"SELECT MIN(created_at) FROM provider_spend WHERE {column} = ? AND created_at >= ? "
+                            "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
+                            (subject_id, since["daily"]),
+                        ).fetchone()[0]
         except sqlite3.Error:
-            facts.update({profile_id: ("ledger_unavailable", {}, None) for profile_id in wanted})
-    out: dict[str, list[dict[str, Any]]] = {}
-    for profile_id, caps in capped.items():
-        unknown, totals, oldest_daily = facts[profile_id]
-        entries: list[dict[str, Any]] = []
-        for period, cap in caps:
-            if unknown is not None:
-                resets_at = None
-            elif period == "daily":
-                # A rolling window has no single reset: this is when the oldest
-                # counted charge leaves the window and the spend first drops.
-                resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None else None
-            else:
-                resets_at = _next_month_start_epoch(timestamp)
-            entry: dict[str, Any] = {
-                "period": period,
-                "window": "rolling_24h" if period == "daily" else "calendar_month_utc",
-                "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
-                "cap_usd": str(cap),
-                "resets_at": resets_at,
-            }
-            if unknown:
-                entry["unknown_reason"] = unknown
-            entries.append(entry)
-        out[profile_id] = entries
-    return out
+            unknown = "ledger_unavailable"
+    entries: list[dict[str, Any]] = []
+    for period, cap in periods:
+        if unknown is not None:
+            resets_at = None
+        elif period == "daily":
+            # A rolling window has no single reset: this is when the oldest
+            # counted charge leaves the window and the spend first drops.
+            resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None else None
+        else:
+            resets_at = _next_month_start_epoch(timestamp)
+        entry: dict[str, Any] = {
+            "period": period,
+            "window": "rolling_24h" if period == "daily" else "calendar_month_utc",
+            "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
+            "cap_usd": format(cap, "f"),
+            "resets_at": resets_at,
+        }
+        if unknown:
+            entry["unknown_reason"] = unknown
+        entries.append(entry)
+    return entries
 
 
-def _plan_spend_facts(
-    conn: sqlite3.Connection,
-    profile_id: str,
-    *,
-    columns: set[str],
-    since: Mapping[str, int],
-    now: int,
-) -> tuple[str | None, dict[str, Decimal], int | None]:
-    if {"process_generation", "expires_at"} <= columns:
-        # The rows recover_provider_spend would mark needs_reconciliation.
-        stale_reserved = (
-            "status = 'reserved' AND (process_generation IS NULL OR expires_at IS NULL "
-            "OR process_generation != ? OR expires_at <= ?)"
-        )
-        stale_params: list[Any] = [current_process_generation(), now]
-    else:
-        # ensure_ledger marks every reserved row of a pre-ownership ledger.
-        stale_reserved, stale_params = "status = 'reserved'", []
-    if conn.execute(
-        f"SELECT 1 FROM provider_spend WHERE profile_id = ? AND "
-        f"(status = 'needs_reconciliation' OR ({stale_reserved})) LIMIT 1",
-        [profile_id, *stale_params],
-    ).fetchone():
-        return "needs_reconciliation", {}, None
-    totals = {
-        period: _window_total(conn, provider=None, profile_id=profile_id, since=start)
-        for period, start in since.items()
-    }
-    oldest_daily = conn.execute(
-        "SELECT MIN(created_at) FROM provider_spend WHERE profile_id = ? AND created_at >= ? "
-        "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
-        (profile_id, since["daily"]),
-    ).fetchone()[0]
-    return None, totals, oldest_daily
+def _month_start_epoch(timestamp: int) -> int:
+    parts = time.gmtime(timestamp)
+    return calendar.timegm((parts.tm_year, parts.tm_mon, 1, 0, 0, 0))
 
 
 def _enforce_provider_concurrency(
@@ -1276,30 +1293,6 @@ def _provider_admin_policy(
                 policy = raw_policy
                 break
     return policy if isinstance(policy, Mapping) else {}
-
-
-def _enforce_allowed_plan(
-    profile: AppProfile,
-    provider: ProviderRef,
-    provider_admin: Mapping[str, Any],
-) -> None:
-    provider_id = canonical_provider_id(provider.id)
-    policy = _provider_admin_policy(provider_admin, provider_id)
-    if "allowed_plans" not in policy:
-        return
-    raw = policy.get("allowed_plans")
-    if raw is None:
-        allowed: set[str] = set()
-    elif isinstance(raw, str):
-        allowed = {raw}
-    elif isinstance(raw, (list, tuple, set)):
-        allowed = {str(item) for item in raw}
-    else:
-        allowed = set()
-    if profile.id not in allowed:
-        raise RemoteProviderNotAllowed(
-            f"remote provider {provider_id!r} is not allowed for access plan {profile.id!r}"
-        )
 
 
 def _admin_provider_cap(

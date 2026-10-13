@@ -218,7 +218,7 @@ class TestVisionViaAux:
                 proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
             ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
                 proxy, "vision_capable_llm_backends", return_value=[]
-            ), patch.object(proxy, "profile_allows_backend", return_value=True), loaded as present:
+            ), loaded as present:
                 asyncio.run(proxy._prepare_litellm_local_llm_request(
                     proxy.NO_AUTH_CONTEXT, request_path="/v1/chat/completions",
                     body_json=body, activate_target=False,

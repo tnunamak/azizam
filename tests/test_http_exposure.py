@@ -9,12 +9,8 @@ import proxy
 
 @pytest.fixture
 def public_client(monkeypatch):
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
-    monkeypatch.setattr(proxy, "LAN_BYPASS_ENABLED", False)
     monkeypatch.setattr(proxy, "AUTH_PUBLIC_PATHS", ["/health"])
-    monkeypatch.setattr(proxy, "OLLAMA_COMPAT_DISCOVERY_ENABLED", False)
     monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", False)
-    monkeypatch.setattr(proxy, "PATH_TOKENS", {})
     client = TestClient(proxy.app, base_url="https://gateway.example", client=("203.0.113.25", 41000))
     try:
         yield client

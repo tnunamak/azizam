@@ -1,8 +1,8 @@
 """Admin plane API router.
 
 Builds a FastAPI router that exposes JSON endpoints under ``/admin/api`` for
-managing apps (the user-facing data-plane noun), users, app profiles,
-credentials, and for inspecting audit records and policy decisions.
+managing apps (the user-facing data-plane noun), users, access plans,
+credentials, and for inspecting audit records and access decisions.
 
 This module is intentionally decoupled from persistent storage and live auth:
 
@@ -12,8 +12,8 @@ This module is intentionally decoupled from persistent storage and live auth:
   rendered as JSON.
 * Persistence is injected as an :class:`AdminStore` — any object exposing the
   duck-typed methods listed below. The router treats it as a black box.
-* Policy simulation calls :func:`gateway.policy.evaluate` directly so the
-  admin plane stays consistent with the live runtime decision logic.
+* Check access calls :func:`gateway.policy.evaluate` directly so the admin
+  plane stays consistent with the live runtime decision logic.
 
 The router never reads files, never reads ``os.environ``, never touches
 ``proxy.py``, and never returns raw key material outside one-time key creation
@@ -29,7 +29,6 @@ import hmac
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
@@ -37,18 +36,15 @@ from fastapi.responses import JSONResponse
 
 from gateway.admin_oidc import validate_oidc_display_name
 from gateway.policy import (
-    AppProfile,
-    default_profile_id,
+    EffectiveAccess,
     PolicyDecision,
     PolicyRequest,
     evaluate,
-    is_default_profile_id,
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway.profiles import ProfileLoadError, load_profile
 from gateway import admin_catalog, admin_store, extension_packages, service_registry
 
 __all__ = [
@@ -141,20 +137,20 @@ class AdminStore(Protocol):
         self, *, app_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def list_profiles(self) -> list[dict[str, Any]]: ...
+    def list_access_plans(self) -> list[dict[str, Any]]: ...
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
+    def get_access_plan(self, plan_id: str) -> dict[str, Any] | None: ...
 
-    def create_profile(
+    def create_access_plan(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def delete_profile(
-        self, *, profile_id: str, actor: AdminContext
+    def delete_access_plan(
+        self, *, plan_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
     def list_credentials(self) -> list[dict[str, Any]]: ...
@@ -171,23 +167,9 @@ class AdminStore(Protocol):
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None: ...
 
-    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]: ...
-
-    def create_runtime_profile_mapping(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]: ...
-
-    def disable_runtime_profile_mapping(
-        self, *, mapping_id: str, actor: AdminContext
-    ) -> dict[str, Any] | None: ...
-
     def operator_overrides(self) -> dict[str, Any]: ...
 
     def setting_revision(self, key: str) -> str: ...
-
-    def update_user_access_defaults(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]: ...
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -270,7 +252,8 @@ class AdminStore(Protocol):
 
 
 AdminAuth = Callable[[Request], AdminContext]
-ProfileResolver = Callable[[str], AppProfile | None]
+# app_id -> the access an App runs under right now (both plans), or None.
+AccessResolver = Callable[[str], "EffectiveAccess | None"]
 # async (host, port, path) -> {ok, status, error, url}
 ServiceProbe = Callable[[str, "int | None", str], "Awaitable[Mapping[str, Any]]"]
 StatusProvider = Callable[[], "Awaitable[Mapping[str, Any]]"]
@@ -291,8 +274,8 @@ _AUDIT_ACTOR_KINDS = frozenset({"user", "service_account", "system", "cli", "adm
 # producers.  Unknown keys (including nested objects) are omitted at this API
 # boundary rather than asking every client to recognize secrets.
 _AUDIT_SAFE_DETAIL_FIELDS = frozenset({
-    "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
-    "fields", "kind", "override_count", "package_hash", "prefix", "profile_id",
+    "access_plan", "app_id", "capability_count", "count", "credential_prefix", "effective_profile_id",
+    "fields", "kind", "override_count", "package_hash", "plan_id", "prefix", "profile_id",
     "protocol_frontend_count", "role", "secret_changed", "service_count", "source_kind",
     "via", "workflow_count",
 })
@@ -327,17 +310,7 @@ _MEDIA_ADMISSION_FIELDS = frozenset(
 )
 
 
-def _attention_app_profile_id(record: Mapping[str, Any]) -> str:
-    """Resolve an App's effective profile id (the effective profile shown to owners)."""
-    profile_id = (
-        record.get("default_profile_id")
-        or record.get("profile_id")
-        or record.get("profile")
-    )
-    return str(profile_id) if profile_id else default_profile_id()
-
-
-_AUDIT_ID_RE = re.compile(r"^(?:app|prof|svc|cred)_[a-f0-9]{8,64}$")
+_AUDIT_ID_RE = re.compile(r"^(?:app|prof|plan|svc|cred)_[a-f0-9]{8,64}$")
 # ``_key_prefix`` persists exactly the first 18 characters of generated
 # operator/admin keys: the public marker plus 14 URL-safe token characters.
 # A broad "safe-looking string" grammar would also accept a full credential.
@@ -350,7 +323,7 @@ _AUDIT_ENUMS = {
     "via": frozenset({"admin", "setup", "cli", "system"}),
 }
 _AUDIT_COUNT_FIELDS = frozenset({"capability_count", "count", "override_count", "protocol_frontend_count", "service_count", "workflow_count"})
-_AUDIT_ID_FIELDS = frozenset({"app_id", "effective_profile_id", "profile_id"})
+_AUDIT_ID_FIELDS = frozenset({"app_id", "effective_profile_id", "plan_id", "profile_id"})
 
 
 def _safe_audit_detail(key: str, value: Any) -> Any:
@@ -413,7 +386,7 @@ def _admin_target_href(target_kind: str, target_id: str) -> str | None:
 
     routes = {
         "app": ("/admin/apps", "app"),
-        "profile": ("/admin/profiles", "profile"),
+        "access_plan": ("/people", "plan"),
         "service": ("/admin/services", "service"),
         "audit": ("/admin/audit", "event"),
     }
@@ -833,9 +806,8 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     Signals mirror the single current-health projection used by the detail
     surfaces, so the overview never disagrees with the sections:
-      * Apps: profile missing, or no active key. Apps without an explicit
-        profile use the built-in default profile. Disabled Apps are an operator
-        state, not a per-row incident.
+      * Apps: no access plan (the App denies every request), or no active
+        key. Disabled Apps are an operator state, not a per-row incident.
         * Services: the projected row severity.
       * Live status: the current health projection and high-error/high-latency
           Apps. Structured, independent health signals create system advisories;
@@ -845,8 +817,6 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     apps = [a for a in snapshot.get("apps", []) if isinstance(a, Mapping)]
-    profiles = [p for p in snapshot.get("profiles", []) if isinstance(p, Mapping)]
-    profile_ids = {str(p.get("id")) for p in profiles if p.get("id")}
     credentials = [c for c in snapshot.get("credentials", []) if isinstance(c, Mapping)]
     active_keys_by_app: dict[str, int] = {}
     for cred in credentials:
@@ -859,14 +829,13 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     for app in apps:
         app_id = str(app.get("id") or "")
         name = str(app.get("name") or app_id or "App")
-        profile_id = _attention_app_profile_id(app)
         if app.get("disabled_at"):
             continue
-        elif not is_default_profile_id(profile_id) and profile_id not in profile_ids:
+        elif not app.get("effective_access_plan_id"):
             items.append(_attention_item(
                 kind="app", severity="problem",
-                title=f"{name}'s profile is missing",
-                detail="Its profile was deleted; assign a new one.",
+                title=f"{name} has no access plan",
+                detail="It can't run anything. Choose a plan.",
                 target_kind="app", target_id=app_id, target_name=name,
             ))
         elif active_keys_by_app.get(app_id, 0) < 1:
@@ -971,26 +940,22 @@ def derive_admin_attention(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def access_model_summary() -> dict[str, Any]:
     return {
-        "nouns": ["user", "app", "profile", "key", "runtime_mapping", "admin_role"],
+        "nouns": ["user", "app", "access_plan", "key", "admin_role"],
         "users": {
-            "identity": "OIDC identity",
-            "relationship": "users are not apps",
+            "identity": "OIDC or built-in identity",
+            "relationship": "a person holds one access plan, or none (cannot generate)",
         },
         "apps": {
-            "relationship": "apps inherit/default to profiles",
+            "relationship": (
+                "an app has an accountable person and one assignment: an access plan, "
+                "or the same plan as its person; it runs only what both plans allow"
+            ),
         },
-        "profiles": {
-            "relationship": "profiles are reusable runtime access policies",
+        "access_plans": {
+            "relationship": "access plans are named, reusable lists of what may run",
         },
         "keys": {
-            "relationship": "keys authenticate apps or admin automation without exposing raw secrets",
-        },
-        "runtime_mappings": {
-            "source_kinds": list(admin_store.RUNTIME_PROFILE_MAPPING_SOURCE_KINDS),
-            "relationship": (
-                "OIDC groups, OIDC roles, emails, domains, gateway roles, "
-                "and all signed-in users can map identities to runtime profiles"
-            ),
+            "relationship": "keys act for their app; they carry no plan of their own",
         },
         "admin_roles": {
             "relationship": "admin roles control the admin plane separately from runtime access",
@@ -1474,10 +1439,6 @@ def _validate_extension_package_source(payload: Mapping[str, Any]) -> dict[str, 
     return {"source": dict(source)}
 
 
-_USER_ACCESS_DEFAULT_FIELDS = frozenset(
-    {"self_service_apps", "auto_create_personal_app"}
-)
-
 _OIDC_CONFIG_FIELDS = frozenset(
     {
         "enabled",
@@ -1606,50 +1567,6 @@ def _validate_bool_field(value: Any, *, field: str) -> bool:
     )
 
 
-def _validate_user_access_defaults(payload: Mapping[str, Any]) -> dict[str, bool]:
-    unknown = set(payload.keys()) - _USER_ACCESS_DEFAULT_FIELDS
-    if unknown:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST,
-            "invalid_operator_override",
-            f"unknown user access fields: {sorted(unknown)}",
-        )
-    return {
-        field: _validate_bool_field(payload[field], field=field)
-        for field in sorted(_USER_ACCESS_DEFAULT_FIELDS)
-        if field in payload
-    }
-
-
-def _resolve_profile(
-    profile_payload: Any,
-    *,
-    profile_resolver: ProfileResolver | None,
-) -> AppProfile:
-    """Build a profile from either an inline dict or a stored profile id."""
-    if isinstance(profile_payload, str):
-        if profile_resolver is None:
-            raise _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "profile_resolver_unavailable",
-                "no profile resolver configured; pass an inline profile dict",
-            )
-        profile = profile_resolver(profile_payload)
-        if profile is None:
-            raise _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_payload!r} not found",
-            )
-        return profile
-    try:
-        return load_profile(profile_payload)
-    except ProfileLoadError as exc:
-        raise _RouteError(
-            status.HTTP_400_BAD_REQUEST, "invalid_profile", str(exc)
-        ) from exc
-
-
 _POLICY_REQUEST_FIELDS = frozenset(
     {
         "protocol",
@@ -1712,49 +1629,32 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
     return {
         "decision": decision.decision,
         "allowed": decision.allowed,
+        "code": decision.code,
+        "side": decision.side,
         "sources": list(decision.sources),
         "reasons": list(decision.reasons),
         "visibility_level": decision.visibility_level,
     }
 
 
-def _plans_spend(rows: list[Mapping[str, Any]], ledger: Path | None) -> list[list[dict[str, Any]] | None]:
-    """Spend against each plan's caps, as cap enforcement counts it.
-
-    ``None`` for a stored plan that cannot be loaded (its caps are unknown).
-    One ledger connection serves every plan.
-    """
-    from gateway import providers
-
-    loaded: list[Any] = []
-    for row in rows:
-        try:
-            loaded.append(load_profile(row.get("profile"), default_id=row.get("id")))
-        except ProfileLoadError:
-            loaded.append(None)
-    spend = providers.plan_spend_many([p for p in loaded if p is not None], path=ledger)
-    return [spend[p.id] if p is not None else None for p in loaded]
-
-
 def create_admin_router(
     store: AdminStore,
     *,
     auth: AdminAuth,
-    profile_resolver: ProfileResolver | None = None,
+    access_resolver: AccessResolver | None = None,
     service_probe: ServiceProbe | None = None,
     status_provider: StatusProvider | None = None,
     litellm_key_client: LiteLLMKeyClient | None = None,
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     effective_oidc_config_provider: EffectiveOidcConfigProvider | None = None,
     prefix: str = "/admin/api",
-    spend_ledger_path: Callable[[], Path | None] = lambda: None,
 ) -> APIRouter:
     """Build an admin-plane router.
 
     ``store`` provides persistence. ``auth`` is invoked on every request and
     must raise :class:`AdminAuthError` for unauthenticated or forbidden
-    callers. ``profile_resolver`` lets the policy simulator accept a stored
-    profile id (string) rather than an inline profile dict. ``service_probe`` is
+    callers. ``access_resolver`` lets Check access evaluate an App exactly as
+    the runtime does (its two plans, from the admin store). ``service_probe`` is
     an optional ``async (host, port, path) -> {ok, status, error, url}`` used by
     the backend "Test connection" control; when absent that route reports the
     capability is unavailable rather than failing. ``status_provider`` supplies
@@ -1808,11 +1708,10 @@ def create_admin_router(
         if isinstance(ctx, JSONResponse):
             return ctx
         def read_overview_stores():
-            return (store.list_users(), store.list_apps(), store.list_profiles(),
-                    store.list_runtime_profile_mappings(), _scrub_credentials(store.list_credentials()),
-                    store.get_service_registry())
+            return (store.list_users(), store.list_apps(), store.list_access_plans(),
+                    _scrub_credentials(store.list_credentials()), store.get_service_registry())
 
-        users, apps, profiles, runtime_mappings, credentials, registry = await asyncio.to_thread(read_overview_stores)
+        users, apps, plans, credentials, registry = await asyncio.to_thread(read_overview_stores)
         active_credentials = [
             c for c in credentials if not c.get("revoked_at")
         ]
@@ -1837,7 +1736,6 @@ def create_admin_router(
         )
         attention = derive_admin_attention({
             "apps": apps,
-            "profiles": profiles,
             "credentials": credentials,
             "services": current_health["services"],
             "status": status_snap,
@@ -1853,8 +1751,7 @@ def create_admin_router(
             "counts": {
                 "users": len(users),
                 "apps": len(apps),
-                "profiles": len(profiles),
-                "runtime_profile_mappings": len(runtime_mappings),
+                "access_plans": len(plans),
                 "credentials": len(credentials),
                 "active_credentials": len(active_credentials),
                 "services_total": services_total,
@@ -1868,7 +1765,6 @@ def create_admin_router(
             },
             "attention": attention,
             "current_health": current_health,
-            "runtime_profile_mappings": runtime_mappings,
         }
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
@@ -1973,18 +1869,6 @@ def create_admin_router(
                     "invalid_app",
                     "app name is required",
                 ).as_response()
-        profile_id = body.get("default_profile_id", body.get("profile_id"))
-        if profile_id:
-            profile_key = str(profile_id).strip()
-            if (
-                not is_default_profile_id(profile_key)
-                and store.get_profile(profile_key) is None
-            ):
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_app",
-                    f"profile {profile_key!r} not found",
-                ).as_response()
         try:
             record = store.update_app(app_id=app_id, data=body, actor=ctx)
         except ValueError as exc:
@@ -2042,25 +1926,23 @@ def create_admin_router(
             status_code=status.HTTP_200_OK, content={"app": record}
         )
 
-    @router.get("/profiles")
-    def list_profiles(request: Request) -> JSONResponse:
+    @router.get("/access-plans")
+    def list_access_plans(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        rows = list(store.list_profiles())
-        spend = _plans_spend(rows, spend_ledger_path())
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"profiles": [{**row, "plan_spend": plan} for row, plan in zip(rows, spend)]},
+            content={"access_plans": list(store.list_access_plans())},
         )
 
-    @router.get("/policy/editor")
-    def policy_editor(request: Request) -> JSONResponse:
+    @router.get("/access-plans/editor")
+    def access_plan_editor(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            contract = admin_catalog.policy_editor_contract(
+            contract = admin_catalog.access_plan_editor_contract(
                 store.get_service_registry()
             )
         except Exception:  # A failed projection must never look like no choices.
@@ -2068,191 +1950,79 @@ def create_admin_router(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={
                     "error": {
-                        "code": "policy_editor_unavailable",
-                        "message": "Policy editor choices could not be read.",
+                        "code": "access_plan_editor_unavailable",
+                        "message": "Access plan choices could not be read.",
                     }
                 },
             )
         return JSONResponse(status_code=status.HTTP_200_OK, content=contract)
 
-    @router.post("/profiles")
-    async def create_profile(request: Request) -> JSONResponse:
+    def _plan_write_error(exc: ValueError) -> JSONResponse:
+        msg = str(exc)
+        if "already in use" in msg:
+            return _RouteError(status.HTTP_409_CONFLICT, "access_plan_name_conflict", msg).as_response()
+        return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", msg).as_response()
+
+    @router.post("/access-plans")
+    async def create_access_plan(request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await _read_json_body(request)
+            record = store.create_access_plan(data=body, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        profile_block = body.get("profile") if "profile" in body else body
-        try:
-            load_profile(profile_block)
-        except ProfileLoadError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                str(exc),
-            ).as_response()
-        try:
-            record = store.create_profile(data=body, actor=ctx)
         except ValueError as exc:
-            msg = str(exc)
-            if "already in use" in msg:
-                return _RouteError(
-                    status.HTTP_409_CONFLICT,
-                    "profile_name_conflict",
-                    msg,
-                ).as_response()
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                msg,
-            ).as_response()
+            return _plan_write_error(exc)
         return JSONResponse(
-            status_code=status.HTTP_201_CREATED, content={"profile": record}
+            status_code=status.HTTP_201_CREATED, content={"access_plan": record}
         )
 
-    @router.get("/profiles/{profile_id}")
-    def get_profile(profile_id: str, request: Request) -> JSONResponse:
+    @router.get("/access-plans/{plan_id}")
+    def get_access_plan(plan_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        record = store.get_profile(profile_id)
+        record = store.get_access_plan(plan_id)
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"access_plan": record})
 
-    @router.patch("/profiles/{profile_id}")
-    async def update_profile(profile_id: str, request: Request) -> JSONResponse:
+    @router.put("/access-plans/{plan_id}")
+    async def update_access_plan(plan_id: str, request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await _read_json_body(request)
+            record = store.update_access_plan(plan_id=plan_id, data=body, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
-        if "profile" in body:
-            try:
-                load_profile(body.get("profile"))
-            except ProfileLoadError as exc:
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_profile",
-                    str(exc),
-                ).as_response()
-        try:
-            record = store.update_profile(
-                profile_id=profile_id, data=body, actor=ctx
-            )
         except ValueError as exc:
-            msg = str(exc)
-            if "already in use" in msg:
-                return _RouteError(
-                    status.HTTP_409_CONFLICT,
-                    "profile_name_conflict",
-                    msg,
-                ).as_response()
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_profile",
-                msg,
-            ).as_response()
+            return _plan_write_error(exc)
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK, content={"profile": record}
-        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"access_plan": record})
 
-    @router.delete("/profiles/{profile_id}")
-    def delete_profile(profile_id: str, request: Request) -> JSONResponse:
+    @router.delete("/access-plans/{plan_id}")
+    def delete_access_plan(plan_id: str, request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
-            record = store.delete_profile(profile_id=profile_id, actor=ctx)
+            record = store.delete_access_plan(plan_id=plan_id, actor=ctx)
         except ValueError as exc:
-            return _RouteError(
-                status.HTTP_409_CONFLICT,
-                "profile_in_use",
-                str(exc),
-            ).as_response()
+            return _RouteError(status.HTTP_409_CONFLICT, "access_plan_in_use", str(exc)).as_response()
         if record is None:
             return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "profile_not_found",
-                f"profile {profile_id!r} not found",
+                status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.",
             ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"profile": record})
-
-    @router.get("/runtime-profile-mappings")
-    def list_runtime_profile_mappings(request: Request) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "mappings": list(store.list_runtime_profile_mappings()),
-            },
-        )
-
-    @router.post("/runtime-profile-mappings")
-    async def create_runtime_profile_mapping(request: Request) -> JSONResponse:
-        ctx = (await asyncio.to_thread(_guard, request))
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await _read_json_body(request)
-        except _RouteError as exc:
-            return exc.as_response()
-        profile_id = str(body.get("profile_id") or "").strip()
-        if profile_id and not is_default_profile_id(profile_id):
-            if store.get_profile(profile_id) is None:
-                return _RouteError(
-                    status.HTTP_400_BAD_REQUEST,
-                    "invalid_runtime_mapping",
-                    f"profile {profile_id!r} not found",
-                ).as_response()
-        try:
-            record = store.create_runtime_profile_mapping(data=body, actor=ctx)
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_runtime_mapping",
-                str(exc),
-            ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_201_CREATED,
-            content={"mapping": record},
-        )
-
-    @router.delete("/runtime-profile-mappings/{mapping_id}")
-    def disable_runtime_profile_mapping(
-        mapping_id: str,
-        request: Request,
-    ) -> JSONResponse:
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        record = store.disable_runtime_profile_mapping(
-            mapping_id=mapping_id,
-            actor=ctx,
-        )
-        if record is None:
-            return _RouteError(
-                status.HTTP_404_NOT_FOUND,
-                "runtime_mapping_not_found",
-                f"runtime Profile mapping {mapping_id!r} not found",
-            ).as_response()
-        return JSONResponse(status_code=status.HTTP_200_OK, content={"mapping": record})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"access_plan": record})
 
     @router.post("/apps/{app_id}/keys")
     async def create_key(app_id: str, request: Request) -> JSONResponse:
@@ -2398,28 +2168,6 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"overrides": store.operator_overrides()},
-        )
-
-    @router.put("/operator/user-access-defaults")
-    async def update_user_access_defaults(request: Request) -> JSONResponse:
-        ctx = (await asyncio.to_thread(_guard, request))
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        try:
-            body = await _read_json_body(request)
-            defaults = _validate_user_access_defaults(body)
-            record = store.update_user_access_defaults(data=defaults, actor=ctx)
-        except _RouteError as exc:
-            return exc.as_response()
-        except ValueError as exc:
-            return _RouteError(
-                status.HTTP_400_BAD_REQUEST,
-                "invalid_operator_override",
-                str(exc),
-            ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"user_access_defaults": record},
         )
 
     @router.put("/operator/service-availability")
@@ -2803,7 +2551,7 @@ def create_admin_router(
 
     # -- LiteLLM virtual-key admin ------------------------------------------
     # The "LiteLLM owns LLM runtime keys" split: the gateway owns durable App
-    # keys / Profiles / policy; LiteLLM mints and meters the *virtual execution
+    # keys / access plans; LiteLLM mints and meters the *virtual execution
     # keys* used for commodity LLM calls. These routes are the operator surface
     # over the sidecar's /key/* API, via the injected ``litellm_key_client``.
 
@@ -3196,26 +2944,46 @@ def create_admin_router(
             content={"event": _safe_audit_record(record)},
         )
 
-    @router.post("/policy/simulate")
-    async def simulate(request: Request) -> JSONResponse:
+    @router.post("/access/check")
+    async def check_access(request: Request) -> JSONResponse:
+        """Check access (design §3.1): the decision an App's request would get.
+
+        ``{"app": app_id, "request": {...}}`` evaluates the App's two plans as
+        the runtime does; ``{"plan": plan_id, "request": {...}}`` evaluates one
+        plan on both sides (an App that is "Same as its person").
+        """
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
         try:
             body = await _read_json_body(request)
-            profile = _resolve_profile(
-                body.get("profile"), profile_resolver=profile_resolver
-            )
             policy_request = _build_policy_request(body.get("request"))
+            if body.get("app"):
+                if access_resolver is None:
+                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "access_resolver_unavailable",
+                                      "Checking an app is not available here; pass a plan.")
+                access = access_resolver(str(body["app"]))
+                if access is None:
+                    raise _RouteError(status.HTTP_404_NOT_FOUND, "app_not_found", "App not found.")
+            elif body.get("plan"):
+                from gateway.access_plans import PlanError, plan_from_document
+
+                record = store.get_access_plan(str(body["plan"]))
+                if record is None:
+                    raise _RouteError(status.HTTP_404_NOT_FOUND, "access_plan_not_found", "Access plan not found.")
+                try:
+                    plan = plan_from_document(record["plan"], plan_id=str(record["id"]))
+                except PlanError as exc:
+                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", str(exc)) from exc
+                access = EffectiveAccess(person_plan=plan, app_plan=plan)
+            else:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_request", "Pass an app or a plan.")
         except _RouteError as exc:
             return exc.as_response()
-        decision = evaluate(profile, policy_request)
+        decision = evaluate(access, policy_request)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={
-                "profile_id": profile.id,
-                "decision": _decision_payload(decision),
-            },
+            content={"plan_ids": list(access.plan_ids), "decision": _decision_payload(decision)},
         )
 
     return router

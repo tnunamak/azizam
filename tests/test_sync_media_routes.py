@@ -16,6 +16,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
+from tests.support.access import authenticated, access_context, auth_identity  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
@@ -113,7 +114,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             patch.object(receipt_store, "DB_PATH", self.receipt_db),
             patch.object(proxy, "IMAGE_CACHE_DIR", self.cache),
             patch.object(proxy, "_image_url_signing_secret", b"sync-media-test-secret"),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ]
         for item in patches:
             item.start()
@@ -211,7 +212,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             app_id="app_image",
             owner_key_hash="sha256:owner",
         )
-        proxy.media_delivery.begin(profile_default="full", receipt=receipt)
+        proxy.media_delivery.begin(plan_bound="full", receipt=receipt)
         request = _StubUrlRequest(headers={"host": "gateway.test"})
 
         response = proxy._build_image_response_payload(
@@ -219,7 +220,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             [_png_bytes()],
             "url",
             {},
-            proxy.NO_AUTH_CONTEXT,
+            access_context(),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -319,7 +320,7 @@ class SyncMediaRouteTests(unittest.TestCase):
                 created.job_id,
                 body=body,
                 request=PayloadRequest(),  # type: ignore[arg-type]
-                auth_context=proxy.NO_AUTH_CONTEXT,
+                auth_context=access_context(),
             )
             anyio.run(proxy._run_image_media_job, created.job_id)
 
@@ -421,7 +422,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         prompt_id = _FakeVideoAsyncClient.prompt_id
         video_id = proxy._video_id_from_prompt_id(prompt_id)
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(
+            identity=auth_identity(
                 name="Video app",
                 key_hash="sha256:video-owner",
                 app_id="app_video",
@@ -429,7 +430,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         )
         proxy._video_job_records[prompt_id] = {
             "resolved_model": "ltx-test",
-            "app_profile": auth_context.identity.profile.id,
+            "app_profile": "plan_test",
             "app_id": "app_video",
             "api_key_name": "Video app",
             "owner_key_hash": "sha256:video-owner",
@@ -459,7 +460,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.assertEqual(job["intent"], "video.generate")
         self.assertEqual(job["workflow"], "video.generate.ltx-test")
         self.assertEqual(job["backend"], "comfyui")
-        self.assertEqual(job["app_profile"], "default-local")
+        self.assertEqual(job["app_profile"], "plan_test")
         self.assertEqual(job["app_id"], "app_video")
         self.assertEqual(job["api_key_name"], "Video app")
         self.assertEqual(job["owner_key_hash"], "app:app_video")
@@ -476,13 +477,13 @@ class SyncMediaRouteTests(unittest.TestCase):
         prompt_id = "prompt_sync_video_no_index"
         video_id = proxy._video_id_from_prompt_id(prompt_id)
         auth_context = proxy.AuthContext(
-            identity=proxy.AuthIdentity(name="Video app", key_hash="sha256:video-owner", app_id="app_video")
+            identity=auth_identity(name="Video app", key_hash="sha256:video-owner", app_id="app_video")
         )
         old_prompt = _FakeVideoAsyncClient.prompt_id
         _FakeVideoAsyncClient.prompt_id = prompt_id
         proxy._video_job_records[prompt_id] = {
             "resolved_model": "ltx-test",
-            "app_profile": auth_context.identity.profile.id,
+            "app_profile": "plan_test",
             "app_id": "app_video",
             "api_key_name": "Video app",
             "owner_key_hash": "sha256:video-owner",
@@ -520,9 +521,8 @@ class SyncMediaRouteTests(unittest.TestCase):
         async def begin(intent: str):
             return await media_ingestion.start_receipt(
                 request,  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
+                access_context(),
                 intent=intent,
-                profile="owner-default",
             )
 
         request = JsonRequest()

@@ -19,6 +19,7 @@ from starlette.responses import Response
 from gateway import media_delivery, media_jobs, provenance, receipt_store
 from gateway.receipts import RouteReceipt
 from gateway.ownership import owner_key
+from gateway.runtime_auth import plan_ref
 
 _KIND_BY_PREFIX = {"img": "image", "aud": "audio", "vid": "video"}
 _MEDIA_TYPE_BY_SUFFIX = {
@@ -96,10 +97,10 @@ def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_prof
     )
 
 
-async def start_receipt(request: Request, auth_context: Any, *, intent: str, profile: Any = None) -> RouteReceipt:
+async def start_receipt(request: Request, auth_context: Any, *, intent: str) -> RouteReceipt:
     """Begin a route receipt for synchronous audio/media routes."""
     identity = getattr(auth_context, "identity", None)
-    profile_id = _profile_id(profile) or _profile_id(getattr(identity, "profile", None))
+    profile_id = plan_ref(identity)
     body = await _safe_request_json(request)
     receipt = RouteReceipt(
         protocol="openai.audio",
@@ -113,11 +114,11 @@ async def start_receipt(request: Request, auth_context: Any, *, intent: str, pro
         stream=_body_stream_requested(body),
     )
     receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
-    visibility = getattr(getattr(getattr(identity, "profile", None), "status_visibility", None), "level", None)
-    if visibility:
-        receipt.visibility = str(visibility)
+    access = getattr(identity, "access", None)
+    if access is not None:
+        receipt.visibility = access.receipt_detail
     receipt_store.begin(receipt, path=receipt_store.DB_PATH)
-    media_delivery.begin(profile_default=None, receipt=receipt)
+    media_delivery.begin(plan_bound=None, receipt=receipt)
     return receipt
 
 
@@ -307,15 +308,6 @@ def _body_stream_requested(body: Mapping[str, Any] | None) -> bool:
         return True
     value = body.get("stream_format")
     return isinstance(value, str) and value.lower() == "sse"
-
-def _profile_id(profile: Any) -> str | None:
-    if profile is None:
-        return None
-    if isinstance(profile, str):
-        return profile
-    raw = getattr(profile, "id", None)
-    return str(raw) if raw else None
-
 
 def _normalize_asset(asset: Mapping[str, Any]) -> dict[str, Any] | None:
     asset_id = str(asset.get("asset_id") or asset.get("id") or "").strip()

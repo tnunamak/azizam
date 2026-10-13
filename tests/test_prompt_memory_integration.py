@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 import proxy
+from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_delivery, media_jobs, media_metadata, prompt_memory
 
 
@@ -29,7 +30,7 @@ def test_kept_prompt_has_one_maker_record_and_clean_media(tmp_path):
     admin_db = tmp_path / "data" / "admin.db"
     admin_store.init_db(admin_db)
     person = admin_store.upsert_oidc_user("issuer", "person-a", email="a@example.test", path=admin_db)
-    context = media_delivery.begin(profile_default="none")
+    context = media_delivery.begin(plan_bound="none")
     context.person_id = person["id"]
     context.prompt_decision = prompt_memory.Decision(person["id"], True, "remembered")
     context.prompt_text = sentinel
@@ -49,7 +50,7 @@ def test_forget_or_kill_switch_leaves_no_prompt_bytes_in_data_or_cache(tmp_path,
     db = tmp_path / "data" / "media_jobs.db"
     admin_db = tmp_path / "data" / "admin.db"
     admin_store.init_db(admin_db)
-    context = media_delivery.begin(profile_default="none")
+    context = media_delivery.begin(plan_bound="none")
     context.prompt_decision = prompt_memory.Decision("person-a", False, reason)
     context.prompt_text = sentinel
     with patch.object(proxy, "IMAGE_CACHE_DIR", cache), patch.object(media_jobs, "DB_PATH", db), patch.object(proxy.ADMIN_STORE, "path", admin_db):
@@ -101,9 +102,9 @@ def test_async_member_off_stays_forgotten_if_enabled_before_worker_starts(tmp_pa
     payload_dir = tmp_path / "cache" / "payloads"
     admin_store.init_db(admin_db)
     person = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=admin_db)
-    app = admin_store.create_app("Maker", kind="personal", owner_user_id=person["id"], path=admin_db)
+    app = admin_store.create_app("Maker", kind="personal", owner_user_id=person["id"], access_plan="person", path=admin_db)
     admin_store.put_prompt_memory_preference(person["id"], remember=False, retention="never", path=admin_db)
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+    auth = proxy.AuthContext(identity=auth_identity(
         name="maker", key_hash="sha256:maker", app_id=app["id"], person_id=person["id"],
     ))
     request = SimpleNamespace(

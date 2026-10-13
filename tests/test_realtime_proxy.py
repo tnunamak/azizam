@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import proxy
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import realtime_proxy
 
 
@@ -70,10 +71,13 @@ class RealtimeRouteCase(unittest.TestCase):
             patch.object(proxy, "ws_connect", self.connect),
             patch.object(proxy, "_ensure_speech_service_ready", self.ensure),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
-            patch.object(proxy, "AUTH_ENABLED", False),
         ):
             p.start()
             self.addCleanup(p.stop)
+        # By default the caller holds a key of an App whose plans allow everything.
+        self.auth = authenticated()
+        self.auth.start()
+        self.addCleanup(self.auth.stop)
         self.client = TestClient(proxy.app)
 
 
@@ -134,8 +138,17 @@ class RefusalTests(RealtimeRouteCase):
         return getattr(exc, "status_code", None) or getattr(exc, "code", None)
 
     def test_missing_key_is_a_401_before_any_upstream_connection(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", True), patch.object(proxy, "_client_is_lan", return_value=False):
-            self.assertEqual(self._refused(), 401)
+        self.auth.stop()  # the real key check, with no key on the request
+        self.assertEqual(self._refused(), 401)
+
+    def test_a_placeholder_key_from_the_lan_is_a_401_before_any_upstream_connection(self) -> None:
+        self.auth.stop()
+        client = TestClient(proxy.app, client=("192.168.1.50", 4000))
+        with self.assertRaises(Exception) as caught:
+            with client.websocket_connect("/v1/realtime", subprotocols=["realtime", "openai-insecure-api-key.lan"]):
+                self.fail("the upgrade was accepted")
+        self.assertEqual(getattr(caught.exception, "status_code", None), 401)
+        self.connect.assert_not_called()
 
     def test_a_key_in_the_subprotocol_is_checked_like_a_bearer_header(self) -> None:
         seen = {}
@@ -170,7 +183,7 @@ class RefusalTests(RealtimeRouteCase):
             "/v1/audio/speech",
         )
         with patch.object(proxy, "_enforce_runtime_route_policy", return_value=None) as enforce:
-            self.assertIsNone(proxy._realtime_policy_denial(proxy.NO_AUTH_CONTEXT))
+            self.assertIsNone(proxy._realtime_policy_denial(access_context()))
         self.assertEqual([call.args[1] for call in enforce.call_args_list], list(required))
 
         for index, denied_path in enumerate(required):

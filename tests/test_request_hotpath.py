@@ -17,14 +17,8 @@ sys.path.insert(0, str(ROOT))
 from gateway import admin_store, service_registry  # noqa: E402
 from gateway import admin_runtime  # noqa: E402
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash  # noqa: E402
-
-
-def _profile(name: str, protocols: list[str]) -> dict[str, object]:
-    return {
-        "id": name,
-        "protocols": protocols,
-        "status_visibility": {"level": "basic"},
-    }
+from gateway import accounts  # noqa: E402
+from tests.support.access import plan_document, service_app, store_plan  # noqa: E402
 
 
 class RequestHotpathTests(unittest.TestCase):
@@ -129,70 +123,46 @@ class RequestHotpathTests(unittest.TestCase):
                     expected = service_registry.normalize_service_registry(previous["value"])
                     self.assertEqual(service_registry.load_service_registry(path=self.db), expected)
 
-    def _credential(
-        self,
-        *,
-        profile_id: str | None = None,
-        expires_at: int | None = None,
-        owner=None,
-    ):
-        owner = admin_store.create_service_account(
-            f"owner-{threading.get_ident()}-{time.time_ns()}", path=self.db
-        ) if owner is None else owner
-        app = admin_store.create_app(
-            "hotpath-app", kind="service", owner_service_account_id=owner["id"], path=self.db
-        )
+    def _credential(self, *, expires_at: int | None = None, plan_id: str | None = None, **plan_kwargs):
+        app = service_app("hotpath-app", path=self.db, plan_id=plan_id, **plan_kwargs)
         credential = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app["id"],
             app_id=app["id"],
             hash=f"hash-{app['id']}",
             prefix="opk_test",
-            profile_id=profile_id,
             expires_at=expires_at,
             path=self.db,
         )
         return app, credential
 
-    def test_auth_observes_profile_app_and_credential_changes_on_next_lookup(self) -> None:
-        p1 = admin_store.create_profile("one", _profile("one", ["openai.chat"]), path=self.db)
-        p2 = admin_store.create_profile("two", _profile("two", ["openai.images"]), path=self.db)
-        app, credential = self._credential(profile_id=p1["id"])
+    def test_auth_observes_plan_app_and_credential_changes_on_next_lookup(self) -> None:
+        chat = store_plan("chat only", path=self.db, caps=("chat",))
+        images = store_plan("images only", path=self.db, caps=("image",))
+        app, credential = self._credential(plan_id=chat["id"])
         key_hash = credential["hash"]
 
         identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
-        self.assertEqual(identity.profile.protocols, frozenset({"openai.chat"}))
-        admin_store.update_profile(
-            p1["id"],
-            profile_doc=_profile("one", ["openai.audio"]),
-            path=self.db,
-        )
+        self.assertEqual(set(identity.access.app_plan.can_use), {"chat"})
+        admin_store.update_access_plan(chat["id"], plan_document("chat only", caps=("chat", "speech")), path=self.db)
         identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
-        self.assertEqual(identity.profile.protocols, frozenset({"openai.audio"}))
+        self.assertEqual(set(identity.access.app_plan.can_use), {"chat", "speech"})
 
-        admin_store.update_app(app["id"], default_profile_id=p2["id"], path=self.db)
-        # Credential-level profile remains authoritative until cleared.
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(key_hash, path=self.db).profile.id,
-            "one",
-        )
-        with admin_store._conn(self.db) as conn:
-            conn.execute("UPDATE credentials SET profile_id = NULL WHERE id = ?", (credential["id"],))
-            conn.commit()
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(key_hash, path=self.db).profile.id,
-            "two",
-        )
+        admin_store.update_app(app["id"], access_plan=images["id"], path=self.db)
+        identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertEqual(identity.access.app_plan.id, images["id"])
+        admin_store.update_app(app["id"], access_plan="person", path=self.db)
+        identity = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertEqual(identity.access.app_plan.id, identity.access.person_plan.id)
 
         admin_store.disable_app(app["id"], path=self.db)
-        self.assertIsNone(runtime_identity_for_app_credential_hash(key_hash, path=self.db))
+        self.assertEqual(runtime_identity_for_app_credential_hash(key_hash, path=self.db).denial, "app_disabled")
         admin_store.enable_app(app["id"], path=self.db)
+        self.assertIsNone(runtime_identity_for_app_credential_hash(key_hash, path=self.db).denial)
         admin_store.revoke_credential(credential["id"], path=self.db)
         self.assertIsNone(runtime_identity_for_app_credential_hash(key_hash, path=self.db))
 
-    def test_auth_observes_expiry_and_inherited_mapping_changes(self) -> None:
-        p1 = admin_store.create_profile("mapped one", _profile("mapped-one", ["openai.chat"]), path=self.db)
-        p2 = admin_store.create_profile("mapped two", _profile("mapped-two", ["openai.images"]), path=self.db)
+    def test_auth_observes_expiry_on_next_lookup(self) -> None:
         _, expires_soon = self._credential(expires_at=101)
         with patch.object(admin_runtime.time, "time", return_value=100):
             self.assertIsNotNone(
@@ -203,68 +173,22 @@ class RequestHotpathTests(unittest.TestCase):
                 runtime_identity_for_app_credential_hash(expires_soon["hash"], path=self.db)
             )
 
+    def test_auth_observes_the_accountable_persons_plan_and_state_on_next_lookup(self) -> None:
         app, credential = self._credential()
-        first = admin_store.create_runtime_profile_mapping(
-            source_kind="all_users", source_value="*", profile_id=p1["id"], path=self.db
-        )
-        resolver = lambda _app: admin_store.resolve_runtime_profile_mapping(
-            email="person@example.test", gateway_role="member", path=self.db
-        )
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(
-                credential["hash"], inherited_profile_id_for_app=resolver, path=self.db
-            ).profile.id,
-            "mapped-one",
-        )
-        admin_store.disable_runtime_profile_mapping(first["id"], path=self.db)
-        admin_store.create_runtime_profile_mapping(
-            source_kind="all_users", source_value="*", profile_id=p2["id"], path=self.db
-        )
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(
-                credential["hash"], inherited_profile_id_for_app=resolver, path=self.db
-            ).profile.id,
-            "mapped-two",
-        )
-
-    def test_auth_inherited_profile_mapping_tracks_live_role_revocation(self) -> None:
-        p1 = admin_store.create_profile("owner mapped", _profile("owner-map", ["openai.chat"]), path=self.db)
-        p2 = admin_store.create_profile("fallback mapped", _profile("fallback-map", ["openai.images"]), path=self.db)
-        owner = admin_store.create_service_account("role-mapped-owner", path=self.db)
-        app, credential = self._credential(owner=owner)
-        admin_store.create_runtime_profile_mapping(
-            source_kind="gateway_role", source_value="owner", profile_id=p1["id"], path=self.db
-        )
-        admin_store.create_runtime_profile_mapping(
-            source_kind="all_users", source_value="*", profile_id=p2["id"], path=self.db
-        )
-        assignment = admin_store.assign_admin_role(
-            role="owner", subject_kind="service_account", subject_id=owner["id"], path=self.db
-        )
-
-        def resolve_from_live_role(_app):
-            roles = admin_store.list_admin_roles(
-                subject_kind="service_account", subject_id=owner["id"], path=self.db
-            )
-            role = roles[-1]["role"] if roles else "none"
-            return admin_store.resolve_runtime_profile_mapping(
-                email="person@example.test", gateway_role=role, path=self.db
-            )
-
-        kwargs = {"inherited_profile_id_for_app": resolve_from_live_role, "path": self.db}
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(credential["hash"], **kwargs).profile.id,
-            "owner-map",
-        )
-        admin_store.revoke_admin_role(assignment["id"], path=self.db)
-        self.assertEqual(
-            runtime_identity_for_app_credential_hash(credential["hash"], **kwargs).profile.id,
-            "fallback-map",
-        )
+        key_hash = credential["hash"]
+        person = admin_store.get_app(app["id"], path=self.db)["owner_user_id"]
+        before = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertIsNotNone(before.access.person_plan)
+        narrower = store_plan("narrower", path=self.db, caps=("chat",))
+        accounts.change_person(person, "test", path=self.db, plan_id=narrower["id"])
+        after = runtime_identity_for_app_credential_hash(key_hash, path=self.db)
+        self.assertEqual(after.access.person_plan.id, narrower["id"])
+        # Disabling a person revokes the keys of the Apps they answer for.
+        accounts.change_person(person, "test", path=self.db, disabled=True)
+        self.assertIsNone(runtime_identity_for_app_credential_hash(key_hash, path=self.db))
 
     def test_touch_failure_rolls_back_and_later_store_writes_remain_visible(self) -> None:
-        p1 = admin_store.create_profile("touch profile", _profile("touch", ["openai.chat"]), path=self.db)
-        app, credential = self._credential(profile_id=p1["id"])
+        app, credential = self._credential()
         def fail_after_write(cred_id: str, *, connection, **kwargs) -> bool:
             connection.execute(
                 "UPDATE credentials SET last_used_at = 123 WHERE id = ?", (cred_id,)
@@ -333,12 +257,12 @@ class RequestHotpathTests(unittest.TestCase):
         return identity, [s for s in statements if s.lstrip().upper().startswith("SELECT")]
 
     def test_session_app_guard_adds_no_query_to_identity_resolution(self) -> None:
-        profile = admin_store.create_profile("guard", _profile("guard", ["openai.chat"]), path=self.db)
-        _, credential = self._credential(profile_id=profile["id"])
+        _, credential = self._credential()
         identity, selects = self._traced_resolution(credential["hash"])
         self.assertIsNotNone(identity)
-        # The credential (with its session-App flag), its App, and its profile.
-        self.assertEqual(len(selects), 3, selects)
+        # One statement reads the credential (with its session-App flag), its
+        # App, the accountable person and both plans: one snapshot (design §2.13).
+        self.assertEqual(len(selects), 1, selects)
 
     def test_a_session_app_credential_still_never_authenticates(self) -> None:
         import sqlite3

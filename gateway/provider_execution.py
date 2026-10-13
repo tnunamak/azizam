@@ -26,7 +26,7 @@ from gateway.backends.llm_execution import (
     sanitize_litellm_execution_request,
     send_llm_execution_request,
 )
-from gateway.policy import AppProfile, PolicyRequest, evaluate
+from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt
 from gateway.litellm_substrate import litellm_provider_model_lookup
 
@@ -498,32 +498,31 @@ def _resolved_upstream_model(provider: providers.ProviderRef, model: str) -> str
 
 async def execute_paid_litellm(
     request: Request, *, request_path: str, body: Mapping[str, Any],
-    provider: providers.ProviderRef, profile: AppProfile,
+    provider: providers.ProviderRef, identity: Any,
     runtime: LiteLlmRuntimeConfig, ledger_path: Path,
     admin_db_path: Path | None = None,
-    app_id: str | None = None, app_name: str | None = None,
-    delegated: bool = False, paid_fallback: bool = False,
+    paid_fallback: bool = False,
     requested_model: str | None = None,
-    identity: Any = None,
 ) -> Response:
+    """``identity`` carries the request's two plans, its App and the App's
+    accountable person; each of them is needed to admit and charge the call."""
     model = str(body.get("model") or "")
+    access, app_id, app_name = identity.access, identity.app_id, identity.name
     protocol, intent = (
         ("openai.embeddings", "text.embeddings") if request_path == "/v1/embeddings"
         else ("openai.chat", "text.completions" if request_path == "/v1/completions" else "chat.completions")
     )
     receipt = RouteReceipt(
         protocol=protocol, intent=intent, path=request_path, backend=provider.id,
-        app_profile=profile.id, app_id=app_id, api_key_name=app_name,
+        app_profile="+".join(access.plan_ids) or None, app_id=app_id, api_key_name=app_name,
         requested_model=requested_model or model, resolved_model=model,
-        stream=bool(body.get("stream")), visibility=profile.status_visibility.level,
+        stream=bool(body.get("stream")), visibility=access.receipt_detail,
     )
     providers.attach_cost_to_receipt(receipt, providers.Cost(None, "unknown", provider.id))
     if paid_fallback:
         receipt.add_fallback_reason("explicit alias selected a paid fallback")
     async with ReceiptLifecycleOwner(receipt) as owner:
         try:
-            if delegated:
-                raise providers.RemoteProviderNotAllowed("Paid providers require a gateway App key and access plan")
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
             resolved_upstream_model = _resolved_upstream_model(provider, model)
@@ -533,8 +532,7 @@ async def execute_paid_litellm(
             })
             policy_request = PolicyRequest(protocol=protocol, intent=intent, model=model)
             decision = category_enforcement.apply(
-                identity if identity is not None else SimpleNamespace(person_id=None, app_id=app_id),
-                policy_request, evaluate(profile, policy_request))
+                identity, policy_request, evaluate(access, policy_request))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:
@@ -579,7 +577,7 @@ async def execute_paid_litellm(
             from gateway.provider_reconciliation import reconcile_pending_generations
             await reconcile_pending_generations(provider, path=ledger_path)
             reservation = providers.reserve_provider_spend(
-                profile, provider, estimate, path=ledger_path,
+                identity, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
                 request_timeout_s=execution.read_timeout,
             )

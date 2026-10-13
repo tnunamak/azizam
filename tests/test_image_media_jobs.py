@@ -15,12 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs  # noqa: E402
 
 
 class _StubJsonRequest:
     method = "POST"
-    scope: dict[str, Any] = {}
+    # The auth context the middleware would have put on the request.
+    scope: dict[str, Any] = {"auth_context": access_context()}
     query_params: dict[str, str] = {}
 
     def __init__(
@@ -109,13 +111,13 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         first, digest, kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_one",
         )
         second, _, second_kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_two",
         )
@@ -132,7 +134,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         request_id, digest, kind = proxy._image_media_job_request_id(
             body=body,
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
             idempotency_key=None,
             fallback_request_id="req_unique",
         )
@@ -229,7 +231,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             job.job_id,
             body=body,
             request=request,  # type: ignore[arg-type]
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
         )
         return job.job_id
 
@@ -323,7 +325,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         }
         scheduled: list[str] = []
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "_schedule_image_media_job",
             lambda job_id: scheduled.append(job_id) or True,
@@ -345,7 +347,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         assert private_payload is not None
         self.assertEqual(private_payload["body"]["prompt"], "private prompt")
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "_schedule_image_media_job",
             lambda job_id: scheduled.append(job_id) or True,
@@ -364,7 +366,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         }
 
         async def submit() -> str:
-            with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+            with authenticated(), patch.object(
                 proxy, "_schedule_image_media_job", lambda job_id: True,
             ):
                 response = await proxy.gateway_image_generations_media_job(
@@ -391,7 +393,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         }
         scheduled: list[str] = []
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "_schedule_image_media_job",
             lambda job_id: scheduled.append(job_id) or True,
@@ -416,7 +418,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "prompt": "private prompt",
         }
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "COMFY_ENABLED",
             False,
@@ -454,7 +456,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "prompt": "private prompt",
         }
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "MEDIA_JOB_ADMISSION_CFG",
             {"max_queue_depth": 1, "queue_retry_after_seconds": 9},
@@ -489,7 +491,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "MEDIA_JOB_ADMISSION_CFG",
             {},
@@ -530,7 +532,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "media_job_admission": {},
         }
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "COMFY_ENABLED",
             True,
@@ -568,7 +570,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "prompt": "private prompt",
         }
 
-        with patch.object(proxy, "AUTH_ENABLED", False), patch.object(
+        with authenticated(), patch.object(
             proxy,
             "MEDIA_JOB_ADMISSION_CFG",
             {
@@ -593,7 +595,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(media_jobs.recent(path=self.db)), 3)
 
     async def test_generic_media_jobs_rejects_unsupported_executable_intent(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
                 payload={
@@ -620,6 +622,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_content_route_returns_openai_image_payload_for_succeeded_job(self) -> None:
         job = media_jobs.MediaJob(
+            app_id="app_test",  # the App the test key belongs to
             intent="image.generate",
             request_id="req_done",
             status=media_jobs.STATUS_SUCCEEDED,
@@ -633,7 +636,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         media_jobs.create(job, path=self.db)
 
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with authenticated():
             response = await proxy.gateway_media_job_content(
                 job.job_id,
                 _StubJsonRequest({}),  # type: ignore[arg-type]

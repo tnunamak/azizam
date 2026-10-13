@@ -12,7 +12,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
+from tests.support.access import access_context, auth_identity, store_plan  # noqa: E402
+from gateway import accounts, admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash
 from gateway.api import create_gateway_router
@@ -26,8 +27,10 @@ def owners(tmp_path, monkeypatch):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     user = admin_store.upsert_oidc_user("fixture", "azizam-user", path=db)
-    first = admin_store.create_app("Azizam one", kind="personal", owner_user_id=user["id"], path=db)
-    second = admin_store.create_app("Azizam two", kind="personal", owner_user_id=user["id"], path=db)
+    accounts.initialize(db)
+    accounts.change_person(user["id"], "test", path=db, plan_id=store_plan("Everything", path=db)["id"])
+    first = admin_store.create_app("Azizam one", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
+    second = admin_store.create_app("Azizam two", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     credentials = []
     for app, suffix in ((first, "old"), (first, "new"), (second, "other")):
         credentials.append(admin_store.create_credential_hash(
@@ -39,7 +42,6 @@ def owners(tmp_path, monkeypatch):
     monkeypatch.setattr(admin_store, "DB_PATH", db)
     monkeypatch.setattr(proxy, "ADMIN_STORE", SimpleNamespace(path=db))
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "images")
-    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
     contexts = [proxy.AuthContext(identity=runtime_identity_for_app_credential_hash(c["hash"], path=db)) for c in credentials]
     store = custom_voices.VoiceStore(tmp_path / "voices", legacy_owners=lambda owner: ownership.credential_owner_keys(owner, path=db))
     return SimpleNamespace(db=db, user=user, first=first, second=second, credentials=credentials,
@@ -59,7 +61,7 @@ def test_owner_mapping_and_namespaces(owners):
     assert ownership.owner_key(old) == ownership.owner_key(new) == f"app:{owners.first['id']}"
     assert ownership.owner_key(other) != ownership.owner_key(old)
     assert ownership.principal_key("app", "same") != ownership.principal_key("user", "same")
-    assert ownership.owner_key(proxy.NO_AUTH_CONTEXT) is None
+    assert ownership.owner_key(proxy.NO_AUTH_CONTEXT) is None  # no identity: the unowned namespace
     assert custom_voices.owner_dir_name(None) == "local"
     service = admin_store.ensure_service_account("azizam-fixture", path=owners.db)
     credential = admin_store.create_credential_hash(
@@ -186,13 +188,13 @@ def test_unknown_credential_and_local_do_not_share_scoped_assets(owners):
     unknown = proxy.AuthContext(identity=SimpleNamespace(key_hash="sha256:unmapped"))
     assert ownership.readable_owner_keys(unknown) == ("sha256:unmapped",)
     asset = proxy.store_image_bytes(b"Azizam local image")
-    assert proxy._asset_access_allowed(asset, proxy.NO_AUTH_CONTEXT)
+    assert proxy._asset_access_allowed(asset, proxy.NO_AUTH_CONTEXT)  # unowned assets belong to no identity
     assert not proxy._asset_access_allowed(asset, unknown)
     assert not proxy._asset_access_allowed(asset, owners.contexts[0])
 
 
 def test_authenticated_current_key_is_a_read_alias_without_a_registry_row(owners):
-    auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="Azizam imported", key_hash="sha256:fixture-imported", app_id="fixture-imported-app"))
+    auth = proxy.AuthContext(identity=auth_identity(name="Azizam imported", key_hash="sha256:fixture-imported", app_id="fixture-imported-app"))
     aliases = ownership.readable_owner_keys(auth)
     assert aliases == ("app:fixture-imported-app", "sha256:fixture-imported")
     asset = proxy.store_image_bytes(b"Azizam imported media")

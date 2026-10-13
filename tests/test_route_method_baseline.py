@@ -31,6 +31,7 @@ Everything else, including every API 405 and Allow header, must be equal.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,12 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+# The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
+# mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
+ACCESS_PLAN_API_PREFIXES = (
+    "/admin/api/access-plans", "/admin/api/access/", "/admin/api/profiles", "/admin/api/runtime-profile-mappings",
+    "/admin/api/policy/", "/admin/api/settings/lan-placeholder-keys", "/admin/api/operator/user-access-defaults",
+)
 MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
@@ -77,9 +84,26 @@ def _flat(routing: dict) -> dict:
     return {f"{method} {path}": outcome for path, row in routing.items() for method, outcome in row.items()}
 
 
+def _now_needs_a_key(old: str | None, new: str | None) -> bool:
+    """A method nothing serves answers a caller with no key 401 (key_required), not 404."""
+    if old is None or new is None:
+        return False
+    return re.sub(r"none: (404|405)[^;]*", "none: 401 application/json", old, count=1) == new
+
+
+def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
+    """Same as the API-client outcome, except a caller with no key now gets 401, not 404."""
+    old_any, new_any = _any_accept(old), _any_accept(new)
+    if old_any.get("none", "").startswith(("404", "405")) and new_any.get("none", "").startswith("401"):
+        old_any["none"] = new_any["none"]
+    return old_any == new_any
+
+
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
+    if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
+        return "access-plans"
     if ui_routes.classify(path) is not None:
         return "ui"
     if path in DELETED_PATHS or ui_routes.first_segment(path) in DELETED_SEGMENTS:
@@ -149,6 +173,10 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue
         if kind == "deleted" and (route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue
+        if kind == "access-plans":
+            continue  # the access plan API replaced /admin/api/profiles
+        if _now_needs_a_key(old.get(key), new.get(key)):
+            continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
                 f"{m} /setup/console" for m in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS")}:
             continue
@@ -187,9 +215,11 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "mcp_oauth"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth"}:
             continue
-        if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
+        if _now_needs_a_key(old.get(key), new.get(key)):
+            continue
+        if kind == "html404" and _now_needs_a_key_any(old.get(key), new.get(key)):
             continue
         if kind == "showcase" and key not in new:
             continue

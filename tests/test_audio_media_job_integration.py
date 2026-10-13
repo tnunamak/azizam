@@ -15,12 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs  # noqa: E402
 
 
 class _StubJsonRequest:
     method = "POST"
-    scope: dict[str, Any] = {}
+    # The auth context the middleware would have put on the request.
+    scope: dict[str, Any] = {"auth_context": access_context()}
     query_params: dict[str, str] = {}
 
     def __init__(
@@ -49,7 +51,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(media_jobs, "DB_PATH", self.db),
             patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.payload_dir),
-            patch.object(proxy, "AUTH_ENABLED", False),
+            authenticated(),
         ]
         for p in self.patches:
             p.start()
@@ -269,6 +271,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         asset_id = "aud_" + "b" * 64
         job = media_jobs.MediaJob(
+            app_id="app_test",  # the App the test key belongs to
             intent="music.generate",
             request_id="aud_done",
             status=media_jobs.STATUS_SUCCEEDED,
@@ -350,7 +353,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             job.job_id,
             body=body,
             request=_StubJsonRequest(body),  # type: ignore[arg-type]
-            auth_context=proxy.NO_AUTH_CONTEXT,
+            auth_context=access_context(),
         )
         scheduled: list[str] = []
 
@@ -426,7 +429,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     job.job_id,
                     body=body,
                     request=_StubJsonRequest(body),
-                    auth_context=proxy.NO_AUTH_CONTEXT,
+                    auth_context=access_context(),
                 )
                 self.assertIsNotNone(
                     proxy._load_audio_media_job_payload(job.job_id)

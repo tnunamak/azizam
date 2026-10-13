@@ -121,9 +121,10 @@ def test_sec10_post_logout_revokes_replayed_legacy_and_registered_cookies(oidc_g
     cfg = proxy.ADMIN_OIDC_CONFIG
     user = admin_store.upsert_oidc_user(cfg.issuer, "logout-owner", path=oidc_gateway)
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"], path=oidc_gateway)
-    if access_row:
+    if not access_row:
+        # Every person has an access row; the cookie must still be revoked without one.
         with accounts.connection(oidc_gateway) as conn:
-            conn.execute("INSERT INTO account_access(user_id) VALUES(?)", (user["id"],))
+            conn.execute("DELETE FROM account_access WHERE user_id = ?", (user["id"],))
     session = session_from_claims({"sub": user["id"], "email": ""}, role="owner", cookie=cfg.cookie)
     if registered:
         accounts.register_session(user["id"], session.session_id, int(session.expires_at), path=oidc_gateway)

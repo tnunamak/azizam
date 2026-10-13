@@ -13,6 +13,7 @@ It intentionally keeps two planes separate:
 
 from __future__ import annotations
 
+import functools
 import secrets
 import json
 import time
@@ -34,8 +35,8 @@ from gateway.admin_oidc import (
     load_oidc_config,
     validate_oidc_display_name,
 )
-from gateway.policy import DEFAULT_PROFILE, default_profile_id, is_default_profile_id
-from gateway.profiles import ProfileLoadError, load_profile
+from gateway.access_plans import PERSON, PlanError, plan_from_document, plan_summary
+from gateway.policy import EffectiveAccess
 from gateway.litellm_substrate import write_litellm_config_artifact
 from gateway.provider_admin import (
     provider_admin_setting_from_store,
@@ -45,14 +46,12 @@ from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 
 APP_KEY_PREFIX = "opk_"
 ADMIN_KEY_PREFIX = "oak_"
-DEFAULT_SERVICE_ACCOUNT = "gateway-admin"
 ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 SERVICE_ACCOUNT_SESSION_PREFIX = "service_account:"
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
 SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
 MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
-USER_ACCESS_DEFAULTS_SETTING_KEY = "user_access_defaults"
 OIDC_PROVIDER_SETTING_KEY = "oidc_provider_config"
 SERVICE_REGISTRY_SETTING_KEY = service_registry.SERVICE_REGISTRY_SETTING_KEY
 EXTENSION_PACKAGE_INDEX_SETTING_KEY = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
@@ -162,25 +161,13 @@ def _copy_override_value(value: Mapping[str, Any]) -> dict[str, Any]:
     return copied
 
 
-def _stored_profile_id(value: Any) -> str | None:
-    """Return a stored Profile id, treating the built-in default as inherited."""
-    profile_id = str(value or "").strip()
-    if not profile_id or is_default_profile_id(profile_id):
-        return None
-    return profile_id
-
-
-def _profile_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+def _plan_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """An access plan as the admin API returns it: document plus summary."""
     out = dict(record)
-    profile = out.get("profile")
-    if isinstance(profile, Mapping):
-        out["protocols"] = profile.get("protocols") or []
-        out["workflows"] = profile.get("workflows") or []
-        visibility = profile.get("status_visibility") or {}
-        if isinstance(visibility, Mapping):
-            out["status_visibility"] = visibility.get("level") or "basic"
-        else:
-            out["status_visibility"] = "basic"
+    try:
+        out["summary"] = plan_summary(plan_from_document(record["plan"], plan_id=str(record["id"])))
+    except PlanError:
+        out["summary"] = None
     return out
 
 
@@ -293,23 +280,36 @@ class AdminSQLiteStore:
             user.setdefault("name", user.get("display_name"))
         return users
 
-    def _enrich_app(self, record: dict[str, Any], profiles: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """Annotate an app record with resolved effective profile fields.
+    def _enrich_app(self, record: dict[str, Any], listing: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+        """Annotate an App with its assignment and accountable person.
 
-        ``profiles`` holds the profiles of a whole listing, read in one query.
+        ``listing`` holds the owners, person plans and plans of a whole
+        listing, read in one query each.
         """
-        pid = record.get("default_profile_id")
-        if pid:
-            profile = admin_store.get_profile(str(pid), path=self.path) if profiles is None else profiles.get(str(pid))
-            record["effective_profile_id"] = str(pid)
-            record["effective_profile_name"] = (
-                str(profile.get("name") or "") if profile else None
-            )
-            record["effective_profile_source"] = "app_default"
+        assignment = record.get("access_plan")
+        owner_id = str(record.get("owner_user_id") or "")
+        if listing is None:
+            owner = admin_store.get_user(owner_id, path=self.path) if owner_id else None
         else:
-            record["effective_profile_id"] = default_profile_id()
-            record["effective_profile_name"] = default_profile_id()
-            record["effective_profile_source"] = "fallback"
+            owner = listing["users"].get(owner_id)
+        record["accountable_person"] = (
+            {"id": owner_id, "name": owner.get("display_name") or owner.get("email")} if owner else None
+        )
+        if assignment != PERSON:
+            plan_id = assignment
+        elif listing is None:
+            plan_id = admin_store.person_plan_id(owner_id, path=self.path)
+        else:
+            plan_id = listing["person_plans"].get(owner_id)
+        if not plan_id:
+            plan = None
+        elif listing is None:
+            plan = admin_store.get_access_plan(str(plan_id), path=self.path)
+        else:
+            plan = listing["plans"].get(str(plan_id))
+        record["same_as_person"] = assignment == PERSON
+        record["access_plan_name"] = plan.get("name") if plan else None
+        record["effective_access_plan_id"] = plan.get("id") if plan else None
         return record
 
     def _visible_admin_app(self, record: Mapping[str, Any], owners: Mapping[str, Any] | None = None) -> bool:
@@ -327,15 +327,16 @@ class AdminSQLiteStore:
 
     def list_apps(self) -> list[dict[str, Any]]:
         records = admin_store.list_apps(path=self.path)
-        owners = admin_store.get_users(
-            [str(r.get("owner_user_id")) for r in records if r.get("kind") == "personal" and r.get("owner_user_id")],
-            path=self.path)
-        profiles = admin_store.get_profiles(
-            [str(r["default_profile_id"]) for r in records if r.get("default_profile_id")], path=self.path)
+        owner_ids = [str(r["owner_user_id"]) for r in records if r.get("owner_user_id")]
+        listing = {
+            "users": admin_store.get_users(owner_ids, path=self.path),
+            "person_plans": admin_store.person_plan_ids(owner_ids, path=self.path),
+            "plans": {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=self.path)},
+        }
         return [
-            self._enrich_app(r, profiles)
+            self._enrich_app(r, listing)
             for r in records
-            if self._visible_admin_app(r, owners)
+            if self._visible_admin_app(r, listing["users"])
         ]
 
     def get_app(self, app_id: str) -> dict[str, Any] | None:
@@ -345,39 +346,37 @@ class AdminSQLiteStore:
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
+        """Create an App with its accountable person and its access plan.
+
+        ``access_plan`` is required: a plan id, or ``"person"`` for "Same as
+        its person". The accountable person defaults to the signed-in person,
+        or, for an admin key, to the gateway owner.
+        """
         name = str(data.get("name") or "").strip()
         if not name:
             raise ValueError("app name is required")
         kind = str(data.get("kind") or "service")
-        profile_id = _stored_profile_id(data.get("profile_id"))
-        owner_user_id = data.get("owner_user_id")
-        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
-            raise ValueError(f"profile {profile_id!r} not found")
-        if kind == "personal" or owner_user_id:
-            if not owner_user_id:
-                raise ValueError("personal apps require owner_user_id")
-            if admin_store.get_user(str(owner_user_id), path=self.path) is None:
-                raise ValueError(f"user {owner_user_id!r} not found")
-            record = admin_store.create_app(
-                name,
-                kind="personal",
-                owner_user_id=str(owner_user_id),
-                default_profile_id=profile_id,
-                path=self.path,
+        owner_user_id = str(data.get("owner_user_id") or "").strip()
+        if not owner_user_id and actor.actor_kind == "user":
+            owner_user_id = actor.audit_actor_id
+        if not owner_user_id:
+            owner_user_id = admin_store.instance_owner_id(path=self.path) or ""
+        if not owner_user_id:
+            raise ValueError(
+                "an app needs a person who answers for it: pass owner_user_id, or create the owner account first"
             )
-        else:
-            svc = admin_store.ensure_service_account(
-                str(data.get("owner_service_account_name") or DEFAULT_SERVICE_ACCOUNT),
-                description="Default owner for shared Apps created from the admin dashboard.",
-                path=self.path,
-            )
-            record = admin_store.create_app(
-                name,
-                kind="service",
-                owner_service_account_id=svc["id"],
-                default_profile_id=profile_id,
-                path=self.path,
-            )
+        if admin_store.get_user(owner_user_id, path=self.path) is None:
+            raise ValueError(f"user {owner_user_id!r} not found")
+        access_plan = str(data.get("access_plan") or "").strip()
+        if not access_plan:
+            raise ValueError("access_plan is required: an access plan id or \"person\"")
+        record = admin_store.create_app(
+            name,
+            kind=kind,
+            owner_user_id=owner_user_id,
+            access_plan=access_plan,
+            path=self.path,
+        )
         admin_store.record_audit(
             "app.create",
             actor_kind=actor.actor_kind,
@@ -385,7 +384,7 @@ class AdminSQLiteStore:
             actor_label=actor.actor_label,
             target_kind="app",
             target_id=record["id"],
-            metadata={"name": name, "kind": record.get("kind")},
+            metadata={"name": name, "kind": record.get("kind"), "access_plan": access_plan},
             path=self.path,
         )
         return self._enrich_app(record)
@@ -401,19 +400,16 @@ class AdminSQLiteStore:
             name = str(data.get("name") or "").strip()
             if not name:
                 raise ValueError("app name is required")
-
-        profile_key_present = "default_profile_id" in data or "profile_id" in data
-        profile_value = data.get("default_profile_id", data.get("profile_id"))
-        profile_id = _stored_profile_id(profile_value)
-        clear_profile = profile_key_present and profile_id is None
-        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
-            raise ValueError(f"profile {profile_id!r} not found")
+        access_plan = None
+        if "access_plan" in data:
+            access_plan = str(data.get("access_plan") or "").strip()
+            if not access_plan:
+                raise ValueError("an app's access plan cannot be cleared; turn the app off instead")
 
         record = admin_store.update_app(
             app_id,
             name=name,
-            default_profile_id=profile_id,
-            clear_default_profile=clear_profile,
+            access_plan=access_plan,
             path=self.path,
         )
         admin_store.record_audit(
@@ -423,7 +419,7 @@ class AdminSQLiteStore:
             actor_label=actor.actor_label,
             target_kind="app",
             target_id=app_id,
-            metadata={"name": name, "default_profile_id": profile_id},
+            metadata={"name": name, "access_plan": access_plan},
             path=self.path,
         )
         return self._enrich_app(record) if record is not None else None
@@ -466,109 +462,60 @@ class AdminSQLiteStore:
         )
         return self._enrich_app(record) if record is not None else None
 
-    def list_profiles(self) -> list[dict[str, Any]]:
-        return [
-            _profile_summary(record)
-            for record in admin_store.list_profiles(path=self.path)
-        ]
+    def list_access_plans(self) -> list[dict[str, Any]]:
+        out = []
+        for record in admin_store.list_access_plans(path=self.path):
+            plan = _plan_record(record)
+            plan["used_by"] = self.access_plan_users(record["id"])
+            out.append(plan)
+        return out
 
-    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
-        return admin_store.get_profile(profile_id, path=self.path)
+    def access_plan_users(self, plan_id: str) -> dict[str, Any]:
+        with admin_store._conn(self.path) as conn:
+            return admin_store.access_plan_users(conn, plan_id)
 
-    def create_profile(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]:
-        profile_doc = data.get("profile") if "profile" in data else data
-        if not isinstance(profile_doc, Mapping):
-            raise ValueError("profile must be a mapping")
-        profile_id = str(profile_doc.get("id") or data.get("id") or "").strip()
-        name = str(data.get("name") or data.get("label") or profile_id).strip()
-        if not name:
-            raise ValueError("profile name is required")
-        record = admin_store.create_profile(
-            name,
-            profile_doc,
-            description=data.get("description"),
-            path=self.path,
-        )
+    def get_access_plan(self, plan_id: str) -> dict[str, Any] | None:
+        record = admin_store.get_access_plan(plan_id, path=self.path)
+        return _plan_record(record) if record is not None else None
+
+    def _audit_plan(self, action: str, actor: AdminContext, plan_id: str, name: Any) -> None:
         admin_store.record_audit(
-            "profile.create",
+            action,
             actor_kind=actor.actor_kind,
             actor_id=actor.audit_actor_id,
             actor_label=actor.actor_label,
-            target_kind="profile",
-            target_id=record["id"],
+            target_kind="access_plan",
+            target_id=plan_id,
             metadata={"name": name},
             path=self.path,
         )
-        return _profile_summary(record)
 
-    def update_profile(
-        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    def create_access_plan(self, *, data: Mapping[str, Any], actor: AdminContext) -> dict[str, Any]:
+        try:
+            record = admin_store.create_access_plan(data, path=self.path)
+        except PlanError as exc:
+            raise ValueError(str(exc)) from exc
+        self._audit_plan("access_plan.create", actor, record["id"], record["name"])
+        return _plan_record(record)
+
+    def update_access_plan(
+        self, *, plan_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
-        if admin_store.get_profile(profile_id, path=self.path) is None:
-            return None
-
-        profile_doc = None
-        if "profile" in data:
-            raw_profile = data.get("profile")
-            if not isinstance(raw_profile, Mapping):
-                raise ValueError("profile must be a mapping")
-            try:
-                load_profile(raw_profile)
-            except ProfileLoadError as exc:
-                raise ValueError(str(exc)) from exc
-            profile_doc = raw_profile
-
-        name = None
-        if "name" in data or "label" in data:
-            name = str(data.get("name") or data.get("label") or "").strip()
-            if not name:
-                raise ValueError("profile name is required")
-
-        record = admin_store.update_profile(
-            profile_id,
-            name=name,
-            description=(
-                str(data.get("description"))
-                if data.get("description") is not None
-                else None
-            ),
-            profile_doc=profile_doc,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "profile.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="profile",
-            target_id=profile_id,
-            metadata={"name": name},
-            path=self.path,
-        )
-        return _profile_summary(record) if record is not None else None
-
-    def delete_profile(
-        self, *, profile_id: str, actor: AdminContext
-    ) -> dict[str, Any] | None:
-        record = admin_store.delete_profile(profile_id, path=self.path)
+        try:
+            record = admin_store.update_access_plan(plan_id, data, path=self.path)
+        except PlanError as exc:
+            raise ValueError(str(exc)) from exc
         if record is None:
             return None
-        admin_store.record_audit(
-            "profile.delete",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="profile",
-            target_id=profile_id,
-            metadata={
-                "name": record.get("name"),
-                "cleared_revoked_credential_ids": record["cleared_revoked_credential_ids"],
-            },
-            path=self.path,
-        )
-        return _profile_summary(record)
+        self._audit_plan("access_plan.update", actor, plan_id, record["name"])
+        return _plan_record(record)
+
+    def delete_access_plan(self, *, plan_id: str, actor: AdminContext) -> dict[str, Any] | None:
+        record = admin_store.delete_access_plan(plan_id, path=self.path)
+        if record is None:
+            return None
+        self._audit_plan("access_plan.delete", actor, plan_id, record.get("name"))
+        return _plan_record(record)
 
     def list_credentials(self) -> list[dict[str, Any]]:
         return [
@@ -583,15 +530,11 @@ class AdminSQLiteStore:
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
         api_key = generate_app_api_key()
-        profile_id = _stored_profile_id(data.get("profile_id"))
-        if profile_id and admin_store.get_profile(profile_id, path=self.path) is None:
-            raise ValueError(f"profile {profile_id!r} not found")
         record = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_id,
             hash=hash_api_key(api_key),
             prefix=_key_prefix(api_key),
-            profile_id=profile_id,
             display_name=str(data.get("label") or data.get("name") or "API key"),
             scopes=data.get("scopes") if isinstance(data.get("scopes"), list) else None,
             created_by=actor.audit_actor_id if actor.actor_kind == "user" else "",
@@ -666,9 +609,6 @@ class AdminSQLiteStore:
         out["service_account"] = service_account["name"]
         return out
 
-    def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
-        return admin_store.list_runtime_profile_mappings(path=self.path)
-
     def setting_revision(self, key: str) -> str:
         return admin_store.operator_setting_revision(
             admin_store.get_operator_setting(key, path=self.path)
@@ -684,7 +624,6 @@ class AdminSQLiteStore:
             path=self.path,
         )
         return {
-            "user_access_defaults": self.user_access_defaults(),
             "service_availability": (
                 service_setting["value"] if service_setting is not None else {}
             ),
@@ -694,48 +633,6 @@ class AdminSQLiteStore:
             "extension_package_index": self.get_extension_package_index(),
             "revisions": {MEDIA_JOB_ADMISSION_OVERRIDES_KEY: admin_store.operator_setting_revision(media_setting)},
         }
-
-    def user_access_defaults(self) -> dict[str, bool]:
-        setting = admin_store.get_operator_setting(
-            USER_ACCESS_DEFAULTS_SETTING_KEY,
-            path=self.path,
-        )
-        value = setting["value"] if setting is not None else {}
-        if not isinstance(value, Mapping):
-            value = {}
-        self_service = _bool_setting(value.get("self_service_apps"), True)
-        return {
-            "self_service_apps": self_service,
-            "auto_create_personal_app": _bool_setting(
-                value.get("auto_create_personal_app"),
-                self_service,
-            ),
-        }
-
-    def update_user_access_defaults(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, bool]:
-        value = self.user_access_defaults()
-        for key in ("self_service_apps", "auto_create_personal_app"):
-            if key in data:
-                value[key] = _bool_setting(data[key], value[key])
-        record = admin_store.put_operator_setting(
-            USER_ACCESS_DEFAULTS_SETTING_KEY,
-            value,
-            updated_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "operator.user_access_defaults.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="operator_setting",
-            target_id=USER_ACCESS_DEFAULTS_SETTING_KEY,
-            metadata={"fields": sorted(data.keys())},
-            path=self.path,
-        )
-        return record["value"]
 
     def update_service_availability_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -1248,80 +1145,6 @@ class AdminSQLiteStore:
             "revision": admin_store.operator_setting_revision(record),
         }
 
-    def create_runtime_profile_mapping(
-        self, *, data: Mapping[str, Any], actor: AdminContext
-    ) -> dict[str, Any]:
-        source_kind = str(data.get("source_kind") or "").strip()
-        source_value = str(data.get("source_value") or "").strip()
-        profile_id = str(data.get("profile_id") or "").strip()
-        if profile_id and not is_default_profile_id(profile_id) and admin_store.get_profile(
-            profile_id,
-            path=self.path,
-        ) is None:
-            raise ValueError(f"profile {profile_id!r} not found")
-        record = admin_store.create_runtime_profile_mapping(
-            source_kind=source_kind,
-            source_value=source_value,
-            profile_id=profile_id or default_profile_id(),
-            created_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "runtime_profile_mapping.create",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="runtime_profile_mapping",
-            target_id=record["id"],
-            metadata={
-                "source_kind": record.get("source_kind"),
-                "source_value": record.get("source_value"),
-                "profile_id": record.get("profile_id"),
-            },
-            path=self.path,
-        )
-        return record
-
-    def disable_runtime_profile_mapping(
-        self, *, mapping_id: str, actor: AdminContext
-    ) -> dict[str, Any] | None:
-        before = next(
-            (
-                row
-                for row in admin_store.list_runtime_profile_mappings(
-                    include_disabled=True,
-                    path=self.path,
-                )
-                if str(row.get("id") or "") == mapping_id
-            ),
-            None,
-        )
-        if before is None:
-            return None
-        admin_store.disable_runtime_profile_mapping(mapping_id, path=self.path)
-        record = next(
-            (
-                row
-                for row in admin_store.list_runtime_profile_mappings(
-                    include_disabled=True,
-                    path=self.path,
-                )
-                if str(row.get("id") or "") == mapping_id
-            ),
-            before,
-        )
-        admin_store.record_audit(
-            "runtime_profile_mapping.disable",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="runtime_profile_mapping",
-            target_id=mapping_id,
-            metadata={"profile_id": before.get("profile_id")},
-            path=self.path,
-        )
-        return record
-
     def revoke_credential(
         self, *, credential_id: str, actor: AdminContext
     ) -> dict[str, Any] | None:
@@ -1438,20 +1261,10 @@ class AdminSQLiteStore:
             "automated_count": admin_store.count_service_account_audit(path=self.path),
         }
 
-    def profile_for_id(self, profile_id: str):
-        record = admin_store.get_profile(profile_id, path=self.path)
-        if not record:
-            return None
-        try:
-            return load_profile(record.get("profile"), default_id=record.get("id"))
-        except ProfileLoadError:
-            return None
-
     def dashboard_snapshot(self, actor: AdminContext) -> dict[str, Any]:
         users = self.list_users()
         apps = self.list_apps()
-        profiles = self.list_profiles()
-        runtime_mappings = self.list_runtime_profile_mappings()
+        plans = self.list_access_plans()
         credentials = self.list_credentials()
         audit = self.recent_audit(limit=50)
         return {
@@ -1464,16 +1277,14 @@ class AdminSQLiteStore:
             "counts": {
                 "users": len(users),
                 "apps": len(apps),
-                "profiles": len(profiles),
-                "runtime_profile_mappings": len(runtime_mappings),
+                "access_plans": len(plans),
                 "credentials": len(credentials),
                 "active_credentials": sum(1 for c in credentials if not c.get("revoked_at")),
             },
             "access_model": access_model_summary(),
             "users": users,
             "apps": apps,
-            "profiles": profiles,
-            "runtime_profile_mappings": runtime_mappings,
+            "access_plans": plans,
             "credentials": credentials,
             "audit": audit,
             "discovery_links": [
@@ -1485,7 +1296,7 @@ class AdminSQLiteStore:
                 },
                 {"label": "Admin overview", "href": "/admin/api/overview"},
                 {"label": "Apps JSON", "href": "/admin/api/apps"},
-                {"label": "Profiles JSON", "href": "/admin/api/profiles"},
+                {"label": "Access plans JSON", "href": "/admin/api/access-plans"},
                 {"label": "Audit JSON", "href": "/admin/api/audit"},
             ],
         }
@@ -1643,135 +1454,119 @@ def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any])
     }
 
 
+@functools.lru_cache(maxsize=256)
+def _parsed_plan(plan_json: str, plan_id: str):
+    """Parse a stored plan once per distinct document (it is immutable text)."""
+    try:
+        return plan_from_document(json.loads(plan_json), plan_id=plan_id)
+    except (PlanError, ValueError, TypeError):
+        return None
+
+
+def _plan_from_row(plan_json: Any, plan_id: Any):
+    if not plan_json or not plan_id:
+        return None
+    return _parsed_plan(str(plan_json), str(plan_id))
+
+
+def identity_from_access_row(
+    row: Mapping[str, Any], *, key_hash: str, name: str, person_id: str | None,
+) -> RuntimeIdentity:
+    """Build the identity of design §2.5 step 1 from one runtime_access_row.
+
+    A disabled App or a disabled, removed or missing accountable person yields
+    an identity whose ``denial`` names the reason; plans come from the same
+    row, so the whole decision reads one snapshot.
+    """
+    denial = None
+    if row.get("app_disabled_at") is not None:
+        denial = "app_disabled"
+    elif (row.get("person_row") is None or row.get("access_row") is None
+          or row.get("person_disabled_at") is not None or row.get("person_removed_at") is not None):
+        denial = "person_disabled"
+    person_plan = _plan_from_row(row.get("person_plan_json"), row.get("person_plan_id"))
+    assignment = row.get("access_plan")
+    if assignment == PERSON:
+        app_plan = person_plan
+    else:
+        app_plan = _plan_from_row(row.get("app_plan_json"), assignment)
+    return RuntimeIdentity(
+        name=name,
+        key_hash=key_hash,
+        downstream={},
+        access=EffectiveAccess(person_plan=person_plan, app_plan=app_plan),
+        app_id=str(row["app_id"]),
+        person_id=person_id,
+        accountable_person_id=str(row.get("owner_user_id") or "") or None,
+        denial=denial,
+    )
+
+
+def access_for_person(person_id: str, *, path: Path = admin_store.DB_PATH) -> EffectiveAccess:
+    """What a new "Same as my access plan" App of this person could do."""
+    plan_id = admin_store.person_plan_id(person_id, path=path)
+    record = admin_store.get_access_plan(plan_id, path=path) if plan_id else None
+    plan = _parsed_plan(json.dumps(record["plan"], sort_keys=True), plan_id) if record else None
+    return EffectiveAccess(person_plan=plan, app_plan=plan)
+
+
 def runtime_identity_for_app_credential_hash(
     key_hash: str,
     *,
-    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> RuntimeIdentity | None:
-    """Return a data-plane identity for an admin-store App credential.
+    """Return a data-plane identity for an App key, or None if the key is unknown.
 
-    Runtime ``opk_...`` keys live in the durable admin store. Runtime auth must
-    accept only active App credentials from that store; user/service-account
-    admin keys remain control-plane-only.
+    Only active App credentials authenticate; user and service-account keys
+    stay control-plane-only, and a session App acts only through its person's
+    browser session. A disabled App or person returns an identity with
+    ``denial`` set, so the caller can say which (design §3.3).
     """
     with admin_store.runtime_auth_connection(path) as connection:
-        credential = admin_store.find_runtime_credential_by_hash(key_hash, path=path, connection=connection)
-        if credential is None or not _credential_active(credential):
+        row = admin_store.runtime_access_row(connection, key_hash=key_hash)
+        if row is None or row["cred_subject_kind"] != "app" or row["on_session_app"]:
             return None
-        if credential.get("subject_kind") != "app":
+        if not _credential_active({"revoked_at": row["cred_revoked_at"], "expires_at": row["cred_expires_at"]}):
             return None
-        # A session App acts only through its person's browser session.
-        if credential["on_session_app"]:
-            return None
-
         # Record that this key was just used so the portal can show real "used N
         # ago" recency. Debounced in the store (at most one write per key per
         # minute) and best-effort: a recency write must never fail a live request.
-        cred_id = credential.get("id")
-        if cred_id:
+        try:
+            admin_store.touch_credential_last_used(str(row["cred_id"]), path=path, connection=connection)
+        except Exception:
             try:
-                admin_store.touch_credential_last_used(str(cred_id), path=path, connection=connection)
+                connection.rollback()
             except Exception:
-                # A failed best-effort write must not leave a transaction open
-                # over the remaining auth reads on this connection.
-                try:
-                    connection.rollback()
-                except Exception:
-                    return None
-
-        app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-        if not app_id:
-            return None
-        app = admin_store.get_app(app_id, path=path, connection=connection)
-        profile = _runtime_app_profile(
-            app, credential.get("profile_id"),
-            inherited_profile_id_for_app=inherited_profile_id_for_app,
-            path=path, connection=connection,
-        )
-        if app is None or profile is None:
-            return None
-        return RuntimeIdentity(
-            name=str(app.get("name") or credential.get("display_name") or app_id),
-            key_hash=key_hash,
-            downstream={},
-            profile=profile,
-            app_id=app_id,
-            person_id=person_for_app_credential(app, credential),
-        )
+                pass
+    app = {"kind": row["app_kind"], "owner_user_id": row["owner_user_id"]}
+    return identity_from_access_row(
+        row,
+        key_hash=key_hash,
+        name=str(row.get("app_name") or row.get("cred_display_name") or row["app_id"]),
+        person_id=person_for_app_credential(app, {"created_by": row["cred_created_by"]}),
+    )
 
 
 def runtime_identity_for_session_app(
     app_id: str,
     person_id: str,
     *,
-    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> RuntimeIdentity | None:
     """Return the keyless identity a signed-in person acts through.
 
-    It passes the same App, owner, and profile checks as an App key, but only
+    It passes the same App, person and plan checks as an App key, but only
     for the person's own session App, which never holds a credential. Its
     ``key_hash`` is the App's ownership principal, not a credential hash.
     """
     with admin_store.runtime_auth_connection(path) as connection:
-        app = admin_store.get_app(app_id, path=path, connection=connection)
-        if (app is None or app.get("owner_user_id") != person_id
-                or not admin_store.is_session_app(app_id, path=path, connection=connection)):
-            return None
-        profile = _runtime_app_profile(
-            app, None, inherited_profile_id_for_app=inherited_profile_id_for_app,
-            path=path, connection=connection,
-        )
-        if profile is None:
-            return None
-        return RuntimeIdentity(
-            name=str(app.get("name") or app_id),
-            key_hash=f"app:{app_id}",
-            downstream={},
-            profile=profile,
-            app_id=app_id,
-            person_id=person_id,
-        )
-
-
-def _runtime_app_profile(
-    app: Mapping[str, Any] | None,
-    profile_id: Any,
-    *,
-    inherited_profile_id_for_app: Callable[[Mapping[str, Any]], str | None] | None,
-    path: Path,
-    connection: Any,
-) -> Any:
-    """Return the profile an enabled App runs with, or None if it may not run."""
-    if app is None or app.get("disabled_at"):
+        row = admin_store.runtime_access_row(connection, app_id=app_id)
+    if row is None or row.get("owner_user_id") != person_id or not row["on_session_app"]:
         return None
+    return identity_from_access_row(
+        row, key_hash=f"app:{app_id}", name=str(row.get("app_name") or app_id), person_id=person_id,
+    )
 
-    if app.get("owner_user_id"):
-        has_accounts = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
-        owner = connection.execute(
-            "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
-            (app["owner_user_id"],),
-        ).fetchone() if has_accounts else None
-        if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
-            return None
-
-    profile = DEFAULT_PROFILE
-    profile_id = profile_id or app.get("default_profile_id")
-    if not profile_id and inherited_profile_id_for_app is not None:
-        profile_id = inherited_profile_id_for_app(app)
-    if profile_id:
-        profile_record = admin_store.get_profile(str(profile_id), path=path, connection=connection)
-        if profile_record is None:
-            return None
-        try:
-            profile = load_profile(
-                profile_record.get("profile"),
-                default_id=str(profile_id),
-            )
-        except ProfileLoadError:
-            return None
-    return profile
 
 def create_admin_service_account_key(
     name: str,
@@ -1825,5 +1620,4 @@ __all__ = [
     "OIDC_PROVIDER_FIELDS",
     "OIDC_PROVIDER_SETTING_KEY",
     "OIDC_SECRET_FIELDS",
-    "USER_ACCESS_DEFAULTS_SETTING_KEY",
 ]

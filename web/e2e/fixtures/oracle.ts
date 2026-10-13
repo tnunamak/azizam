@@ -180,7 +180,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
     const csrf = session.actor.csrf_token as string;
     const admin = new Session(owner, { "x-azizam-admin-action": "1", "x-azizam-csrf": csrf });
     const member = new Session(owner, { "x-azizam-user-action": "1", "x-azizam-csrf": csrf });
-    const plans = (await admin.call("GET", "/admin/api/profiles")).body.profiles as Json[];
+    const plans = (await admin.call("GET", "/admin/api/access-plans")).body.access_plans as Json[];
     const plan = plans[0];
 
     // --- Accounts: an invite becomes a person, who signs in, is changed and removed.
@@ -188,7 +188,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
     const password = "Oracle person password 2026";
     const invite = record(
       "POST /admin/api/invites",
-      await admin.call("POST", "/admin/api/invites", { data: { profile_id: plan.id, email, expires_in: 3600 } }),
+      await admin.call("POST", "/admin/api/invites", { data: { access_plan: plan.id, email, expires_in: 3600 } }),
     );
     record("GET /admin/api/invites/{id}/link", await admin.call("GET", `/admin/api/invites/${invite.invite.id}/link`));
     const token = String(invite.url).split("token=")[1];
@@ -218,12 +218,16 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
     );
     record("DELETE /admin/api/people/{id}", await admin.call("DELETE", `/admin/api/people/${person.id}`));
     const spare = (
-      await admin.call("POST", "/admin/api/invites", { data: { profile_id: plan.id, expires_in: 3600 } })
+      await admin.call("POST", "/admin/api/invites", { data: { access_plan: plan.id, expires_in: 3600 } })
     ).body;
     record("DELETE /admin/api/invites/{id}", await admin.call("DELETE", `/admin/api/invites/${spare.invite.id}`));
 
     // --- Plans, services, policy.
-    record("PATCH /admin/api/profiles/{id}", await admin.call("PATCH", `/admin/api/profiles/${plan.id}`, { data: { name: plan.name } }));
+    const { id: _planId, ...planDocument } = plan.plan as Json;
+    record(
+      "PUT /admin/api/access-plans/{id}",
+      await admin.call("PUT", `/admin/api/access-plans/${plan.id}`, { data: planDocument }),
+    );
     const registry = await owner.get("/admin/api/operator/service-registry");
     const generation = registry.headers()["etag"];
     const serviceIds = Object.keys((await registry.json()).service_registry.services);
@@ -239,9 +243,9 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
       await admin.call("POST", "/admin/api/operator/services/test", { data: { base_url: engineOrigin, health_endpoint: "/health" } }),
     );
     record(
-      "POST /admin/api/policy/simulate",
-      await admin.call("POST", "/admin/api/policy/simulate", {
-        data: { profile: plan.id, request: { model: "fast", intent: "chat.completions" } },
+      "POST /admin/api/access/check",
+      await admin.call("POST", "/admin/api/access/check", {
+        data: { plan: plan.id, request: { model: "fast", intent: "chat.completions" } },
       }),
     );
 
@@ -261,7 +265,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
 
     // --- Engines the gateway only reaches through a registered service: a
     // transcription engine, and the video workflow that serve.py's extra config
-    // names. Plans must allow both before an app key can use them.
+    // names.
     const sttRegistry = await owner.get("/admin/api/operator/service-registry");
     const added = await admin.call("POST", "/admin/api/operator/services", {
       data: {
@@ -301,20 +305,8 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
     });
     if (enabled.status !== 200) throw new Error(`oracle: enabling the embedding service returned HTTP ${enabled.status}`);
     await admin.call("POST", "/admin/api/config/reload", { data: {} });
-    for (const row of plans) {
-      const profile = row.profile as Json;
-      const changed = await admin.call("PATCH", `/admin/api/profiles/${row.id}`, {
-        data: {
-          profile: {
-            ...profile,
-            backends: [...new Set([...profile.backends, "stt", "decisions"])],
-            protocols: [...new Set([...(profile.protocols ?? []), "typesafe"])],
-            models: [...new Set([...profile.models, "whisper-large", "video-ltx-2.5-t2v", "decide"])],
-          },
-        },
-      });
-      if (changed.status !== 200) throw new Error(`oracle: widening plan ${row.name} returned HTTP ${changed.status}`);
-    }
+    // The household plans grant every item of every capability, so the new
+    // services' models need no plan change.
 
     // --- An app key, as the apps in the household seed use.
     const app = Object.values(manifest.apps as Record<string, string>)[0];

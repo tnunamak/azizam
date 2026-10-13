@@ -232,19 +232,11 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/operator/services/{service_id}/enabled` | owner-bearer | denied | `gateway.admin_api.set_service_enabled`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.get_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/operator/sign-in` | owner-bearer | denied | `gateway.accounts_api.set_mode`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `PUT /admin/api/operator/user-access-defaults` | owner-bearer | denied | `gateway.admin_api.update_user_access_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/overview` | owner-bearer | denied | `gateway.admin_api.overview`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/people` | owner-bearer | denied | `gateway.accounts_api.people`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `DELETE /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.remove_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PATCH /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.update_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/people/{user_id}/reset` | owner-bearer | denied | `gateway.accounts_api.reset_link`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/policy/editor` | owner-bearer | denied | `gateway.admin_api.policy_editor`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/policy/simulate` | owner-bearer | denied | `gateway.admin_api.simulate`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/api/profiles` | owner-bearer | denied | `gateway.admin_api.list_profiles`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/profiles` | owner-bearer | denied | `gateway.admin_api.create_profile`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `DELETE /admin/api/profiles/{profile_id}` | owner-bearer | denied | `gateway.admin_api.delete_profile`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/api/profiles/{profile_id}` | owner-bearer | denied | `gateway.admin_api.get_profile`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `PATCH /admin/api/profiles/{profile_id}` | owner-bearer | denied | `gateway.admin_api.update_profile`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/providers` | owner-bearer | denied | `gateway.provider_admin.list_providers`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/providers` | owner-bearer | denied | `gateway.provider_admin.add_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/providers/-/catalog` | owner-bearer | denied | `gateway.provider_admin.list_catalog`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -253,7 +245,6 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/providers/-/test` | owner-bearer | denied | `gateway.provider_admin.test_unsaved_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/providers/{provider_id}` | owner-bearer | denied | `gateway.provider_admin.remove_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/providers/{provider_id}` | owner-bearer | denied | `gateway.provider_admin.get_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `PUT /admin/api/providers/{provider_id}/allowed-plans` | owner-bearer | denied | `gateway.provider_admin.set_allowed_plans`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/providers/{provider_id}/caps` | owner-bearer | denied | `gateway.provider_admin.clear_provider_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PUT /admin/api/providers/{provider_id}/caps` | owner-bearer | denied | `gateway.provider_admin.set_provider_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/providers/{provider_id}/key` | owner-bearer | denied | `gateway.provider_admin.delete_provider_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -262,9 +253,6 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/providers/{provider_id}/reconciliation` | owner-bearer | denied | `gateway.provider_admin.list_provider_reconciliation`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/providers/{provider_id}/reconciliation/{reservation_id}` | owner-bearer | denied | `gateway.provider_admin.reconcile_provider_reservation`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/providers/{provider_id}/test` | owner-bearer | denied | `gateway.provider_admin.test_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `GET /admin/api/runtime-profile-mappings` | owner-bearer | denied | `gateway.admin_api.list_runtime_profile_mappings`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/runtime-profile-mappings` | owner-bearer | denied | `gateway.admin_api.create_runtime_profile_mapping`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `DELETE /admin/api/runtime-profile-mappings/{mapping_id}` | owner-bearer | denied | `gateway.admin_api.disable_runtime_profile_mapping`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/session` | owner-bearer | denied | `gateway.admin_api.session`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.get_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.put_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
@@ -272,8 +260,6 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/settings/effective/export` | owner-bearer | denied | `gateway.settings_api.export_effective`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.get_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.put_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/settings/lan-placeholder-keys` | owner-bearer | denied | `gateway.settings_api.get_lan_placeholder_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `PUT /admin/api/settings/lan-placeholder-keys` | owner-bearer | denied | `gateway.settings_api.put_lan_placeholder_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/prompt-memory` | owner-bearer | denied | `gateway.settings_api.get_prompt_memory`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/prompt-memory` | owner-bearer | denied | `gateway.settings_api.put_prompt_memory`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/receipts` | owner-bearer | denied | `gateway.settings_api.get_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
@@ -284,6 +270,13 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.list_access_plans`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/access-plans/editor` | owner-bearer | denied | `gateway.admin_api.access_plan_editor`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.get_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.create_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access/check` | owner-bearer | denied | `gateway.admin_api.check_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.update_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/oidc/callback` | browser/public | no owner authority | `proxy.admin_oidc_callback`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /auth/api/invite` | browser/public | no owner authority | `gateway.accounts_api.inspect`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/invite/accept` | browser/public | no owner authority | `gateway.accounts_api.accept`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |

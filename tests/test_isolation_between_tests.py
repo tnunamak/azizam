@@ -21,7 +21,7 @@ from gateway import media_delivery
 
 
 def test_a_begin_delivery_without_a_request_scope() -> None:
-    media_delivery.begin(profile_default=None)
+    media_delivery.begin(plan_bound=None)
     assert media_delivery.current() is not None
 
 

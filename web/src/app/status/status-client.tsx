@@ -11,7 +11,6 @@ import {
   ApiError,
   queryKeys,
   type CurrentHealthService,
-  type Profile,
   type Service,
   type ServiceRegistry,
   type StatusPayload,
@@ -44,7 +43,6 @@ import {
   engineShortName,
 } from "@/lib/health-presentation";
 import { cn } from "@/lib/cn";
-import type { PlanSpend } from "@/lib/product-api-types";
 import { SectionHeading } from "@/components/product/readiness";
 import {
   Callout,
@@ -648,26 +646,16 @@ function engineProblems(
 }
 
 /**
- * Spending-cap refusals, read from refused receipts' warnings, per access
- * plan. A refusal stops counting once a later paid request on the same plan
- * succeeded, or after 24 hours.
+ * Spending-cap refusals, read from refused receipts' warnings. Caps are per
+ * paid provider and for the whole gateway (Providers page). A refusal stops
+ * counting once a later paid request succeeded, or after 24 hours.
  */
-function capProblems(
-  records: ActivityRecord[],
-  profiles: Profile[] | undefined,
-  now: number,
-): Problem[] {
-  const byPlan = new Map<string, ActivityRecord[]>();
-  const resolved = new Set<string>();
+function capProblems(records: ActivityRecord[], now: number): Problem[] {
+  const refused: ActivityRecord[] = [];
   for (const record of records.toSorted(
     (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0),
   )) {
-    const plan = record.receipt?.app_profile ?? "unknown";
-    if (resolved.has(plan)) continue;
-    if (record.receipt?.remote && isSuccess(record.receipt.status)) {
-      resolved.add(plan);
-      continue;
-    }
+    if (record.receipt?.remote && isSuccess(record.receipt.status)) break;
     const capped =
       String(record.receipt?.status ?? "").toLowerCase() === "rejected" &&
       (record.receipt?.warnings ?? []).some((text) => CAP_WARNING.test(text));
@@ -685,109 +673,28 @@ function capProblems(
       )
     )
       continue;
-    byPlan.set(plan, [...(byPlan.get(plan) ?? []), record]);
+    refused.push(record);
   }
-  return [...byPlan.entries()].map(([planId, refused]) => {
-    const profile = profiles?.find((item) => item.id === planId);
-    const name = profile?.name ?? "An access plan";
-    const remote = (
-      profile?.profile as
-        | {
-            remote?: {
-              budget_usd_per_day?: string | number | null;
-              budget_usd_per_month?: string | number | null;
-            };
-          }
-        | undefined
-    )?.remote;
-    const daily =
-      remote?.budget_usd_per_day != null
-        ? Number(remote.budget_usd_per_day)
-        : null;
-    const monthly =
-      remote?.budget_usd_per_month != null
-        ? Number(remote.budget_usd_per_month)
-        : null;
-    const warning =
-      (refused[0].receipt?.warnings ?? []).find((text) =>
-        CAP_WARNING.test(text),
-      ) ?? "";
-    // What the refusals and the plan's own spend record support, and no
-    // more (red team round 2): spend per period when the gateway knows it
-    // (plan_spend), else "Unavailable"; the refusal's own words, quoted;
-    // reset times in local time from the gateway when it gives them.
-    const spend =
-      (profile as { plan_spend?: PlanSpend[] | null } | undefined)
-        ?.plan_spend ?? [];
-    const when = (ts: number) =>
-      new Date(ts * 1000).toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    const per = (period: PlanSpend["period"]) =>
-      period === "daily" ? "in the last 24 h" : "this month";
-    const facts: Array<[string, ReactNode]> = [
-      ["Affects", "Paid models for people on this access plan"],
-      [
-        "Spent",
-        spend.length ? (
-          <span key="s" className="block space-y-0.5">
-            {spend.map((item) => (
-              <span key={item.period} className="block">
-                {item.spent_usd != null
-                  ? `USD ${Number(item.spent_usd).toFixed(2)} of ${Number(item.cap_usd).toFixed(2)} ${per(item.period)}`
-                  : `Unavailable (limit USD ${Number(item.cap_usd).toFixed(2)} ${per(item.period)})`}
-              </span>
-            ))}
-          </span>
-        ) : (
-          [
-            "Unavailable",
-            daily != null ? `limit USD ${daily.toFixed(2)} a day` : null,
-            monthly != null ? `USD ${monthly.toFixed(2)} a month` : null,
-          ]
-            .filter(Boolean)
-            .join("; ")
-        ),
-      ],
-      ["Gateway said", warning ? `“${warning}”` : "A spending limit"],
-      [
-        "Resets",
-        spend.some((item) => item.resets_at != null) ? (
-          <span key="r" className="block space-y-0.5">
-            {spend
-              .map((item) => (
-                <span key={item.period} className="block">
-                  {item.period === "daily" ? "Daily" : "Monthly"}:{" "}
-                  {item.resets_at != null ? when(item.resets_at) : "Reset time not provided"}
-                </span>
-              ))}
-          </span>
-        ) : (
-          "Reset time not provided"
-        ),
-      ],
-      ["Refused", failedRequestsFact(refused, records.length)],
-    ];
-    return {
-      key: `cap:${planId}`,
+  if (!refused.length) return [];
+  const warning =
+    (refused[0].receipt?.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "";
+  const facts: Array<[string, ReactNode]> = [
+    ["Affects", "Paid models"],
+    ["Gateway said", warning ? `“${warning}”` : "A spending limit"],
+    ["Refused", failedRequestsFact(refused, records.length)],
+  ];
+  return [
+    {
+      key: "cap:paid",
       severity: "attention",
       tone: "warn",
-      // The refusals show a limit refused paid requests; they do not show
-      // how much was spent.
-      title: profile
-        ? `A spending limit on the ${name} access plan refused paid requests`
-        : "A spending limit refused paid requests",
-      headline: profile
-        ? `${name} access plan reached its spending limit`
-        : "Spending limit reached",
+      title: "A spending limit refused paid requests",
+      headline: "Spending limit reached",
       facts,
-      href: "/people?tab=plans",
-      action: profile ? "Edit access plan" : "Open access plans",
-    } satisfies Problem;
-  });
+      href: "/providers",
+      action: "Open providers",
+    } satisfies Problem,
+  ];
 }
 
 function ProblemCard({
@@ -1072,11 +979,6 @@ export function StatusClient() {
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
   });
-  const { data: profiles, isPending: profilesIsPending, isError: profilesIsError, refetch: refetchProfiles } = useQuery({
-    queryKey: queryKeys.profiles,
-    queryFn: api.profiles.list,
-    retry: false,
-  });
   const providers = useOptionalProviderStatus();
   const activity = useActivitySample(true);
   const model = useCapabilityViews(true);
@@ -1345,7 +1247,7 @@ export function StatusClient() {
           ),
         )),
     ...providerProblems,
-    ...capProblems(records, profilesIsError ? undefined : profiles, now),
+    ...capProblems(records, now),
     ...signalProblems,
   ];
   const running = records.filter((record) =>
@@ -1474,7 +1376,6 @@ export function StatusClient() {
     providers.refetch();
     model.refetch();
     void activity.refetch();
-    void refetchProfiles();
   };
 
   return (
@@ -1569,14 +1470,6 @@ export function StatusClient() {
               </section>
             ) : null}
 
-            {profilesIsError ? (
-              <div role="alert" className="text-destructive flex flex-wrap items-center gap-2 text-meta">
-                Access plan details couldn’t load.
-                <Button variant="outline" size="sm" onClick={() => void refetchProfiles()}>Retry access plans</Button>
-              </div>
-            ) : profilesIsPending && records.some((record) => (record.receipt?.warnings ?? []).some((warning) => CAP_WARNING.test(warning))) ? (
-              <p className="text-muted-foreground text-meta">Checking access plan details…</p>
-            ) : null}
             {activity.isPending ? (
               <p className="text-muted-foreground text-meta">Checking recent requests…</p>
             ) : activity.isError || !activity.data ? (

@@ -13,7 +13,13 @@ export interface AccountApp {
   kind: string;
   disabled_at: number | null;
   created_at: number;
-  profile: { name: string; missing?: boolean } | null;
+  /** The plan the app runs under; null when it has none (it denies). */
+  access_plan: {
+    id: string;
+    name: string;
+    summary: string | null;
+    same_as_person: boolean;
+  } | null;
   can_mint_keys: boolean;
   credentials: Credential[];
 }

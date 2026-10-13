@@ -16,24 +16,27 @@ import httpx
 from starlette.requests import Request
 
 from gateway import admin_store, decision_provider_execution as execution
+from tests.support.access import access, plan_for  # noqa: E402
 from gateway import receipt_store
-from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
-
-
 def _profile(*, providers=frozenset({"typesafe", "openai"}), max_request=Decimal("1.00"), budget=Decimal("5.00"), monthly=Decimal("20.00")):
-    return DEFAULT_PROFILE.with_overrides(
-        id="paid-decisions",
-        remote=RemoteProviderPolicy(
-            providers=frozenset(providers),
-            max_usd_per_request=max_request,
-            budget_usd_per_day=budget,
-            budget_usd_per_month=monthly,
-        ),
-    )
+    return access(plan_for(
+        "paid-decisions", paid=sorted(providers),
+        usd_per_request=None if max_request is None else str(max_request),
+        usd_per_day=None if budget is None else str(budget),
+        usd_per_month=None if monthly is None else str(monthly),
+    ))
 
 
-def _auth(app_id="app_1", *, delegated=False):
-    return SimpleNamespace(identity=SimpleNamespace(app_id=app_id, name="Decision App", delegated=delegated))
+def _auth(app_id="app_1", *, access_=None):
+    return SimpleNamespace(identity=SimpleNamespace(
+        app_id=app_id, name="Decision App", access=access_ or _profile(),
+        accountable_person_id="usr_1", person_id=None))
+
+
+def _ctx(app_id="app_1", **profile_kwargs):
+    """An authenticated App and the plans that bound it, so the reservation and the check agree."""
+    plans = _profile(**profile_kwargs)
+    return _auth(app_id, access_=plans), plans
 
 
 def _registry(*, provider_id="typesafe", protocols=("typesafe-systemone",), models=None, price=None, api_key_env=None, enabled=True):
@@ -124,7 +127,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         registry = _registry(models=[{"id": "typesafe/jev-latest"}])
         with patch.object(execution.providers.httpx, "AsyncClient", client_factory):
             result = await execution.systemone(
-                _auth(), _profile(), {"model": "typesafe/jev-latest", "state": "x", "questions": {"q": {"type": "noul", "instructions": "ok?"}}},
+                *_ctx(), {"model": "typesafe/jev-latest", "state": "x", "questions": {"q": {"type": "noul", "instructions": "ok?"}}},
                 "req-ts", registry, self.ledger,
             )
 
@@ -146,7 +149,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             result = await execution.systemone(
-                _auth(), _profile(), {"model": "typesafe/jev-latest", "state": "x", "questions": {}},
+                *_ctx(), {"model": "typesafe/jev-latest", "state": "x", "questions": {}},
                 "req-rate", _registry(), self.ledger,
             )
 
@@ -174,7 +177,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         registry = _registry(provider_id="acme-decisions", models=[{"id": "acme-decisions/decider"}])
         with patch.object(execution.providers, "call_typesafe_systemone", fake_call):
             result = await execution.systemone(
-                _auth(), _profile(providers=frozenset({"acme-decisions"}), max_request=None, budget=None, monthly=None),
+                *_ctx(providers=frozenset({"acme-decisions"}), max_request=None, budget=None, monthly=None),
                 {"model": "acme-decisions/decider", "state": "x", "questions": {}},
                 "req-custom", registry, self.ledger,
             )
@@ -232,7 +235,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             called = True
 
         with patch.object(execution.providers, "call_typesafe_systemone", fake_call):
-            result = await execution.systemone(_auth(), _profile(), {"model": "jev-latest"}, "req-local", _registry(), self.ledger)
+            result = await execution.systemone(*_ctx(), {"model": "jev-latest"}, "req-local", _registry(), self.ledger)
 
         self.assertEqual(result.status_code, 501)
         self.assertEqual(result.body["error"]["code"], "provider_not_configured")
@@ -261,7 +264,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(execution.providers.httpx, "AsyncClient", client_factory):
             result = await execution.systemone(
-                _auth("family-app"), _profile(),
+                *_ctx("family-app", ),
                 {"model": "typesafe/jev-latest", "state": "x", "questions": {"q": {"type": "noul", "instructions": "ok?"}}},
                 "req-cat", _registry(models=[{"id": "typesafe/jev-latest"}]), self.ledger,
             )
@@ -304,7 +307,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cap.cost_class, "paid-remote")
 
     async def test_openai_decisions_returns_501_without_configured_decisions_provider(self) -> None:
-        response = await execution.openai(_request({"model": "gpt-5"}), _auth(), _profile(), {"services": {}}, self.ledger)
+        response = await execution.openai(_request({"model": "gpt-5"}), *_ctx(), {"services": {}}, self.ledger)
         body = json.loads(await _response_body(response))
 
         self.assertEqual(response.status_code, 501)
@@ -323,7 +326,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
-            response = await execution.openai(_request({"model": "gpt-5", "input": "hi"}), _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger)
+            response = await execution.openai(_request({"model": "gpt-5", "input": "hi"}), *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger)
 
         body = json.loads(await _response_body(response))
         self.assertEqual(response.status_code, 200)
@@ -338,7 +341,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_empty_typesafe_provider_model_is_rejected_before_admission(self) -> None:
-        result = await execution.systemone(_auth(), _profile(), {"model": "typesafe/"}, "req-empty", _registry(), self.ledger)
+        result = await execution.systemone(*_ctx(), {"model": "typesafe/"}, "req-empty", _registry(), self.ledger)
 
         self.assertEqual(result.status_code, 422)
         self.assertEqual(result.body["error"]["code"], "invalid_model")
@@ -352,7 +355,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             result = await execution.systemone(
-                _auth(), _profile(max_request=None, budget=None, monthly=None),
+                *_ctx(max_request=None, budget=None, monthly=None),
                 {"model": "typesafe/jev-latest", "state": "x", "questions": {}},
                 "req-unknown", _registry(), self.ledger,
             )
@@ -381,7 +384,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             task = asyncio.create_task(execution.systemone(
-                _auth(), _profile(),
+                *_ctx(),
                 {"model": "typesafe/jev-latest", "state": "x", "questions": {}},
                 "req-cancel", _registry(), self.ledger,
             ))
@@ -413,7 +416,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             task = asyncio.create_task(execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger,
             ))
             await asyncio.wait_for(entered.wait(), timeout=1)
             task.cancel()
@@ -438,7 +441,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger,
             )
 
         body = json.loads(await _response_body(response))
@@ -460,7 +463,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger,
             )
 
         body = json.loads(await _response_body(response))
@@ -486,7 +489,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(execution.providers, "_litellm_full_usage_cost", fail_pricing):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -509,7 +512,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(execution.providers, "_litellm_full_usage_cost", fail_pricing):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -627,7 +630,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(admin_store, "DB_PATH", admin_db), patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
-                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger, admin_db_path=admin_db,
+                *_ctx(max_request=None, budget=None, monthly=None), registry, self.ledger, admin_db_path=admin_db,
             )
 
         self.assertEqual(response.status_code, 200, await _response_body(response))
@@ -638,7 +641,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         other = _registry(provider_id="openai-b", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
         registry["services"].update(other["services"])
 
-        response = await execution.openai(_request({"model": "gpt-5"}), _auth(), _profile(providers=frozenset({"openai-a", "openai-b"})), registry, self.ledger)
+        response = await execution.openai(_request({"model": "gpt-5"}), *_ctx(providers=frozenset({"openai-a", "openai-b"})), registry, self.ledger)
         body = json.loads(await _response_body(response))
 
         self.assertEqual(response.status_code, 501)
@@ -656,7 +659,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.MockTransport(handler)
         registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), price={}, models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
         with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
-            response = await execution.openai(_request({"model": "gpt-5", "input": "hi"}), _auth(), _profile(max_request=Decimal("0.01")), registry, self.ledger)
+            response = await execution.openai(_request({"model": "gpt-5", "input": "hi"}), *_ctx(max_request=Decimal("0.01")), registry, self.ledger)
 
         body = json.loads(await _response_body(response))
         self.assertEqual(response.status_code, 402)

@@ -8,36 +8,53 @@ import { fulfilJson } from "./fixtures/intercept";
 // focus did not return to the invitation's Actions trigger).
 test.describe.configure({ mode: "default" });
 
+// The shapes the gateway sends (docs/design/ACCESS_PLANS.md §3.1).
+const planDocument = {
+  name: "Local creative",
+  can_use: { chat: { items: "all" }, image: { items: "all" } },
+  direct_engine_access: { engines: [], operations: [] },
+  paid_providers: [],
+  provider_fallback: false,
+  caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+  can_load_models: true,
+  receipt_detail: "basic",
+  media_metadata: "none",
+};
+const planSummary = "Chat and images. Local models only. No paid providers.";
 const plan = {
   id: "plan-local",
   name: "Local creative",
-  description: "For family and friends",
   created_at: 1720000000,
-  protocols: ["openai"],
-  workflows: [],
-  status_visibility: "full",
-  profile: {
-    allow: { intents: ["chat", "images"], exposure: ["local"] },
-    models: ["demo-chat"],
-    fallback: { cloud_allowed: false },
-    custom_operator_field: { preserve: true },
-  },
+  updated_at: 1720000000,
+  plan: { ...planDocument, id: "plan-local" },
+  summary: planSummary,
+  used_by: { people: ["person-family"], apps: [], invites: 1 },
 };
+// People and Invites list plans as pickers show them.
+const planChoice = { id: plan.id, name: plan.name, summary: planSummary };
 const person = {
   id: "person-family",
   name: "Morgan Rivera",
   email: "morgan@example.test",
-  profile_id: plan.id,
+  plan_id: plan.id,
   plan_name: plan.name,
-  disabled: false,
+  disabled_at: null,
   last_active: Math.floor(Date.now() / 1000) - 3600,
+  disabled: false,
   requests_this_month: null,
+  builtin: true,
+  protected: false,
+  role: "member",
+  grants: [],
 };
 const invitation = {
   id: "invitation-family",
+  kind: "invite",
   email: "sam@example.test",
-  profile_id: plan.id,
+  plan_id: plan.id,
   plan_name: plan.name,
+  user_id: null,
+  created_by: "owner",
   expires_at: Math.floor(Date.now() / 1000) + 86400,
   created_at: Math.floor(Date.now() / 1000) - 3600,
   used_at: null,
@@ -52,30 +69,16 @@ const signIn = {
   owner_name: "Alex",
 };
 const editor = {
-  schema_version: 1,
-  profile: {
-    create: { profile: {} },
-    set_semantics: { omitted: "no_opinion", empty: "deny_all" },
-    choices: {
-      intents: [
-        { id: "chat", label: "Chat" },
-        { id: "images", label: "Images" },
-      ],
-      exposure: [
-        { id: "local", label: "Local" },
-        { id: "remote", label: "Remote (paid)" },
-      ],
-      models: [{ id: "demo-chat", label: "Demo chat" }],
-      protocols: [{ id: "openai", label: "OpenAI" }],
-      workflows: [],
-      trust_tiers: [],
-      resource_tiers: [],
-      tags: [],
-      status_visibility: [],
-      target_visibility: [],
-      target_activation: [],
-    },
-  },
+  schema_version: 2,
+  capabilities: [
+    { id: "chat", label: "Chat", items: [{ kind: "model", id: "demo-chat", available: true }] },
+    { id: "image", label: "Images", items: [] },
+  ],
+  engines: [],
+  paid_providers: [],
+  receipt_detail: [{ id: "basic", label: "Basic", description: null }],
+  media_metadata: [{ id: "none", label: "Strip", description: null }],
+  new_plan: { ...planDocument, name: "", can_use: {} },
 };
 const surfaces = ["people", "invites", "plans", "sign-in", "invite"] as const;
 type Surface = (typeof surfaces)[number];
@@ -87,7 +90,7 @@ async function mock(page: Page, state: State) {
           ? { error: { message: "People unavailable" } }
           : {
               people: state === "empty" ? [] : [person],
-              profiles: state === "empty" ? [] : [plan],
+              access_plans: state === "empty" ? [] : [planChoice],
             }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/admin/api/invites", (route) =>
@@ -95,13 +98,14 @@ async function mock(page: Page, state: State) {
           ? { error: { message: "Invites unavailable" } }
           : {
               invites: state === "empty" ? [] : [invitation],
-              profiles: state === "empty" ? [] : [plan],
+              access_plans: state === "empty" ? [] : [planChoice],
+              invite_access_plan: null,
             }, { status: state === "error" ? 503 : 200 }),
   );
-  await page.route("**/admin/api/profiles", (route) =>
+  await page.route("**/admin/api/access-plans", (route) =>
     fulfilJson(route, state === "error"
           ? { error: { message: "Plans unavailable" } }
-          : { profiles: state === "empty" ? [] : [plan] }, { status: state === "error" ? 503 : 200 }),
+          : { access_plans: state === "empty" ? [] : [plan] }, { status: state === "error" ? 503 : 200 }),
   );
   await page.route("**/auth/api/options*", (route) =>
     fulfilJson(route, state === "error"
@@ -121,12 +125,12 @@ async function mock(page: Page, state: State) {
             }
           : {
               ...signIn,
-              plan,
+              plan: planChoice,
               email: invitation.email,
               expires_at: invitation.expires_at,
             }, { status: state === "error" ? 410 : 200 }),
   );
-  await page.route("**/admin/api/policy/editor", (route) =>
+  await page.route("**/admin/api/access-plans/editor", (route) =>
     fulfilJson(route, editor),
   );
 }
@@ -251,7 +255,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   await page.route("**/admin/api/invites", async (route) => {
     if (route.request().method() === "POST") {
       expect(route.request().postDataJSON()).toEqual({
-        profile_id: plan.id,
+        access_plan: plan.id,
         email: "friend@example.test",
         expires_in: 604800,
       });
@@ -260,7 +264,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
           url: "/invite/#token=browser-test-token",
         });
     } else
-      await fulfilJson(route, { invites: [invitation], profiles: [plan] });
+      await fulfilJson(route, { invites: [invitation], access_plans: [planChoice], invite_access_plan: null });
   });
   await page
     .getByRole("button", { name: "Invite someone", exact: true })
@@ -311,7 +315,7 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   );
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(writes[0]).toEqual({ method: "PATCH", body: { profile_id: plan.id } });
+  expect(writes[0]).toEqual({ method: "PATCH", body: { access_plan: plan.id } });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Disable access" }).click();
   await page
@@ -346,47 +350,52 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
 
-test("people lane editing preserves unknown fields, omitted sets, and simulator returns actual decision", async ({
+test("people lane editing sends the whole plan document, and Check access shows the gateway's decision", async ({
   page,
 }) => {
   await open(page, "plans", "seeded");
-  await page.route(`**/admin/api/profiles/${plan.id}`, (route) => {
+  await page.route(`**/admin/api/access-plans/${plan.id}`, (route) => {
     const body = route.request().postDataJSON();
-    expect(body.profile.custom_operator_field).toEqual({ preserve: true });
-    expect(body.profile.models).toEqual(["demo-chat"]);
-    expect(body.profile.protocols).toBeUndefined();
-    return fulfilJson(route, { profile: { ...plan, ...body } });
+    expect(route.request().method()).toBe("PUT");
+    // Every field goes back, so the server never fills a gap with a default.
+    expect(body).toEqual({ ...planDocument, name: "Family access" });
+    return fulfilJson(route, { access_plan: { ...plan, name: body.name, plan: { ...body, id: plan.id } } });
   });
   await page.getByRole("button", { name: "Edit plan", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Family access");
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.route("**/admin/api/policy/simulate", (route) => {
+  await page.route("**/admin/api/access/check", (route) => {
     expect(route.request().postDataJSON()).toEqual({
-      profile: plan.id,
-      request: { model: "demo-chat", intent: null, protocol: null },
+      plan: plan.id,
+      request: { model: "demo-chat", intent: "chat.completions" },
     });
     return fulfilJson(route, {
-        profile_id: plan.id,
+        plan_ids: [plan.id],
         decision: {
           decision: "denied",
           allowed: false,
-          reasons: ["This model is not allowed by the selected plan."],
+          code: "not_in_access_plan",
+          side: "person",
           sources: [],
-          visibility_level: "none",
+          reasons: ["demo-chat isn't in your access plan."],
+          visibility_level: "basic",
         },
       });
   });
-  await page.getByRole("button", { name: "Test access", exact: true }).click();
-  await page.getByLabel("Model", { exact: true }).fill("demo-chat");
-  await page.getByRole("button", { name: "Run test" }).click();
+  await page.getByRole("button", { name: "Check access", exact: true }).click();
+  await page.getByLabel("Model or workflow", { exact: true }).fill("demo-chat");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Check access", exact: true })
+    .click();
   await expect(page.getByRole("status")).toContainText(
     "This request would be denied",
   );
   await expect(page.getByRole("status")).toContainText(
-    "This model is not allowed by the selected plan.",
+    "demo-chat isn't in your access plan.",
   );
-  await page.getByLabel("Model", { exact: true }).fill("different-model");
+  await page.getByLabel("Model or workflow", { exact: true }).fill("different-model");
   await expect(page.getByText("This request would be denied")).toHaveCount(0);
 });
 
@@ -519,7 +528,7 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await open(page, "invites", "error");
   await page.unroute("**/admin/api/invites");
   await page.route("**/admin/api/invites", (route) =>
-    fulfilJson(route, { invites: [invitation], profiles: [plan] }),
+    fulfilJson(route, { invites: [invitation], access_plans: [planChoice] }),
   );
   // The plans request also fails in the error state, so the header explains
   // why Invite is unavailable and offers its own Try again.
@@ -575,7 +584,7 @@ test("people lane invitation rows distinguish pending, accepted, expired and rev
   ];
   await mock(page, "seeded");
   await page.route("**/admin/api/invites", (route) =>
-    fulfilJson(route, { invites, profiles: [plan] }),
+    fulfilJson(route, { invites, access_plans: [planChoice] }),
   );
   await page.goto("/people/");
   await page.getByRole("tab", { name: "Invites", exact: true }).click();
@@ -611,7 +620,7 @@ test("people lane omits unknown monthly usage and keeps known usage", async ({
             requests_this_month: 42,
           },
         ],
-        profiles: [plan],
+        access_plans: [planChoice],
       }),
   );
   await page.setViewportSize({ width: 390, height: 844 });
@@ -682,15 +691,15 @@ test("people lane real invitation creates an account, app and working key, then 
   try {
     const session = await (await request.get("/admin/api/session")).json();
     const headers = { "x-azizam-csrf": session.actor.csrf_token };
-    const profiles = await (await request.get("/admin/api/profiles")).json();
-    const local = profiles.profiles.find(
+    const plans = await (await request.get("/admin/api/access-plans")).json();
+    const local = plans.access_plans.find(
       (p: { name: string }) => p.name === "Local chat",
     );
     expect(local).toBeTruthy();
     const result = await request.post("/admin/api/invites", {
       headers,
       data: {
-        profile_id: local.id,
+        access_plan: local.id,
         email: "real-browser-member@example.test",
         expires_in: 86400,
       },
@@ -776,7 +785,7 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.route("**/admin/api/people", (route) =>
     fulfilJson(route, {
         people: [{ ...person, builtin: false, protected: true }],
-        profiles: [plan],
+        access_plans: [planChoice],
       }),
   );
   await page.goto("/people/");
@@ -790,7 +799,7 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.route("**/admin/api/people", (route) =>
     fulfilJson(route, {
         people: [{ ...person, builtin: true, protected: true, role: "owner" }],
-        profiles: [plan],
+        access_plans: [planChoice],
       }),
   );
   await page.reload();
@@ -812,7 +821,7 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.route("**/admin/api/people", (route) =>
     fulfilJson(route, {
         people: [{ ...person, builtin: false, protected: false }],
-        profiles: [plan],
+        access_plans: [planChoice],
       }),
   );
   await page.reload();
@@ -831,7 +840,7 @@ test("people lane protects owner actions and explains permanent key revocation",
         people: [
           { ...person, builtin: true, protected: false, disabled: true },
         ],
-        profiles: [plan],
+        access_plans: [planChoice],
       }),
   );
   await page.reload();
@@ -873,26 +882,24 @@ test("administrators cannot invite or manage people but can view access plans", 
   await expect(page.getByRole("button", { name: "Edit plan" })).toBeVisible();
 });
 
-test("invalid policy shapes stay editable with an inline error", async ({
+test("an invalid plan document stays editable with an inline error", async ({
   page,
 }) => {
   await mock(page, "seeded");
   await page.goto("/people/?tab=plans");
   await page.getByRole("button", { name: "Edit plan" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByText("Advanced", { exact: true }).click();
-  await dialog.getByText("Complete policy document", { exact: true }).click();
-  await dialog.getByLabel("Policy JSON").fill('{"models":"invalid"}');
+  await dialog.getByText("Details", { exact: true }).click();
+  await dialog.getByText("Complete plan document", { exact: true }).click();
+  await dialog.getByLabel("Plan JSON").fill('{"name":"No fields"}');
   await expect(dialog.getByRole("alert")).toHaveText(
-    "models must be an array of strings.",
+    "The plan needs the field can_use.",
   );
-  await expect(dialog.getByLabel("Policy JSON")).toHaveValue(
-    '{"models":"invalid"}',
-  );
+  await expect(dialog.getByLabel("Plan JSON")).toHaveValue('{"name":"No fields"}');
   await expect(
     dialog.getByRole("button", { name: "Save access plan" }),
   ).toBeDisabled();
-  await dialog.getByLabel("Policy JSON").fill('{"models":[]}');
+  await dialog.getByLabel("Plan JSON").fill(JSON.stringify(planDocument));
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   await expect(
     dialog.getByRole("button", { name: "Save access plan" }),
@@ -905,7 +912,7 @@ for (const disabled of [false, true]) {
   }) => {
     await mock(page, "seeded");
     await page.route("**/admin/api/people", (route) =>
-      fulfilJson(route, { people: [{ ...person, disabled }], profiles: [plan] }),
+      fulfilJson(route, { people: [{ ...person, disabled }], access_plans: [planChoice] }),
     );
     await page.goto("/people/");
     const trigger = page.getByRole("button", {
@@ -970,7 +977,7 @@ for (const width of [390, 1440]) {
           people: [
             { ...person, name: "n".repeat(300), plan_name: "p".repeat(300) },
           ],
-          profiles: [plan],
+          access_plans: [planChoice],
         }),
     );
     await page.goto("/people/");

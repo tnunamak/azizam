@@ -9,6 +9,7 @@ import pytest
 from starlette.requests import Request
 
 import proxy
+from tests.support.access import access_context  # noqa: E402
 
 
 def _request(body, path="/v1/responses"):
@@ -31,13 +32,9 @@ def _request(body, path="/v1/responses"):
 
 @pytest.fixture
 def isolated_handlers(monkeypatch):
-    route_auth = SimpleNamespace(
-        auth_context=proxy.NO_AUTH_CONTEXT,
-        delegated_to_litellm=True,
-        delegated_litellm_api_key="",
-    )
+    route_auth = SimpleNamespace(auth_context=access_context())
     monkeypatch.setattr(
-        proxy, "authenticate_runtime_or_litellm_request",
+        proxy, "authenticate_runtime_request",
         lambda *args, **kwargs: route_auth,
     )
     monkeypatch.setattr(

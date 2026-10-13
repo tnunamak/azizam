@@ -104,7 +104,6 @@ def _sources(apps: dict[str, dict]) -> list[dict]:
             "label": str(app.get("name") or "App"),
             "app_id": app_id,
             "owner_user_id": app.get("owner_user_id"),
-            "owner_service_account_id": app.get("owner_service_account_id"),
         })
     return rows
 

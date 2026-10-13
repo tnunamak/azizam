@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.access import access_context, authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
@@ -44,7 +45,7 @@ class RemixReplaceBase(unittest.TestCase):
         self.addCleanup(self.stack.close)
         for p in self.comfy.patches(probe=self.probe):
             self.stack.enter_context(p)
-        self.stack.enter_context(patch.object(proxy, "AUTH_ENABLED", False))
+        self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
@@ -52,7 +53,7 @@ class RemixReplaceBase(unittest.TestCase):
             self.addCleanup(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
         proxy._video_job_records[SOURCE_PROMPT_ID] = {
             "model": "ltx-2.5", "resolved_model": "video-ltx-2.5-t2v", "size": "960x512",
-            "seconds": "4", "created_at": 1000, "completed_at": 1100, "owner_key_hash": None,
+            "seconds": "4", "created_at": 1000, "completed_at": 1100, "owner_key_hash": "sha256:test",
             "deleted_at": None,
         }
         self.client = TestClient(proxy.app)
@@ -201,7 +202,7 @@ class EditRouteTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.comfy.uploads[0][:2], ("source.webm", b"url-clip"))
         fetch.assert_awaited_once()
-        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", proxy.NO_AUTH_CONTEXT))
+        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", access_context()))
         self.assertEqual(fetch.call_args.kwargs["request"].headers["host"], "testserver")
 
 

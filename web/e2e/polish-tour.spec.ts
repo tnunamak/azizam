@@ -140,15 +140,15 @@ let invitations = 0;
 test.beforeAll(async ({ request }) => {
   if (finalScreens) await mkdir(finalScreens, { recursive: true });
   const session = await (await request.get("/admin/api/session")).json();
-  const profiles = await (await request.get("/admin/api/profiles")).json();
-  const profile = profiles.profiles.find(
-    (plan: { name: string }) => plan.name === "Local chat",
+  const plans = await (await request.get("/admin/api/access-plans")).json();
+  const plan = plans.access_plans.find(
+    (item: { name: string }) => item.name === "Local chat",
   );
-  expect(profile).toBeTruthy();
+  expect(plan).toBeTruthy();
   const result = await request.post("/admin/api/invites", {
     headers: { "x-azizam-csrf": session.actor.csrf_token },
     data: {
-      profile_id: profile.id,
+      access_plan: plan.id,
       email: `polish-tour+${process.env.UI_E2E_RUN_ID ?? "local"}-${process.pid}-${invitations++}@example.test`,
       expires_in: 86400,
     },

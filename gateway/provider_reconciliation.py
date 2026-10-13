@@ -172,6 +172,6 @@ async def reconcile_pending_generations(provider: ProviderRef, *, path) -> None:
                 if row.get("generation_id")][:2]:
         cost = await lookup_generation_cost(provider, row["generation_id"])
         if cost.usd is not None:
-            reservation = providers.Reservation(row["id"], row["provider"], row["profile_id"],
+            reservation = providers.Reservation(row["id"], row["provider"], row["app_id"],
                                                 Decimal(row["estimated_usd"]), row["cost_source"])
             providers.settle_provider_spend(reservation, cost, path=path)

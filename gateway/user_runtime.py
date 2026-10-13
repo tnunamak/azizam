@@ -2,8 +2,9 @@
 
 The user portal is intentionally narrow. It lets a signed-in OIDC user create
 user-owned Apps, see non-secret API-key records, create keys for Apps they own,
-inspect owned-key access, and delete their own keys or Apps. It never grants
-Profiles or changes App ownership; those remain admin-plane actions.
+inspect owned-key access, and delete their own keys or Apps. A person's own
+App is always "Same as my access plan"; choosing plans and changing App
+ownership remain admin-plane actions.
 """
 
 from __future__ import annotations
@@ -72,61 +73,37 @@ def _credential_not_found() -> UserPortalError:
     )
 
 
-def _profile_summary(
-    profile_id: str | None, *, path: Path, records: Mapping[str, Any] | None = None,
+def _plan_summary(
+    app: Mapping[str, Any], *, path: Path, listing: tuple[str | None, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    """``records`` holds profiles read in one query for a listing; a missing key is a missing profile."""
-    if not profile_id:
-        return None
-    record = admin_store.get_profile(profile_id, path=path) if records is None else records.get(profile_id)
+    """The plan an App runs under, as the portal shows it: its name and summary, no rules.
+
+    ``listing`` holds the person's plan id and every plan, read once for a listing
+    of one person's Apps.
+    """
+    from gateway.access_plans import PlanError, plan_from_document, plan_summary
+
+    assignment = app.get("access_plan")
+    same_as_person = assignment == admin_store.PERSON_ASSIGNMENT
+    if not same_as_person:
+        plan_id = assignment
+    elif listing is not None:
+        plan_id = listing[0]
+    else:
+        plan_id = admin_store.person_plan_id(str(app.get("owner_user_id") or ""), path=path)
+    if not plan_id:
+        record = None
+    elif listing is not None:
+        record = listing[1].get(str(plan_id))
+    else:
+        record = admin_store.get_access_plan(str(plan_id), path=path)
     if record is None:
-        return {
-            "id": profile_id,
-            "name": "Missing Profile",
-            "missing": True,
-        }
-    profile = record.get("profile") if isinstance(record, Mapping) else None
-    policy_id = None
-    protocols: list[str] = []
-    allow: dict[str, Any] = {}
-    status_visibility = "basic"
-    if isinstance(profile, Mapping):
-        policy_id = profile.get("id")
-        protocols = list(profile.get("protocols") or [])
-        raw_allow = profile.get("allow")
-        allow = dict(raw_allow) if isinstance(raw_allow, Mapping) else {}
-        raw_visibility = profile.get("status_visibility")
-        if isinstance(raw_visibility, Mapping):
-            status_visibility = str(raw_visibility.get("level") or "basic")
-    return {
-        "id": record.get("id") or profile_id,
-        "name": record.get("name") or policy_id or profile_id,
-        "policy_id": policy_id,
-        "protocols": protocols,
-        "allow": allow,
-        "status_visibility": status_visibility,
-        "missing": False,
-    }
-
-
-def _default_profile_summary(
-    profile_id: str | None, *, path: Path, records: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    if profile_id:
-        profile = _profile_summary(profile_id, path=path, records=records)
-        if profile is not None:
-            profile["inherited"] = True
-            return profile
-    return {
-        "id": "default-local",
-        "name": "Default local",
-        "policy_id": "default-local",
-        "protocols": [],
-        "allow": {},
-        "status_visibility": "basic",
-        "missing": False,
-        "inherited": True,
-    }
+        return None
+    try:
+        summary = plan_summary(plan_from_document(record["plan"], plan_id=str(record["id"])))
+    except PlanError:
+        summary = None
+    return {"id": record["id"], "name": record["name"], "summary": summary, "same_as_person": same_as_person}
 
 
 def _credentials_for_app(
@@ -161,31 +138,6 @@ def _app_belongs_to_user(app_id: str, user_id: str, *, path: Path) -> dict[str, 
     return app
 
 
-def _effective_profile_id(
-    app: Mapping[str, Any], *, default_profile_id: str | None = None
-) -> str | None:
-    profile_id = app.get("default_profile_id") or default_profile_id
-    return str(profile_id) if profile_id else None
-
-
-def _app_profile_for_self_service(
-    app: Mapping[str, Any],
-    *,
-    default_profile_id: str | None = None,
-    path: Path,
-) -> str | None:
-    profile_id = _effective_profile_id(app, default_profile_id=default_profile_id)
-    if not profile_id:
-        return None
-    if admin_store.get_profile(str(profile_id), path=path) is None:
-        raise UserPortalError(
-            "profile_missing",
-            "This App's inherited permissions are unavailable; ask the operator to repair access",
-            status_code=403,
-        )
-    return str(profile_id)
-
-
 def _user_from_session(session: AdminSession, *, path: Path) -> dict[str, Any]:
     user = admin_store.get_user(session.subject, path=path)
     if user is None:
@@ -215,38 +167,20 @@ def _live_role_for_user(user_id: str, *, path: Path) -> str:
 def _app_payload(
     app: Mapping[str, Any],
     *,
-    default_profile_id: str | None,
     path: Path,
     credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
-    profile_records: Mapping[str, Any] | None = None,
+    plan_listing: tuple[str | None, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    profile_id = app.get("default_profile_id")
-    effective_profile_id = _effective_profile_id(
-        app,
-        default_profile_id=default_profile_id,
-    )
     credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
-    profile = (
-        _profile_summary(str(profile_id), path=path, records=profile_records)
-        if profile_id
-        else _default_profile_summary(default_profile_id, path=path, records=profile_records)
-    )
+    plan = _plan_summary(app, path=path, listing=plan_listing)
     return {
         "id": app.get("id"),
         "kind": app.get("kind"),
         "name": app.get("name"),
         "disabled_at": app.get("disabled_at"),
-        "default_profile_id": profile_id,
-        "profile_id": profile_id,
-        "effective_profile_id": effective_profile_id or "default-local",
-        "profile": profile,
-        "can_mint_keys": (
-            not app.get("disabled_at")
-            and not (profile or {}).get("missing")
-        ),
+        "access_plan": plan,
+        "can_mint_keys": not app.get("disabled_at"),
         "can_delete": not bool(app.get("disabled_at")),
-        "inherits_profile": not bool(profile_id),
-        "profile_required": False,
         "credentials": credentials,
         "active_credentials": len(credentials),
         "created_at": app.get("created_at"),
@@ -257,7 +191,6 @@ def build_user_portal_snapshot(
     session: AdminSession | None,
     *,
     auto_create_personal_app: bool = False,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the account data safe to embed in ``/me``.
@@ -284,18 +217,18 @@ def build_user_portal_snapshot(
             path=path,
         )
 
-    # Session apps, keys and profiles for every listed app are read in one query each,
+    # Session apps, keys and plans for every listed app are read in one query each,
     # so the number of statements does not grow with the number of apps.
     owned = admin_store.list_apps_for_user(user["id"], path=path)
     sessions = admin_store.session_app_ids([str(app["id"]) for app in owned], path=path)
     listed = [app for app in owned if not app.get("disabled_at") and str(app["id"]) not in sessions]
     credentials_by_app = admin_store.list_active_credentials_for_apps([str(app["id"]) for app in listed], path=path)
-    profile_records = admin_store.get_profiles(
-        [str(app["default_profile_id"]) for app in listed if app.get("default_profile_id")] + [default_profile_id or ""],
-        path=path)
+    plan_listing = (
+        admin_store.person_plan_id(str(user["id"]), path=path),
+        {str(plan["id"]): plan for plan in admin_store.list_access_plans(path=path)},
+    ) if listed else None
     apps: list[dict[str, Any]] = [
-        _app_payload(app, default_profile_id=default_profile_id, path=path,
-                     credentials_by_app=credentials_by_app, profile_records=profile_records)
+        _app_payload(app, path=path, credentials_by_app=credentials_by_app, plan_listing=plan_listing)
         for app in listed
     ]
 
@@ -445,7 +378,6 @@ def mint_user_app_key(
     app_id: str,
     *,
     label: str | None = None,
-    default_profile_id: str | None = None,
     expires_at: int | None = None,
     session_id: str | None = None,
     path: Path = admin_store.DB_PATH,
@@ -456,11 +388,6 @@ def mint_user_app_key(
     """
     user = _user_from_session(session, path=path)
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
-    _app_profile_for_self_service(
-        app,
-        default_profile_id=default_profile_id,
-        path=path,
-    )
     api_key = generate_app_api_key()
     record = admin_store.create_credential_hash(
         subject_kind="app",
@@ -493,7 +420,6 @@ def ensure_try_session_key(
     session: AdminSession,
     *,
     reuse_id: str | None = None,
-    default_profile_id: str | None = None,
     now: int | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
@@ -518,10 +444,7 @@ def ensure_try_session_key(
     if apps:
         app = _app_belongs_to_user(str(apps[0]["id"]), str(user["id"]), path=path)
     else:
-        created = create_user_app(
-            session, name=admin_store.TRY_APP_NAME,
-            default_profile_id=default_profile_id, path=path,
-        )["app"]
+        created = create_user_app(session, name=admin_store.TRY_APP_NAME, path=path)["app"]
         app = admin_store.get_app(str(created["id"]), path=path) or created
     app_name = str(app.get("name") or admin_store.TRY_APP_NAME)
     session_keys = [
@@ -539,8 +462,7 @@ def ensure_try_session_key(
         str(app["id"]), session.session_id, keep=1, now=ts, path=path,
     )
     minted = mint_user_app_key(
-        session, str(app["id"]), label=admin_store.TRY_KEY_LABEL,
-        default_profile_id=default_profile_id, expires_at=expires_at,
+        session, str(app["id"]), label=admin_store.TRY_KEY_LABEL, expires_at=expires_at,
         session_id=session.session_id, path=path,
     )
     minted.update(reused=False, app_name=app_name)
@@ -551,10 +473,9 @@ def create_user_app(
     session: AdminSession,
     *,
     name: str,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Create a new user-owned App that inherits the user's default policy."""
+    """Create a new user-owned App: "Same as my access plan" (design §2.9)."""
     user = _user_from_session(session, path=path)
     cleaned_name = " ".join(str(name or "").split())
     if not cleaned_name:
@@ -573,7 +494,7 @@ def create_user_app(
         cleaned_name,
         kind="personal",
         owner_user_id=str(user["id"]),
-        default_profile_id=default_profile_id,
+        access_plan=admin_store.PERSON_ASSIGNMENT,
         path=path,
     )
     admin_store.record_audit(
@@ -585,7 +506,7 @@ def create_user_app(
         metadata={"email": user.get("email"), "name": cleaned_name},
         path=path,
     )
-    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+    return {"app": _app_payload(app, path=path)}
 
 
 def delete_user_app(
@@ -628,7 +549,6 @@ def delete_user_app(
 def request_user_access(
     session: AdminSession,
     *,
-    default_profile_id: str | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Create or return the signed-in user's self-service Personal App."""
@@ -637,7 +557,6 @@ def request_user_access(
     app = admin_store.ensure_personal_app_for_user(
         str(user["id"]),
         name=f"{label} personal access",
-        default_profile_id=default_profile_id,
         path=path,
     )
     admin_store.record_audit(
@@ -646,15 +565,10 @@ def request_user_access(
         actor_id=str(user["id"]),
         target_kind="app",
         target_id=app["id"],
-        metadata={
-            "email": user.get("email"),
-            "effective_profile_id": (
-                app.get("default_profile_id") or default_profile_id or "default-local"
-            ),
-        },
+        metadata={"email": user.get("email"), "access_plan": app.get("access_plan")},
         path=path,
     )
-    return {"app": _app_payload(app, default_profile_id=default_profile_id, path=path)}
+    return {"app": _app_payload(app, path=path)}
 
 
 def get_user_app_credential(

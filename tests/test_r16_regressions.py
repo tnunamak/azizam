@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from tests.support.access import access, plan_for
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from fastapi.responses import JSONResponse
@@ -93,6 +94,9 @@ def test_recovery_skips_live_and_scheduled_make_jobs(tmp_path, monkeypatch, reco
     asyncio.run(scenario())
 
 
+LOCAL = access(plan_for('local'))  # an App whose plans allow loading models
+
+
 def test_denied_decision_fallback_never_activates():
     ensure = AsyncMock(return_value=None)
     rt = runtime(ensure=ensure)
@@ -103,7 +107,7 @@ def test_denied_decision_fallback_never_activates():
         posts.append(request.url.port)
         return httpx.Response(503, json={'error': 'busy'})
     with patch('gateway.decision_routing.httpx.AsyncClient', lambda **kw: real(transport=httpx.MockTransport(handler))):
-        result = asyncio.run(rt.dispatch(None, None, {**BODY, 'model': 'decide-quality'}, 'r'))
+        result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, 'model': 'decide-quality'}, 'r'))
     assert result.status_code == 503
     assert [call.args[0] for call in ensure.call_args_list] == ['large']
     assert posts == [18092]
@@ -121,7 +125,7 @@ def test_decision_rechecks_policy_after_readiness():
         return JSONResponse({'error': 'denied'}, status_code=503) if ready else None
     rt.admit = admit
     with patch('gateway.decision_routing.httpx.AsyncClient', side_effect=AssertionError('must not send')):
-        result = asyncio.run(rt.dispatch(None, None, BODY, 'r'))
+        result = asyncio.run(rt.dispatch(None, LOCAL, BODY, 'r'))
     assert result.status_code == 503
     assert admissions == [False, True]
 

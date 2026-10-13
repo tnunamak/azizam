@@ -10,6 +10,8 @@ backend is replaced by a fake, so the test needs no network.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import json
 import sys
 import unittest
@@ -24,7 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway.policy import AppProfile  # noqa: E402
+from tests.support.access import authenticated, plan_for, access, auth_identity# noqa: E402
 
 FIXTURE = json.loads(
     (ROOT / "tests" / "fixtures" / "anthropic-sdk-schemas.json").read_text("utf-8")
@@ -189,22 +191,17 @@ def keyed_auth(raw_key: str):
     from contextlib import ExitStack
 
     key_hash = proxy.hash_api_key(raw_key)
-    identity = proxy.AuthIdentity(
+    identity = auth_identity(
         name=raw_key,
         key_hash=key_hash,
         downstream={},
-        profile=AppProfile(
-            id="conformance",
-            protocols=frozenset({"anthropic.messages", "ollama.chat", "ollama.generate", "openai.chat"}),
-        ),
+        access=access(plan_for("conformance", caps=('chat',))),
     )
 
     def lookup(candidate_hash: str, **_kwargs):
         return identity if candidate_hash == key_hash else None
 
     stack = ExitStack()
-    stack.enter_context(patch.object(proxy, "AUTH_ENABLED", True))
-    stack.enter_context(patch.object(proxy, "LAN_BYPASS_ENABLED", False))
     stack.enter_context(
         patch.object(proxy, "runtime_identity_for_app_credential_hash", side_effect=lookup)
     )
@@ -214,7 +211,7 @@ def keyed_auth(raw_key: str):
 class AnthropicConformanceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
-        self.auth = patch.object(proxy, "AUTH_ENABLED", False)
+        self.auth = authenticated()
         self.auth.start()
         self.addCleanup(self.auth.stop)
         self.sent: list[dict] = []

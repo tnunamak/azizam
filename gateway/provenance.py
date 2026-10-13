@@ -4,9 +4,10 @@ Two jobs, both pure (no I/O, no FastAPI, no ``proxy`` import):
 
 1. The delivery control. A request may carry
    ``extensions["com.azizam.workflow"].metadata = "full" | "none"``. The
-   gateway always STORES generated media with full metadata. The control (or,
-   when absent, the app profile default in ``profile.media_metadata.default``)
-   decides whether the bytes DELIVERED to the client keep that metadata.
+   gateway always STORES generated media with full metadata. The access
+   plans set a bound (the lower ``media_metadata`` of the person's and the
+   app's plan); a request may ask for less, never more. The result decides
+   whether the bytes DELIVERED to the client keep that metadata.
 
 2. The provenance record: a small JSON document that says how an asset was
    made (requested model and alias, what it resolved to, seed, parameters,
@@ -99,13 +100,12 @@ def requested_metadata_mode(body: Mapping[str, Any] | None) -> str | None:
     return parse_metadata_mode(block[METADATA_CONTROL])
 
 
-def resolve_metadata_mode(requested: str | None, profile_default: str | None) -> str:
-    """Request value wins; else the profile default; else ``none`` (safe)."""
-    if requested in METADATA_MODES:
-        return str(requested)
-    if profile_default in METADATA_MODES:
-        return str(profile_default)
-    return METADATA_NONE
+def resolve_metadata_mode(requested: str | None, plan_bound: str | None) -> str:
+    """The plans' bound, lowered by the request; ``none`` without a bound (safe)."""
+    bound = str(plan_bound) if plan_bound in METADATA_MODES else METADATA_NONE
+    if requested == METADATA_NONE:
+        return METADATA_NONE
+    return bound
 
 
 # ---------------------------------------------------------------------------

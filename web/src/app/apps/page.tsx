@@ -79,16 +79,19 @@ type Reveal = {
 };
 type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
 
+/** "Family (yours)" or the app's own plan name (design §3.4). */
 function accessPlanSummary(app: AccountApp): string {
-  return app.profile?.name ?? "";
+  const plan = app.access_plan;
+  if (!plan) return "";
+  return plan.same_as_person ? `${plan.name} (yours)` : plan.name;
 }
 
 /** Why this app cannot get a key. The API sends only the boolean, so the
  * reason comes from the fields that set it (gateway/user_runtime.py). */
 function mintBlockedReason(app: AccountApp): string {
   if (app.disabled_at) return "This app is turned off, so it can't get keys.";
-  if (app.profile?.missing)
-    return "This app's access plan was removed. Ask the owner to choose one.";
+  if (!app.access_plan)
+    return "This app has no access plan. Ask the owner to choose one.";
   return "You can't create keys for this app. Ask the owner to update its access.";
 }
 
@@ -618,7 +621,7 @@ function AppsContents() {
                   blockedReason ? "Can't create keys" : null,
                   `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
                   accessPlanSummary(app)
-                    ? `Plan: ${accessPlanSummary(app)}`
+                    ? `Access plan: ${accessPlanSummary(app)}`
                     : null,
                 ]}
                 metaTitle={
