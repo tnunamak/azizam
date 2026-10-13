@@ -5,7 +5,7 @@ import { chatAlias } from "../src/app/_home/recipes";
 
 const homePath = "/";
 const homeApi = "**/me/api/home";
-const mediaApi = "**/me/api/media?limit=50";
+const mediaApi = "**/me/api/media?limit=12";
 const setupApi = "**/admin/api/setup-progress";
 
 test("Home names a freshly checked on-demand task as ready to start", async ({

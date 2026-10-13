@@ -60,7 +60,7 @@ function mockHomeMedia(
       const response = extra?.(path);
       if (response) return response;
       if (path === "/me/api/home") return Response.json(home);
-      if (path === "/me/api/media?limit=50") {
+      if (path === "/me/api/media?limit=12") {
         return Response.json({ assets, has_more: false });
       }
       if (path.includes("/download?"))

@@ -139,7 +139,7 @@ export const homeApi = {
     let pagesScanned = 0;
     let partial = false;
     while (hasMore && previewable.length < 4 && pagesScanned < 3) {
-      const query = new URLSearchParams({ limit: "50" });
+      const query = new URLSearchParams({ limit: "12" });
       if (cursor) query.set("cursor", cursor);
       let page: HomeCreationsResponse;
       try {
