@@ -157,5 +157,5 @@ def test_submit_dropped_by_the_upstream_gives_a_502(fake_upstreams, monkeypatch)
         expect_fixed("FK-B7", f"raised {type(dropped).__name__}", "returned")
     else:
         assert images == []
-        assert _error(error) == (502, {"error": {"message": f"Image backend connection dropped at {fake.base_url}", "type": "api_error"}})
+        assert _error(error) == (502, {"error": {"message": f"Image backend connection dropped", "type": "api_error"}})
     assert len(fake.calls("prompt")) == 1

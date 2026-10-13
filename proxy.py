@@ -7309,7 +7309,7 @@ async def _comfy_run_round(
         except httpx.TransportError:
             # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
             return Response(
-                content=json.dumps({"error": {"message": f"Image backend connection dropped at {COMFY_HOST}", "type": "api_error"}}),
+                content=json.dumps({"error": {"message": f"Image backend connection dropped", "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json",
             ), []
