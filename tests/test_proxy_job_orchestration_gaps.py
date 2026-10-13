@@ -227,9 +227,6 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
                  "_recover_media_jobs", "_provision_existing_user_personal_apps"):
         monkeypatch.setattr(proxy, name, Mock(return_value=0))
     monkeypatch.setattr(proxy, "active_app_credential_count", lambda: 1)
-    monkeypatch.setattr(proxy.default_profiles, "seed_default_profiles", lambda **kw: [])
-    monkeypatch.setattr(proxy, "_seed_user_defaults_from_bootstrap_config",
-                        lambda: {"settings": 0, "mappings": 0})
     monkeypatch.setattr(proxy, "_prompt_migration_state_path",
                         lambda: tmp_path / "migration.json")
     monkeypatch.setattr(proxy.state, "shutdown_requested", False)
