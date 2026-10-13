@@ -200,34 +200,9 @@ class = "equivalent"
 reason = "The scan starts at length 8 instead of 7 or 9; a full tag is not a proper prefix, so the result is the same."
 
 [[mutant]]
-id = "gateway/transforms.py:885:bool:and->or"
-class = "killable"
-reason = "Differs from the current code only when a close tag comes before an opener in one frame, where the current output is wrong (\"r</think><think>x</think>v\" gives visible \"r</think>v\", reasoning \"x\"). Killed by tests on fix/think-stray-tags (05b404ea) once released; a test here would pin the bug."
-
-[[mutant]]
-id = "gateway/transforms.py:885:cmp:<-><="
-class = "equivalent"
-reason = "Equivalent while the gate `idx < 0 and not in_think` holds. Here `tag` is the opener and idx its find(). `idx <= 0` adds only idx == 0 (text starts with the opener). The inner test at :888 then needs a close tag before position 0 or no opener, and an opener sits at 0, so it is false and the loop goes on as before. fix/think-stray-tags removes the gate; the mutant is then live and its tests kill it."
-
-[[mutant]]
-id = "gateway/transforms.py:885:int-const:0->1"
-class = "equivalent"
-reason = "Equivalent while the gate `idx < 0 and not in_think` holds. `idx < 1` adds only idx == 0 (text starts with the opener), where the inner test at :888 is false: no close tag can sit before position 0, and the opener is present. fix/think-stray-tags removes the gate; the mutant is then live and its tests kill it."
-
-[[mutant]]
-id = "gateway/transforms.py:888:cmp:<-><="
-class = "equivalent"
-reason = "Equivalent under the gate at :885: not in_think and idx < 0 mean find(opener) == -1, so `find(opener) < 0` and `<= 0` are both true."
-
-[[mutant]]
 id = "gateway/transforms.py:888:cmp:<-><=#2"
 class = "equivalent"
-reason = "Dead operand under the gate at :885: find(opener) == -1 makes `find(opener) < 0` true, so the `or` short-circuits and `idx_close < find(opener)` is never evaluated."
-
-[[mutant]]
-id = "gateway/transforms.py:888:int-const:0->1#2"
-class = "equivalent"
-reason = "Equivalent under the gate at :885: find(opener) == -1, so `find(opener) < 0` and `< 1` are both true."
+reason = "`idx_close < idx` becomes `<=`. The close tag and the opener are different strings, so they cannot start at the same index: idx_close == idx never holds, and `<` and `<=` agree on every reachable input."
 
 [[mutant]]
 id = "gateway/transforms.py:979:str-const:\"\"->\"XXXX\""

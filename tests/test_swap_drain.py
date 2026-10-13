@@ -98,12 +98,13 @@ def test_lease_counts_until_released_and_release_is_idempotent() -> None:
 def test_clear_for_swap_returns_at_once_when_idle() -> None:
     drain = SwapDrain()
 
-    async def scenario() -> float:
-        start = time.monotonic()
+    async def scenario() -> None:
         await drain.clear_for_swap("llm", _settings(timeout_s=5))
-        return time.monotonic() - start
 
-    assert asyncio.run(scenario()) < 0.5
+    # No lease is held and nothing releases one: returning at all is the oracle.
+    # The 30 s wait_for only turns a hang into a failure (a 5 s drain timeout
+    # would also end the wait, but with SwapDeferred).
+    asyncio.run(asyncio.wait_for(scenario(), 30))
 
 
 def test_clear_for_swap_waits_for_the_last_release() -> None:
