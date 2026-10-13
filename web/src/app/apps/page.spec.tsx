@@ -8,9 +8,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import AppsPage from "./page";
-import type { Credential, MintedCredential } from "@/lib/api";
+import { api, type AccessPlan, type Credential, type MintedCredential } from "@/lib/api";
+import { productApi } from "@/lib/product-api";
+import type { ModelsCatalog } from "@/lib/product-api-types";
+import { ViewerContext, type Viewer } from "@/components/shell/session";
 import {
   accountApi,
   type AccountApp,
@@ -21,6 +25,10 @@ const navigation = vi.hoisted(() => ({ search: "" }));
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(navigation.search),
+}));
+vi.mock("@/lib/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/toast")>()),
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@/lib/account-api", () => ({
   accountApi: {
@@ -50,7 +58,38 @@ const snapshot: AccountSnapshot = {
   apps: [],
 };
 
+const member: Viewer = {
+  authenticated: true,
+  name: "Sam",
+  email: null,
+  role: "member",
+  admin: false,
+};
+const owner: Viewer = { ...member, name: "Tim", role: "owner", admin: true };
+const familyPlan = { id: "plan_family", name: "Family", summary: "Chat and Images." };
+const plans = [
+  { id: "plan_family", name: "Family", summary: "Chat and Images." },
+  { id: "plan_local", name: "Local only", summary: "Chat. No paid models." },
+] as AccessPlan[];
+const catalog = {
+  aliases: [
+    { id: "house-chat", capability: "chat", capabilities: [{ capability: "chat" }], recommended: true },
+    { id: "house-whisper", capability: "transcribe", capabilities: [{ capability: "transcribe" }] },
+  ],
+  models: [],
+} as unknown as ModelsCatalog;
+
+beforeAll(() => {
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.setPointerCapture ??= () => undefined;
+  Element.prototype.releasePointerCapture ??= () => undefined;
+  Element.prototype.scrollIntoView ??= () => undefined;
+});
+
 beforeEach(() => {
+  vi.spyOn(api.accessPlans, "list").mockReset().mockResolvedValue(plans);
+  vi.spyOn(api.apps, "setAccessPlan").mockReset().mockResolvedValue({} as never);
+  vi.spyOn(productApi, "models").mockReset().mockResolvedValue(catalog);
   navigation.search = "";
   vi.mocked(accountApi.session).mockReset().mockResolvedValue(snapshot);
   vi.mocked(accountApi.discovery).mockResolvedValue({ recipes: {} });
@@ -64,15 +103,18 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
-function renderApps() {
+function renderApps(viewer: Viewer = member) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <AppsPage />
+      <ViewerContext.Provider value={viewer}>
+        <AppsPage />
+      </ViewerContext.Provider>
     </QueryClientProvider>,
   );
   return client;
@@ -300,7 +342,7 @@ it("refreshes a partially created app, clears the cancelled draft, and resumes k
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "New app" }));
   expect(screen.getByLabelText("App name")).toHaveValue("");
-  expect(screen.getByLabelText("App recipe")).toHaveTextContent("Other app");
+  expect(screen.queryByLabelText("App recipe")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   const card = within(
@@ -698,4 +740,219 @@ it("says how to make a connection when there is none", async () => {
     "href",
     "/connect",
   );
+});
+
+// --- What an app can use (access plan), and the setup guide in the reveal ---
+
+const person = (role: string) => ({
+  id: "person",
+  email: null,
+  name: "Tim",
+  role,
+  access_plan: familyPlan,
+});
+const planAccountApp: AccountApp = {
+  ...app,
+  id: "planned-app",
+  name: "Guide app",
+  access_plan: { ...familyPlan, same_as_person: true },
+  credentials: [{ id: "k1", created_by: "person" } as Credential],
+};
+
+async function openNewApp(name: string) {
+  await screen.findByText("Connect your first app");
+  fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
+  fireEvent.change(screen.getByLabelText("App name"), { target: { value: name } });
+}
+async function choosePlan(label: string, option: string) {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+const minted = (name: string): MintedCredential => ({ ...mintedKey, display_name: name });
+
+it("lets an owner pick an access plan, and sets it before any key is minted", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "new-app", name: "Dictation" });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("Dictation"));
+  renderApps(owner);
+  await openNewApp("Dictation");
+  const select = await screen.findByRole("combobox", { name: "Access plan" });
+  // A key has no permissions of its own: it gets its app's plan.
+  expect(
+    screen.getByText(/A key can use only what its app.s access plan allows/),
+  ).toBeVisible();
+  expect(select).toHaveTextContent("Same as you (Family)");
+  expect(screen.getByText("Chat and Images.")).toBeVisible();
+  await choosePlan("Access plan", "Local only");
+  expect(
+    screen.getByText("Chat. No paid models. It never gets more than your own plan allows."),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  expect(await screen.findByRole("heading", { name: "Connect Dictation" })).toBeVisible();
+  expect(api.apps.setAccessPlan).toHaveBeenCalledWith("new-app", "plan_local");
+  const order = (fn: unknown) => vi.mocked(fn as () => void).mock.invocationCallOrder[0];
+  expect(order(accountApi.createApp)).toBeLessThan(order(api.apps.setAccessPlan));
+  expect(order(api.apps.setAccessPlan)).toBeLessThan(order(accountApi.mintKey));
+  expect(accountApi.mintKey).toHaveBeenCalledWith("new-app", "Dictation");
+});
+
+it("does not call the plan endpoint when an owner keeps 'Same as you'", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(mintedKey);
+  renderApps(owner);
+  await openNewApp("My laptop");
+  fireEvent.click(await screen.findByRole("button", { name: "Create app and key" }));
+  await screen.findByRole("heading", { name: "Connect My laptop" });
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
+});
+
+it("mints no key when the plan cannot be saved, and finishes the app on retry", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("owner") });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(mintedKey);
+  vi.mocked(api.apps.setAccessPlan)
+    .mockRejectedValueOnce(new Error("The plan could not be saved."))
+    .mockResolvedValue({} as never);
+  renderApps(owner);
+  await openNewApp("My laptop");
+  await choosePlan("Access plan", "Local only");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Your app was created");
+  expect(alert).toHaveTextContent("The plan could not be saved.");
+  expect(accountApi.mintKey).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry key creation" }));
+  expect(await screen.findByRole("heading", { name: "Connect My laptop" })).toBeVisible();
+  expect(accountApi.createApp).toHaveBeenCalledTimes(1);
+  expect(api.apps.setAccessPlan).toHaveBeenCalledTimes(2);
+  expect(accountApi.mintKey).toHaveBeenCalledTimes(1);
+});
+
+it("shows a member their plan, read-only, and never sets one", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(mintedKey);
+  renderApps(member);
+  await openNewApp("My laptop");
+  expect(
+    await screen.findByText(
+      "Same as yours: Family. Chat and Images. Only the owner can change an app's access plan.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Access plan" })).toBeNull();
+  expect(api.accessPlans.list).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  await screen.findByRole("heading", { name: "Connect My laptop" });
+  expect(api.apps.setAccessPlan).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["OpenWhispr laptop", "OpenWhispr"],
+  ["My laptop", "Open WebUI"],
+])("opens the reveal for %s with the %s guide chosen, and the key only in its own field", async (name, appName) => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "guide", name });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted(name));
+  renderApps(member);
+  await openNewApp(name);
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const dialog = within(await screen.findByRole("dialog", { name: `Connect ${name}` }));
+  expect(dialog.getByRole("combobox", { name: "Your app" })).toHaveTextContent(appName);
+  expect(dialog.getByRole("heading", { name: "Set up your app" })).toBeVisible();
+  expect(dialog.getByLabelText("Your key")).toHaveValue("test-key-only");
+  // The key field of the guide shows a hint, never the key.
+  const guide = dialog.getByRole("heading", { name: "Set up your app" }).closest("section")!;
+  expect(guide.textContent).toContain("Paste the key from above.");
+  const values = [...guide.querySelectorAll("input")].map((input) => input.value);
+  expect(values.length).toBeGreaterThan(0);
+  expect(values).not.toContain("test-key-only");
+  expect(guide.textContent).not.toContain("test-key-only");
+  expect(dialog.getByRole("link", { name: "Connect" })).toHaveAttribute("href", expect.stringMatching(/^\/connect\/?$/));
+  expect(dialog.getByRole("link", { name: `${appName} documentation` })).toHaveAttribute(
+    "href",
+    expect.stringMatching(/^https:\/\//),
+  );
+  // The sticky action saves the key and closes the dialog.
+  fireEvent.click(dialog.getByRole("button", { name: "I’ve saved the key" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("fills the guide with the person's own model names, and warns when a task has none", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "guide", name: "OpenWhispr laptop" });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("OpenWhispr laptop"));
+  renderApps(member);
+  await openNewApp("OpenWhispr laptop");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Connect OpenWhispr laptop" }));
+  await waitFor(() => {
+    const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
+    expect(models).toEqual(["house-whisper", "house-chat"]);
+  });
+  expect(dialog.queryByText(/needs a .* model, and none is available/)).toBeNull();
+});
+
+it("says which model task is missing once the catalog has loaded", async () => {
+  vi.mocked(productApi.models).mockResolvedValue({ aliases: [], models: [] } as unknown as ModelsCatalog);
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
+  vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "guide", name: "OpenWhispr laptop" });
+  vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted("OpenWhispr laptop"));
+  renderApps(member);
+  await openNewApp("OpenWhispr laptop");
+  fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Connect OpenWhispr laptop" }));
+  expect(
+    await dialog.findByText(/OpenWhispr needs a transcription and a chat model, and none is available to you\./),
+  ).toBeVisible();
+});
+
+it("gives an owner 'Change access plan' that sets the plan and refreshes", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    user: person("owner"),
+    apps: [planAccountApp],
+  });
+  renderApps(owner);
+  await screen.findByRole("heading", { name: "Guide app" });
+  openMenu("Guide app");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Change access plan" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Access plan for Guide app" }));
+  expect(dialog.getByRole("combobox", { name: "Access plan" })).toHaveTextContent("Same as you (Family)");
+  await choosePlan("Access plan", "Local only");
+  expect(dialog.getByText("Local only. Chat. No paid models.")).toBeVisible();
+  const sessionCalls = vi.mocked(accountApi.session).mock.calls.length;
+  fireEvent.click(dialog.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(api.apps.setAccessPlan).toHaveBeenCalledWith("planned-app", "plan_local"));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(vi.mocked(accountApi.session).mock.calls.length).toBeGreaterThan(sessionCalls),
+  );
+});
+
+it("keeps the change-access dialog open with the error when saving fails", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    user: person("owner"),
+    apps: [planAccountApp],
+  });
+  vi.mocked(api.apps.setAccessPlan).mockRejectedValue(new Error("Only the owner can do that."));
+  renderApps(owner);
+  await screen.findByRole("heading", { name: "Guide app" });
+  openMenu("Guide app");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Change access plan" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Access plan for Guide app" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Save" }));
+  expect(await dialog.findByRole("alert")).toHaveTextContent("Only the owner can do that.");
+});
+
+it("does not offer 'Change access plan' to a member", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    user: person("member"),
+    apps: [planAccountApp],
+  });
+  renderApps(member);
+  await screen.findByRole("heading", { name: "Guide app" });
+  openMenu("Guide app");
+  await screen.findByRole("menuitem", { name: "Create another key" });
+  expect(screen.queryByRole("menuitem", { name: "Change access plan" })).toBeNull();
 });

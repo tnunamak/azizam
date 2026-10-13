@@ -37,6 +37,12 @@ test("owner signs in, opens Connect and copies the MCP config", async ({
     const list = page.getByRole("list", { name: "MCP tools" });
     for (const name of names) await expect(list).toContainText(name);
 
+    // App setup comes from data: a generic guide, and MCP notes per app.
+    await expect(page.getByText("Set up an app", { exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Your app" })).toContainText("Open WebUI");
+    await expect(page.getByText("MCP notes for each app", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+
     await page.getByRole("button", { name: "Copy JSON code" }).click();
     const copied = await page.evaluate(() => navigator.clipboard.readText());
     const config = JSON.parse(copied);

@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { ViewerContext } from "@/components/shell/session";
 import { expectNoHostPath } from "../../../tests/helpers/host-path";
-import ModelsClient from "./models-client";
 
 const MODEL_PATH = "/opt/models/model-b.gguf";
+import ModelsClient from "./models-client";
 
 afterEach(() => {
   cleanup();
@@ -17,8 +17,10 @@ test("Models shows no host path when a model is registered by file path", async 
   // The real productApi.models runs here: it is what shortens the path.
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      Response.json({
+    vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes("well-known")
+        ? Response.json({ recipes: {} })
+        : Response.json({
         schema_version: 1,
         object: "models.catalog",
         aliases: [],
@@ -39,7 +41,7 @@ test("Models shows no host path when a model is registered by file path", async 
             cost: { kind: "free", price: null },
             timing: {},
             availability: { available: true, status: "ready" },
-            io: { input_modalities: ["text"], output_modalities: ["text"] },
+            io: { input: ["text"], output: ["text"] },
             examples: [],
             recent_receipts: [],
             use: { model: MODEL_PATH },
@@ -59,9 +61,10 @@ test("Models shows no host path when a model is registered by file path", async 
       </QueryClientProvider>
     </ViewerContext.Provider>,
   );
-  await userEvent.setup().click(await screen.findByRole("button", { name: "Show all models" }));
-  // The model is on screen by its file name, so the check below is not vacuous.
-  expect((await screen.findAllByText(/model-b\.gguf/)).length).toBeGreaterThan(0);
-  expect(document.body.textContent).not.toContain("/opt/models/");
+  // The model is listed at once, by its file name, so the checks are not vacuous.
+  const name = await screen.findByRole("button", { name: /^model-b/ });
   expectNoHostPath(expect, "models");
+  await userEvent.setup().click(name);
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  expectNoHostPath(expect, "models details");
 });

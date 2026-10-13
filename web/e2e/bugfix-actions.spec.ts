@@ -30,7 +30,7 @@ test("remove an app through Apps & keys and invalidate its key", { tag: GLOBAL_S
   const { credential } = await (await mintedResponse).json();
   const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
   await expect(reveal).toBeVisible();
-  await reveal.getByRole("button", { name: "I’ve saved it" }).click();
+  await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
   expect(
     (
       await request.get("/openai/v1/models", {

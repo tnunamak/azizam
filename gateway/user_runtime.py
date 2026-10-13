@@ -239,6 +239,13 @@ def build_user_portal_snapshot(
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
             "role": _live_role_for_user(str(user["id"]), path=path),
+            # A new App starts on this plan ("Same as you"), so the New app
+            # dialog can say what it will be allowed to use before it exists.
+            "access_plan": _plan_summary(
+                {"access_plan": admin_store.PERSON_ASSIGNMENT, "owner_user_id": str(user["id"])},
+                path=path,
+                listing=plan_listing,
+            ),
         },
         "apps": apps,
     }

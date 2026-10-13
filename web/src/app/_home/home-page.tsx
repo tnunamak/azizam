@@ -79,7 +79,8 @@ import {
   type HomeReceipt,
   hasHomeCreationContent,
 } from "./home-api";
-import { chatAlias, recipeFor, type Client } from "./recipes";
+import { chatAlias, transcriptionAlias } from "./chat-alias";
+import { keyAppById, keyApps, resolveKeyGuide } from "@/lib/app-guides";
 import { capabilityTiles } from "./presentation";
 
 const homeKey = ["account", "home"];
@@ -91,21 +92,16 @@ const recentCreationsQuery = {
   staleTime: 30_000,
 };
 const setupKey = ["gateway", "setup-progress"];
-const primaryAppChoices = [
-  "Open WebUI",
-  "LibreChat",
-  "SillyTavern",
-  "Cursor",
-  "Codex",
-  "Claude Code",
-] as const satisfies readonly Client[];
-const otherClientChoices = [
-  "Python",
-  "JavaScript",
-  "curl",
-  "Phone",
-] as const satisfies readonly Client[];
-type AppChoice = Client | "Other";
+// Apps lead the chooser; code (Python, JavaScript, curl) sits under "Another app".
+const primaryAppChoices = keyApps
+  .filter((app) => app.kind !== "Code")
+  .map((app) => app.id);
+const otherClientChoices = keyApps
+  .filter((app) => app.kind === "Code")
+  .map((app) => app.id);
+type AppChoice = string;
+const OTHER = "other";
+
 
 function formatMilliseconds(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
@@ -510,7 +506,7 @@ function Connect({
   const queryClient = useQueryClient();
   const [chooserOpen, setChooserOpen] = useState(startOpen);
   const [appChoice, setAppChoice] = useState<AppChoice | null>(null);
-  const [client, setClient] = useState<Client>("Open WebUI");
+  const [client, setClient] = useState<string>(keyApps[0].id);
   const [selectedCredentialId, setSelectedCredentialId] = useState("new");
   const [notesOpen, setNotesOpen] = useState(false);
   const [reveal, setReveal] = useState<{
@@ -561,13 +557,23 @@ function Connect({
   const canCreate =
     home.apps.some((app) => app.can_mint_keys) || home.apps.length === 0;
   const choiceLocked = creating || !!reveal || testing;
-  const chosenAppName = appChoice === "Other" ? client : (appChoice ?? client);
-  const selectedRecipe = recipeFor(
-    client,
-    home.api_base_url,
-    home.public_base_url,
-    model ?? "",
-  );
+  const guideApp = keyAppById(client) ?? keyApps[0];
+  const chosenAppName = guideApp.name;
+  const selectedGuide = resolveKeyGuide(guideApp.key, {
+    openai_url: home.api_base_url,
+    anthropic_url: home.public_base_url,
+    mcp_url: `${home.public_base_url}/mcp`,
+    chat_model: model,
+    transcription_model: transcriptionAlias(scopedAliases),
+  });
+  const guideAddress = selectedGuide.fields.find((field) => field.isAddress);
+  // One copy field per distinct model the app needs (OpenWhispr needs two).
+  const guideModels = selectedGuide.fields
+    .filter((field) => field.isModel && !field.missing)
+    .filter(
+      (field, index, all) =>
+        all.findIndex((other) => other.value === field.value) === index,
+    );
 
   async function createKey() {
     if (createLock.current) return;
@@ -649,7 +655,7 @@ function Connect({
             aria-labelledby="add-app-label"
             className="grid grid-cols-2 gap-1.5"
           >
-            {([...primaryAppChoices, "Other"] as AppChoice[]).map((name) => (
+            {[...primaryAppChoices, OTHER].map((name: AppChoice) => (
               <button
                 key={name}
                 type="button"
@@ -663,14 +669,14 @@ function Connect({
                 disabled={choiceLocked}
                 onClick={() => {
                   setAppChoice(name);
-                  setClient(name === "Other" ? "Python" : name);
+                  setClient(name === OTHER ? otherClientChoices[0] : name);
                   setTestResult(null);
                   setTestError(null);
                 }}
               >
-                <AppMark app={name} />
+                <AppMark app={name === OTHER ? "Other" : (keyAppById(name)?.name ?? name)} />
                 <span className="truncate">
-                  {name === "Other" ? "Another app" : name}
+                  {name === OTHER ? "Another app" : keyAppById(name)?.name}
                 </span>
               </button>
             ))}
@@ -689,16 +695,16 @@ function Connect({
       )}
       {appChoice && (
         <div className="space-y-4 border-t pt-4">
-          {appChoice === "Other" && (
+          {appChoice === OTHER && (
             <div className="space-y-2">
               <label htmlFor="other-client" className="text-meta font-medium">
-                Recipe
+                Language or tool
               </label>
               <Select
                 value={client}
                 disabled={choiceLocked}
                 onValueChange={(value) => {
-                  setClient(value as Client);
+                  setClient(value);
                   setTestResult(null);
                   setTestError(null);
                 }}
@@ -707,25 +713,27 @@ function Connect({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {otherClientChoices.map((name) => (
-                    <SelectItem key={name} value={name}>
-                      {name}
+                  {otherClientChoices.map((id) => (
+                    <SelectItem key={id} value={id}>
+                      {keyAppById(id)?.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
-          {(selectedRecipe.fields[0]?.value ?? home.api_base_url) !==
-          home.api_base_url ? (
-            <CopyField
-              label="Base URL"
-              value={selectedRecipe.fields[0]?.value ?? home.api_base_url}
-            />
+          {guideAddress && guideAddress.value !== home.api_base_url ? (
+            <CopyField label={guideAddress.label} value={guideAddress.value} />
           ) : (
             <CopyField label="Gateway address" value={home.api_base_url} />
           )}
-          {model && <CopyField label="Model" value={model} />}
+          {guideModels.map((field) => (
+            <CopyField
+              key={field.value}
+              label={field.group ? `${field.group.replace(/ \(optional\)$/, "")} model` : "Model"}
+              value={field.value}
+            />
+          ))}
           <div className="space-y-2">
             <label htmlFor="app-key" className="text-meta font-medium">
               API key
@@ -775,7 +783,7 @@ function Connect({
                   htmlFor="pasted-app-key"
                   className="text-meta font-medium"
                 >
-                  Paste your {selectedRecipe.keyLabel}
+                  Paste your {selectedGuide.keyLabel}
                 </label>
                 <Input
                   id="pasted-app-key"
@@ -930,25 +938,27 @@ function Connect({
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 px-4 pb-4">
-            <p className="text-body">{selectedRecipe.description}</p>
+            <ol className="text-body list-decimal space-y-1 pl-5">
+              {selectedGuide.steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
             <p className="text-muted-foreground text-meta">
               The gateway check verifies the route and key. It does not verify
               the app.
             </p>
-            <p className="text-muted-foreground text-meta">
-              {client === "Open WebUI"
-                ? "Tested with Open WebUI v0.11.4 using host networking and non-streaming."
-                : "Check your app version and network path before testing."}
-            </p>
-            {model ? (
+            {selectedGuide.note ? (
+              <p className="text-muted-foreground text-meta">{selectedGuide.note}</p>
+            ) : null}
+            {model && selectedGuide.snippet ? (
               <CodeBlock
-                language={selectedRecipe.language}
-                code={selectedRecipe.code}
+                language={selectedGuide.snippet.language}
+                code={selectedGuide.snippet.code}
               />
             ) : null}
             <a
               className="text-link text-meta inline-flex items-center gap-1 underline underline-offset-4 max-sm:min-h-11"
-              href={selectedRecipe.docs}
+              href={selectedGuide.docs}
               target="_blank"
               rel="noreferrer"
             >

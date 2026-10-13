@@ -757,6 +757,12 @@ export const api = {
   apps: {
     list: () =>
       adminFetch<{ apps: App[] }>("/admin/api/apps").then((r) => r.apps),
+    /** Owner only: an access plan id, or "person" for the app's person's plan. */
+    setAccessPlan: (appId: string, accessPlan: string) =>
+      adminFetch<{ app: App }>(`/admin/api/apps/${encodeURIComponent(appId)}`, {
+        method: "PATCH",
+        body: { access_plan: accessPlan },
+      }).then((r) => r.app),
   },
   users: {
     list: () =>

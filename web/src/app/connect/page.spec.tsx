@@ -7,10 +7,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import { accountApi, type GatewayDiscovery } from "@/lib/account-api";
+import { productApi } from "@/lib/product-api";
+import type { ModelsCatalog } from "@/lib/product-api-types";
+import { mcpApps } from "@/lib/app-guides";
 import ConnectPage from "./page";
 
 vi.mock("next/link", () => ({
@@ -64,37 +67,30 @@ function renderPage(viewer: Viewer) {
   );
 }
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const catalog = {
+  aliases: [
+    { id: "house-chat", capability: "chat", capabilities: [{ capability: "chat" }], recommended: true },
+    { id: "house-whisper", capability: "transcribe", capabilities: [{ capability: "transcribe" }] },
+  ],
+  models: [],
+} as unknown as ModelsCatalog;
+
+beforeAll(() => {
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.scrollIntoView ??= () => undefined;
+});
+
 beforeEach(() => {
   vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([]);
+  vi.spyOn(productApi, "models").mockResolvedValue(catalog);
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-
-const notes = {
-  checked: "2026-10-13",
-  clients: [
-    {
-      id: "hosted",
-      name: "Hosted Chat",
-      auth: "sign-in" as const,
-      status: "documented" as const,
-      steps: ["Add a connector with <server address>.", "Sign in when asked."],
-      note: "Takes no key.",
-      docs: "https://hosted.example/docs",
-    },
-    {
-      id: "editor",
-      name: "Some Editor",
-      auth: "sign-in-or-key" as const,
-      status: "unverified" as const,
-      steps: ["Set url to <server address>."],
-      docs: "https://editor.example/docs",
-    },
-  ],
-};
 
 describe("Connect", () => {
   test("shows a loading state while connection details load", () => {
@@ -232,23 +228,69 @@ describe("Connect", () => {
     expect(screen.queryByRole("list", { name: "How to connect" })).toBeNull();
   });
 
-  test("renders each client's notes from data, with the address filled in", async () => {
+  test("renders MCP notes for each app from data, with the address filled in", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue({
       ...discovery,
-      mcp: { ...discovery.mcp!, sign_in: true, clients: notes },
+      mcp: { ...discovery.mcp!, sign_in: true },
     });
     renderPage(member);
-    expect(await screen.findByText(/checked 2026-10-13/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Hosted Chat/ }));
     expect(
-      await screen.findByText("Add a connector with https://gw.example/mcp."),
+      await screen.findByText("MCP notes for each app"),
+    ).toBeTruthy();
+    expect(screen.getByText(/checked 2026-/)).toBeTruthy();
+    // One accordion row per MCP app in the data, none written into the page.
+    for (const app of mcpApps)
+      expect(
+        screen.getByRole("button", { name: new RegExp(escapeRegExp(app.name)) }),
+      ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /LibreChat/ }));
+    expect(
+      await screen.findByText(/url: https:\/\/gw\.example\/mcp\./),
     ).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: "Hosted Chat documentation" }),
-    ).toHaveAttribute("href", "https://hosted.example/docs");
+      screen.getByRole("link", { name: "LibreChat documentation" }),
+    ).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
+    // An entry the data marks unverified says so; a documented one does not.
+    const unverified = mcpApps.find((app) => app.mcp.status === "unverified")!;
+    const documented = mcpApps.find((app) => app.mcp.status === "documented")!;
     expect(
-      screen.getByRole("button", { name: /Some Editor/ }).textContent,
+      screen.getByRole("button", { name: new RegExp(`^${escapeRegExp(unverified.name)}`) }).textContent,
     ).toMatch(/Partly unverified/);
+    expect(
+      screen.getByRole("button", { name: new RegExp(`^${escapeRegExp(documented.name)}`) }).textContent,
+    ).not.toMatch(/Partly unverified/);
+    expect(document.body.textContent).not.toContain("{mcp_url}");
+  });
+
+  test("shows a Set up an app guide with the gateway address and the first model name", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    expect(await screen.findByText("Set up an app")).toBeTruthy();
+    expect(screen.getByLabelText("Your app")).toHaveTextContent("Open WebUI");
+    // The address comes from discovery; the model from the person's catalog.
+    expect(screen.getByLabelText("URL")).toHaveValue("https://gw.example/openai/v1");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model IDs")).toHaveValue("house-chat"),
+    );
+    // The key field points to Apps & keys and never holds a key.
+    expect(screen.getByText("Paste an app key. Create one in Apps & keys.")).toBeTruthy();
+    expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
+  });
+
+  test("changes the guide when another app is chosen", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    fireEvent.click(await screen.findByLabelText("Your app"));
+    fireEvent.click(await screen.findByRole("option", { name: "OpenWhispr" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Your app")).toHaveTextContent("OpenWhispr"),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value)).toEqual([
+        "house-whisper",
+        "house-chat",
+      ]),
+    );
   });
 
   test("lists connections and disconnects one", async () => {

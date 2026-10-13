@@ -81,6 +81,24 @@ class UserRuntimeTests(unittest.TestCase):
         self.assertNotIn("opk_secret", rendered)
         self.assertNotIn("api_key", rendered)
 
+    def test_snapshot_names_the_plan_a_new_app_starts_with(self) -> None:
+        # The New app dialog says what an app may use before the app exists.
+        expected = {"id": self.plan["id"], "name": "Chat only", "summary": "Chat. No paid models.", "same_as_person": True}
+        self.assertEqual(build_user_portal_snapshot(self.session, path=self.db)["user"]["access_plan"], expected)
+        admin_store.disable_app(self.app["id"], path=self.db)  # no listed apps: the plan is read on its own
+        snapshot = build_user_portal_snapshot(self.session, path=self.db)
+        self.assertEqual(snapshot["apps"], [])
+        self.assertEqual(snapshot["user"]["access_plan"], expected)
+
+    def test_snapshot_says_a_person_without_a_plan_has_none(self) -> None:
+        new_user = admin_store.upsert_oidc_user(
+            "https://idp.example", "planless-sub", email="planless@example.com",
+            display_name="Planless", path=self.db,
+        )
+        session = AdminSession(subject=new_user["id"], email="planless@example.com", role="none",
+                               issued_at=1, expires_at=4_000_000_000)
+        self.assertIsNone(build_user_portal_snapshot(session, path=self.db)["user"]["access_plan"])
+
     def test_mint_and_revoke_user_owned_app_key(self) -> None:
         created = mint_user_app_key(
             self.session,

@@ -51,36 +51,52 @@ import {
   EmptyState,
   ErrorState,
   RelativeTime,
-  SecretReveal,
   CopyField,
-  CodeBlock,
 } from "@/components/product";
 import { cn } from "@/lib/cn";
-import { preferredTerms } from "@/lib/terms";
 import { keyPromptNote } from "@/lib/prompt-memory";
+import { api, type AccessPlan } from "@/lib/api";
+import { productApi } from "@/lib/product-api";
+import { keyApps, suggestedModel } from "@/lib/app-guides";
+import { useViewer } from "@/components/shell/session";
+import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 
 const accountKey = ["account", "session"];
-const CLIENTS = [
-  "Other app",
-  "Open WebUI",
-  "LibreChat",
-  "SillyTavern",
-  "Cursor",
-  "Python",
-  "JavaScript",
-  "curl",
-];
+/** "person": the app uses its person's own plan ("Same as you"). */
+const SAME_AS_PERSON = "person";
 type Reveal = {
   secret: string;
   appId: string;
   app: string;
-  client: string;
   oldIds: string[];
   /** Whether prompts sent with the key are remembered, and for whom. */
   note?: string | null;
 };
 type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
+
+/** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr). */
+function guideForName(name: string): string {
+  const lower = name.toLowerCase();
+  return (
+    keyApps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
+    keyApps[0].id
+  );
+}
+
+/** What an app may use, in one sentence: 'Access plan "Local only": Chat and Images. No paid models.' */
+function planSentence(plan: { name: string; summary: string | null } | null | undefined): string {
+  if (!plan) return "No access plan yet, so it can't use anything. Ask the owner to choose one.";
+  return plan.summary
+    ? `Access plan “${plan.name}”: ${plan.summary}`
+    : `Access plan “${plan.name}”.`;
+}
+
+/** Under an "Access plan" label: "Local only. Chat and Images. No paid models." */
+function planDescription(plan: { name: string; summary: string | null } | null | undefined): string {
+  if (!plan) return "No access plan yet, so it can't use anything. Ask the owner to choose one.";
+  return plan.summary ? `${plan.name}. ${plan.summary}` : plan.name;
+}
 
 /** "Family (yours)" or the app's own plan name (design §3.4). */
 function accessPlanSummary(app: AccountApp): string {
@@ -163,9 +179,13 @@ function AppsContents() {
     queryKey: ["gateway", "discovery"],
     queryFn: accountApi.discovery,
   });
+  const viewer = useViewer();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
-  const [client, setClient] = useState(CLIENTS[0]);
+  const [plan, setPlan] = useState(SAME_AS_PERSON);
+  const [guideApp, setGuideApp] = useState(keyApps[0].id);
+  const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
+  const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
   // True only when this dialog created the app, so a key failure on an
   // existing app does not claim the app was just created.
@@ -182,11 +202,33 @@ function AppsContents() {
   const [trustingApp, setTrustingApp] = useState<AccountApp | null>(null);
   const [saved, setSaved] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
+  // Only the owner and admins may give an app a different plan.
+  const { data: plans } = useQuery({
+    queryKey: ["access-plans"],
+    queryFn: api.accessPlans.list,
+    enabled: viewer.admin && (creating || accessApp !== null),
+  });
+  // A guide fills in a real model name; the catalog is already scoped to
+  // what this person may use.
+  const { data: catalog, isPending: catalogPending } = useQuery({
+    queryKey: ["models", "catalog"],
+    queryFn: productApi.models,
+    enabled: reveal !== null,
+  });
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
   const baseUrl =
-    discoveryData?.recipes.openai?.canonical_base_url ??
-    (typeof window === "undefined"
-      ? ""
-      : `${window.location.origin}/openai/v1`);
+    discoveryData?.recipes?.openai?.canonical_base_url ?? `${origin}/openai/v1`;
+  const catalogRows = catalog?.aliases?.length ? catalog.aliases : (catalog?.models ?? []);
+  const guideValues = {
+    openai_url: baseUrl,
+    anthropic_url:
+      discoveryData?.recipes?.anthropic?.canonical_base_url ?? `${origin}/anthropic`,
+    mcp_url: discoveryData?.mcp?.url ?? `${origin}/mcp`,
+    chat_model: suggestedModel(catalogRows, "chat"),
+    transcription_model: suggestedModel(catalogRows, "transcribe"),
+  };
+  const personPlan = accountData?.user?.access_plan ?? null;
+  const chosenPlan = (plans ?? []).find((item) => item.id === plan);
 
   useEffect(() => {
     if (
@@ -279,7 +321,7 @@ function AppsContents() {
 
   function resetDraft() {
     setName("");
-    setClient(CLIENTS[0]);
+    setPlan(SAME_AS_PERSON);
     setCreatedApp(null);
     setAppIsNew(false);
     setError(null);
@@ -319,16 +361,29 @@ function AppsContents() {
         );
         void refresh();
       }
+      // The plan is set before any key exists, so a key never works with
+      // more access than the owner chose.
+      if (
+        viewer.admin &&
+        plan !== SAME_AS_PERSON &&
+        !(app.access_plan && !app.access_plan.same_as_person && app.access_plan.id === plan)
+      ) {
+        await api.apps.setAccessPlan(app.id, plan);
+        const chosen = (plans ?? []).find((item) => item.id === plan);
+        setCreatedApp({
+          ...app,
+          access_plan: chosen
+            ? { id: chosen.id, name: chosen.name, summary: chosen.summary, same_as_person: false }
+            : app.access_plan,
+        });
+      }
       const appName = formatAppName(app.name, accountData?.user?.email);
-      const key = await accountApi.mintKey(
-        app.id,
-        client === "Other app" ? appName : client,
-      );
+      const key = await accountApi.mintKey(app.id, appName);
+      setGuideApp(guideForName(app.name));
       setReveal({
         secret: key.api_key,
         appId: app.id,
         app: appName,
-        client,
         oldIds: [],
         note: keyPromptNote(key.prompt_memory),
       });
@@ -349,6 +404,24 @@ function AppsContents() {
     }
   }
 
+  async function changeAccess() {
+    if (!accessApp) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.apps.setAccessPlan(accessApp.id, accessPlan);
+      toast.success("Access updated");
+      setAccessApp(null);
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Access could not be changed. Try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function performAction() {
     if (!action) return;
     setBusy(true);
@@ -361,11 +434,11 @@ function AppsContents() {
           action.app.id,
           `${appName} replacement`,
         );
+        setGuideApp(guideForName(action.app.name));
         setReveal({
           secret: key.api_key,
           appId: action.app.id,
           app: appName,
-          client: "Other app",
           oldIds: ids,
           note: keyPromptNote(key.prompt_memory),
         });
@@ -487,11 +560,11 @@ function AppsContents() {
       const key = await accountApi.mintKey(app.id, appName);
       rememberAppFocus(app.id);
       setSaved(false);
+      setGuideApp(guideForName(app.name));
       setReveal({
         secret: key.api_key,
         appId: app.id,
         app: appName,
-        client: "Other app",
         oldIds: [],
         note: keyPromptNote(key.prompt_memory),
       });
@@ -751,6 +824,22 @@ function AppsContents() {
                         >
                           Revoke keys
                         </DropdownMenuItem>
+                        {viewer.admin && (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setError(null);
+                              setAccessPlan(
+                                !app.access_plan || app.access_plan.same_as_person
+                                  ? SAME_AS_PERSON
+                                  : app.access_plan.id,
+                              );
+                              setAccessApp(app);
+                            }}
+                          >
+                            Change access plan
+                          </DropdownMenuItem>
+                        )}
                         {accountData?.user?.role === "owner" && (
                           <DropdownMenuItem
                             onSelect={() => {
@@ -808,7 +897,9 @@ function AppsContents() {
           <DialogHeader>
             <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
             <DialogDescription>
-              Create access for an existing app; its key appears once.
+              A key can use only what its app&apos;s access plan allows. Each
+              app gets its own key, so you can turn one off without touching
+              the others.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={create} className="space-y-5">
@@ -820,34 +911,53 @@ function AppsContents() {
                 id="app-name"
                 autoFocus
                 required
-                maxLength={120}
-                placeholder="My laptop"
+                maxLength={80}
+                placeholder="Open WebUI on my laptop"
                 value={name}
                 disabled={!!createdApp || busy}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
-            <div className="space-y-2">
-              <label htmlFor="app-client" className="text-label">
-                App recipe
-              </label>
-              <Select value={client} onValueChange={setClient}>
-                <SelectTrigger id="app-client" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CLIENTS.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <fieldset className="space-y-2">
+              <legend className="text-label">Access plan</legend>
+              {createdApp ? (
+                <p className="text-muted-foreground text-meta">
+                  {planDescription(createdApp.access_plan)}
+                </p>
+              ) : viewer.admin ? (
+                <>
+                  <Select value={plan} onValueChange={setPlan} disabled={busy}>
+                    <SelectTrigger id="app-plan" aria-label="Access plan" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={SAME_AS_PERSON}>
+                        Same as you{personPlan ? ` (${personPlan.name})` : ""}
+                      </SelectItem>
+                      {(plans ?? []).map((item: AccessPlan) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-meta">
+                    {plan === SAME_AS_PERSON
+                      ? (personPlan?.summary ?? planDescription(personPlan))
+                      : `${chosenPlan?.summary ?? planDescription(chosenPlan)} It never gets more than your own plan allows.`}
+                  </p>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-meta">
+                  Same as yours: {planDescription(personPlan)} Only the owner
+                  can change an app&apos;s access plan.
+                </p>
+              )}
+            </fieldset>
             {error && (
               <p role="alert" className="text-destructive text-meta">
                 {appIsNew
-                  ? "Your app was created, but its key could not be created. Retry to finish. "
+                  ? "Your app was created, but it isn't set up yet. Retry to finish. "
                   : ""}
                 {error}
               </p>
@@ -941,81 +1051,54 @@ function AppsContents() {
         <DialogContent
           showCloseButton={false}
           onCloseAutoFocus={restoreDialogFocus}
-          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[42rem]!"
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
         >
           <DialogHeader>
             <DialogTitle>Connect {reveal?.app}</DialogTitle>
             <DialogDescription>
-              Save this key; you cannot view it again.
+              Copy the key now. It is shown only once.
             </DialogDescription>
           </DialogHeader>
           {reveal && (
-            <div className="space-y-5">
+            <div className="space-y-6">
               {!saved && (
-                <SecretReveal
-                  secret={reveal.secret}
-                  note={reveal.note}
-                  onSaved={() => void saveKey()}
-                />
-              )}
-              <CopyField
-                label={preferredTerms.connectionAddress}
-                value={baseUrl}
-              />
-              <p className="text-muted-foreground text-meta">
-                {reveal.client === "Other app"
-                  ? "Choose your app's OpenAI-compatible provider"
-                  : `Use ${reveal.client} with the OpenAI-compatible API`}
-                , paste this gateway address, and enter your saved key.
-              </p>
-              <details className="text-meta">
-                <summary className="cursor-pointer font-medium">
-                  Connection examples
-                </summary>
-                <div className="mt-3">
-                  <CodeBlock
-                    snippets={[
-                      {
-                        language: "curl",
-                        code: `curl '${baseUrl}/models' \\\n  -H "Authorization: Bearer $GATEWAY_API_KEY"`,
-                      },
-                      {
-                        language: "Python",
-                        code: `import os
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}",
-    api_key=os.environ["GATEWAY_API_KEY"],
-)
-print(client.models.list())`,
-                      },
-                      {
-                        language: "JavaScript",
-                        code: `import OpenAI from "openai";
-
-const client = new OpenAI({
-  baseURL: "${baseUrl}",
-  apiKey: process.env.GATEWAY_API_KEY,
-});
-console.log(await client.models.list());`,
-                      },
-                    ].sort(
-                      (first, second) =>
-                        Number(
-                          second.language.toLowerCase() ===
-                            reveal.client.toLowerCase(),
-                        ) -
-                        Number(
-                          first.language.toLowerCase() ===
-                            reveal.client.toLowerCase(),
-                        ),
+                <div className="space-y-2">
+                  <CopyField label="Your key" value={reveal.secret} />
+                  {reveal.note ? (
+                    <p className="text-muted-foreground text-meta">{reveal.note}</p>
+                  ) : null}
+                  <p className="text-muted-foreground text-meta">
+                    {planSentence(
+                      apps.find((app) => app.id === reveal.appId)?.access_plan,
                     )}
-                  />
+                  </p>
                 </div>
-              </details>
+              )}
+              <section aria-labelledby="setup-heading" className="space-y-3 border-t pt-5">
+                <h3 id="setup-heading" className="text-body font-medium">
+                  Set up your app
+                </h3>
+                <AppGuide
+                  appId={guideApp}
+                  onAppChange={setGuideApp}
+                  values={guideValues}
+                  loading={catalogPending}
+                  keyHint={
+                    saved
+                      ? "Paste the key you saved."
+                      : "Paste the key from above."
+                  }
+                />
+                <p className="text-muted-foreground text-meta">
+                  This guide stays on{" "}
+                  <Link prefetch={false} href="/connect/" className="underline underline-offset-4">
+                    Connect
+                  </Link>
+                  .
+                </p>
+              </section>
               {saved && !busy && reveal.oldIds.length > 0 && (
                 <div role="alert">
                   <p className="text-destructive text-meta">
@@ -1037,8 +1120,68 @@ console.log(await client.models.list());`,
                   Revoking previous keys…
                 </p>
               )}
+              {!saved && (
+                <DialogFooter className="bg-background sticky -bottom-6 -mx-6 -mb-6 border-t px-6 py-4">
+                  <Button size="md" onClick={() => void saveKey()}>
+                    I’ve saved the key
+                  </Button>
+                </DialogFooter>
+              )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={accessApp !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setAccessApp(null);
+        }}
+      >
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
+          <DialogHeader>
+            <DialogTitle>
+              Access plan for {accessApp ? formatAppName(accessApp.name, accountData?.user?.email) : ""}
+            </DialogTitle>
+            <DialogDescription>
+              The change applies to the app&apos;s keys at once. An app never
+              gets more than its person&apos;s own plan allows.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Select value={accessPlan} onValueChange={setAccessPlan} disabled={busy}>
+              <SelectTrigger aria-label="Access plan" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SAME_AS_PERSON}>
+                  Same as you{personPlan ? ` (${personPlan.name})` : ""}
+                </SelectItem>
+                {(plans ?? []).map((item: AccessPlan) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-meta">
+              {accessPlan === SAME_AS_PERSON
+                ? planDescription(personPlan)
+                : planDescription((plans ?? []).find((item) => item.id === accessPlan))}
+            </p>
+          </div>
+          {error && (
+            <p role="alert" className="text-destructive text-meta">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setAccessApp(null)}>
+              Cancel
+            </Button>
+            <Button disabled={busy} onClick={() => void changeAccess()}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,7 +1,7 @@
 import { type APIRequestContext, type Page } from "@playwright/test";
 import { expect, GLOBAL_STATE_TAG, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
-import { chatAlias } from "../src/app/_home/recipes";
+import { chatAlias } from "../src/app/_home/chat-alias";
 import { fulfilJson } from "./fixtures/intercept";
 
 // The key selector right after minting: the loading label, or the key's own.
@@ -138,7 +138,7 @@ test("Home refreshes capability evidence while it stays open", async ({
   await expect(chat).not.toContainText("Unknown");
 });
 
-async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
+async function chooseKey(page: Page, optionName: string | RegExp) {
   await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: optionName }).click();
 }
@@ -309,7 +309,7 @@ for (const theme of ["light", "dark"] as const) {
             )
             .toBeGreaterThan(0);
           await openClientInstructionsOnPhone(page, width);
-          await chooseRecipeKey(page, /Browser test app/);
+          await chooseKey(page, /Browser test app/);
           const selected = seededApp.credentials[0];
           const aliases = snapshot.credential_aliases?.[selected.id] ?? [];
           const model = page.getByRole("textbox", {
@@ -438,7 +438,7 @@ test("Home setup notes fit a phone and remain accessible", async ({
   );
   expect(seededApp?.credentials.length).toBeGreaterThan(0);
   await openClientInstructionsOnPhone(page, 390);
-  await chooseRecipeKey(page, /Browser test app/);
+  await chooseKey(page, /Browser test app/);
   await page.getByRole("button", { name: "Setup notes", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Open WebUI");
   await expect(page.getByRole("dialog")).toContainText(
@@ -692,7 +692,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     ).toBeFalsy();
     // The new-key option reads "New key for Open WebUI" since D1.1; pick
     // the key just minted for the Open WebUI app.
-    await chooseRecipeKey(page, /^Open WebUI · /);
+    await chooseKey(page, /^Open WebUI · /);
 
     const before = await (
       await request.get("/me/api/activity?limit=100")
@@ -700,7 +700,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const ownedBefore = before.receipts.filter(
       (receipt: { request_id: string }) => receipt.request_id,
     ).length;
-    await page.getByLabel("Paste your API key", { exact: true }).fill(secret);
+    await page.getByLabel("Paste your API Key", { exact: true }).fill(secret);
     const testedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/me/api/connection-test",
@@ -795,7 +795,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
   }
 });
 
-test("a new inherited key cannot borrow an existing app's recipe beyond the person's plan", { tag: GLOBAL_STATE_TAG }, async ({
+test("a new inherited key cannot borrow an existing app's access beyond the person's plan", { tag: GLOBAL_STATE_TAG }, async ({
   page,
   request,
 }) => {
@@ -831,7 +831,7 @@ test("a new inherited key cannot borrow an existing app's recipe beyond the pers
     // "New app · default access" reads "New key for Open WebUI" since D1.1.
     await expect(selector).toContainText("New key for Open WebUI");
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
-    await chooseRecipeKey(page, /Browser test app/);
+    await chooseKey(page, /Browser test app/);
     const allowedChat = chatAlias(snapshot.credential_aliases[broader.id]);
     if (allowedChat) {
       await expect(page.getByRole("textbox", { name: "Model" })).toHaveValue(allowedChat);
