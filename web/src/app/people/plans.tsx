@@ -197,7 +197,7 @@ export function PlanEditor({
   close: () => void;
   saved: () => Promise<void>;
 }) {
-  const editor = useQuery({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: queryKeys.accessPlanEditor,
     queryFn: api.accessPlans.editor,
   });
@@ -216,17 +216,17 @@ export function PlanEditor({
             access plan and its person&apos;s access plan allow.
           </DialogDescription>
         </DialogHeader>
-        {editor.isPending ? (
-          <p role="status">Loading available choices…</p>
-        ) : editor.isError ? (
+        {isError ? (
           <ErrorState
             message="Available choices could not be loaded."
-            onRetry={() => void editor.refetch()}
+            onRetry={() => void refetch()}
           />
+        ) : isPending || !data ? (
+          <p role="status">Loading available choices…</p>
         ) : (
           <PlanForm
             plan={plan}
-            contract={editor.data}
+            contract={data}
             close={close}
             saved={saved}
           />

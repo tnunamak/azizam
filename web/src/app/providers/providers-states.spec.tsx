@@ -45,19 +45,20 @@ const catalog = {
   ],
 };
 
+// GET /admin/api/access-plans: Paid providers live in each plan's document.
 const plans = {
-  plans: [
+  access_plans: [
     {
       id: "local",
       name: "Local only",
-      description: "No paid providers",
-      paid_allowed: false,
+      summary: "No paid providers",
+      plan: { paid_providers: [] },
     },
     {
       id: "paid",
       name: "Paid cloud",
-      description: "Can use selected paid providers",
-      paid_allowed: true,
+      summary: "Can use selected paid providers",
+      plan: { paid_providers: ["openrouter"] },
     },
   ],
 };
@@ -83,7 +84,7 @@ const seededProviders = {
         pending_reconciliation_count: 1,
       },
       caps: { daily_usd: 5, monthly_usd: 50 },
-      allowed_plans: [],
+      access_plans: [],
       recommendations: [
         {
           message:
@@ -201,7 +202,7 @@ function installFetch(
       if (path.endsWith("/session")) {
         return Response.json({ actor: { csrf_token: "test-csrf" } });
       }
-      if (path === "/admin/api/profiles") return Response.json(plans);
+      if (path === "/admin/api/access-plans") return Response.json(plans);
       if (path === "/admin/api/providers/-/catalog") {
         return Response.json(catalogOverride ?? catalog);
       }
@@ -231,7 +232,7 @@ function installFetch(
         });
       }
       if (
-        /\/admin\/api\/providers\/openrouter\/(models|caps|allowed-plans|key)$/.test(path)
+        /\/admin\/api\/providers\/openrouter\/(models|caps|key)$/.test(path)
       ) {
         return Response.json({
           provider: seededProviders.providers[0],
@@ -318,7 +319,7 @@ describe("providers page states", () => {
 });
 
 describe("provider detail edits", () => {
-  it("sends models, caps and allowed plans to their own admin routes", async () => {
+  it("sends models and caps to their own admin routes and names the plans that include the provider", async () => {
     const calls = installFetch("seeded");
     renderPage();
     fireEvent.click(await screen.findByText("Manage", { exact: true }));
@@ -358,15 +359,11 @@ describe("provider detail edits", () => {
     expect(callsTo(calls, "/admin/api/providers/openrouter/caps", "PUT")[0].body)
       .toEqual({ daily_usd: 7, monthly_usd: 70 });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Edit access plans" }));
-    fireEvent.click(screen.getByLabelText("Allow Paid cloud for OpenRouter"));
-    fireEvent.click(screen.getByRole("button", { name: "Save access plans" }));
-    await waitFor(() =>
-      expect(callsTo(calls, "/admin/api/providers/openrouter/allowed-plans", "PUT")).toHaveLength(1),
-    );
+    // Plans include a paid provider in People → Access plans, not here.
+    expect(screen.getByText("No access plan includes OpenRouter.")).toBeVisible();
     expect(
-      callsTo(calls, "/admin/api/providers/openrouter/allowed-plans", "PUT")[0].body,
-    ).toEqual({ allowed_plans: ["paid"] });
+      screen.queryByRole("button", { name: "Edit access plans" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -449,9 +446,7 @@ describe("add provider wizard", () => {
     expect(dialog.getByText("openrouter/unknown-new-model")).toBeVisible();
     fireEvent.click(dialog.getByRole("button", { name: "Next" }));
     expect(
-      dialog.getByText(
-        "No access plans selected. Paid requests will be denied until an owner allows an access plan.",
-      ),
+      dialog.getByText(/No access plan includes a new provider/),
     ).toBeVisible();
     fireEvent.click(dialog.getByRole("button", { name: "Save provider" }));
     await waitFor(() =>
@@ -465,8 +460,8 @@ describe("add provider wizard", () => {
       provider_id: "openrouter",
       key_mode: "secret",
       api_key: "sk-or-browser-test",
-      allowed_plans: [],
     });
+    expect(body).not.toHaveProperty("allowed_plans");
     expect(body.models[0]).toEqual({
       id: "openrouter/anthropic/claude-sonnet-4.5",
       name: "Claude Sonnet 4.5",
