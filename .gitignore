@@ -100,6 +100,8 @@ build/
 # Optional Node SDK compatibility probes. The lockfile is committed; the
 # installed dependency tree is local runtime state.
 tests/compat/node/node_modules/
+tests/conformance/node_modules/
+.ci-conformance-venv/
 
 # =============================================================================
 # Editor / OS
