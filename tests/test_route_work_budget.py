@@ -38,6 +38,8 @@ NOT_MEASURABLE = {
     "/admin/api/operator/litellm/keys": "503: the LLM substrate is not configured in the gate",
     "/admin/api/settings/receipts/preview": "400: needs a retention argument",
     "/me/api/prompt-memory": "500: needs the prompt-memory store's own database and a person row",
+    "/admin/api/activity/requests": "500 in some orders: its router keeps the receipts path the app was imported with, "
+                                    "not the fixture's (scripts/perf/api_bench.py measures it on real data)",
 }
 MEASURED = [route for route in ROUTES if "{" not in route and route not in NOT_MEASURABLE]
 
