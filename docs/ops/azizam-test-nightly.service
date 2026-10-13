@@ -3,7 +3,7 @@
 #   install -m 644 docs/ops/azizam-test-nightly.{service,timer} ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now azizam-test-nightly.timer
 [Unit]
-Description=Azizam nightly scheduled tests (SDK probes over the fake upstream, quality sweep)
+Description=Azizam nightly scheduled tests (SDK probes over the fake upstream, quality sweep, performance budgets on a copy of the live data)
 
 [Service]
 Type=oneshot
@@ -15,5 +15,5 @@ IOSchedulingClass=idle
 # receipt in ~/.tmp/azizam-ci-receipts/scheduled/ says SKIPPED and it is never a pass.
 # 1 (FAIL) and 4 (INCOMPLETE) fail the unit.
 SuccessExitStatus=3
-# Three tasks of at most 26 min each plus lock waits; the run is bounded by its own task timeouts.
+# Three tasks of at most 10, 26 and 20 min plus lock waits; the run is bounded by its own task timeouts.
 TimeoutStartSec=90min
