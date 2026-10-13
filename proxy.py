@@ -318,6 +318,7 @@ from gateway.openai_media_schemas import (
     IMAGES_GENERATIONS_OPENAPI,
     IMAGES_VARIATIONS_OPENAPI,
     SIGNED_IMAGE_CONTENT_OPENAPI,
+    SIGNED_THUMBNAIL_OPENAPI,
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
@@ -22577,7 +22578,7 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     )
 
 
-@app.get("/v1/assets/{asset_id}/thumbnail", response_class=Response)
+@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
 async def assets_thumbnail(asset_id: str, request: Request):
     """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
     return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
