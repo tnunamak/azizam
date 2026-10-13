@@ -26,6 +26,7 @@ from tests.support.work import count_work
 from tests.test_event_loop_guard import ROUTES, _concrete, gateway  # noqa: F401 - fixture
 
 SMALL, LARGE = 4, 24
+MAX_STATEMENTS = 100  # one request, any route, at LARGE; the constant part must stay small too
 
 # route -> why its statement count still grows with the data
 KNOWN_TO_GROW: dict[str, str] = {}
@@ -95,6 +96,7 @@ def test_route_work_does_not_grow_with_the_data(gateway, media_store, route):  #
     household.grow_to(LARGE)
     _, large = _get(route, gateway)
     assert small.processes == large.processes == 0, f"{route} started {small.commands + large.commands}"
+    assert large.statements <= MAX_STATEMENTS, f"{route} ran {large.statements} statements at {LARGE} apps"
     if route in KNOWN_TO_GROW:
         return
     assert large.statements == small.statements, (
