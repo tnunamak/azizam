@@ -38,9 +38,12 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   await anon.dispose();
 
   const media = await (await page.request.get("/me/api/media?scope=everyone")).json();
-  expect(media.sources.map((source: { id: string }) => source.id)).toEqual(
-    expect.arrayContaining(["local-network", `app:${data.service_app_id}`]),
+  const mediaSources = media.sources.map((source: { id: string }) => source.id);
+  expect(mediaSources).toEqual(
+    expect.arrayContaining([`app:${data.service_app_id}`]),
   );
+  // Keyless access is gone, so "Local network · no key" is no source to pick.
+  expect(mediaSources).not.toContain("local-network");
   expect(
     media.assets.map((asset: { asset_id: string }) => asset.asset_id),
   ).toEqual(
@@ -57,24 +60,21 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   expect(
     serviceMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
   ).toEqual([data.service_asset]);
-  const localMedia = await (
-    await page.request.get("/me/api/media?scope=everyone&source=local-network")
-  ).json();
   expect(
-    localMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
-  ).toEqual(expect.arrayContaining([data.local_asset]));
+    (await page.request.get("/me/api/media?scope=everyone&source=local-network")).status(),
+  ).toBe(400);
 
   const usage = await (
-    await page.request.get("/me/api/usage/summary?person=all&source=local-network")
+    await page.request.get("/me/api/usage/summary?person=all")
   ).json();
   expect(usage.requests).toBeGreaterThanOrEqual(1);
   expect(usage.media_count).toBeGreaterThanOrEqual(1);
   expect(
-    usage.receipts.some(
-      (receipt: { source?: { kind?: string } }) =>
-        receipt.source?.kind === "local-network",
-    ),
-  ).toBe(true);
+    usage.sources.map((source: { id: string }) => source.id),
+  ).not.toContain("local-network");
+  expect(
+    (await page.request.get("/me/api/usage/summary?person=all&source=local-network")).status(),
+  ).toBe(400);
 
   await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
@@ -138,7 +138,7 @@ test("member cannot see local/service media or mint signed URLs for them", async
 
   expect(
     (await member.get("/me/api/media?source=local-network")).status(),
-  ).toBe(403);
+  ).toBe(400);
   expect(
     (
       await member.get(`/me/api/media?source=app:${data.service_app_id}`)
@@ -149,7 +149,7 @@ test("member cannot see local/service media or mint signed URLs for them", async
   ).toBe(404);
   expect(
     (await member.get("/me/api/usage/summary?source=local-network")).status(),
-  ).toBe(403);
+  ).toBe(400);
 
   const page = await context.newPage();
   await page.goto("/library/");

@@ -249,6 +249,16 @@ export default function UsagePage() {
                         {item.label}
                       </SelectItem>
                     ))}
+                    {sources.connections.length ? (
+                      <SelectGroup>
+                        <SelectLabel>Connected with sign-in</SelectLabel>
+                        {sources.connections.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
                     {sources.inactive.length ? (
                       <SelectGroup>
                         <SelectLabel>Turned off or no requests</SelectLabel>
@@ -1031,6 +1041,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
         return {
           id: string(row.id, ""),
           label: string(row.label, "Source"),
+          kind: string(row.kind, "app"),
           requests: requestCount(row.requests),
           disabled: row.disabled === true,
           createdAt: nullableNumber(row.created_at),

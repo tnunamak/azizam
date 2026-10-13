@@ -98,7 +98,7 @@ def test_member_self_scope_is_allowed(monkeypatch, tmp_path, person):
     assert me_media._usage_app_scope(request, actor, tmp_path) == (["app_owned"], "me", ["person_private_id"])
 
 
-@pytest.mark.parametrize("person", ["all", "local-network", "another_person"])
+@pytest.mark.parametrize("person", ["all", "another_person"])
 def test_other_people_still_require_owner(tmp_path, person):
     from starlette.requests import Request
     from gateway import me_media
