@@ -15,13 +15,14 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, request_connections, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import admin_store, request_connections, server_timing, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -518,33 +519,33 @@ def _list_media(
     cursor = _decode_cursor(request.query_params.get("cursor"))
     sources = _media_sources(scope, admin_db_path)
     source_filter = "local-network" if request.query_params.get("person") == "local-network" else _media_source_filter(request, scope)
-    all_items = _media_items(
-        request=request,
-        scope=scope,
-        signed_url_builder=signed_url_builder,
-        asset_path_resolver=asset_path_resolver,
-        asset_media_type_resolver=asset_media_type_resolver,
-        asset_catalog_provider=asset_catalog_provider,
-        asset_metadata_reader=asset_metadata_reader,
-        admin_db_path=admin_db_path,
-        media_jobs_path=media_jobs_path,
-        receipts_path=receipts_path,
-        prompt_memory_path=prompt_memory_path,
-    )
-    filtered = [_item for _item in all_items if _matches_media_filters(_item, request)]
+    with server_timing.span("db"):
+        entries = _media_entries(
+            request=request,
+            scope=scope,
+            signed_url_builder=signed_url_builder,
+            asset_path_resolver=asset_path_resolver,
+            asset_media_type_resolver=asset_media_type_resolver,
+            asset_catalog_provider=asset_catalog_provider,
+            asset_metadata_reader=asset_metadata_reader,
+            admin_db_path=admin_db_path,
+            media_jobs_path=media_jobs_path,
+            receipts_path=receipts_path,
+            prompt_memory_path=prompt_memory_path,
+        )
+    filtered = [entry for entry in entries if _entry_matches(entry, request)]
     if source_filter is not None:
-        filtered = [_item for _item in filtered if _source_id(_item.get("source")) == source_filter]
+        filtered = [entry for entry in filtered if entry.source_id == source_filter]
     if cursor:
-        filtered = [
-            item for item in filtered
-            if (int(item.get("created_at") or 0), str(item.get("asset_id") or "")) < cursor
-        ]
+        filtered = [entry for entry in filtered if entry.sort_key < cursor]
     page = filtered[: limit + 1]
     next_cursor = None
     if len(page) > limit:
         last = page[limit - 1]
-        next_cursor = _encode_cursor(int(last.get("created_at") or 0), str(last.get("asset_id") or ""))
+        next_cursor = _encode_cursor(*last.sort_key)
         page = page[:limit]
+    with server_timing.span("build"):
+        assets = [entry.build(False) for entry in page]
     return {
         "schema_version": 1,
         "authenticated": True,
@@ -552,10 +553,10 @@ def _list_media(
         "default_scope": "explicit" if _scope_requested(request) else "self",
         "source": source_filter,
         "sources": sources,
-        "assets": page,
+        "assets": assets,
         "next_cursor": next_cursor,
         "has_more": next_cursor is not None,
-        "models": sorted({item["model"] for item in all_items if item.get("model")}),
+        "models": sorted({entry.model for entry in entries if entry.model}),
     }
 
 
@@ -609,7 +610,7 @@ def _find_asset(
     receipts_path: Path,
     prompt_memory_path: Path,
 ) -> dict[str, Any] | None:
-    for item in _media_items(
+    for entry in _media_entries(
         request=request,
         scope=scope,
         signed_url_builder=signed_url_builder,
@@ -622,12 +623,87 @@ def _find_asset(
         receipts_path=receipts_path,
         prompt_memory_path=prompt_memory_path,
     ):
-        if item.get("asset_id") == asset_id:
-            return item
+        if entry.asset_id == asset_id:
+            return entry.build(True)
     return None
 
 
-def _media_items(
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_EMBEDDED_MEMO: dict[tuple[str, int, int], dict[str, Any]] = {}
+_EMBEDDED_MEMO_MAX = 4096
+
+
+def _embedded_provenance_cached(path: Path | None, *, probe: bool) -> dict[str, Any]:
+    """Embedded provenance, remembered per file version (path, mtime, size).
+
+    ``probe=False`` skips audio and video, whose tags need an ``ffprobe``
+    process (tens of milliseconds each). The result is read-only.
+    """
+    if path is None:
+        return {}
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    hit = _EMBEDDED_MEMO.get(key)
+    if hit is not None:
+        return hit
+    if not probe and path.suffix.lower() not in _IMAGE_SUFFIXES:
+        return {}
+    value = _embedded_provenance(path)
+    if len(_EMBEDDED_MEMO) >= _EMBEDDED_MEMO_MAX:
+        _EMBEDDED_MEMO.clear()
+    _EMBEDDED_MEMO[key] = value
+    return value
+
+
+class _Apps:
+    """Apps and credential-to-app links, read once for a whole listing."""
+
+    def __init__(self, admin_db_path: Path) -> None:
+        self._path = admin_db_path
+        self._by_id: dict[str, dict[str, Any]] | None = None
+        self._by_hash: dict[str, dict[str, Any]] | None = None
+
+    def get(self, app_id: str) -> dict[str, Any] | None:
+        if self._by_id is None:
+            self._by_id = {str(app["id"]): app for app in admin_store.list_apps(path=self._path) if app.get("id")}
+        return self._by_id.get(app_id)
+
+    def by_hash(self) -> dict[str, dict[str, Any]]:
+        if self._by_hash is None:
+            self._by_hash = _credential_app_by_hash(self._path)
+        return self._by_hash
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """What filtering, sorting and paging need, without opening the file.
+
+    ``build(probe)`` makes the full Library item. ``probe=True`` also reads
+    audio and video tags with ``ffprobe``; the list leaves that to the detail view.
+    """
+
+    asset_id: str
+    kind: str
+    created_at: int | None
+    model: str | None
+    workflow: str | None
+    prompt: str | None
+    source_id: str | None
+    build: Callable[[bool], dict[str, Any]]
+
+    @property
+    def sort_key(self) -> tuple[int, str]:
+        return (int(self.created_at or 0), self.asset_id)
+
+
+def _media_items(**kwargs: Any) -> list[dict[str, Any]]:
+    return [entry.build(True) for entry in _media_entries(**kwargs)]
+
+
+def _media_entries(
     *,
     request: Request,
     scope: _MediaScope,
@@ -640,18 +716,24 @@ def _media_items(
     media_jobs_path: Path,
     receipts_path: Path,
     prompt_memory_path: Path,
-) -> list[dict[str, Any]]:
+) -> list[_Entry]:
+    """Every Library asset in scope, newest first, as cheap entries.
+
+    Reads the jobs in one query and their receipts in a few, so the query
+    count does not grow with the Library. Files are not opened here.
+    """
     jobs = media_jobs.recent(
         limit=media_jobs.count(path=media_jobs_path),
         audience="internal",
         status=media_jobs.STATUS_SUCCEEDED,
         path=media_jobs_path,
     )
-    receipts = _receipts_by_request_id(
+    receipts = receipt_store.get_many(
         [request_id for job in jobs for request_id in _job_receipt_ids(job)],
-        path=receipts_path,
+        audience="internal", path=receipts_path,
     )
-    out: list[dict[str, Any]] = []
+    apps = _Apps(admin_db_path)
+    out: list[_Entry] = []
     seen: set[str] = set()
     prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
@@ -667,60 +749,26 @@ def _media_items(
             if not asset_id or asset_id in seen or asset_id in deleted:
                 continue
             seen.add(asset_id)
-            kind = _asset_kind(asset_id, asset)
-            path = asset_path_resolver(asset_id)
-            embedded = _embedded_provenance(path)
-            media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
-            created_at = _asset_created_at(path, job, receipt, embedded)
-            sidecar = dict(asset_metadata_reader(asset_id) or {}) if asset_metadata_reader else {}
-            prompt_record = prompts.get(asset_id)
-            prompt = prompt_record.get("prompt_text") if prompt_record else None
-            model = _string_first(
-                _model_for_asset(asset, job, receipt),
-                embedded.get("resolved_model"),
-                embedded.get("requested_model"),
-            )
-            workflow = _string_first(
-                _workflow_for_asset(asset, job, receipt),
-                embedded.get("workflow_id"),
-                embedded.get("workflow"),
-            )
             if job_source is None:
-                job_source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids)
-            source = job_source
-            makers = sidecar.get("maker_person_ids")
-            if makers and len(makers) == 1:
-                user = admin_store.get_user(makers[0], path=admin_db_path)
-                source = {**source, "label": str((user or {}).get("display_name") or (user or {}).get("email") or "Unknown maker"), "person_id": makers[0]}
-            out.append({
-                "asset_id": asset_id,
-                "id": asset_id,
-                "kind": kind,
-                "media_type": media_type,
-                "size_bytes": int(path.stat().st_size) if path and path.exists() else None,
-                "created_at": created_at,
-                "file_modified_at": _file_modified_at(path) if created_at is None else None,
-                "updated_at": job.get("updated_at") or created_at,
-                "job_id": job.get("job_id"),
-                "request_id": job.get("request_id"),
-                "status": job.get("status"),
-                "available": bool(path is not None and path.is_file()),
-                "prompt": prompt,
-                "title": _media_title(prompt, kind, created_at, source),
-                "model": model,
-                "workflow": workflow,
-                "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), _nested(receipt, "metadata", "seed"), embedded.get("seed")),
-                "width": _first_present(asset.get("width"), _nested(job, "metadata", "width"), _nested(embedded, "parameters", "width")),
-                "height": _first_present(asset.get("height"), _nested(job, "metadata", "height"), _nested(embedded, "parameters", "height")),
-                "duration_s": _first_present(asset.get("duration_s"), asset.get("duration"), _nested(job, "metadata", "duration_s"), _nested(embedded, "parameters", "duration_s")),
-                "poster_asset_id": asset.get("poster_asset_id"),
-                "download_url": signed_url_builder(request, asset_id, "none") if path is not None and path.is_file() else None,
-                "workflow_download_url": signed_url_builder(request, asset_id, "full") if path is not None and path.is_file() and prompt_record else None,
-                "generation_ms": receipt.get("latency_ms") if receipt else None,
-                "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
-                "source": source,
-                "unavailable_reason": None if path is not None and path.is_file() else "Asset file is missing or expired.",
-            })
+                job_source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids, apps=apps)
+            prompt_record = prompts.get(asset_id)
+            created_at = _asset_created_at(None, job, receipt)
+            out.append(_Entry(
+                asset_id=asset_id,
+                kind=_asset_kind(asset_id, asset),
+                created_at=created_at,
+                model=_model_for_asset(asset, job, receipt),
+                workflow=_workflow_for_asset(asset, job, receipt),
+                prompt=prompt_record.get("prompt_text") if prompt_record else None,
+                source_id=_source_id(job_source),
+                build=partial(
+                    _build_job_item, asset_id=asset_id, asset=asset, job=job, receipt=receipt,
+                    created_at=created_at, prompt_record=prompt_record, source=job_source, request=request,
+                    signed_url_builder=signed_url_builder, asset_path_resolver=asset_path_resolver,
+                    asset_media_type_resolver=asset_media_type_resolver,
+                    asset_metadata_reader=asset_metadata_reader, admin_db_path=admin_db_path,
+                ),
+            ))
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
         credential_hashes = _credential_hashes_for_scope(scope, admin_db_path)
         for asset_id in asset_catalog_provider():
@@ -734,59 +782,161 @@ def _media_items(
             path = asset_path_resolver(asset_id)
             if path is None or not path.exists():
                 continue
-            embedded = _embedded_provenance(path)
+            embedded = _embedded_provenance_cached(path, probe=False)
             receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
             if not _receipt_in_scope(receipt, scope) and receipt is not None:
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
             prompt_record = prompts.get(asset_id)
-            prompt = prompt_record.get("prompt_text") if prompt_record else None
             source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded,
-                                        visible_app_ids=scope.app_ids)
+                                        visible_app_ids=scope.app_ids, apps=apps)
             seen.add(asset_id)
-            out.append({
-                "asset_id": asset_id,
-                "id": asset_id,
-                "kind": kind,
-                "media_type": asset_media_type_resolver(asset_id, path),
-                "size_bytes": int(path.stat().st_size),
-                "created_at": created_at,
-                "file_modified_at": _file_modified_at(path) if created_at is None else None,
-                "updated_at": int(metadata.get("updated_at") or path.stat().st_mtime),
-                "job_id": None,
-                "request_id": (receipt or embedded).get("request_id"),
-                "status": "available",
-                "prompt": prompt,
-                "title": _media_title(prompt, kind, created_at, source),
-                "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
-                "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
-                "seed": embedded.get("seed"),
+            out.append(_Entry(
+                asset_id=asset_id,
+                kind=kind,
+                created_at=created_at,
+                model=_string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
+                workflow=_string_first(embedded.get("workflow_id"), embedded.get("workflow")),
+                prompt=prompt_record.get("prompt_text") if prompt_record else None,
+                source_id=_source_id(source),
+                build=partial(
+                    _build_cache_item, asset_id=asset_id, path=path, metadata=metadata, receipt=receipt,
+                    kind=kind, created_at=created_at, prompt_record=prompt_record, source=source,
+                    request=request, signed_url_builder=signed_url_builder,
+                    asset_media_type_resolver=asset_media_type_resolver,
+                ),
+            ))
+    return sorted(out, key=lambda entry: entry.sort_key, reverse=True)
+
+
+def _build_job_item(
+    probe: bool,
+    *,
+    asset_id: str,
+    asset: Mapping[str, Any],
+    job: Mapping[str, Any],
+    receipt: Mapping[str, Any] | None,
+    created_at: int | None,
+    prompt_record: Mapping[str, Any] | None,
+    source: dict[str, Any],
+    request: Request,
+    signed_url_builder: SignedUrlBuilder,
+    asset_path_resolver: AssetPathResolver,
+    asset_media_type_resolver: AssetMediaTypeResolver,
+    asset_metadata_reader: AssetMetadataReader | None,
+    admin_db_path: Path,
+) -> dict[str, Any]:
+    kind = _asset_kind(asset_id, asset)
+    path = asset_path_resolver(asset_id)
+    embedded = _embedded_provenance_cached(path, probe=probe)
+    media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
+    sidecar = dict(asset_metadata_reader(asset_id) or {}) if asset_metadata_reader else {}
+    prompt = prompt_record.get("prompt_text") if prompt_record else None
+    model = _string_first(
+        _model_for_asset(asset, job, receipt),
+        embedded.get("resolved_model"),
+        embedded.get("requested_model"),
+    )
+    workflow = _string_first(
+        _workflow_for_asset(asset, job, receipt),
+        embedded.get("workflow_id"),
+        embedded.get("workflow"),
+    )
+    makers = sidecar.get("maker_person_ids")
+    if makers and len(makers) == 1:
+        user = admin_store.get_user(makers[0], path=admin_db_path)
+        source = {**source, "label": str((user or {}).get("display_name") or (user or {}).get("email") or "Unknown maker"), "person_id": makers[0]}
+    available = bool(path is not None and path.is_file())
+    return {
+        "asset_id": asset_id,
+        "id": asset_id,
+        "kind": kind,
+        "media_type": media_type,
+        "size_bytes": int(path.stat().st_size) if path and path.exists() else None,
+        "created_at": created_at,
+        "file_modified_at": _file_modified_at(path) if created_at is None else None,
+        "updated_at": job.get("updated_at") or created_at,
+        "job_id": job.get("job_id"),
+        "request_id": job.get("request_id"),
+        "status": job.get("status"),
+        "available": available,
+        "prompt": prompt,
+        "title": _media_title(prompt, kind, created_at, source),
+        "model": model,
+        "workflow": workflow,
+        "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), _nested(receipt, "metadata", "seed"), embedded.get("seed")),
+        "width": _first_present(asset.get("width"), _nested(job, "metadata", "width"), _nested(embedded, "parameters", "width")),
+        "height": _first_present(asset.get("height"), _nested(job, "metadata", "height"), _nested(embedded, "parameters", "height")),
+        "duration_s": _first_present(asset.get("duration_s"), asset.get("duration"), _nested(job, "metadata", "duration_s"), _nested(embedded, "parameters", "duration_s")),
+        "poster_asset_id": asset.get("poster_asset_id"),
+        "download_url": signed_url_builder(request, asset_id, "none") if available else None,
+        "workflow_download_url": signed_url_builder(request, asset_id, "full") if available and prompt_record else None,
+        "generation_ms": receipt.get("latency_ms") if receipt else None,
+        "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
+        "source": source,
+        "unavailable_reason": None if available else "Asset file is missing or expired.",
+    }
+
+
+def _build_cache_item(
+    probe: bool,
+    *,
+    asset_id: str,
+    path: Path,
+    metadata: Mapping[str, Any],
+    receipt: Mapping[str, Any] | None,
+    kind: str,
+    created_at: int | None,
+    prompt_record: Mapping[str, Any] | None,
+    source: dict[str, Any],
+    request: Request,
+    signed_url_builder: SignedUrlBuilder,
+    asset_media_type_resolver: AssetMediaTypeResolver,
+) -> dict[str, Any]:
+    embedded = _embedded_provenance_cached(path, probe=probe)
+    prompt = prompt_record.get("prompt_text") if prompt_record else None
+    return {
+        "asset_id": asset_id,
+        "id": asset_id,
+        "kind": kind,
+        "media_type": asset_media_type_resolver(asset_id, path),
+        "size_bytes": int(path.stat().st_size),
+        "created_at": created_at,
+        "file_modified_at": _file_modified_at(path) if created_at is None else None,
+        "updated_at": int(metadata.get("updated_at") or path.stat().st_mtime),
+        "job_id": None,
+        "request_id": (receipt or embedded).get("request_id"),
+        "status": "available",
+        "prompt": prompt,
+        "title": _media_title(prompt, kind, created_at, source),
+        "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
+        "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
+        "seed": embedded.get("seed"),
+        "width": _nested(embedded, "parameters", "width"),
+        "height": _nested(embedded, "parameters", "height"),
+        "duration_s": _nested(embedded, "parameters", "duration_s"),
+        "poster_asset_id": None,
+        "download_url": signed_url_builder(request, asset_id, "none"),
+        "workflow_download_url": signed_url_builder(request, asset_id, "full") if prompt_record else None,
+        "generation_ms": None,
+        "provenance": {
+            "prompt": prompt,
+            "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
+            "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
+            "seed": embedded.get("seed"),
+            "size": {
                 "width": _nested(embedded, "parameters", "width"),
                 "height": _nested(embedded, "parameters", "height"),
-                "duration_s": _nested(embedded, "parameters", "duration_s"),
-                "poster_asset_id": None,
-                "download_url": signed_url_builder(request, asset_id, "none"),
-                "workflow_download_url": signed_url_builder(request, asset_id, "full") if prompt_record else None,
-                "generation_ms": None,
-                "provenance": {
-                    "prompt": prompt,
-                    "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
-                    "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
-                    "seed": embedded.get("seed"),
-                    "size": {
-                        "width": _nested(embedded, "parameters", "width"),
-                        "height": _nested(embedded, "parameters", "height"),
-                    },
-                    "created_at": created_at,
-                    "request_id": (receipt or embedded).get("request_id"),
-                    "job_id": None,
-                    "source": "asset_cache",
-                    "complete": bool(embedded),
-                },
-                "source": source,
-            })
-    return sorted(out, key=lambda item: (int(item.get("created_at") or 0), str(item.get("asset_id") or "")), reverse=True)
+            },
+            "created_at": created_at,
+            "request_id": (receipt or embedded).get("request_id"),
+            "job_id": None,
+            "source": "asset_cache",
+            "complete": bool(embedded),
+        },
+        "source": source,
+    }
 
 
 def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
@@ -954,10 +1104,14 @@ def _source_projection(
     metadata: Mapping[str, Any] | None = None,
     embedded: Mapping[str, Any] | None = None,
     visible_app_ids: list[str] | None = None,
+    apps: _Apps | None = None,
 ) -> dict[str, Any]:
+    def lookup(app_id: str) -> dict[str, Any] | None:
+        return apps.get(app_id) if apps is not None else admin_store.get_app(app_id, path=admin_db_path)
+
     app_id = str((receipt or {}).get("app_id") or "")
     if app_id:
-        app = admin_store.get_app(app_id, path=admin_db_path)
+        app = lookup(app_id)
         if app is not None:
             return {
                 "kind": "app",
@@ -967,7 +1121,7 @@ def _source_projection(
                 "client_hint": _client_hint(receipt),
             }
         return {"kind": "app", "app_id": app_id, "label": "Unknown app", "profile": (receipt or {}).get("app_profile"), "client_hint": _client_hint(receipt)}
-    receipt_owner_app = _app_from_asset_owner_hashes(receipt, admin_db_path, visible_app_ids=visible_app_ids)
+    receipt_owner_app = _app_from_asset_owner_hashes(receipt, admin_db_path, visible_app_ids=visible_app_ids, apps=apps)
     if receipt_owner_app is not None:
         recovered_app_id = str(receipt_owner_app.get("id") or "")
         return {
@@ -982,7 +1136,7 @@ def _source_projection(
     if receipt is None:
         trusted_app_id = str((metadata or {}).get("app_id") or "")
         if trusted_app_id and (visible_app_ids is None or trusted_app_id in set(visible_app_ids)):
-            app = admin_store.get_app(trusted_app_id, path=admin_db_path)
+            app = lookup(trusted_app_id)
             if app is not None:
                 return {
                     "kind": "app",
@@ -992,7 +1146,7 @@ def _source_projection(
                     "client_hint": None,
                     "recovered_from": "media_job",
                 }
-        app = _app_from_asset_owner_hashes(metadata, admin_db_path, visible_app_ids=visible_app_ids)
+        app = _app_from_asset_owner_hashes(metadata, admin_db_path, visible_app_ids=visible_app_ids, apps=apps)
         if app is not None:
             recovered_app_id = str(app.get("id") or "")
             return {
@@ -1021,6 +1175,7 @@ def _app_from_asset_owner_hashes(
     admin_db_path: Path,
     *,
     visible_app_ids: list[str] | None,
+    apps: _Apps | None = None,
 ) -> Mapping[str, Any] | None:
     raw_owners = list((metadata or {}).get("owner_key_hashes") or [])
     single_owner = (metadata or {}).get("owner_key_hash")
@@ -1030,7 +1185,7 @@ def _app_from_asset_owner_hashes(
     if not owners:
         return None
     visible = set(visible_app_ids) if visible_app_ids is not None else None
-    by_hash = _credential_app_by_hash(admin_db_path)
+    by_hash = apps.by_hash() if apps is not None else _credential_app_by_hash(admin_db_path)
     for owner_hash in owners:
         app = by_hash.get(owner_hash)
         if app is not None and (visible is None or str(app.get("id") or "") in visible):
@@ -1204,6 +1359,14 @@ def _media_title(prompt: str | None, kind: str, created_at: int | None, source: 
         return f"{noun} by {maker}"
     date = datetime.fromtimestamp(created_at).strftime("%b %-d at %-I:%M %p")
     return f"{noun} by {maker} · {date}"
+
+
+def _entry_matches(item: _Entry, request: Request) -> bool:
+    return _matches_media_filters(
+        {"kind": item.kind, "model": item.model, "workflow": item.workflow,
+         "prompt": item.prompt, "created_at": item.created_at},
+        request,
+    )
 
 
 def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:
