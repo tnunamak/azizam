@@ -1409,6 +1409,7 @@ def _usage_summary(
     source_filter = "local-network" if request.query_params.get("person") == "local-network" else _source_filter(request)
     _reject_forbidden_source_filter(source_filter, app_ids)
     sources = _usage_sources(admin_db_path, app_ids=None if actor.owner else app_ids)
+    apps = _Apps(admin_db_path)  # apps and credential links, read once for the whole summary
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     clauses = ["created_at >= ?", "parent_request_id IS NULL"]
@@ -1451,7 +1452,7 @@ def _usage_summary(
             if not _receipt_in_scope(value, media_scope):
                 continue
             value["_stored_at"] = stored_at
-            _annotate_receipt_source(value, sources, admin_db_path)
+            _annotate_receipt_source(value, sources, admin_db_path, apps)
             tallied = _source_id(value.get("source"))
             if tallied:
                 source_requests[tallied] = source_requests.get(tallied, 0) + 1
@@ -1504,48 +1505,65 @@ def _usage_summary(
     receipts_by_id: dict[str, Mapping[str, Any]] = {}
     for receipt in receipts:
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
-    for job in succeeded_jobs.result():
+    jobs = succeeded_jobs.result()
+    # Receipts older than the month (or out of the month's scope) in one read, not one per job.
+    older = receipt_store.get_many(
+        [request_id for job in jobs for request_id in _job_receipt_ids(job) if request_id not in receipts_by_id],
+        audience="internal", path=receipts_path)
+    # Assets of an in-scope job are decided by the job, as the Library lists them; the file
+    # loop below only adds files no job knows, so a job's audio and video are not probed.
+    in_jobs: set[str] = set()
+    for job in jobs:
         job_receipt = None
         for request_id in _job_receipt_ids(job):
             job_receipt = receipts_by_id.get(request_id)
             if job_receipt is None:
-                job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+                job_receipt = older.get(request_id)
                 if job_receipt is not None:
-                    _annotate_receipt_source(job_receipt, sources, admin_db_path)
+                    _annotate_receipt_source(job_receipt, sources, admin_db_path, apps)
             if job_receipt is not None:
                 break
         if job_receipt is not None:
+            job_in_scope = _receipt_in_scope(job_receipt, media_scope)
+            if job_in_scope:
+                in_jobs.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
             if (
                 int(job_receipt.get("_stored_at") or 0) >= start
-                and _receipt_in_scope(job_receipt, media_scope)
+                and job_in_scope
                 and _source_matches_filter(job_receipt.get("source"), source_filter)
             ):
                 made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
             continue
-        if _job_in_scope(job, media_scope) and int(job.get("created_at") or 0) >= start:
-            source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids)
-            if _source_matches_filter(source, source_filter):
-                made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+        if _job_in_scope(job, media_scope):
+            in_jobs.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+            if int(job.get("created_at") or 0) >= start:
+                source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids, apps=apps)
+                if _source_matches_filter(source, source_filter):
+                    made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
     if asset_catalog_provider and asset_metadata_reader:
         for asset_id in asset_catalog_provider():
+            if asset_id in in_jobs:
+                continue
             metadata = asset_metadata_reader(asset_id)
             owners = set(metadata.get("owner_key_hashes") or [])
             if hashes is not None and not (owners & hashes):
                 continue
             path = asset_path_resolver(asset_id)
             if path is not None and path.exists():
-                embedded = _embedded_provenance(path)
+                embedded = _embedded_provenance_cached(path, probe=True)
                 receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
                 if receipt is not None and not _receipt_in_scope(receipt, media_scope):
                     continue
-                source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids)
+                source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids, apps=apps)
                 # A file without a recorded creation time counts by its file time.
                 made_at = _asset_created_at(path, {}, receipt, embedded) or _file_modified_at(path) or 0
                 if made_at >= start and _source_matches_filter(source, source_filter):
                     made.add(asset_id)
     receipt_list = []
-    for internal in receipts[:USAGE_RECEIPT_LIMIT]:
-        visible = receipt_store.get(internal["request_id"], audience="client", path=receipts_path)
+    shown = receipts[:USAGE_RECEIPT_LIMIT]
+    visible_receipts = receipt_store.get_many([internal["request_id"] for internal in shown], audience="client", path=receipts_path)
+    for internal in shown:
+        visible = visible_receipts.get(internal["request_id"])
         if visible:
             visible["remote_spend"] = _receipt_cost(internal)
             visible["capability"] = _capability(internal)
@@ -1662,13 +1680,14 @@ def _annotate_receipt_source(
     receipt: dict[str, Any],
     sources: list[Mapping[str, Any]],
     admin_db_path: Path,
+    apps: _Apps | None = None,
 ) -> None:
     visible_app_ids = [
         str(source["app_id"])
         for source in sources
         if isinstance(source.get("app_id"), str) and source["app_id"]
     ]
-    source = _source_projection(receipt, admin_db_path, visible_app_ids=visible_app_ids)
+    source = _source_projection(receipt, admin_db_path, visible_app_ids=visible_app_ids, apps=apps)
     receipt["source"] = source
     receipt.setdefault("source_kind", source["kind"])
     receipt.setdefault("source_label", source["label"])
