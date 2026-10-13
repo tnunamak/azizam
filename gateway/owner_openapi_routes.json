@@ -380,7 +380,7 @@
   },
   "DELETE /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   },
   "GET /admin/api/access-plans": {
     "tag": "people and plans",
@@ -396,7 +396,7 @@
   },
   "POST /admin/api/access-plans": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "success_status": 201
   },
   "POST /admin/api/access/check": {
@@ -409,6 +409,6 @@
   },
   "PUT /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
   }
 }

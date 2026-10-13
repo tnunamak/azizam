@@ -86,6 +86,10 @@ class AdminContext:
         return self.actor_id or self.subject
 
 
+class AdminKeyNameTaken(ValueError):
+    """The name of a new admin key is already in use."""
+
+
 class AdminAuthError(Exception):
     """Raised by an injected auth callable to deny a request.
 
@@ -2036,11 +2040,21 @@ def create_admin_router(
             return _RouteError(status.HTTP_409_CONFLICT, "access_plan_name_conflict", msg).as_response()
         return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_access_plan", msg).as_response()
 
+    def _owner_only(ctx: AdminContext) -> JSONResponse | None:
+        """Plans bound what every person may do, so only the owner writes them."""
+        if "owner" in ctx.roles:
+            return None
+        return _RouteError(
+            status.HTTP_403_FORBIDDEN, "owner_required", "Only the owner can change access plans.",
+        ).as_response()
+
     @router.post("/access-plans")
     async def create_access_plan(request: Request) -> JSONResponse:
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
             record = store.create_access_plan(data=body, actor=ctx)
@@ -2069,6 +2083,8 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             body = await _read_json_body(request)
             record = store.update_access_plan(plan_id=plan_id, data=body, actor=ctx)
@@ -2087,6 +2103,8 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        if (denied := _owner_only(ctx)) is not None:
+            return denied
         try:
             record = store.delete_access_plan(plan_id=plan_id, actor=ctx)
         except ValueError as exc:
@@ -2164,6 +2182,10 @@ def create_admin_router(
         except PermissionError as exc:
             return _RouteError(
                 status.HTTP_403_FORBIDDEN, "admin_role_forbidden", str(exc)
+            ).as_response()
+        except AdminKeyNameTaken as exc:
+            return _RouteError(
+                status.HTTP_409_CONFLICT, "admin_key_name_taken", str(exc)
             ).as_response()
         except ValueError as exc:
             return _RouteError(

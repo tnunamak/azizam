@@ -35,13 +35,30 @@ read-only scope. The key's role is enforced on each request. The helper does
 not configure a browser session or start a server.
 
 An administrator, not only the owner, may mint an `admin` key with
-`POST /admin/api/admin-keys`; only an owner may mint an `owner` key. A key made
-on the host with the helper above belongs to the operator and has no
-person behind it. Every other key belongs to the person (or key) that minted
-it, and it works only while that person still holds a role that permits it.
-When an administrator loses the role, their keys stop working at once. When an
-owner becomes an administrator, their `owner` keys work at administrator reach.
-If the person who minted a key cannot be found, the key has no authority.
+`POST /admin/api/admin-keys`; only an owner may mint an `owner` key. Every
+dashboard key gets a service account of its own, and the name must be new: a
+name that is already in use is refused with `409 admin_key_name_taken`, so no
+one can take over another key by naming theirs the same. A key made on the host
+with the helper above belongs to the operator and has no person behind it; the
+helper refuses a name that the dashboard already used. Every other key records
+who minted it (a person, or another key), and it works only while that minter
+still holds a role that permits it. When an administrator loses the role, their
+keys stop working at once. When an owner becomes an administrator, their `owner`
+keys work at administrator reach. If the minter cannot be found, the key has no
+authority.
+
+A role that the identity provider gave (an admin group or role claim) counts
+only while a sign-in has confirmed it within the session length (8 hours by
+default). An administrator who is removed from the group and never signs in
+again loses the role, and with it every key they minted, when that time ends.
+Roles the owner gave by hand do not expire. A sign-in that is refused ends the
+provider's roles and all sessions of that person at once; it also ends their
+MCP connections and pauses their personal App keys (`person_signin_refused`)
+until a later sign-in succeeds. Nothing is deleted, so the keys work again then.
+
+Access plans decide what everyone may do, so only the owner may create, change
+or delete one (`403 owner_required` for an administrator). Administrators can
+still read plans.
 
 Only the owner may create an App that someone else answers for, change that
 App's access plan or accountable person, or mint a key on it. An administrator
@@ -290,14 +307,14 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.list_access_plans`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/access-plans/editor` | owner-bearer | denied | `gateway.admin_api.access_plan_editor`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.get_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.create_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.create_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/access/check` | owner-bearer | denied | `gateway.admin_api.check_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/access/preview` | owner-bearer | denied | `gateway.admin_api.preview_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `PUT /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.update_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.update_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/oidc/callback` | browser/public | no owner authority | `proxy.admin_oidc_callback`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
 | `POST /auth/api/invite` | browser/public | no owner authority | `gateway.accounts_api.inspect`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
 | `POST /auth/api/invite/accept` | browser/public | no owner authority | `gateway.accounts_api.accept`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |

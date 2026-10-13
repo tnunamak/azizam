@@ -186,6 +186,8 @@ CREATE TABLE IF NOT EXISTS admin_role_assignments (
   granted_by TEXT,
   provenance TEXT NOT NULL DEFAULT 'manual',
   revoked_at INTEGER,
+  -- For identity-provider grants: when a sign-in last confirmed the claim.
+  last_confirmed_at INTEGER,
   UNIQUE(role, subject_kind, subject_id, scope_app_id),
   FOREIGN KEY(scope_app_id) REFERENCES apps(id)
 );
@@ -248,6 +250,11 @@ ACCOUNT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS account_access (
  user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT REFERENCES access_plans(id),
  disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
+);
+-- A person whose latest sign-in was refused. Their personal keys stop working
+-- until a sign-in succeeds, which deletes the row (reversible by design).
+CREATE TABLE IF NOT EXISTS account_signin_refusals (
+ user_id TEXT PRIMARY KEY REFERENCES users(id), refused_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS account_sessions (
  session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL
@@ -358,6 +365,14 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE admin_role_assignments "
             "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'"
+        )
+    if "last_confirmed_at" not in columns:
+        # Additive. Grants the identity provider gave before this column
+        # existed get one session length to be confirmed by a sign-in.
+        conn.execute("ALTER TABLE admin_role_assignments ADD COLUMN last_confirmed_at INTEGER")
+        conn.execute(
+            "UPDATE admin_role_assignments SET last_confirmed_at = ? "
+            "WHERE provenance = 'oidc' AND revoked_at IS NULL", (_now(),),
         )
     if purge_folded_claims:
         conn.execute("DELETE FROM user_identity_claims")
@@ -947,9 +962,7 @@ def claim_first_local_owner(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         existing = conn.execute(
-            "SELECT 1 FROM admin_role_assignments "
-            "WHERE revoked_at IS NULL AND role IN ('owner', 'admin', 'superadmin') "
-            "LIMIT 1"
+            "SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1"
         ).fetchone()
         if existing is not None:
             conn.rollback()
@@ -1965,6 +1978,7 @@ SELECT a.id AS app_id, a.name AS app_name, a.kind AS app_kind, a.owner_user_id,
        u.id AS person_row, u.issuer AS person_issuer,
        acc.user_id AS access_row, acc.disabled_at AS person_disabled_at,
        acc.removed_at AS person_removed_at, acc.plan_id AS person_plan_id,
+       EXISTS(SELECT 1 FROM account_signin_refusals r WHERE r.user_id = a.owner_user_id) AS person_signin_refused,
        pp.plan_json AS person_plan_json,
        ap.plan_json AS app_plan_json,
        EXISTS(SELECT 1 FROM session_apps s WHERE s.app_id = a.id) AS on_session_app
@@ -2134,21 +2148,28 @@ def assign_admin_role(
             "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
             (role, subject_kind, subject_id, scope_app_id),
         ).fetchone()
+        confirmed = ts if provenance == "oidc" else None
         if row is not None:
             if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
                 return _row_to_dict(row)  # type: ignore[return-value]
+            if (subject_kind == "service_account" and row["granted_by"]
+                    and row["granted_by"] != granted_by):
+                # A key's authority belongs to whoever granted it. Re-granting
+                # under another name would let a later caller take the key over.
+                conn.rollback()
+                raise PermissionError("this service account was granted by someone else")
             conn.execute(
                 "UPDATE admin_role_assignments SET revoked_at = NULL, "
-                "granted_at = ?, granted_by = ?, provenance = ? WHERE id = ?",
-                (ts, granted_by, provenance, row["id"]),
+                "granted_at = ?, granted_by = ?, provenance = ?, last_confirmed_at = ? WHERE id = ?",
+                (ts, granted_by, provenance, confirmed, row["id"]),
             )
             assignment_id = row["id"]
         else:
             cur = conn.execute(
                 "INSERT INTO admin_role_assignments(role, subject_kind, "
-                "subject_id, scope_app_id, granted_at, granted_by, provenance) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance),
+                "subject_id, scope_app_id, granted_at, granted_by, provenance, last_confirmed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance, confirmed),
             )
             assignment_id = cur.lastrowid
         granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
@@ -2196,17 +2217,22 @@ def reconcile_oidc_admin_roles(
             existing = next((row for row in matching if row["provenance"] == "oidc"), None)
             if existing is not None:
                 if existing["revoked_at"] is None:
+                    # The claim is still true: this sign-in confirms it.
+                    conn.execute(
+                        "UPDATE admin_role_assignments SET last_confirmed_at=? WHERE id=?",
+                        (ts, existing["id"]),
+                    )
                     continue
                 conn.execute(
-                    "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=? "
-                    "WHERE id=?", (ts, existing["id"]),
+                    "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=?, "
+                    "last_confirmed_at=? WHERE id=?", (ts, ts, existing["id"]),
                 )
                 assignment_id = existing["id"]
             else:
                 cur = conn.execute(
                     "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
-                    "scope_app_id,granted_at,granted_by,provenance) "
-                    "VALUES (?,'user',?,NULL,?,'oidc','oidc')", (role, subject_id, ts),
+                    "scope_app_id,granted_at,granted_by,provenance,last_confirmed_at) "
+                    "VALUES (?,'user',?,NULL,?,'oidc','oidc',?)", (role, subject_id, ts, ts),
                 )
                 assignment_id = cur.lastrowid
             granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
@@ -2281,48 +2307,116 @@ def list_admin_roles(
 
 _MAX_GRANT_CHAIN = 8
 OPERATOR_GRANTOR = "cli"
+# An identity-provider grant lasts as long as the longest session the sign-in
+# that confirmed it could open. Callers with a configured session length pass it.
+OIDC_GRANT_MAX_AGE_SECONDS = 8 * 3600
+
+
+def _cap_role(role: str, held: set[str]) -> str | None:
+    """The role a grantor who holds ``held`` can still stand behind, if any."""
+    if role in held or "owner" in held:
+        return role
+    if held & {"admin", "superadmin"}:
+        return "admin"  # lowered to what the grantor still holds
+    return None
+
+
+def _held_by_grantor(
+    grantor: str, *, oidc_max_age: int, now: int, path: Path, depth: int,
+) -> set[str] | None:
+    """Roles a grantor holds now. None means no person is behind it (the operator)."""
+    if not grantor or grantor == OPERATOR_GRANTOR:
+        return None
+    if depth >= _MAX_GRANT_CHAIN:
+        return set()
+    kind, _, ident = grantor.partition(":")
+    if not (kind in {"user", "service_account"} and ident):
+        # An older grant recorded the bare id.
+        ident = grantor
+        if get_user(ident, path=path) is not None:
+            kind = "user"
+        elif get_service_account(ident, path=path) is not None:
+            kind = "service_account"
+        else:
+            return set()
+    return set(effective_admin_roles(
+        kind, ident, oidc_max_age=oidc_max_age, now=now, path=path, _depth=depth + 1))
 
 
 def effective_admin_roles(
-    subject_kind: str, subject_id: str, *, path: Path = DB_PATH, _depth: int = 0,
+    subject_kind: str,
+    subject_id: str,
+    *,
+    minted_by: str | None = None,
+    oidc_max_age: int = OIDC_GRANT_MAX_AGE_SECONDS,
+    now: int | None = None,
+    path: Path = DB_PATH,
+    _depth: int = 0,
 ) -> frozenset[str]:
     """The control-plane roles this subject may use right now.
 
-    A person's roles are their active grants. A service account (an admin key)
-    holds its roles only as far as the grantor still holds them: a key made on
-    the command line (``granted_by`` = "cli") is the operator's and is not
-    capped, and every other key is capped by the person, or the key, that
-    granted it. A grantor that is named but cannot be found grants nothing. So an admin key
-    stops working when the administrator who minted it loses the role, and an
-    owner key made by someone who is no longer an owner works at admin reach.
+    A person's roles are their active global grants (an App-scoped grant is not
+    a control-plane role). A grant from the identity provider counts only while
+    a sign-in confirmed it within ``oidc_max_age`` seconds, so an administrator
+    who is dropped from the group and never signs in again loses it.
+
+    A service account (an admin key) holds its roles only as far as the person,
+    or key, that granted them still holds them. ``minted_by`` is the minter
+    recorded on the credential being used and caps it the same way. The
+    operator's ``cli`` is not capped, and neither is a grant that records no
+    grantor (a direct database write). A named grantor that cannot be found
+    grants nothing. So an admin key stops working when the administrator who
+    minted it loses the role, and an owner key made by someone who is now only
+    an administrator works at administrator reach.
     """
+    ts = _now() if now is None else int(now)
     rows = list_admin_roles(subject_kind=subject_kind, subject_id=subject_id, path=path)
     if subject_kind != "service_account":
-        return frozenset(str(row["role"]) for row in rows)
+        return frozenset(
+            str(row["role"]) for row in rows
+            if row.get("scope_app_id") is None and (
+                row.get("provenance") != "oidc"
+                or (row.get("last_confirmed_at") is not None
+                    and int(row["last_confirmed_at"]) > ts - oidc_max_age))
+        )
     kept: set[str] = set()
     for row in rows:
         role = str(row["role"])
-        grantor = row.get("granted_by")
-        if not grantor or grantor == OPERATOR_GRANTOR:
-            # No person granted it: the command line, or a direct database
-            # write by the operator. The dashboard always records its actor.
-            kept.add(role)
-            continue
-        if _depth >= _MAX_GRANT_CHAIN:
-            continue
-        if get_user(str(grantor), path=path) is not None:
-            held = {str(r["role"]) for r in list_admin_roles(
-                subject_kind="user", subject_id=str(grantor), path=path) if r.get("scope_app_id") is None}
-        elif get_service_account(str(grantor), path=path) is not None:
-            held = set(effective_admin_roles(
-                "service_account", str(grantor), path=path, _depth=_depth + 1))
-        else:
-            continue
-        if role in held or "owner" in held:
-            kept.add(role)
-        elif held & {"admin", "superadmin"}:
-            kept.add("admin")  # lowered to what the grantor still holds
+        held = _held_by_grantor(str(row.get("granted_by") or ""), oidc_max_age=oidc_max_age,
+                                now=ts, path=path, depth=_depth)
+        capped = role if held is None else _cap_role(role, held)
+        if capped is not None and minted_by:
+            held = _held_by_grantor(minted_by, oidc_max_age=oidc_max_age, now=ts, path=path, depth=_depth)
+            capped = capped if held is None else _cap_role(capped, held)
+        if capped is not None:
+            kept.add(capped)
     return frozenset(kept)
+
+
+def claim_first_owner(
+    user_id: str, *, granted_by: str, now: int | None = None, path: Path = DB_PATH,
+) -> bool:
+    """Make this person the owner if no owner grant has ever existed.
+
+    The check and the write share one transaction, so two first sign-ins
+    cannot both win. A revoked owner grant still counts: an email cannot
+    recover ownership that was taken away.
+    """
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM admin_role_assignments WHERE role = 'owner' LIMIT 1").fetchone():
+            conn.rollback()
+            return False
+        cur = conn.execute(
+            "INSERT INTO admin_role_assignments(role, subject_kind, subject_id, scope_app_id, "
+            "granted_at, granted_by, provenance) VALUES ('owner', 'user', ?, NULL, ?, ?, 'manual')",
+            (user_id, ts, granted_by),
+        )
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (cur.lastrowid,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor_kind="system", actor_id=granted_by)
+        conn.commit()
+    return True
 
 
 def owner_display_name(*, path: Path = DB_PATH) -> str | None:
@@ -3031,6 +3125,7 @@ __all__ = [
     "find_credential_by_hash",
     "find_oidc_user",
     "effective_admin_roles",
+    "claim_first_owner",
     "find_runtime_credential_by_hash",
     "list_credentials",
     "list_active_credentials",

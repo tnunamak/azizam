@@ -17,6 +17,7 @@ import functools
 import secrets
 import json
 import time
+import sqlite3
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Mapping
@@ -25,7 +26,7 @@ from fastapi import Request, status
 
 from gateway import admin_store, extension_packages, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
-from gateway.admin_api import AdminAuthError, AdminContext, access_model_summary
+from gateway.admin_api import AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
 from gateway.admin_oidc import (
     CookieConfig,
     OIDCConfigError,
@@ -638,10 +639,22 @@ class AdminSQLiteStore:
             raise ValueError("role must be one of: owner, admin")
         if "owner" not in actor.roles and role not in actor.roles:
             raise PermissionError("owner role required to mint owner keys")
-        service_account = admin_store.ensure_service_account(
-            name,
-            allowed_roles=None if "owner" in actor.roles else actor.roles,
-            description="Owner for an admin automation key created from the dashboard.",
+        # A key always gets a service account of its own. Reusing one by name
+        # would let a caller take over a key that someone else minted.
+        try:
+            service_account = admin_store.create_service_account(
+                name, description="Owner for an admin automation key created from the dashboard.",
+                path=self.path,
+            )
+        except sqlite3.IntegrityError:
+            raise AdminKeyNameTaken(f"a key named {name!r} already exists; choose another name") from None
+        minter = f"{actor.actor_kind}:{actor.audit_actor_id}"
+        assignment = admin_store.assign_admin_role(
+            role=role,
+            subject_kind="service_account",
+            subject_id=service_account["id"],
+            granted_by=actor.audit_actor_id,
+            actor=actor,
             path=self.path,
         )
         api_key = generate_admin_api_key()
@@ -651,14 +664,7 @@ class AdminSQLiteStore:
             hash=hash_api_key(api_key),
             prefix=_key_prefix(api_key),
             display_name=f"{name} admin automation key",
-            path=self.path,
-        )
-        assignment = admin_store.assign_admin_role(
-            role=role,
-            subject_kind="service_account",
-            subject_id=service_account["id"],
-            granted_by=actor.subject,
-            actor=actor,
+            created_by=minter,
             path=self.path,
         )
         admin_store.record_audit(
@@ -1408,6 +1414,7 @@ class AdminAuthenticator:
                     )
                     role_names = admin_store.effective_admin_roles(
                         subject_kind, subject_id, path=self.store.path,
+                        oidc_max_age=self.cookie.max_age_seconds,
                     )
                     if ADMIN_CONTROL_ROLES & role_names:
                         return AdminContext(
@@ -1451,7 +1458,8 @@ class AdminAuthenticator:
         # role that permits it (see admin_store.effective_admin_roles).
         role_names = admin_store.effective_admin_roles(
             str(credential["subject_kind"]), str(credential["subject_id"]),
-            path=self.store.path,
+            minted_by=str(credential.get("created_by") or "") or None,
+            path=self.store.path, oidc_max_age=self.cookie.max_age_seconds,
         )
         if not (ADMIN_CONTROL_ROLES & role_names):
             raise AdminAuthError(
@@ -1553,6 +1561,9 @@ def identity_from_access_row(
     elif (row.get("person_row") is None or row.get("access_row") is None
           or row.get("person_disabled_at") is not None or row.get("person_removed_at") is not None):
         denial = "person_disabled"
+    elif row.get("person_signin_refused"):
+        # Reversible: a successful sign-in deletes the refusal record.
+        denial = "person_signin_refused"
     person_plan = _plan_from_row(row.get("person_plan_json"), row.get("person_plan_id"))
     assignment = row.get("access_plan")
     if assignment == PERSON:
@@ -1674,6 +1685,19 @@ def create_admin_service_account_key(
     if role not in ADMIN_KEY_CREATABLE_ROLES:
         raise ValueError("role must be one of: owner, admin")
     service_account = admin_store.ensure_service_account(name, path=path)
+    if any(row.get("granted_by") not in (None, admin_store.OPERATOR_GRANTOR)
+           for row in admin_store.list_admin_roles(
+               subject_kind="service_account", subject_id=service_account["id"],
+               include_revoked=True, path=path)):
+        raise PermissionError(f"{name!r} was created from the dashboard; choose another name")
+    assignment = admin_store.assign_admin_role(
+        role=role,
+        subject_kind="service_account",
+        subject_id=service_account["id"],
+        granted_by=admin_store.OPERATOR_GRANTOR,
+        actor_kind="cli",
+        path=path,
+    )
     api_key = generate_admin_api_key()
     credential = admin_store.create_credential_hash(
         subject_kind="service_account",
@@ -1681,14 +1705,7 @@ def create_admin_service_account_key(
         hash=hash_api_key(api_key),
         prefix=_key_prefix(api_key),
         display_name=f"{name} admin key",
-        path=path,
-    )
-    assignment = admin_store.assign_admin_role(
-        role=role,
-        subject_kind="service_account",
-        subject_id=service_account["id"],
-        granted_by="cli",
-        actor_kind="cli",
+        created_by=admin_store.OPERATOR_GRANTOR,
         path=path,
     )
     admin_store.record_audit(

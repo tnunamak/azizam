@@ -43,7 +43,8 @@ def test_sec05_name_collision_cannot_issue_owner_principal_key(db):
     before_credentials = admin_store.list_credentials(path=db)
     before_roles = admin_store.list_admin_roles(path=db)
     response = client.post("/admin/api/admin-keys", json={"name": "release-bot", "role": "admin"})
-    assert response.status_code == 403
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "admin_key_name_taken"
     assert admin_store.list_credentials(path=db) == before_credentials
     assert admin_store.list_admin_roles(path=db) == before_roles
 
@@ -57,10 +58,12 @@ def test_sec05_runtime_authorization_precedes_new_identity_mutation(db):
     assert not admin_store.list_credentials(path=db)
 
 
-def test_sec05_owner_can_reissue_existing_owner_identity(db):
+def test_sec05_nobody_reuses_an_existing_key_name_not_even_the_owner(db):
+    """A dashboard key always gets its own account; reusing one by name was how a key was taken over."""
     create_admin_service_account_key("release-bot", role="owner", path=db)
     response = client_for(db, "owner").post("/admin/api/admin-keys", json={"name": "release-bot", "role": "admin"})
-    assert response.status_code == 201
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "admin_key_name_taken"
 
 
 def test_sec06_oidc_trust_changes_require_owner(db):
