@@ -180,6 +180,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/typesafe/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `list_typesafe_models` |
 | `POST` | `/typesafe/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
+| `GET` | `/v1/assets/{asset_id}/thumbnail` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_thumbnail` |
 | `DELETE` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `GET` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `PATCH` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
