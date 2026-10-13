@@ -39,7 +39,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
@@ -505,6 +505,37 @@ def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, An
     return updated
 
 
+def get_many(
+    request_ids: Iterable[str],
+    *,
+    audience: str = "internal",
+    now_ms: int | None = None,
+    stale_after_ms: int = STALE_AFTER_MS,
+    path: Path = DB_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return ``{request_id: receipt}`` as ``get`` would, in one query per 500 ids."""
+    ids = sorted({value for value in request_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    with _conn(path) as conn:
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT request_id, receipt_json, created_at FROM receipts "
+                f"WHERE request_id IN ({','.join('?' for _ in chunk)})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                data = _safe_loads(row[1])
+                if not isinstance(data, Mapping):
+                    continue
+                receipt = _filter_for_audience(
+                    _project_incomplete(data, now_ms=now_ms, stale_after_ms=stale_after_ms), audience
+                )
+                receipt.setdefault("_stored_at", int(row[2]))
+                out[row[0]] = receipt
+    return out
+
+
 def get(
     request_id: str,
     *,
@@ -762,6 +793,7 @@ __all__ = [
     "STALE_AFTER_MS",
     "SCHEMA_VERSION",
     "init_db",
+    "get_many",
     "begin",
     "finalize",
     "record",

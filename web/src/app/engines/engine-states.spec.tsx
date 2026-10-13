@@ -165,6 +165,17 @@ async function openEdit(user: ReturnType<typeof userEvent.setup>, name: string) 
   return screen.findByRole("dialog", { name: "Edit engine" });
 }
 
+/**
+ * Put a value in a field with one input event. The test checks the bodies the
+ * form sends, not key handling; typing ~150 keys re-rendered the sheet on each
+ * one and made this the slowest spec in the suite (it timed out under gate load).
+ * Paste also takes "{" literally, where user.type reads it as a key chord.
+ */
+async function enter(user: ReturnType<typeof userEvent.setup>, field: HTMLElement, text: string) {
+  await user.clear(field);
+  await user.paste(text);
+}
+
 it("lists the in-use engine without its model names, hides unused engines, and opens an edit sheet with test and detect", async () => {
   const user = userEvent.setup();
   mount();
@@ -331,8 +342,8 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   const addDialog = await screen.findByRole("dialog", { name: "Add engine" });
   await user.click(within(addDialog).getByRole("combobox", { name: "Preset" }));
   await user.click(await screen.findByRole("option", { name: /OpenAI.?compatible/i }));
-  await user.type(within(addDialog).getByLabelText(/^Name/), "Added engine");
-  await user.type(within(addDialog).getByLabelText(/^Base URL/), "http://127.0.0.1:18083/v1");
+  await enter(user, within(addDialog).getByLabelText(/^Name/), "Added engine");
+  await enter(user, within(addDialog).getByLabelText(/^Base URL/), "http://127.0.0.1:18083/v1");
   await user.click(within(addDialog).getByRole("button", { name: "Add engine" }));
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Engine added"));
   expect(sent("POST")).toHaveLength(1);
@@ -344,27 +355,20 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
 
   const dialog = await openEdit(user, "Local chat engine");
   const name = within(dialog).getByLabelText(/^Name/);
-  await user.clear(name);
-  await user.type(name, "Renamed chat engine");
+  await enter(user, name, "Renamed chat engine");
   const endpoint = within(dialog).getByLabelText("Endpoint");
-  await user.clear(endpoint);
-  await user.type(endpoint, "https://example.test/v1");
+  await enter(user, endpoint, "https://example.test/v1");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
   expect(await within(dialog).findByText(/HTTPS endpoints are not supported/)).toBeVisible();
   await user.click(within(dialog).getByText("Advanced fields", { exact: true }));
   const json = within(dialog).getByLabelText("Advanced JSON", { exact: true }) as HTMLTextAreaElement;
   const config = json.value;
-  await user.clear(json);
-  await user.type(json, "null");
+  await enter(user, json, "null");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
   expect(await within(dialog).findByText("Advanced fields must be a JSON object.")).toBeVisible();
   expect(sent("PATCH")).toHaveLength(0);
-  // user.type reads "{" as a key chord, so paste the original JSON back.
-  await user.clear(json);
-  await user.click(json);
-  await user.paste(config);
-  await user.clear(endpoint);
-  await user.type(endpoint, "http://127.0.0.1:19000/v1");
+  await enter(user, json, config);
+  await enter(user, endpoint, "http://127.0.0.1:19000/v1");
   await user.click(within(dialog).getByRole("button", { name: "Save engine" }));
   await waitFor(() => expect(sent("PATCH")).toHaveLength(1));
   expect(sent("PATCH")[0].path).toBe("/admin/api/operator/services/chat");
@@ -382,11 +386,9 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   await user.click(screen.getByText("Show infrastructure", { exact: true }));
   const managed = await openEdit(user, "Gateway substrate");
   const mname = within(managed).getByLabelText(/^Name/);
-  await user.clear(mname);
-  await user.type(mname, "Renamed substrate");
+  await enter(user, mname, "Renamed substrate");
   const note = within(managed).getByLabelText("Note");
-  await user.clear(note);
-  await user.type(note, "Managed note changed.");
+  await enter(user, note, "Managed note changed.");
   expect(within(managed).queryByLabelText("Endpoint")).toBeNull();
   await user.click(within(managed).getByRole("button", { name: "Save engine" }));
   await waitFor(() => expect(sent("PATCH")).toHaveLength(2));
@@ -410,7 +412,7 @@ it("adds, edits, toggles and removes engines through the existing APIs with the 
   );
   await user.click(await screen.findByRole("menuitem", { name: "Remove engine" }));
   const confirm = await screen.findByRole("dialog", { name: "Remove engine?" });
-  await user.type(within(confirm).getByRole("textbox"), "Local image engine");
+  await enter(user, within(confirm).getByRole("textbox"), "Local image engine");
   await user.click(within(confirm).getByRole("button", { name: "Remove engine" }));
   await waitFor(() => expect(sent("DELETE")).toHaveLength(1));
   expect(sent("DELETE")[0]).toMatchObject({ path: "/admin/api/operator/services/image", ifMatch: "test-etag" });

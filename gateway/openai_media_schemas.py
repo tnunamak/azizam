@@ -432,6 +432,24 @@ SIGNED_IMAGE_CONTENT_OPENAPI: JsonObjectSchema = {
 }
 
 
+SIGNED_THUMBNAIL_OPENAPI: JsonObjectSchema = {
+    "responses": {
+        "200": {
+            "description": (
+                "A WebP preview of the asset, 480 px on the long side at most. Auth is the "
+                "signed `expires`+`sig` query string a thumbnail URL carries; a content URL "
+                "signature does not open this route."
+            ),
+            "content": {"image/webp": {"schema": {"type": "string", "format": "binary"}}},
+        },
+        "304": {"description": "The preview has not changed since the `If-None-Match` ETag."},
+        "400": _json_error_response("Invalid signed URL."),
+        "403": _json_error_response("Signature expired or invalid."),
+        "404": _json_error_response("No preview for this asset."),
+    }
+}
+
+
 def _audio_generate_request_schema() -> JsonObjectSchema:
     return {
         "type": "object",

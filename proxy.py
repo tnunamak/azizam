@@ -87,7 +87,7 @@ from gateway import (
 )
 from gateway import loop_watchdog, request_connections, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
-from gateway import video_subject
+from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
@@ -318,6 +318,7 @@ from gateway.openai_media_schemas import (
     IMAGES_GENERATIONS_OPENAPI,
     IMAGES_VARIATIONS_OPENAPI,
     SIGNED_IMAGE_CONTENT_OPENAPI,
+    SIGNED_THUMBNAIL_OPENAPI,
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
@@ -7022,10 +7023,16 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     transferable bearer URL cannot establish the maker's identity.
     """
     mode = metadata_mode or provenance.METADATA_NONE
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
-    sig = _sign_asset_token(asset_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if mode == thumbnails.THUMB_MODE:
+        # The expiry steps once per TTL, so the URL is the same all window long
+        # and the browser can keep the preview between visits.
+        expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
+        sig = _sign_asset_token(asset_id, expires, mode)
+        return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}"
+    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
+    sig = _sign_asset_token(asset_id, expires, mode)
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
@@ -22571,6 +22578,40 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     )
 
 
+@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
+async def assets_thumbnail(asset_id: str, request: Request):
+    """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
+    return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
+
+
+def _signed_asset_thumbnail_response(asset_id: str, request: Request) -> Response:
+    def refuse(status: int, message: str) -> Response:
+        return Response(
+            content=json.dumps({"error": {"message": message, "type": "invalid_request_error"}}),
+            status_code=status, media_type="application/json",
+        )
+
+    try:
+        expires = int(request.query_params.get("expires", ""))
+    except ValueError:
+        return refuse(400, "expires must be an integer")
+    # Only a thumbnail-signed URL passes: a content URL's signature covers md=none|full.
+    if not verify_asset_signature(asset_id, expires, request.query_params.get("sig", ""), thumbnails.THUMB_MODE):
+        return refuse(403, "Invalid or expired signature")
+    source = asset_cache_path(asset_id)
+    if source is None:
+        return refuse(400, "Invalid asset id")
+    made = thumbnails.thumbnail_for(source)
+    if made is None:
+        return refuse(404, "No preview for this asset")
+    stat = made.stat()
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+    headers = {"Cache-Control": "private, max-age=3600", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=made.read_bytes(), media_type=thumbnails.THUMB_MEDIA_TYPE, headers=headers)
+
+
 @app.get("/gateway/v1/assets/{asset_id}/content")
 async def gateway_asset_content(asset_id: str, request: Request):
     """Serve a cached generated asset through the gateway-native asset surface."""
@@ -29122,6 +29163,8 @@ from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyL
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
+from gateway.server_timing import ServerTimingMiddleware
+app.add_middleware(ServerTimingMiddleware)
 
 
 # =============================================================================
