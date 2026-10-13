@@ -75,9 +75,9 @@ class BackendGridLoopTests(unittest.IsolatedAsyncioTestCase):
                 on_loop.append(False)
             return real(*args, **kwargs)
 
-        with patch.object(status, "_probe_ssl_context", None, create=True), patch.object(
-            ssl, "create_default_context", spy
-        ):
+        from gateway import http_tls
+
+        with patch.object(http_tls, "_CONTEXT", None), patch.object(ssl, "create_default_context", spy):
             await status._backend_grid({"backends": {}})
         self.assertTrue(on_loop, "no SSL context was built")
         self.assertFalse(any(on_loop), "SSL context was built on the event loop")

@@ -307,6 +307,20 @@ def evidence_from_receipts(
     return out
 
 
+# A receipt is dated by its last update, which can trail its creation by the length of a
+# job. The scan looks this far before the evidence window so a long job still counts.
+EVIDENCE_SCAN_SLACK_S = 6 * 3600
+
+# The fields evidence_from_receipts reads, taken in SQL so a scan does not decode whole receipts.
+_EVIDENCE_COLUMNS = (
+    "json_extract(receipt_json, '$.request_id'), created_at, json_extract(receipt_json, '$.status'), "
+    "json_extract(receipt_json, '$.metadata.service_id'), json_extract(receipt_json, '$.metadata.\"service-id\"'), "
+    "json_extract(receipt_json, '$.backend'), json_extract(receipt_json, '$.updated_at_ms'), "
+    "json_extract(receipt_json, '$.accepted_at_ms'), json_extract(receipt_json, '$.status_code'), "
+    "json_extract(receipt_json, '$.metadata.status_code')"
+)
+
+
 def evidence_from_receipt_store(
     path: Path,
     *,
@@ -314,24 +328,34 @@ def evidence_from_receipt_store(
     max_age_s: int = RECENT_EVIDENCE_WINDOW_S,
     scan_limit: int = 5000,
 ) -> dict[str, dict[str, Any]]:
-    """Read recent backend evidence without depending on page-sized feeds."""
+    """Read recent backend evidence without depending on page-sized feeds.
+
+    Only receipts created in the evidence window (plus a slack for jobs that are
+    still updating) are read, and only the fields evidence needs.
+    """
 
     now_s = int(time.time() if now_s is None else now_s)
     rows: list[dict[str, Any]] = []
     with receipt_store.reader(path) as conn:
-        for receipt_json, created_at in conn.execute(
-            "SELECT receipt_json, created_at FROM receipts "
-            "WHERE parent_request_id IS NULL "
+        for (request_id, created_at, status, service_id, service_dash, backend, updated_ms,
+             accepted_ms, status_code, metadata_code) in conn.execute(
+            f"SELECT {_EVIDENCE_COLUMNS} FROM receipts "
+            # The unary plus keeps SQLite on the created_at index; without it the planner reads
+            # and sorts every top-level receipt ever recorded.
+            "WHERE +parent_request_id IS NULL AND created_at >= ? "
             "ORDER BY created_at DESC, request_id DESC LIMIT ?",
-            (int(scan_limit),),
+            (now_s - max_age_s - EVIDENCE_SCAN_SLACK_S, int(scan_limit)),
         ):
-            try:
-                payload = json.loads(receipt_json)
-            except Exception:
-                continue
-            if isinstance(payload, dict):
-                payload.setdefault("_stored_at", int(created_at))
-                rows.append(payload)
+            metadata = {key: value for key, value in (
+                ("service_id", service_id), ("service-id", service_dash), ("status_code", metadata_code))
+                if value is not None}
+            payload: dict[str, Any] = {"request_id": request_id, "status": status, "metadata": metadata,
+                                       "_stored_at": int(created_at)}
+            for key, value in (("backend", backend), ("updated_at_ms", updated_ms),
+                               ("accepted_at_ms", accepted_ms), ("status_code", status_code)):
+                if value is not None:
+                    payload[key] = value
+            rows.append(payload)
     return evidence_from_receipts(rows, now_s=now_s, max_age_s=max_age_s)
 
 

@@ -63,9 +63,27 @@ class ProviderPreset:
         }
 
 
+_CATALOG_MEMO: dict[Path, tuple[tuple, dict[str, "ProviderPreset"]]] = {}
+
+
 def load_provider_catalog(path: Path = CATALOG_DIR) -> dict[str, ProviderPreset]:
+    """The provider presets in ``path``. The files are parsed again only when one is added,
+    removed or changed (name, size and modification time): the catalog is read on every
+    model-catalog and Home request, and parsing the YAML took several milliseconds."""
+    files = sorted(path.glob("*.yml"))
+    stats = [(f, f.stat()) for f in files]
+    signature = tuple((f.name, st.st_mtime_ns, st.st_size) for f, st in stats)
+    hit = _CATALOG_MEMO.get(path)
+    if hit is not None and hit[0] == signature:
+        return dict(hit[1])
+    presets = _parse_provider_catalog(files)
+    _CATALOG_MEMO[path] = (signature, presets)
+    return dict(presets)
+
+
+def _parse_provider_catalog(files: list[Path]) -> dict[str, ProviderPreset]:
     presets: dict[str, ProviderPreset] = {}
-    for file_path in sorted(path.glob("*.yml")):
+    for file_path in files:
         raw = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
         preset = normalize_provider_preset(raw, source=file_path)
         if preset.id in presets:

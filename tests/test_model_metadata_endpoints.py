@@ -423,6 +423,10 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         return response.json()
 
     def _observe(self, *, baseline: bool = False, headers: dict | None = None):
+        # The gateway keeps a service's health and resource answers for a few seconds; each
+        # observation here is a separate moment in which the service is asked.
+        proxy._HEALTH_EVIDENCE_CACHE.clear()
+        proxy._RESOURCE_FACT_CACHE.clear()
         self.requests.clear()
         payload = self._payload(baseline=baseline, headers=headers)
         return {item["id"] for item in payload["data"]}, list(self.requests)

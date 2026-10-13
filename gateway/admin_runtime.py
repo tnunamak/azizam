@@ -293,11 +293,14 @@ class AdminSQLiteStore:
             user.setdefault("name", user.get("display_name"))
         return users
 
-    def _enrich_app(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Annotate an app record with resolved effective profile fields."""
+    def _enrich_app(self, record: dict[str, Any], profiles: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Annotate an app record with resolved effective profile fields.
+
+        ``profiles`` holds the profiles of a whole listing, read in one query.
+        """
         pid = record.get("default_profile_id")
         if pid:
-            profile = admin_store.get_profile(str(pid), path=self.path)
+            profile = admin_store.get_profile(str(pid), path=self.path) if profiles is None else profiles.get(str(pid))
             record["effective_profile_id"] = str(pid)
             record["effective_profile_name"] = (
                 str(profile.get("name") or "") if profile else None
@@ -309,21 +312,30 @@ class AdminSQLiteStore:
             record["effective_profile_source"] = "fallback"
         return record
 
-    def _visible_admin_app(self, record: Mapping[str, Any]) -> bool:
-        """True when an App belongs on the operator-facing Apps surface."""
+    def _visible_admin_app(self, record: Mapping[str, Any], owners: Mapping[str, Any] | None = None) -> bool:
+        """True when an App belongs on the operator-facing Apps surface.
+
+        ``owners`` holds the owners of a whole listing, read in one query.
+        """
         if record.get("kind") != "personal":
             return True
         owner_user_id = str(record.get("owner_user_id") or "")
         if not owner_user_id:
             return True
-        owner = admin_store.get_user(owner_user_id, path=self.path)
+        owner = admin_store.get_user(owner_user_id, path=self.path) if owners is None else owners.get(owner_user_id)
         return owner is None or is_human_user_record(owner)
 
     def list_apps(self) -> list[dict[str, Any]]:
+        records = admin_store.list_apps(path=self.path)
+        owners = admin_store.get_users(
+            [str(r.get("owner_user_id")) for r in records if r.get("kind") == "personal" and r.get("owner_user_id")],
+            path=self.path)
+        profiles = admin_store.get_profiles(
+            [str(r["default_profile_id"]) for r in records if r.get("default_profile_id")], path=self.path)
         return [
-            self._enrich_app(r)
-            for r in admin_store.list_apps(path=self.path)
-            if self._visible_admin_app(r)
+            self._enrich_app(r, profiles)
+            for r in records
+            if self._visible_admin_app(r, owners)
         ]
 
     def get_app(self, app_id: str) -> dict[str, Any] | None:

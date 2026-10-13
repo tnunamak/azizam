@@ -72,10 +72,13 @@ def _credential_not_found() -> UserPortalError:
     )
 
 
-def _profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any] | None:
+def _profile_summary(
+    profile_id: str | None, *, path: Path, records: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """``records`` holds profiles read in one query for a listing; a missing key is a missing profile."""
     if not profile_id:
         return None
-    record = admin_store.get_profile(profile_id, path=path)
+    record = admin_store.get_profile(profile_id, path=path) if records is None else records.get(profile_id)
     if record is None:
         return {
             "id": profile_id,
@@ -106,9 +109,11 @@ def _profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any] | 
     }
 
 
-def _default_profile_summary(profile_id: str | None, *, path: Path) -> dict[str, Any]:
+def _default_profile_summary(
+    profile_id: str | None, *, path: Path, records: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if profile_id:
-        profile = _profile_summary(profile_id, path=path)
+        profile = _profile_summary(profile_id, path=path, records=records)
         if profile is not None:
             profile["inherited"] = True
             return profile
@@ -124,13 +129,13 @@ def _default_profile_summary(profile_id: str | None, *, path: Path) -> dict[str,
     }
 
 
-def _credentials_for_app(app_id: str, *, path: Path) -> list[dict[str, Any]]:
+def _credentials_for_app(
+    app_id: str, *, path: Path, active: Mapping[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """``active`` holds every listed app's credentials, read in one query."""
     credentials = []
-    for record in admin_store.list_active_credentials(
-        subject_kind="app",
-        app_id=app_id,
-        path=path,
-    ):
+    for record in (admin_store.list_active_credentials(subject_kind="app", app_id=app_id, path=path)
+                   if active is None else active.get(app_id, ())):
         item = _sanitize_credential(record)
         item["active"] = True
         credentials.append(item)
@@ -212,17 +217,19 @@ def _app_payload(
     *,
     default_profile_id: str | None,
     path: Path,
+    credentials_by_app: Mapping[str, list[dict[str, Any]]] | None = None,
+    profile_records: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile_id = app.get("default_profile_id")
     effective_profile_id = _effective_profile_id(
         app,
         default_profile_id=default_profile_id,
     )
-    credentials = _credentials_for_app(str(app["id"]), path=path)
+    credentials = _credentials_for_app(str(app["id"]), path=path, active=credentials_by_app)
     profile = (
-        _profile_summary(str(profile_id), path=path)
+        _profile_summary(str(profile_id), path=path, records=profile_records)
         if profile_id
-        else _default_profile_summary(default_profile_id, path=path)
+        else _default_profile_summary(default_profile_id, path=path, records=profile_records)
     )
     return {
         "id": app.get("id"),
@@ -277,15 +284,20 @@ def build_user_portal_snapshot(
             path=path,
         )
 
-    apps: list[dict[str, Any]] = []
-    for app in admin_store.list_apps_for_user(user["id"], path=path):
-        if app.get("disabled_at") or admin_store.is_session_app(str(app["id"]), path=path):
-            continue
-        apps.append(_app_payload(
-            app,
-            default_profile_id=default_profile_id,
-            path=path,
-        ))
+    # Session apps, keys and profiles for every listed app are read in one query each,
+    # so the number of statements does not grow with the number of apps.
+    owned = admin_store.list_apps_for_user(user["id"], path=path)
+    sessions = admin_store.session_app_ids([str(app["id"]) for app in owned], path=path)
+    listed = [app for app in owned if not app.get("disabled_at") and str(app["id"]) not in sessions]
+    credentials_by_app = admin_store.list_active_credentials_for_apps([str(app["id"]) for app in listed], path=path)
+    profile_records = admin_store.get_profiles(
+        [str(app["default_profile_id"]) for app in listed if app.get("default_profile_id")] + [default_profile_id or ""],
+        path=path)
+    apps: list[dict[str, Any]] = [
+        _app_payload(app, default_profile_id=default_profile_id, path=path,
+                     credentials_by_app=credentials_by_app, profile_records=profile_records)
+        for app in listed
+    ]
 
     return {
         "authenticated": True,

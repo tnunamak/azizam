@@ -25,6 +25,30 @@ class _AmbiguousProvenanceError(ValueError):
     """Distinct stored records are equally eligible to supply provenance."""
 
 
+
+_VERIFIED_STORES: dict[tuple[str, int, int], CategoryStore] = {}
+
+
+def _verified_store(path: str | Path) -> CategoryStore:
+    """The store for ``path``, opened (and integrity-checked) once per file.
+
+    Opening a store runs ``PRAGMA integrity_check``, which reads the whole file; doing it
+    on every request made each categories call cost as much as the store is large. A store
+    keeps no connection open, so one instance serves every request. A file that was
+    replaced (new inode) or created later is opened and checked again.
+    """
+    try:
+        status = Path(path).stat()
+    except OSError:
+        store = CategoryStore(path)  # absent: the constructor creates it (or fails, as before)
+        status = Path(path).stat()
+        return _VERIFIED_STORES.setdefault((str(path), status.st_dev, status.st_ino), store)
+    key = (str(path), status.st_dev, status.st_ino)
+    store = _VERIFIED_STORES.get(key)
+    if store is None:
+        store = _VERIFIED_STORES[key] = CategoryStore(path)
+    return store
+
 def _object(value, required, optional=()):
     if type(value) is not dict or not all(type(k) is str for k in value):
         raise ValueError("Expected an object")
@@ -304,7 +328,7 @@ def create_category_router(*, auth: AdminAuth, store_path: Path,
                     if not revision.isascii() or not revision.isdigit():
                         raise ValueError("Invalid revision")
                     revision = _revision(int(revision))
-                store = CategoryStore(store_path)
+                store = _verified_store(store_path)
                 if operation == "active":
                     row = store.get_active()
                     result = record(row)

@@ -132,6 +132,7 @@ interface MediaAsset {
   workflow?: string | Record<string, unknown> | null;
   seed?: string | number | null;
   duration_s?: number | null;
+  size_bytes?: number | null;
   poster_asset_id?: string | null;
   owner_name?: string | null;
   /** `person_id` is the maker, when the gateway knows who made it. */
@@ -550,12 +551,14 @@ function AudioTile({
   src,
   title,
   duration,
+  sizeBytes,
   visible,
 }: {
   assetId: string;
   src: string;
   title: string;
   duration?: number | null;
+  sizeBytes?: number | null;
   visible: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -594,6 +597,7 @@ function AudioTile({
       <AudioFace
         peaksKey={assetId}
         src={src}
+        sizeBytes={sizeBytes}
         visible={visible}
         status={errorText || buffering ? <span role="status">{errorText || "Loading audio…"}</span> : null}
       />
@@ -1339,6 +1343,7 @@ function AssetTile({
             src={asset.download_url!}
             title={assetTitle(asset)}
             duration={asset.duration_s}
+            sizeBytes={asset.size_bytes}
             visible={visible}
           />
         ) : (

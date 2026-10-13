@@ -37,6 +37,8 @@ import httpx
 import yaml
 
 from gateway import lifecycle_drivers
+from gateway import http_tls
+from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
@@ -73,14 +75,12 @@ _HTTP_TIMEOUT = httpx.Timeout(2.0, connect=3.0)
 
 # httpx builds an SSL context (reads the CA bundle) for every client it creates.
 # That is seconds of CPU on a loaded host, so build it once, off the event loop.
-_probe_ssl_context: ssl.SSLContext | None = None
 
 
 async def _shared_probe_ssl_context() -> ssl.SSLContext:
-    global _probe_ssl_context
-    if _probe_ssl_context is None:
-        _probe_ssl_context = await asyncio.to_thread(ssl.create_default_context)
-    return _probe_ssl_context
+    if http_tls.is_built():
+        return tls_context()
+    return await asyncio.to_thread(tls_context)  # the first build, if nothing built it yet, stays off the loop
 
 
 _SUBPROC_TIMEOUT = 1.5  # seconds per shell probe
@@ -448,7 +448,7 @@ async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             props = await _get(client, "http://127.0.0.1:5051/props")
             return props, None
     except Exception:
@@ -808,7 +808,7 @@ async def _comfy_queue_and_stats() -> tuple[Optional[dict], Optional[dict]]:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             queue, stats = await asyncio.gather(
                 _get(client, "http://127.0.0.1:7890/queue"),
                 _get(client, "http://127.0.0.1:7890/system_stats"),
@@ -2572,7 +2572,7 @@ async def _enriched_aux_health() -> dict:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             voxtral, parakeet = await asyncio.gather(
                 _get(client, "http://127.0.0.1:8001/health"),
                 _get(client, "http://127.0.0.1:5092/health"),

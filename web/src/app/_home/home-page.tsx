@@ -1032,6 +1032,7 @@ function CreationMedia({
       <AudioFace
         peaksKey={creation.asset_id}
         src={audioSrc}
+        sizeBytes={creation.size_bytes}
         visible={visible}
         status={
           audioLoading ? (

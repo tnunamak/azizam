@@ -160,7 +160,7 @@ async function fixture(
   await page.route("**/admin/api/setup-progress", (route) =>
     fulfilJson(route, { complete: true, steps: [] }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
+  await page.route("**/me/api/media?limit=12", (route) =>
     fulfilJson(route, { assets: [] }),
   );
   return home;
@@ -344,7 +344,7 @@ test("Home recent media carries content while requests stay in receipts", async 
         ],
       }),
   );
-  await page.route("**/me/api/media?limit=50", (route) =>
+  await page.route("**/me/api/media?limit=12", (route) =>
     fulfilJson(route, {
         assets: [
           {

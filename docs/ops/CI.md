@@ -126,6 +126,14 @@ while a gate waits (`~/.tmp/azizam-ci.gate-waiting`). The units
 `docs/ops/azizam-test-nightly.{service,timer}` run it at 04:00 local; the
 owner enables them.
 
+The third task, `perf`, runs `scripts/perf/run.py` on a read-only copy of the live
+databases (ports 18520-18521): every GET route and every page against
+`scripts/perf/budgets.toml`. It lists no test files; over budget is FAIL and opens
+or updates the open GitHub issue labelled `perf-red`. That label does not block
+signoff. The gate holds the counts (SQLite statements and processes per request at
+two data sizes) in `tests/test_route_work_budget.py` and `tests/test_work_budget.py`.
+To investigate: `scripts/perf/README.md`.
+
 ## Signoff
 
 `scripts/ci-local --force --signoff --target main [--closes-nightly-red N]`

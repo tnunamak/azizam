@@ -119,18 +119,25 @@ def scoped(kind: str, path: object, opener: Callable[[], sqlite3.Connection]) ->
 
 
 class RequestConnectionsMiddleware:
-    """Open a ``request_scope`` around read requests to the hot API prefixes."""
+    """Open a ``request_scope`` around read requests to the hot API prefixes.
 
-    PREFIXES = ("/me/api/", "/admin/api/", "/v1/")
+    The OpenAI, Anthropic and gateway twins of ``/v1/`` are listed too: without a
+    scope a list route opened one SQLite connection per row it checked.
+    """
+
+    PREFIXES = ("/me/api/", "/admin/api/", "/v1/", "/openai/v1/", "/anthropic/v1/", "/gateway/v1/")
     BULK_SUFFIXES = ("/content", "/download", "/sample", "/stream")
+    # `/me/api/.../download` answers with a small JSON document holding a signed link; only the
+    # API routes outside /me/api stream file bytes, and those keep no connection open.
+    JSON_PREFIXES = ("/me/api/",)
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        if (scope["type"] != "http" or scope.get("method") != "GET"
-                or not path.startswith(self.PREFIXES) or path.endswith(self.BULK_SUFFIXES)):
+        if (scope["type"] != "http" or scope.get("method") != "GET" or not path.startswith(self.PREFIXES)
+                or (path.endswith(self.BULK_SUFFIXES) and not path.startswith(self.JSON_PREFIXES))):
             return await self.app(scope, receive, send)
         with request_scope():
             await self.app(scope, receive, send)

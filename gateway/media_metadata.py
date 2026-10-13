@@ -185,6 +185,37 @@ def png_text_chunks(content: bytes) -> dict[str, str]:
     return result
 
 
+def png_text_chunks_from_path(path: Path | str) -> dict[str, str]:
+    """``png_text_chunks`` of a file, reading only the chunk headers and the text chunks.
+
+    Image data (IDAT) is skipped by seeking, so a 20 MB picture costs a few reads, not 20 MB.
+    The result, and the error for a truncated chunk, are those of ``png_text_chunks``.
+    """
+    result: dict[str, str] = {}
+    with open(path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if handle.read(len(_PNG_SIG)) != _PNG_SIG:
+            return {}
+        pos = len(_PNG_SIG)
+        while pos + 12 <= size:
+            header = handle.read(8)
+            if len(header) < 8:
+                break
+            length = struct.unpack(">I", header[:4])[0]
+            ctype = header[4:8]
+            if pos + 12 + length > size:
+                raise MediaMetadataError("truncated PNG chunk")
+            if ctype in (b"tEXt", b"zTXt", b"iTXt"):
+                entry = _png_text_entry(ctype, handle.read(length))
+                handle.seek(4, os.SEEK_CUR)
+                if entry:
+                    result[entry[0]] = entry[1]
+            else:
+                handle.seek(length + 4, os.SEEK_CUR)
+            pos += 12 + length
+    return result
+
+
 def _make_png_text_chunk(key: str, value: str) -> bytes:
     try:
         kw = key.encode("latin-1")

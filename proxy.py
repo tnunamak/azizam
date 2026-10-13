@@ -85,7 +85,8 @@ from gateway import (
     video_media_jobs,
     voice_design,
 )
-from gateway import loop_watchdog, request_connections, video_extend
+from gateway import directory_index, loop_watchdog, request_connections, video_extend
+from gateway.http_tls import tls_context
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails
 from gateway import video_job_records, prompt_metadata_migration
@@ -1662,6 +1663,11 @@ def _has_bootstrap_user_access_defaults() -> bool:
 
 
 def _runtime_user_access_defaults() -> dict[str, Any]:
+    # Asked once per app by a listing; a read request reads the setting once.
+    return dict(request_connections.memo(("user-access-defaults",), _read_runtime_user_access_defaults))
+
+
+def _read_runtime_user_access_defaults() -> dict[str, Any]:
     try:
         setting = admin_store.get_operator_setting(
             USER_ACCESS_DEFAULTS_SETTING_KEY,
@@ -1683,6 +1689,10 @@ def _runtime_user_access_defaults() -> dict[str, Any]:
 
 
 def _user_defaults_seeded_in_admin_db() -> bool:
+    return request_connections.memo(("user-defaults-seeded",), _read_user_defaults_seeded)
+
+
+def _read_user_defaults_seeded() -> bool:
     try:
         return (
             admin_store.get_operator_setting(
@@ -1896,6 +1906,11 @@ def _default_profile_id_for_user(**kwargs) -> str | None:
 
 
 def _effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
+    key = ("effective-plan", str(person["id"]), str(person.get("email") or ""))
+    return dict(request_connections.memo(key, lambda: _read_effective_plan_for_person(person)))
+
+
+def _read_effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
     user_id = str(person["id"])
     assigned = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
     if assigned:
@@ -1933,10 +1948,15 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     owner_user_id = str(app.get("owner_user_id") or "")
     if not owner_user_id:
         return None
-    user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
-    if user is None or not is_human_user_record(user):
-        return None
-    return _effective_plan_for_person(user)["profile_id"]
+
+    def inherited() -> str | None:
+        user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
+        if user is None or not is_human_user_record(user):
+            return None
+        return _effective_plan_for_person(user)["profile_id"]
+
+    # Every app of one person inherits the same plan; a read request works it out once.
+    return request_connections.memo(("inherited-plan", owner_user_id), inherited)
 
 
 def _provision_existing_user_personal_apps() -> int:
@@ -3412,7 +3432,7 @@ async def _activate_prepared_litellm_local_target(
 async def get_served_model_id(base_url: str) -> str:
     """The first model id an OpenAI-compatible server lists at ``base_url``."""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(f"{base_url}/v1/models", timeout=HEALTH_CHECK_TIMEOUT)
             if resp.status_code != 200:
                 return ""
@@ -3463,7 +3483,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     if not strategy:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
             resp = await client.get(f"{host}{strategy['endpoint']}")
         if resp.status_code != 200:
             return ""
@@ -3601,7 +3621,7 @@ async def probe_backend(
     authority = f"{host}:{port}" if port else str(host)
     url = f"{scheme}://{authority}{safe_path}"
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
         body: Any = None
         try:
@@ -3621,6 +3641,10 @@ async def probe_backend(
         return {"ok": False, "status": None, "error": str(exc) or type(exc).__name__, "url": url, "body": None}
 
 
+# What a service answered to its resource check, kept for the same few seconds as health answers.
+_RESOURCE_FACT_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+
+
 async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     """Return a generic runtime status fact for a configured service.
 
@@ -3628,10 +3652,24 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     transport fields. That keeps the gateway from learning engine-specific
     health semantics in code; richer queue/admission facts can be added as
     data on the service record.
+
+    An answer is kept for ``_HEALTH_EVIDENCE_TTL_S`` and used only while the service's
+    probe settings are unchanged, so a read of the resource list does not open a
+    connection to every service each time.
     """
     bcfg = _service_resource_probe_config(service_id)
     if not isinstance(bcfg, Mapping):
         return {"status": "unknown"}
+    fingerprint = json.dumps(bcfg, sort_keys=True, default=str)
+    hit = _RESOURCE_FACT_CACHE.get(service_id)
+    if hit is not None and time.monotonic() - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint:
+        return dict(hit[2])
+    fact = await _probe_service_resource_fact(bcfg)
+    _RESOURCE_FACT_CACHE[service_id] = (time.monotonic(), fingerprint, dict(fact))
+    return fact
+
+
+async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any]:
     url = _service_resource_probe_url(bcfg)
     if not url:
         return {"status": "unknown"}
@@ -3643,7 +3681,7 @@ async def _service_resource_runtime_fact(service_id: str) -> dict[str, Any]:
     # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=tls_context()) as client:
             resp = await client.get(url, timeout=timeout)
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
@@ -6747,16 +6785,21 @@ def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode:
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
     from gateway.ownership import owner_key
-    return owner_key(auth_context, path=ADMIN_STORE.path)
+    # A list route asks once per row; in a read request the answer is read once.
+    # The entry holds the context itself, so its id cannot be reused by another object.
+    return request_connections.memo(
+        ("asset-owner-key", id(auth_context)),
+        lambda: (auth_context, owner_key(auth_context, path=ADMIN_STORE.path)))[1]
 
 
 def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
     from gateway.ownership import credential_owner_keys
     identity = getattr(auth_context, "identity", None)
-    return credential_owner_keys(
-        _asset_owner_key(auth_context), path=ADMIN_STORE.path,
-        current_key_hash=getattr(identity, "key_hash", None),
-    )
+    return request_connections.memo(
+        ("asset-read-owner-keys", id(auth_context)),
+        lambda: (auth_context, credential_owner_keys(
+            _asset_owner_key(auth_context), path=ADMIN_STORE.path,
+            current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
 def _asset_metadata_path(asset_id: str) -> Path | None:
@@ -7004,6 +7047,9 @@ def asset_cache_path(asset_id: str) -> Optional[Path]:
         return None
     kind, digest = parsed
     candidates = [IMAGE_CACHE_DIR / f"{digest}{suffix}" for suffix in _ASSET_SUFFIXES_BY_KIND[kind]]
+    listed = directory_index.names(IMAGE_CACHE_DIR)  # one listing for every asset, not five probes each
+    if listed is not None:
+        return next((candidate for candidate in candidates if candidate.name in listed), candidates[0])
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -9638,7 +9684,7 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
             q_resp = await client.get(f"{COMFY_HOST}/queue")
             h_resp = await client.get(f"{COMFY_HOST}/history?max_items={_VIDEO_RECONCILE_HISTORY_LIMIT}")
     except Exception as e:
@@ -12997,6 +13043,9 @@ async def lifespan(app: FastAPI):
     # No engine processes to stop — the gateway never owned an engine's existence.
 
 
+# Build the shared TLS context now, at import, so no request builds it on the event loop.
+tls_context()
+
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
 from gateway.api_reference import register_api_reference
@@ -13749,6 +13798,9 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
 async def _status_payload_with_service_rows(
     status_payload: Mapping[str, Any], service_records: Mapping[str, Any], service_ids: Iterable[str],
 ) -> Mapping[str, Any]:
@@ -13768,10 +13820,22 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    extra = await status_endpoint._backend_grid({"backends": missing})
-    checked_at = int(time.time())
-    for row in extra:
-        row.setdefault("observed_at_s", checked_at)
+    # Every capabilities and overview read asks about the same few services. Their
+    # rows are kept as long as the status grid keeps its own, so a read costs no
+    # HTTP probe or `systemctl` process unless a row has expired.
+    now = time.monotonic()
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
+    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
+    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
+    probed: list[dict[str, Any]] = []
+    if unchecked:
+        probed = await status_endpoint._backend_grid({"backends": unchecked})
+        checked_at = int(time.time())
+        for row in probed:
+            row.setdefault("observed_at_s", checked_at)
+            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
+    extra = status_endpoint._merge_backend_observations([*kept, *probed])
     return {**status_payload, "backends": [*rows, *extra]}
 
 
@@ -14056,7 +14120,7 @@ async def _showcase_status() -> dict[str, Any]:
     """
     async def _probe(url: str) -> Any:
         try:
-            async with httpx.AsyncClient(timeout=1.5) as client:
+            async with httpx.AsyncClient(timeout=1.5, verify=tls_context()) as client:
                 resp = await client.get(url)
             return resp.json() if resp.status_code == 200 else None
         except Exception:  # noqa: BLE001
@@ -15582,26 +15646,50 @@ def _catalog_auth_context_for_profile(profile: Any, _profile_id: str) -> AuthCon
     return AuthContext(identity=identity)
 
 
+# Health answers kept this long, as the status grid keeps its own. Each service's
+# answer is dated by its check time, so a kept answer is not passed off as new.
+_HEALTH_EVIDENCE_TTL_S = 10.0
+_HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+
+
 async def _models_catalog_health_evidence(
     service_records: Mapping[str, Any],
     *,
     service_ids: Iterable[str],
 ) -> dict[str, dict[str, Any]]:
+    context = tls_context()  # building one costs tens of milliseconds; one serves every probe
+
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75) as client:
+        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
             response = await client.get(url)
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
         return payload if isinstance(payload, Mapping) else {}
 
-    return await probe_service_health(
-        service_records,
-        get_json=get_json,
-        service_ids=service_ids,
-    )
+    services = service_records.get("services") if isinstance(service_records, Mapping) else None
+    services = services if isinstance(services, Mapping) else {}
+    wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
+    now = time.monotonic()
+
+    def fingerprint(service_id: str) -> str:
+        # An edited service must not be answered from its old record.
+        return json.dumps(services.get(service_id), sort_keys=True, default=str)
+
+    kept: dict[str, dict[str, Any]] = {}
+    for service_id in wanted:
+        hit = _HEALTH_EVIDENCE_CACHE.get(service_id)
+        if hit is not None and now - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint(service_id):
+            kept[service_id] = dict(hit[2])
+    stale = [service_id for service_id in wanted if service_id not in kept]
+    if stale:
+        probed = await probe_service_health(service_records, get_json=get_json, service_ids=stale)
+        for service_id, evidence in probed.items():
+            _HEALTH_EVIDENCE_CACHE[service_id] = (now, fingerprint(service_id), dict(evidence))
+        kept.update(probed)
+    return kept
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
@@ -23940,7 +24028,7 @@ async def _probed_context_window(backend: str) -> int | None:
 
     value: int | None = None
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0), verify=tls_context()) as client:
             resp = await client.get(f"{_backend_base_url(backend)}{endpoint}")
         if resp.status_code == 200:
             payload = resp.json()

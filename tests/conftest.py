@@ -132,6 +132,19 @@ def _isolated_media_delivery_context(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_read_caches() -> None:
+    """The gateway keeps health answers and composed-service rows for a few seconds
+    (proxy._HEALTH_EVIDENCE_CACHE, _SERVICE_ROW_CACHE, _RESOURCE_FACT_CACHE). A test starts with neither."""
+    import sys
+
+    module = sys.modules.get("proxy")
+    if module is not None:
+        module._HEALTH_EVIDENCE_CACHE.clear()
+        module._SERVICE_ROW_CACHE.clear()
+        module._RESOURCE_FACT_CACHE.clear()
+
+
 @pytest.fixture(scope="session")
 def gateway_test_state_dir() -> Path:
     return _STATE_DIR

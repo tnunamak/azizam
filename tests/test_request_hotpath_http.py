@@ -51,6 +51,9 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
         # The original resolver opened a separate connection in each helper.
         yield None
 
+    # The process stamps a key's last use once a minute (admin_store._LAST_TOUCH); start from a key
+    # not yet stamped so the first request pays for its stamp, as the original resolver did.
+    admin_store._LAST_TOUCH.clear()
     with patch.object(admin_store, "runtime_auth_connection", separate_connections), patch.object(
         admin_store, "_conn", wraps=admin_store._conn,
     ) as connections:
@@ -62,8 +65,10 @@ def test_chat_opens_fewer_admin_connections_and_revocation_is_immediate(tmp_path
 
     assert before.status_code == after.status_code == 200
     assert before.json()["choices"] == after.json()["choices"]
-    # Both the handler and firehose resolve this four-lookup identity: 8 -> 2.
-    assert before_count - after_count == 6
+    # Both the handler and firehose resolve this four-lookup identity: 8 -> 2. The process stamps
+    # a key's last use once a minute, so the second resolution skips its stamp (admin_store._LAST_TOUCH):
+    # the original resolver's 8 connections are 7 here, 2 with the shared connection.
+    assert before_count - after_count == 5
     assert len(forwarded) == 2
     admin_store.revoke_credential(credential["id"], path=db)
     denied = client.post("/v1/chat/completions", json=body, headers=headers)

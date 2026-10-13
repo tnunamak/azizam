@@ -1,0 +1,26 @@
+# Performance budgets for the real-data harness (scripts/perf/run.py, nightly "perf" task).
+#
+# Counts are exact and are also enforced at fixed data sizes in the gate
+# (tests/test_route_work_budget.py, tests/test_work_budget.py). Times are measured
+# on a copy of the live databases on the LAN and only mean something on a quiet
+# host; the nightly skips a run when the 1-minute load is over its limit.
+
+[api]
+p95_ms = 100          # client-side p95 over 9 requests, per route and person
+statements = 100      # SQLite statements for one request
+connections = 20      # SQLite connections opened for one request
+processes = 0         # no request starts a process (ffprobe, systemctl, ...)
+
+# A route may carry its own limits when it cannot meet the default yet. Each needs a
+# reason, and the table may only shrink.
+[api.routes]
+# "/some/route" = { p95_ms = 250, reason = "..." }
+
+[ui]
+ready_ms = 500        # last change to <main> after navigation, warm HTTP cache, 1440 px wide
+long_task_ms = 200    # total main-thread long-task time while loading
+requests = 100        # HTTP requests for one page load
+kilobytes = 2500      # response bytes for one page load
+
+[ui.pages]
+# "/library" = { ready_ms = 800, reason = "..." }
