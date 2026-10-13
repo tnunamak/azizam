@@ -31,6 +31,7 @@ import sys
 import subprocess
 import tempfile
 import threading
+import ssl
 import time
 import atexit
 import hashlib
@@ -15458,26 +15459,55 @@ def _catalog_auth_context_for_profile(profile: Any, _profile_id: str) -> AuthCon
     return AuthContext(identity=identity)
 
 
+# Health answers kept this long, as the status grid keeps its own. Each service's
+# answer is dated by its check time, so a kept answer is not passed off as new.
+_HEALTH_EVIDENCE_TTL_S = 10.0
+_HEALTH_EVIDENCE_CACHE: dict[str, tuple[float, str, dict[str, Any]]] = {}
+_HEALTH_PROBE_SSL: ssl.SSLContext | None = None
+
+
 async def _models_catalog_health_evidence(
     service_records: Mapping[str, Any],
     *,
     service_ids: Iterable[str],
 ) -> dict[str, dict[str, Any]]:
+    global _HEALTH_PROBE_SSL
+    if _HEALTH_PROBE_SSL is None:
+        # Building a TLS context costs about 15 ms; one is enough for every probe.
+        _HEALTH_PROBE_SSL = await asyncio.to_thread(ssl.create_default_context)
+    context = _HEALTH_PROBE_SSL
+
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75) as client:
+        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
             response = await client.get(url)
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
         return payload if isinstance(payload, Mapping) else {}
 
-    return await probe_service_health(
-        service_records,
-        get_json=get_json,
-        service_ids=service_ids,
-    )
+    services = service_records.get("services") if isinstance(service_records, Mapping) else None
+    services = services if isinstance(services, Mapping) else {}
+    wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
+    now = time.monotonic()
+
+    def fingerprint(service_id: str) -> str:
+        # An edited service must not be answered from its old record.
+        return json.dumps(services.get(service_id), sort_keys=True, default=str)
+
+    kept: dict[str, dict[str, Any]] = {}
+    for service_id in wanted:
+        hit = _HEALTH_EVIDENCE_CACHE.get(service_id)
+        if hit is not None and now - hit[0] < _HEALTH_EVIDENCE_TTL_S and hit[1] == fingerprint(service_id):
+            kept[service_id] = dict(hit[2])
+    stale = [service_id for service_id in wanted if service_id not in kept]
+    if stale:
+        probed = await probe_service_health(service_records, get_json=get_json, service_ids=stale)
+        for service_id, evidence in probed.items():
+            _HEALTH_EVIDENCE_CACHE[service_id] = (now, fingerprint(service_id), dict(evidence))
+        kept.update(probed)
+    return kept
 
 
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
