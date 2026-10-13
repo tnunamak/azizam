@@ -799,9 +799,9 @@ function RecentJobs({ workflow, owner }: { workflow: WorkflowRow; owner: boolean
                 </Button>
                 {asset.request_id ? (
                   <Button variant="outline" size="sm" asChild>
-                    <a href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
+                    <Link href={`/usage/?receipt=${encodeURIComponent(asset.request_id)}`}>
                       View receipt
-                    </a>
+                    </Link>
                   </Button>
                 ) : null}
                 {asset.download_url && (

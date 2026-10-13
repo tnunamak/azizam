@@ -83,6 +83,13 @@ import { chatAlias, recipeFor, type Client } from "./recipes";
 import { capabilityTiles } from "./presentation";
 
 const homeKey = ["account", "home"];
+// Recent starts beside Home, not after it: both need only the signed-in session.
+const recentCreationsQuery = {
+  queryKey: ["library", "home-recent-creations"],
+  queryFn: homeApi.creations,
+  // Recent mounts after Home settles; it must reuse this read, not repeat it.
+  staleTime: 30_000,
+};
 const setupKey = ["gateway", "setup-progress"];
 const primaryAppChoices = [
   "Open WebUI",
@@ -1223,10 +1230,7 @@ function Recent({
     isError: creationsError,
     refetch: refetchCreations,
     isFetching: creationsFetching,
-  } = useQuery({
-    queryKey: ["library", "home-recent-creations"],
-    queryFn: homeApi.creations,
-  });
+  } = useQuery(recentCreationsQuery);
   // A creation whose file the gateway no longer stores belongs in Library, not Recent.
   const recentCreations = (creations?.assets ?? [])
     .filter(hasHomeCreationContent)
@@ -1325,6 +1329,7 @@ export default function HomePage() {
     refetch: refetchHome,
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
+  useQuery(recentCreationsQuery);
   const isOwner = Boolean(
     home?.authenticated &&
     ["owner", "superadmin", "admin"].includes(home.user.role) &&

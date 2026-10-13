@@ -43,6 +43,9 @@ from gateway.model_presentation import declared_health_success, service_health_e
 # Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 12.0
+# Past the TTL, a status that is at most this old is served at once while one
+# background rebuild refreshes it, so no request pays for the rebuild.
+_CACHE_STALE_S = 60.0
 _BUILD_TASK: asyncio.Task | None = None
 
 
@@ -4159,5 +4162,9 @@ async def get_cached_status(config: dict) -> dict:
     if _BUILD_TASK is None:
         _BUILD_TASK = asyncio.create_task(_rebuild_cached_status(config))
         _BUILD_TASK.add_done_callback(_consume_build_exception)
+    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_STALE_S:
+        data = dict(_CACHE["data"])
+        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
+        return data
     # One cancelled HTTP request must not cancel every other waiter.
     return await asyncio.shield(_BUILD_TASK)

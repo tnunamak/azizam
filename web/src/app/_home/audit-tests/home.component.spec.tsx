@@ -227,6 +227,22 @@ describe("Home audit component behavior", () => {
     );
   }
 
+  it("asks for Recent creations while Home is still loading", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        requested.push(path);
+        if (path === "/me/api/home") return new Promise<Response>(() => {}); // Home never settles
+        return Response.json({ assets: [] });
+      }),
+    );
+    renderHome();
+    await waitFor(() => expect(requested).toContain("/me/api/media?limit=50"));
+    expect(requested).toContain("/me/api/home");
+  });
+
   it("stacks Recent and Make something with only the section gap", async () => {
     mockCraftHome();
     renderHome();

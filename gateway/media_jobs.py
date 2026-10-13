@@ -27,6 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
+from gateway import request_connections
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -417,12 +418,20 @@ def init_db(path: Path = DB_PATH) -> None:
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
-    conn = connect(path, timeout=5.0)
-    try:
-        _apply_pragmas(conn)
+    def open_connection() -> sqlite3.Connection:
+        scoped = request_connections.active()
+        conn = connect(path, timeout=5.0, check_same_thread=not scoped)
+        if scoped:
+            conn.row_factory = sqlite3.Row  # prompt memory reads by column name; index access is unchanged
+        try:
+            _apply_pragmas(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    with request_connections.scoped("media_jobs", path, open_connection) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def _coerce_to_job(job_or_dict: Any) -> MediaJob:

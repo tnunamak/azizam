@@ -1,5 +1,6 @@
 "use client";
 
+import { lazy, Suspense } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCcw } from "lucide-react";
@@ -35,7 +36,11 @@ import {
 } from "@/lib/use-capability-views";
 import { askOwner, useOwnerName } from "@/lib/use-owner-name";
 import { appPlumbingCapabilities, memberTerms } from "@/lib/terms";
-import { StatusClient } from "./status-client";
+
+// The owner's operational view is a large module that members never render.
+const StatusClient = lazy(() =>
+  import("./status-client").then((module) => ({ default: module.StatusClient })),
+);
 
 function usableNames(capability: MemberStatusCapability): string[] {
   return Array.from(
@@ -379,7 +384,9 @@ export function StatusView() {
   const viewer = useViewer();
   return viewer.admin ? (
     <div className="flex min-w-0 flex-col gap-(--space-section)">
-      <StatusClient />
+      <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+        <StatusClient />
+      </Suspense>
       <MemberStatus requestsOnly />
     </div>
   ) : (
