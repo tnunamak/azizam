@@ -355,6 +355,7 @@ export interface CatalogRow {
   alias: boolean;
   operations: Array<string>;
   resolves_to: Record<string, string>;
+  same_model_as?: Array<string>;
   description: string | null;
   technical_description?: string;
   capabilities: Array<CatalogCapability>;

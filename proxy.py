@@ -3772,13 +3772,15 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
         reason = _speech_fallback_reason(response)
         if reason is None:
             break
+        attempt = await _proxy_tts_once(request, auth_context, model_override=next_engine, receipt=receipt)
+        if attempt.status_code == 403:
+            continue  # The caller's plan does not cover that engine: keep the earlier answer.
         note = f"{engine_id}->{next_engine} ({reason})"
         notes.append(note)
         if receipt is not None:
             receipt.add_fallback_reason(note)
         print(f"[proxy] TTS fallback {note}", flush=True)
-        response = await _proxy_tts_once(request, auth_context, model_override=next_engine, receipt=receipt)
-        engine_id = next_engine
+        response, engine_id = attempt, next_engine
     return _with_fallback_header(response, notes)
 
 
@@ -3876,6 +3878,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             model_resolution = resolve_model_for_operation("speech", requested_model)
         except ModelCompatibilityError as e:
             return model_compatibility_error(e)
+        denial = _speech_model_policy_denial(
+            auth_context, model_resolution, requested=str(body_json.get("model", "tts-1")), receipt=receipt)
+        if denial is not None:
+            return _policy_denied_response(denial)
 
         engine = model_resolution.alias.engine_spec if model_resolution.alias else None
         custom_voice = voices_api.custom_voice_id(body_json.get("voice"))
@@ -4126,19 +4132,51 @@ _SAFE_STT_RECEIPT_INPUTS = frozenset(
 )
 
 
+def _speech_model_policy_denial(
+    auth_context: AuthContext,
+    resolution: ModelResolution,
+    *,
+    requested: str,
+    receipt: RouteReceipt | None = None,
+) -> PolicyDecision | None:
+    """Hold a speech request to the engine its model name resolved to.
+
+    The route check passes a plan that lists any speech model; this one names the
+    engine, so a plan or category that lists one engine is not a key to the rest.
+    """
+    route_policy = _RUNTIME_ROUTE_POLICY.get("/v1/audio/speech")
+    alias = resolution.alias
+    if route_policy is None or alias is None or not alias.engine:
+        return None
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(**{**route_policy, "model": alias.engine, "requested_model": requested}),
+        receipt,
+    )
+    return decision if decision.denied else None
+
+
 def _apply_selected_stt_policy(
     receipt: RouteReceipt,
     auth_context: AuthContext,
     *,
     operation: str,
+    model: str | None = None,
+    requested_model: str | None = None,
 ) -> PolicyDecision | None:
-    """Evaluate the route policy against the immutable, selected service id."""
+    """Evaluate the route policy against the immutable, selected service id.
+
+    ``model`` is the engine the name resolved to and ``requested_model`` the name
+    the caller sent, so a plan or category that lists one engine is held to it.
+    """
     path = f"/v1/audio/{operation}"
     route_policy = _RUNTIME_ROUTE_POLICY.get(path)
     if route_policy is None:
         return None
     selected_policy = dict(route_policy)
     selected_policy["backend"] = receipt.backend
+    if model:
+        selected_policy.update(model=model, requested_model=requested_model)
     return evaluate_and_apply(
         auth_context.identity,
         make_policy_request(**selected_policy),
@@ -4285,6 +4323,7 @@ async def _dispatch_selected_stt_route(
     fallbacks: tuple[tuple[str, str | None], ...] = ()
     skipped_notes: list[str] = []
     model_unpeeked = False
+    peeked_model: str | None = None
     if "multipart/form-data" in request.headers.get("content-type", ""):
         peeked_model, request = await speech_stream.peek_multipart_field(request, "model")
         model_unpeeked = not peeked_model
@@ -4310,7 +4349,9 @@ async def _dispatch_selected_stt_route(
             return denied
         return await proxy_stt_request(request, auth_context, operation=operation)
     receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=execution.service_id)
-    decision = None if model_unpeeked else _apply_selected_stt_policy(receipt, auth_context, operation=operation)
+    requested_name = peeked_model.strip() if peeked_model else None
+    decision = None if model_unpeeked else _apply_selected_stt_policy(
+        receipt, auth_context, operation=operation, model=peeked_engine, requested_model=requested_name)
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
     remaining = [(engine, service) for engine, service in fallbacks if service]
@@ -4362,7 +4403,8 @@ async def _dispatch_selected_stt_route(
                 if next_execution is None:
                     continue
                 next_receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=next_execution.service_id)
-                next_decision = _apply_selected_stt_policy(next_receipt, auth_context, operation=operation)
+                next_decision = _apply_selected_stt_policy(
+                    next_receipt, auth_context, operation=operation, model=next_engine, requested_model=requested_name)
                 if next_decision is not None and next_decision.denied:
                     continue
                 chosen = (next_engine, next_execution, next_receipt)
@@ -4534,7 +4576,10 @@ async def proxy_stt_request(
                 target_service = (model_resolution.alias.service if model_resolution.alias is not None else None) or execution.service_id
                 service_changed = target_service != execution.service_id
                 receipt.backend = target_service
-                decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
+                decision = _apply_selected_stt_policy(
+                    receipt, auth_context, operation=operation,
+                    model=model_resolution.alias.engine if model_resolution.alias is not None else None,
+                    requested_model=requested_model)
                 if decision is not None and decision.denied:
                     return _policy_denied_response(decision)
                 if service_changed:
@@ -12943,8 +12988,8 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
     workflow = entry.get("azizam_workflow_id")
     if entry.get("intent") and not operation:
         workflow = model  # Gateway workflow summaries use the manifest ID.
-    target = model
-    if not operation and not workflow:
+    target = str(entry.get("azizam_policy_model") or model)
+    if not operation and not workflow and target == model:
         try:
             matching_alias = resolve_stable_alias("chat", model)
         except stable_aliases.AliasUnavailableError:
@@ -12975,16 +13020,15 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             if name:
                 workflow = f"audio.generate.{name}"
     protocol = str(entry.get("azizam_protocol") or _protocol_for_intent(intent))
-    # Plans grant the name a client asks for, the same name the request route
-    # evaluates; owner category rules are keyed on the resolved target.
-    if not evaluate(
-        _access_for_auth_context(auth_context),
-        make_policy_request(protocol=protocol, intent=intent, model=model, workflow=workflow),
-    ).allowed:
+    # One request, built the way the request route builds it: the model the
+    # name resolves to, plus the name the client sent. A plan may grant either;
+    # owner category rules follow the model (and a restricted category hides both).
+    policy_request = make_policy_request(
+        protocol=protocol, intent=intent, model=target, requested_model=model, workflow=workflow,
+    )
+    if not evaluate(_access_for_auth_context(auth_context), policy_request).allowed:
         return False
-    return category_enforcement.visible(auth_context.identity, make_policy_request(
-        protocol=protocol, intent=intent, model=target, workflow=workflow,
-    ))
+    return category_enforcement.visible(auth_context.identity, policy_request)
 
 
 def _gateway_discovery_visible(request: Request, entry: Mapping[str, Any]) -> bool:
@@ -13081,6 +13125,10 @@ def _capability_for_access(
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
         remote_provider_id = provider.id
+    # A name that points at a model is judged on that model, like a request is;
+    # a plan may also grant the name itself (requested_model).
+    policy_model = next((tag.removeprefix("resolves_to:") for tag in capability.tags
+                         if tag.startswith("resolves_to:")), capability.model)
     return capability_with_policy_view(
         capability,
         access,
@@ -13088,7 +13136,8 @@ def _capability_for_access(
             protocol=protocol or _protocol_for_intent(capability.intent),
             intent=capability.intent,
             workflow=capability.resolved_workflow or capability.workflow,
-            model=next((tag.removeprefix("resolves_to:") for tag in capability.tags if "alias" in capability.tags and tag.startswith("resolves_to:")), capability.model),
+            model=policy_model,
+            requested_model=capability.model,
             backend=capability.backend,
             capability_exposure=capability.exposure,
             capability_trust_tier=capability.trust_tier,
@@ -14025,6 +14074,7 @@ mcp_server.register_mcp_routes(
         call=_mcp_dispatch_call,
         catalog=_mcp_catalog,
         aliases=lambda: _gateway_aliases_provider(),
+        visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
         store_asset=_mcp_store_asset,
         read_asset=_mcp_read_asset,
         public_base_url=lambda request: _public_base_url(request),
@@ -14962,8 +15012,21 @@ def _category_service_catalog() -> list[dict[str, Any]]:
             target = _provider_alias_model(alias.target, alias.service, alias.engine_spec or {})
             add(target, capability.title, "model", capability.intent)
 
+    # Speech and transcription requests are judged on the engine their model name
+    # resolves to, so those engines are what an owner files or grants.
+    name_views = _gateway_aliases_provider()
+    for operation, intents in (("speech", (INTENT_SPEECH,)),
+                               ("transcriptions", (INTENT_TRANSCRIPTIONS, INTENT_TRANSLATIONS))):
+        for engine in name_views.get(operation, {}).get("engines") or ():
+            for intent in intents:
+                add(str(engine["engine"]), engine.get("display_name") or str(engine["engine"]), "model", intent)
+
     for capability in DECISION_RUNTIME.capabilities():
-        add(capability.model, capability.title, "model", capability.intent)
+        # Like chat aliases, decision names are judged on the engine slot they
+        # reach, so the slot is what an owner files or grants.
+        slot = next((tag.removeprefix("resolves_to:") for tag in capability.tags
+                     if tag.startswith("resolves_to:")), capability.model)
+        add(slot, capability.title, "model", capability.intent)
     decision_providers = decision_provider_execution.systemone_providers(registry)
     openai_decisions = decision_provider_execution.openai_decisions_provider(registry)
     if openai_decisions is not None:
@@ -24218,10 +24281,21 @@ async def list_models(request: Request):
         entries = []
         for decision_model in _decision_models_for(auth_context, _access_for_auth_context(auth_context)):
             entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
-                     "created": 0, "capabilities": decision_model.view()["capabilities"]}
-            if _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
+                     "created": 0, "capabilities": decision_model.view()["capabilities"],
+                     **decision_alias_fields.get(decision_model.id, {})}
+            # The same judgement a decision request gets: the engine slot the name
+            # reaches, with the name itself also grantable.
+            slot = DECISION_RUNTIME.policy_model(decision_model.id)
+            if _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone",
+                                                      "azizam_policy_model": slot}):
                 entries.append(entry)
         return entries
+
+    # Decision names that point somewhere say so, as every other alias does.
+    decision_alias_fields = {
+        alias["id"]: {key: value for key, value in alias.items() if key.startswith("azizam_")}
+        for alias in _stable_alias_model_entries() if "decisions" in alias["azizam_resolves_to"]
+    }
 
     decision_ids: set[str] = set()
     for entry in await asyncio.to_thread(visible_decision_entries):
@@ -24934,9 +25008,24 @@ def _protocol_policy_decision(
     intent: str,
     model: str | None = None,
 ) -> PolicyDecision:
+    """Judge a frontend request the way the chat route judges it.
+
+    These frontends hand the request to ``/v1/chat/completions`` on a trusted
+    loopback, which skips its own check. So the name is resolved here: the plan
+    and the owner's category rules see the model it reaches, and the plan may
+    also grant the name the caller sent.
+    """
+    requested = None
+    if model and (intent.startswith("chat.") or "embed" in intent):
+        try:
+            alias = resolve_stable_alias("embeddings" if "embed" in intent else "chat", model)
+        except stable_aliases.AliasUnavailableError:
+            alias = None  # Nothing serves it now; the chat route answers that, not the policy.
+        if alias is not None:
+            requested, model = model, _provider_alias_model(alias.target, alias.service, alias.engine_spec or {})
     return evaluate_and_apply(
         auth_context.identity,
-        make_policy_request(protocol=protocol, intent=intent, model=model),
+        make_policy_request(protocol=protocol, intent=intent, model=model, requested_model=requested),
     )
 
 
@@ -26394,7 +26483,9 @@ def _azizam_policy_decision(
     auth_context: AuthContext,
     request_path: str,
     body: bytes,
+    requested_model: str | None = None,
 ) -> PolicyDecision | None:
+    """``requested_model`` is the name the caller sent when ``body`` already holds the model it resolved to."""
     spec = _AZIZAM_POLICY.get(request_path)
     if spec is None:
         return None
@@ -26414,6 +26505,7 @@ def _azizam_policy_decision(
             protocol=protocol,
             intent=intent,
             model=model,
+            requested_model=requested_model,
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="interactive",
@@ -27296,10 +27388,10 @@ async def _forward_litellm_proxy_request(
         if str(reason)
     ]
     original_model = getattr(request.state, "provider_requested_model", None)
+    # The receipt keeps the name the caller sent, not only the model it resolved
+    # to, so Activity can say "asked for fast, ran default-fast".
     receipt_requested_model = (
-        original_model
-        if fallback_reasons and isinstance(original_model, str) and original_model
-        else model_name
+        original_model if isinstance(original_model, str) and original_model else model_name
     )
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
@@ -27723,8 +27815,11 @@ async def _handle_openai_litellm_request_once(
         )
     except stable_aliases.AliasUnavailableError as exc:
         return model_compatibility_error(exc)
+    requested_alias_name: str | None = None
     if model_override or chat_alias is not None:
         target = model_override or _provider_alias_model(chat_alias.target, chat_alias.service, chat_alias.engine_spec or {})
+        if chat_alias is not None and isinstance(parsed_body.get("model"), str):
+            requested_alias_name = parsed_body["model"]
         parsed_body = {**parsed_body, "model": target}
         body_peek = json.dumps(parsed_body).encode("utf-8")
 
@@ -27741,6 +27836,7 @@ async def _handle_openai_litellm_request_once(
             auth_context,
             request_path,
             body_peek,
+            requested_model=requested_alias_name,
         )
         if policy_decision is not None and policy_decision.denied:
             return _policy_denied_response(policy_decision)

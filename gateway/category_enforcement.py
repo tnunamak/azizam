@@ -160,7 +160,8 @@ class CategoryGate:
         if not index:
             return ""
         categories: set[str] = set()
-        for name in (request.workflow, request.model):
+        # Both spellings: an alias must not reach what its model's category hides.
+        for name in (request.workflow, request.model, request.requested_model):
             categories |= index.get(name or "", frozenset())
         if not categories:
             return ""

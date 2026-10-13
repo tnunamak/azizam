@@ -116,6 +116,10 @@ class McpDeps:
     # request's own Host is not evidence: a rebinding page controls it.
     allowed_origins: Callable[[Request], list[str]] = lambda _request: []
     poll_interval: float = 1.0
+    # (request, auth, entry) -> whether this caller may see the entry. An entry is a
+    # workflow summary ({"id", "intent"}) or a speech name ({"id", "operation": "speech"}).
+    # The default shows everything; the gateway passes the same check discovery uses.
+    visible: Callable[[Request, Any, Mapping[str, Any]], bool] = lambda _request, _auth, _entry: True
     # OAuth (RFC 9728): issuers listed in the protected-resource metadata and
     # the scopes the 401 challenge asks for. Empty means API keys only.
     authorization_servers: Callable[[Request], list[str]] = lambda _request: []
@@ -302,7 +306,13 @@ class Tools:
 
     def _speech_names(self) -> list[str]:
         section = (self.deps.aliases().get("operations") or self.deps.aliases()).get("speech") or {}
-        return [str(a.get("alias")) for a in section.get("stable") or [] if a.get("alias")]
+        return [str(a["alias"]) for a in section.get("stable") or [] if a.get("alias")
+                and self.deps.visible(self.request, self.auth, {"id": str(a["alias"]), "operation": "speech"})]
+
+    def _catalog(self) -> list[dict[str, Any]]:
+        """The workflows this caller may see: what discovery lists, and no hidden ones."""
+        return [entry for entry in self.deps.catalog()
+                if self.deps.visible(self.request, self.auth, {"id": entry["id"], "intent": entry["intent"]})]
 
     def resolve(self, target: str, inputs: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any] | None, str | None]:
         """(kind, catalog entry, speech model). kind is ``workflow`` or ``speech``.
@@ -313,7 +323,7 @@ class Tools:
         t = target.strip()
         if t == SPEECH_TARGET or t in self._speech_names():
             return "speech", None, None if t == SPEECH_TARGET else t
-        entries = self.deps.catalog()
+        entries = self._catalog()
         matches = [e for e in entries if t in (e["id"], e["short_id"]) or t in (e.get("aliases") or [])]
         if matches:
             def rank(entry: Mapping[str, Any]) -> tuple[int, int]:
@@ -351,7 +361,7 @@ class Tools:
         query = str(args.get("query") or "").lower()
         intent = str(args.get("intent") or "")
         rows = []
-        for entry in self.deps.catalog():
+        for entry in self._catalog():
             hay = " ".join([entry["id"], entry.get("description") or "", entry["intent"], *(entry.get("aliases") or [])]).lower()
             if query and query not in hay or intent and entry["intent"] != intent:
                 continue

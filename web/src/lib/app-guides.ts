@@ -180,19 +180,28 @@ type ModelChoice = {
   capabilities: { capability?: string }[];
   recommended?: boolean;
   locality?: string;
+  alias?: boolean;
+  availability?: { available?: boolean };
 };
 
 /**
  * The model a guide suggests for a task: the gateway's recommendation, else a
- * local model (so a guide does not quietly spend on a provider), else any.
+ * local model (so a guide does not quietly spend on a provider), else any. A
+ * name that points at a model (`fast`) beats the model itself, because it keeps
+ * working when the model behind it changes; a name known to be unavailable is
+ * skipped.
  */
 export function suggestedModel(
   rows: ModelChoice[],
   task: "chat" | "transcribe",
 ): string | null {
-  const matches = rows.filter(
-    (row) => (row.capability ?? row.capabilities[0]?.capability) === task,
+  const ofTask = rows.filter(
+    (row) =>
+      (row.capability ?? row.capabilities[0]?.capability) === task &&
+      row.availability?.available !== false,
   );
+  const names = ofTask.filter((row) => row.alias);
+  const matches = names.length > 0 ? names : ofTask;
   return (
     matches.find((row) => row.recommended)?.id ??
     matches.find((row) => row.locality === "local")?.id ??

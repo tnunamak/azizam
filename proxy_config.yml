@@ -1494,7 +1494,7 @@ model_aliases:
       decide: [decider-2b]
       decide-quality: [decider-4b, decider-2b]
     openai:
-      - {match: "jev-*", to: decide}
+      - {match: "jev-*", to: decide, names: [jev-latest, jev-preview]}  # names: the ones model lists show; the pattern accepts any jev-* name
       - {match: "*/*", passthrough: true}
   rerank:
     engines:

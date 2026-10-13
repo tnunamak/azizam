@@ -59,7 +59,7 @@ class SttFallbackPolicyGap(SttCase):
         evaluated = []
         attempts = []
 
-        def authorize(receipt, auth, *, operation):
+        def authorize(receipt, auth, *, operation, model=None, requested_model=None):
             evaluated.append((receipt.backend, operation))
             return SimpleNamespace(denied=receipt.backend == "stt")
 

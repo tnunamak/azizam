@@ -356,6 +356,11 @@ def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
             if not pattern.get("match"):
                 problems.append(f"{operation}.openai: entry without match")
             elif not pattern.get("passthrough"):
+                for published in pattern_names(pattern):
+                    if not fnmatch.fnmatchcase(_norm(published), _norm(pattern["match"])):
+                        problems.append(
+                            f"{operation}.openai[{pattern['match']}]: name {published!r} does not match the pattern"
+                        )
                 target = _norm(pattern.get("to"))
                 if not target:
                     problems.append(f"{operation}.openai[{pattern['match']}]: missing to")
@@ -422,6 +427,47 @@ def fold_workflow_aliases(config: dict[str, Any]) -> None:
         target_section["aliases"] = aliases
 
 
+def pattern_names(pattern: Mapping[str, Any]) -> list[str]:
+    """Literal names a wildcard pattern publishes in model lists (``names:``)."""
+    raw = pattern.get("names")
+    if not isinstance(raw, list):
+        return []
+    return [str(name).strip() for name in raw if isinstance(name, str) and name.strip()]
+
+
+def _published_name_rows(
+    cfg: Mapping[str, Any] | None,
+    operation: str,
+    pattern: Mapping[str, Any],
+    engine_available: EngineAvailable,
+) -> list[dict[str, Any]]:
+    """One discovery row per literal name a pattern publishes, shaped like a stable row.
+
+    A pattern such as ``jev-*`` accepts any name, so it cannot be listed. Its
+    ``names`` are the ones the owner wants shown. Each is a real alias: it
+    resolves through the pattern to the same place any matching request does.
+    """
+    rows: list[dict[str, Any]] = []
+    for name in pattern_names(pattern):
+        row: dict[str, Any] = {"alias": _norm(name), "via": str(pattern.get("match") or "")}
+        try:
+            res = resolve_alias(cfg, operation, name, engine_available=engine_available)
+        except AliasUnavailableError as exc:
+            row["resolves_to"] = None
+            row["error"] = str(exc)
+        else:
+            if res is not None:
+                row["resolves_to"] = res.target
+                if res.engine:
+                    row["engine"] = res.engine
+                    row["service"] = res.service
+                    row["upstream_model"] = res.upstream_model
+                if res.skipped_engines:
+                    row["skipped_engines"] = list(res.skipped_engines)
+        rows.append(row)
+    return rows
+
+
 def describe_aliases(
     cfg: Mapping[str, Any] | None,
     *,
@@ -461,6 +507,7 @@ def describe_aliases(
             if pattern.get("passthrough"):
                 openai_rows.append({"match": match, "passthrough": True})
                 continue
+            stable_rows.extend(_published_name_rows(cfg, op, pattern, engine_available))
             row = {"match": match, "to": str(pattern.get("to") or "")}
             try:
                 probe = match.replace("*", "x").replace("?", "x")
@@ -499,6 +546,7 @@ __all__ = [
     "concrete_targets",
     "describe_aliases",
     "fold_workflow_aliases",
+    "pattern_names",
     "resolve_alias",
     "section_for_operation",
     "validate_aliases",

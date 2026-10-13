@@ -120,7 +120,7 @@ class SttServiceSelectionTests(SttCase):
 
         evaluated = []
 
-        def evaluate(receipt, _auth, *, operation):
+        def evaluate(receipt, _auth, *, operation, model=None, requested_model=None):
             evaluated.append((receipt.backend, operation))
             return Decision(receipt.backend == "stt-nemotron")
 

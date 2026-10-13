@@ -64,7 +64,7 @@ def main():
         "model_aliases": {"decisions": {
             "engines": {"local": {"service": "decisions", "model": "decider-2b-v11", "calibrated": True,
                         "max_options": 255, "max_levels": 10, "context_tokens": 4096}},
-            "stable": {"decide": ["local"]}, "openai": [{"match": "jev-*", "to": "decide"}],
+            "stable": {"decide": ["local"]}, "openai": [{"match": "jev-*", "to": "decide", "names": ["jev-latest", "jev-preview"]}],
         }},
     }
     config_path = state / "config.yml"

@@ -55,7 +55,7 @@ import {
 } from "@/components/product";
 import { cn } from "@/lib/cn";
 import { keyPromptNote } from "@/lib/prompt-memory";
-import { api, type AccessPlan } from "@/lib/api";
+import { api, queryKeys, type AccessPlan } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
 import { keyApps, suggestedModel } from "@/lib/app-guides";
 import { useViewer } from "@/components/shell/session";
@@ -208,17 +208,36 @@ function AppsContents() {
     queryFn: api.accessPlans.list,
     enabled: viewer.admin && (creating || accessApp !== null),
   });
-  // A guide fills in a real model name; the catalog is already scoped to
-  // what this person may use.
+  // A guide fills in a real model name. The catalog is scoped to what this
+  // person may use, but a new app can run under a narrower plan, so for such an
+  // app the name must also be one its own plan allows (Check access answers that).
   const { data: catalog, isPending: catalogPending } = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
     enabled: reveal !== null,
   });
+  const revealedPlan =
+    accountData?.apps?.find((item) => item.id === reveal?.appId)?.access_plan ?? null;
+  const ownPlanLimits = revealedPlan !== null && !revealedPlan.same_as_person;
+  const { data: planPreview, isPending: previewPending } = useQuery({
+    queryKey: queryKeys.accessPreview(revealedPlan?.id ?? ""),
+    queryFn: () => api.accessPlans.preview(revealedPlan!.id),
+    enabled: ownPlanLimits && viewer.admin,
+  });
+  // null: the person's own plan applies, so the catalog is already right.
+  const planAllows = ownPlanLimits
+    ? new Set(
+        (planPreview?.entries ?? [])
+          .filter((entry) => entry.state !== "blocked")
+          .map((entry) => entry.id),
+      )
+    : null;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const baseUrl =
     discoveryData?.recipes?.openai?.canonical_base_url ?? `${origin}/openai/v1`;
-  const catalogRows = catalog?.aliases?.length ? catalog.aliases : (catalog?.models ?? []);
+  const catalogRows = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].filter(
+    (row) => planAllows === null || planAllows.has(row.id),
+  );
   const guideValues = {
     openai_url: baseUrl,
     anthropic_url:
@@ -1084,7 +1103,7 @@ function AppsContents() {
                   appId={guideApp}
                   onAppChange={setGuideApp}
                   values={guideValues}
-                  loading={catalogPending}
+                  loading={catalogPending || (ownPlanLimits && viewer.admin && previewPending)}
                   keyHint={
                     saved
                       ? "Paste the key you saved."

@@ -71,15 +71,17 @@ class CapabilityGrant:
     models: frozenset[str] = frozenset()
     workflows: frozenset[str] = frozenset()
 
-    def allows(self, *, model: str | None, workflow: str | None) -> bool:
-        """A request names a model (what the client asked for), a workflow (what
-        runs), or both; either one being listed grants it."""
+    def allows(self, *, model: str | None, workflow: str | None, requested: str | None = None) -> bool:
+        """A request names a model, a workflow, or both; either one being listed
+        grants it. ``requested`` is the name the client sent when it is an alias
+        for ``model``. A plan may list the alias (it grants requests made through
+        that name) or the model behind it (it grants every name that reaches it)."""
         if self.all_items:
             return True
-        if model is None and workflow is None:
+        if model is None and workflow is None and requested is None:
             # Not resolved yet: the check after resolution names the item.
             return bool(self.models or self.workflows)
-        return (model is not None and model in self.models) or (
+        return any(name is not None and name in self.models for name in (model, requested)) or (
             workflow is not None and workflow in self.workflows)
 
 

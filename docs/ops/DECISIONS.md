@@ -8,9 +8,18 @@ Noul returns P(yes). Questions are evaluated independently against shared state.
 
 Use `decide` for the default local model, `decide-quality` for the larger local
 model with a free fallback to `decide`, or `jev-*` for the default local alias.
-A provider-qualified `typesafe/*` name selects the configured paid TypeSafe
+`jev-latest` and `jev-preview` are listed (they are the `names:` of the `jev-*`
+pattern in `model_aliases.decisions.openai`); any other `jev-*` name also works.
+They run the local `decide` engine, not TypeSafe's hosted model of the same
+name. A provider-qualified `typesafe/*` name selects the configured paid TypeSafe
 provider. Unprefixed `jev-*` names stay local; an unavailable local engine does
 not trigger a paid fallback.
+
+Access is decided on the engine slot a name reaches (`decider-2b`, `decider-4b`),
+the same way chat decides it on the model: a plan or category that names the slot
+covers `decide`, `jev-*`, the slot's own name and its pinned model name
+(`decider-2b-v11`). A plan may also list an alias such as `decide`, which then
+covers requests made through that name only.
 
 The official TypeSafe SDK uses `TYPESAFE_BASE_URL=http://HOST/typesafe` and the
 gateway App key as `TYPESAFE_API_KEY`. `GET /typesafe/v1/models` returns TypeSafe's

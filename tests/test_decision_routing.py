@@ -37,7 +37,7 @@ def config():
                 "large": {"service": "large", "model": "large-v1"},
             },
             "stable": {"decide": ["small"], "decide-quality": ["large", "small"]},
-            "openai": [{"match": "jev-*", "to": "decide"}, {"match": "*/*", "passthrough": True}],
+            "openai": [{"match": "jev-*", "to": "decide", "names": ["jev-latest", "jev-preview"]}, {"match": "*/*", "passthrough": True}],
         }},
     }
 

@@ -995,8 +995,10 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertEqual([row["id"] for row in body["aliases"]], ["chat-ok"])
-        # The permitted alias is the single presentation row for its target.
-        self.assertEqual(body["models"], [])
+        # The model a permitted alias points at is its own row, and each says it reaches the other.
+        self.assertEqual([row["id"] for row in body["models"]], ["allowed-model"])
+        self.assertEqual(body["models"][0]["same_model_as"], ["chat-ok"])
+        self.assertEqual(body["aliases"][0]["same_model_as"], ["allowed-model"])
         self.assertEqual(body["aliases"][0]["resolves_to"], {"chat": "allowed-model"})
         self.assertEqual(body["aliases"][0]["operations"], ["chat"])
         self.assertNotIn("denied-model", response.text)

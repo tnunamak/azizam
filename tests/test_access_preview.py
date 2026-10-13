@@ -161,12 +161,12 @@ CATALOG = [
 ]
 
 
-def _preview(owner, plan, capabilities=CATALOG):
+def _preview(owner, plan, capabilities=CATALOG, name_views=None):
     """The route's answer for ``plan`` over ``capabilities`` run through the real policy view."""
     with patch.object(proxy, "_gateway_catalog_base", lambda: ({}, [])), \
             patch.object(proxy, "_gateway_catalog_finish", lambda *_a: list(capabilities)), \
             patch.object(proxy, "_remote_decision_models", lambda *_a: []), \
-            patch.object(proxy, "_gateway_aliases_provider", return_value={}), \
+            patch.object(proxy, "_gateway_aliases_provider", return_value=name_views or {}), \
             patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set())):
         response = _post(owner, {"plan": plan["id"]})
     assert response.status_code == 200, response.text
@@ -203,6 +203,34 @@ def test_the_preview_decides_exactly_as_the_request_path_does(owner):
         if not decision.allowed:
             assert (entry["reason"] if not kinds else
                     next(k["reason"] for k in entry["kinds"] if k["label"] == label)) == decision.reasons[0]
+
+
+def test_the_preview_judges_a_second_name_the_way_a_request_for_it_is_judged(owner):
+    """A name and the model it points at: a plan may list either; Check access says what a request would."""
+    catalog = [
+        _cap("chat.completions", "default-fast", input_modalities=("text",), output_modalities=("text",)),
+        _cap("chat.completions", "fast", tags=("alias", "resolves_to:default-fast"),
+             input_modalities=("text",), output_modalities=("text",)),
+    ]
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "default-fast", "service": "svc"}]}}
+
+    def states(models):
+        plan = store_plan("Plan " + "-".join(models), path=owner.db, caps=("chat",), models=models)
+        body = _preview(owner, plan, catalog, views)
+        who = runtime_identity(access(_plan_from(owner, plan)), app_id=None, person_id=None)
+        by_id = {e["id"]: e["state"] for e in body["entries"]}
+        # The same question put to the request path: model resolved, caller's name kept.
+        asked = {"fast": make_policy_request(protocol="openai.chat", intent="chat.completions",
+                                             model="default-fast", requested_model="fast"),
+                 "default-fast": make_policy_request(protocol="openai.chat", intent="chat.completions",
+                                                     model="default-fast")}
+        for name, request in asked.items():
+            assert (by_id[name] == "allowed") is evaluate_and_apply(who, request).allowed, name
+        return by_id
+
+    assert states(["default-fast"]) == {"fast": "allowed", "default-fast": "allowed"}
+    assert states(["fast"]) == {"fast": "allowed", "default-fast": "blocked"}
+    assert states(["other"]) == {"fast": "blocked", "default-fast": "blocked"}
 
 
 def _plan_from(owner, record):

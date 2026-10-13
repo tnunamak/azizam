@@ -58,6 +58,10 @@ class PolicyRequest:
     intent: str | None = None
     workflow: str | None = None
     model: str | None = None
+    # The name the client sent, when ``model`` is the model that name resolved
+    # to. A plan grant on either name allows the request; owner category rules
+    # follow the model, and a restricted category hides both names.
+    requested_model: str | None = None
     backend: str | None = None
     capability_exposure: str | None = None
     capability_trust_tier: str | None = None
@@ -229,8 +233,8 @@ def matches_operation(value: str, allowed: frozenset[str]) -> bool:
 def _item_label(request: PolicyRequest, capability: str | None) -> str:
     if request.workflow:
         return request.workflow
-    if request.model:
-        return request.model
+    if request.requested_model or request.model:
+        return request.requested_model or request.model
     if capability:
         return CAPABILITY_LABELS.get(capability, capability)
     return "This request"
@@ -259,7 +263,8 @@ def _check_plan(plan: AccessPlan, request: PolicyRequest, side: str) -> tuple[st
     elif intent is not None and intent not in DISCOVERY_INTENTS and intent not in UNSUPPORTED_INTENTS:
         capability = capability_for_intent(intent)
         grant = plan.can_use.get(capability) if capability else None
-        if grant is None or not grant.allows(model=request.model, workflow=request.workflow):
+        if grant is None or not grant.allows(
+                model=request.model, workflow=request.workflow, requested=request.requested_model):
             return NOT_IN_ACCESS_PLAN, _not_in_plan(side, _item_label(request, capability))
     if request.remote_provider is not None:
         provider = _canonical_provider_id(request.remote_provider)
