@@ -164,6 +164,8 @@ cleanup() {
   pkill -KILL -f -- "$run/" 2>/dev/null || true
   rm -f "$receipts/signoff-$sha.tsv.partial"
   cd "$repo"
+  # Bound the receipt directory: old runs keep their text evidence only.
+  "$repo/scripts/ci/prune-receipts.sh" "$receipts_root" --keep "$receipts" 2>/dev/null || true
   if ((keep_run)); then
     if [[ -f $kept && $(cat "$kept") != "$run" ]]; then remove_run_dir "$(cat "$kept")"; fi
     echo "$run" > "$kept"

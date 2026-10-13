@@ -40,7 +40,12 @@ input_sha256=$(sha256sum "$repo_root/tests/requirements-hermetic.in" | awk '{pri
 checkout_head=$(git -C "$repo_root" rev-parse HEAD)
 
 mkdir -p -- "$state_root"
-state_dir=$(mktemp -d "$state_root/azizam-pytest.XXXXXXXX")
+# Name each allocation after this runner (pid + start time) so a later run can
+# sweep what a SIGKILLed one left: an EXIT trap does not run on SIGKILL.
+read -r -a own_stat < <(sed 's/^.*) //' "/proc/$$/stat")  # start time is field 20 after "(comm)"
+owner_tag="$$-${own_stat[19]}"
+"$repo_root/scripts/sweep-stale-pytest-tmpfs.sh" "$state_root" 2>/dev/null || true
+state_dir=$(mktemp -d "$state_root/azizam-pytest.$owner_tag.XXXXXXXX")
 tmpfs_tmp=
 tmpfs_fallback=
 cleanup() { rm -rf -- "$state_dir" ${tmpfs_tmp:+"$tmpfs_tmp"}; if ((created_cache_mount_dir)); then rmdir -- "$repo_root/cache"; fi; }
@@ -65,8 +70,6 @@ tmpfs_min_kib=${AZIZAM_PYTEST_TMPFS_MIN_KIB:-4194304}
 # A SIGKILLed runner leaves its allocation behind (no trap runs), so sweep dead owners first, before measuring free space.
 "$repo_root/scripts/sweep-stale-pytest-tmpfs.sh" "$tmpfs_root" 2>/dev/null || true
 tmpfs_free_kib=$(df --output=avail -k -- "$tmpfs_root" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
-read -r -a own_stat < <(sed 's/^.*) //' "/proc/$$/stat")  # start time is field 20 after "(comm)"
-owner_tag="$$-${own_stat[19]}"
 if [[ $(stat -f -c %T -- "$tmpfs_root" 2>/dev/null || true) == tmpfs && ${tmpfs_free_kib:-0} -ge $tmpfs_min_kib ]] \
    && tmpfs_tmp=$(mktemp -d "$tmpfs_root/azizam-pytest.$owner_tag.XXXXXXXX" 2>/dev/null); then
   tmpfs_source=$tmpfs_tmp
