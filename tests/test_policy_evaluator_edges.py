@@ -188,3 +188,30 @@ def test_discovery_audience_without_access_is_the_client_audience():
     assert runtime_auth.discovery_audience_for_access(None) == "client"
     assert runtime_auth.discovery_audience_for_access(both(plan(receipt_detail="full"))) == "internal"
     assert runtime_auth.discovery_audience_for_access(both(plan(receipt_detail="standard"))) == "admin"
+
+
+# --- mut4: auth-module survivors that mut3 called equivalent ---
+
+@pytest.mark.parametrize("scope, own_path", [("X*", "/Xray/status"), ("/X*", "/Xray/status"), ("XX*", "/XXray/status")])
+def test_a_scope_prefix_that_starts_with_x_does_not_match_unrelated_paths(scope, own_path):
+    """policy.py:224 ``prefix.lstrip("/")`` -> ``lstrip("XX/XX")``.
+
+    The mutant also strips leading X from the prefix, so "X*" becomes "" and the scope matches every
+    path: a widening of what a plan allows.
+    """
+    assert matches_operation("GET /v1/models", frozenset({scope})) is False
+    assert matches_operation("GET /v1/models", frozenset({scope, "GET /v1/models"})) is True
+    assert matches_operation(f"GET {own_path}", frozenset({scope})) is True
+
+
+def test_an_unknown_receipt_detail_falls_back_to_the_least_informative_audience():
+    """runtime_auth.py:161 default ``"client"`` -> ``"XXclientXX"``.
+
+    EffectiveAccess only yields the four known levels, so a stand-in object supplies an unknown one.
+    The fallback must be the lowest tier, never an invented audience name.
+    """
+    from types import SimpleNamespace
+
+    assert runtime_auth.discovery_audience_for_access(SimpleNamespace(receipt_detail="unheard-of")) == "client"
+    assert runtime_auth.discovery_audience_for_access(SimpleNamespace(receipt_detail="none")) == "client"
+    assert runtime_auth.discovery_audience_for_access(SimpleNamespace(receipt_detail="basic")) == "client"

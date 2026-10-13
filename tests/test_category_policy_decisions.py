@@ -426,3 +426,21 @@ def test_preview_as_passes_the_metadata_flag_to_the_decision():
     v = version(fact())
     assert cp.preview_as(v, "mia", "app", "image", metadata_complete=False)["s@1"].reason == "METADATA_INCOMPLETE"
     assert cp.preview_as(v, "mia", "app", "image")["s@1"].outcome == "allow"
+
+
+@pytest.mark.parametrize("who", [dict(person=""), dict(person=3), dict(app=""), dict(app=3)])
+def test_an_unusable_identity_is_unavailable_before_the_service_is_looked_up(who):
+    """Kills category_policy.py:483 ``or`` -> ``and`` (all three).
+
+    evaluate() repeats the identity guard, so a bad identity with a good service gives the same
+    decision either way. With an unknown service the order shows: the guard at :483 answers
+    IDENTITY_UNAVAILABLE, but without it the service lookup at :489 fails first (POLICY_UNAVAILABLE).
+    PolicyVersion does not check its identity keys, so "" and 3 are given keys to get past :485.
+    """
+    v = PolicyVersion("rules", CATS, {"mia": (plan(),), "": (plan(),), 3: (plan(),)},
+                      {"app": (plan(),), "": (plan(),), 3: (plan(),)}, {"s@1": svc(fact())})
+    assert decision_for(v, req()).outcome == "allow"
+    expected = ("deny", "IDENTITY_UNAVAILABLE", "identity", "", "")
+    assert shape(decision_for(v, req(service="ghost", **who))) == expected
+    assert shape(decision_for(v, req(**who))) == expected
+    assert decision_for(v, req(service="ghost")).reason == "POLICY_UNAVAILABLE"

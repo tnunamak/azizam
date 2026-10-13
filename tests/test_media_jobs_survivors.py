@@ -150,3 +150,48 @@ def test_events_carry_their_job_id(db):
     _seed(db, "job-id-ev")
     mj.append_event("job-id-ev", "note", {"step": 1}, path=db)
     assert [e["job_id"] for e in mj.events("job-id-ev", audience="client", path=db)] == ["job-id-ev"]
+
+
+# --- mut4: entries that mut3 called equivalent and the independent review showed observable ---
+
+def test_asking_for_no_events_does_not_touch_the_store(db):
+    """:1156 ``limit <= 0`` -> ``limit < 0``: the mutant opens the store and repairs sequences before returning [].
+
+    The repair is real (a plain read afterwards does it), so the NULL surviving a limit=0 read shows
+    the early return.
+    """
+    _seed(db, "job-nil")
+    mj.append_event("job-nil", "note", {"step": 1}, path=db)
+    _raw(db, "UPDATE media_job_events SET sequence = NULL WHERE job_id = 'job-nil'")
+    assert mj.events("job-nil", limit=0, path=db) == []
+    assert mj.events("job-nil", limit=-1, path=db) == []
+    assert _raw(db, "SELECT sequence FROM media_job_events WHERE job_id = 'job-nil'") == [(None,)]
+    assert [e["sequence"] for e in mj.events("job-nil", path=db)] == [1]
+
+
+def test_the_stored_input_hash_is_the_digest_of_the_documented_submission_facts(db):
+    """:530 ``"input"`` key renamed.
+
+    Replays are matched against the hash stored by an earlier release, so the hashed document is a
+    persistence format: renaming a key makes every stored hash disagree and turns a retry after an
+    upgrade into IdempotencyConflict. A same-process replay cannot see that; the stored value can.
+    """
+    import hashlib
+
+    job = mj.create(mj.MediaJob(intent="image.generate", request_id="req-hash", workflow="wf@1",
+                                backend="b", metadata={"k": "é"}), path=db, input_data={"prompt": "x"})
+    (raw,) = _raw(db, "SELECT job_json FROM media_jobs WHERE job_id = ?", (job.job_id,))[0]
+    stored = json.loads(raw)["input_hash"]
+    document = {"intent": "image.generate", "workflow": "wf@1", "backend": "b",
+                "metadata": json.loads(raw)["metadata"], "assets": [], "input": {"prompt": "x"}}
+    assert stored == hashlib.sha256(json.dumps(document, sort_keys=True, ensure_ascii=False,
+                                               separators=(",", ":")).encode()).hexdigest()
+
+
+@pytest.mark.parametrize("job_id", ["A-first", "0-digit", "B-job"])
+def test_erasure_reaches_a_job_whose_id_sorts_before_any_sentinel_text(db, job_id):
+    """:729 ``cursor = ""`` -> ``"XXXX"``: the scan cursor is a SQL lower bound, so an id below it is never visited."""
+    _seed(db, job_id, app_id="app-1")
+    assert mj.erase_prompt_derivatives({principal_key("app", "app-1")}, before=2**40, path=db) == 1
+    (raw,) = _raw(db, "SELECT job_json FROM media_jobs WHERE job_id = ?", (job_id,))[0]
+    assert json.loads(raw)["input_hash"] is None

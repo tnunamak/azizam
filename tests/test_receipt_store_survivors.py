@@ -135,3 +135,62 @@ def test_recent_skips_an_unparseable_row_and_returns_the_older_ones(db):
     insert_raw(db, "old-ok", {"request_id": "old-ok", "status": "succeeded"}, created_at=10)
     insert_raw(db, "new-bad", "[]", created_at=20)
     assert [r["request_id"] for r in rs.recent(10, path=db)] == ["old-ok"]
+
+
+# --- mut4: entries that mut3 called equivalent or unproductive and the independent review rebutted ---
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_asking_for_no_receipts_returns_nothing_before_any_filter_is_read(db, limit):
+    """:590 ``limit <= 0`` -> ``limit < 0``: the mutant parses ``since_s`` first and raises on this input."""
+    rs.record({"request_id": "r-any", "metadata": {}}, created_at=1, path=db)
+    assert rs.recent(limit, since_s="not a number", path=db) == []
+
+
+def test_a_retention_preview_is_accepted_exactly_at_both_ends_of_its_window(db, monkeypatch):
+    """:717 both ``<=`` -> ``<``: the preview window is closed, [now - days*86400 - 900, now - days*86400].
+
+    The clock is frozen so the cutoff can sit exactly on each end.
+    """
+    monkeypatch.setattr(rs.time, "time", lambda: 2_000_000_000)
+    latest = 2_000_000_000 - 30 * 86400
+    saved = []
+    for cutoff in (latest - 900, latest):
+        assert rs.save_retention(30, {"cutoff": cutoff, "delete_count": 0}, lambda: saved.append(cutoff), path=db) == 0
+    assert saved == [latest - 900, latest]
+    for cutoff in (latest - 901, latest + 1):
+        with pytest.raises(rs.RetentionPreviewChanged, match="Preview expired"):
+            rs.save_retention(30, {"cutoff": cutoff, "delete_count": 0}, lambda: saved.append(cutoff), path=db)
+    assert len(saved) == 2
+
+
+def test_compaction_reports_the_checkpoint_busy_flag_not_the_frame_count(db, monkeypatch):
+    """:766 ``checkpoint[0]`` -> ``checkpoint[1]``.
+
+    PRAGMA wal_checkpoint returns (busy, log frames, checkpointed frames). With a real database the
+    two columns agree after a TRUNCATE (log is 0 exactly when the checkpoint was not blocked), so a
+    scripted answer is the only way to tell which column is read.
+    """
+    original = rs._conn
+    answers = iter([(1, 0, 0), (0, 5, 5)])
+
+    class Scripted:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+        def execute(self, statement, *args):
+            if "wal_checkpoint" in statement:
+                self._conn.execute(statement, *args).fetchall()
+                return type("Rows", (), {"fetchone": lambda _self, a=next(answers): a})()
+            return self._conn.execute(statement, *args)
+
+    @contextmanager
+    def scripted(path):
+        with original(path) as conn:
+            yield Scripted(conn)
+
+    monkeypatch.setattr(rs, "_conn", scripted)
+    assert rs.compact(db)["checkpoint_pending"] is True
+    assert rs.compact(db)["checkpoint_pending"] is False
