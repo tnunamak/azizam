@@ -98,7 +98,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
-                _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
+                _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]
             )
 
         self.assertEqual(response.status_code, 200, response.body)

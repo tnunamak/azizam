@@ -14969,10 +14969,13 @@ async def user_portal_session(request: Request):
 def _session_catalog_auth_contexts(session: Any, snapshot: Mapping[str, Any]) -> list[AuthContext]:
     """One discovery context per distinct plan pair of the person's Apps."""
     person_id = str(session.subject)
+    # Every listed App's access row in one query, so the work does not grow with the Apps.
+    with admin_store.runtime_auth_connection(ADMIN_STORE.path) as conn:
+        rows = admin_store.runtime_access_rows(
+            conn, [str(app.get("id") or "") for app in snapshot.get("apps") or ()])
 
     def access_for_app(app_id: str):
-        with admin_store.runtime_auth_connection(ADMIN_STORE.path) as conn:
-            row = admin_store.runtime_access_row(conn, app_id=app_id)
+        row = rows.get(app_id)
         if row is None:
             return None
         identity = identity_from_access_row(row, key_hash="session", name="user-session", person_id=person_id)

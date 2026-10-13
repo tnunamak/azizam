@@ -1913,6 +1913,21 @@ def runtime_access_row(
     return data
 
 
+def runtime_access_rows(conn: sqlite3.Connection, app_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """``{app_id: row}`` as ``runtime_access_row`` reads it, for many Apps in one query per 500 ids."""
+    ids = sorted({str(value) for value in app_ids if value})
+    out: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        for row in conn.execute(
+            f"SELECT * FROM ({_RUNTIME_ACCESS_SELECT}) WHERE app_id IN ({','.join('?' for _ in chunk)})", chunk,
+        ).fetchall():
+            data = {k: row[k] for k in row.keys()}
+            data["on_session_app"] = bool(data["on_session_app"])
+            out[str(data["app_id"])] = data
+    return out
+
+
 def list_active_credentials(
     *,
     subject_kind: str | None = None,

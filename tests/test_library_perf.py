@@ -42,8 +42,10 @@ class Library:
         receipt_store.init_db(self.receipts)
         self.alice = admin_store.upsert_oidc_user("iss", "alice", email="alice@example.test", path=self.admin)
         self.bob = admin_store.upsert_oidc_user("iss", "bob", email="bob@example.test", path=self.admin)
-        self.app_a = admin_store.create_app("Alice", kind="personal", owner_user_id=self.alice["id"], path=self.admin)
-        self.app_b = admin_store.create_app("Bob", kind="personal", owner_user_id=self.bob["id"], path=self.admin)
+        self.app_a = admin_store.create_app("Alice", kind="personal", owner_user_id=self.alice["id"],
+                                            access_plan="person", path=self.admin)
+        self.app_b = admin_store.create_app("Bob", kind="personal", owner_user_id=self.bob["id"],
+                                            access_plan="person", path=self.admin)
         self.user = self.alice
         self.count = 0
         app = FastAPI()

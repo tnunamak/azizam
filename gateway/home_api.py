@@ -44,10 +44,17 @@ def _error(exc: UserPortalError | AdminAuthError) -> JSONResponse:
 
 
 def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
-              path: Path, *, person_id: str) -> RuntimeIdentity | None:
-    """Resolve an App's access without marking a key used by a read-only Home request."""
-    with admin_store.runtime_auth_connection(path) as conn:
-        row = admin_store.runtime_access_row(conn, app_id=str(app["id"]))
+              path: Path, *, person_id: str, rows: Mapping[str, Mapping[str, Any]] | None = None,
+              ) -> RuntimeIdentity | None:
+    """Resolve an App's access without marking a key used by a read-only Home request.
+
+    ``rows`` holds the access rows of a whole listing, read in one query.
+    """
+    if rows is not None:
+        row = rows.get(str(app["id"]))
+    else:
+        with admin_store.runtime_auth_connection(path) as conn:
+            row = admin_store.runtime_access_row(conn, app_id=str(app["id"]))
     if row is None:
         return None
     identity = identity_from_access_row(
@@ -359,14 +366,16 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             credential_aliases: dict[str, list[dict[str, Any]]] = {}
             owned_apps = [app for app in admin_store.list_apps_for_user(session.subject, path=store.path)
                           if not app.get("disabled_at")]
-            # Keys for every app are read in one query, so the number of
-            # statements does not grow with the number of keys.
+            # Keys and access rows for every app are read in one query each, so
+            # the number of statements does not grow with the number of apps or keys.
             credentials_by_app = admin_store.list_active_credentials_for_apps(
                 [str(app["id"]) for app in owned_apps], path=store.path)
+            with admin_store.runtime_auth_connection(store.path) as conn:
+                access_rows = admin_store.runtime_access_rows(conn, [str(app["id"]) for app in owned_apps])
             for app in owned_apps:
                 credentials = credentials_by_app.get(str(app["id"]), [])
                 for credential in credentials or [None]:
-                    identity = _identity(app, credential, store.path, person_id=session.subject)
+                    identity = _identity(app, credential, store.path, person_id=session.subject, rows=access_rows)
                     if identity is None:
                         continue
                     scoped = _resolved_capabilities(identity, capabilities, registry)
