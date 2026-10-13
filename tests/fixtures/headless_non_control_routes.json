@@ -100,6 +100,7 @@
   ["GET", "/showcase/static/{name}", "gateway.showcase.showcase_static"],
   ["GET", "/typesafe/v1/models", "gateway.decisions_api.list_typesafe_models"],
   ["GET", "/v1/assets/{asset_id}/content", "proxy.assets_content"],
+  ["GET", "/v1/assets/{asset_id}/thumbnail", "proxy.assets_thumbnail"],
   ["GET", "/v1/assistants{rest:path}", "proxy.openai_assistants_unsupported"],
   ["GET", "/v1/audio/models", "proxy.audio_models"],
   ["GET", "/v1/audio/voice_consents", "gateway.voices_api.list_consents"],

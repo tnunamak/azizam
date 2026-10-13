@@ -383,6 +383,10 @@ def _request_kwargs(route, path, method, gateway=None):
     # authorization; the placeholder signature is deliberately not valid.
     if "/images/" in path or "/assets/" in path:
         params.update(exp=int(time.time()) + 300, sig="inventory-placeholder")
+    if "/assets/" in path and path.endswith("/thumbnail"):
+        # The thumbnail route reads "expires" and refuses a signature made for
+        # another mode, so the future expiry reaches signature authorization.
+        params["expires"] = 1
     for name in ("exp", "expires", "expiry", "expires_at"):
         if name in params:
             params[name] = int(time.time()) + 300
