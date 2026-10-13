@@ -9,14 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { accountApi } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
+import { navigate } from "@/lib/navigate";
 import { PRODUCT_NAME } from "@/lib/product";
-
-/** Leave for the app's address. Kept apart so tests can watch navigation. */
-export const navigate = {
-  to(url: string) {
-    window.location.assign(url);
-  },
-};
 
 /**
  * The one consent screen for an MCP client that asked to sign in
@@ -32,7 +26,7 @@ export default function AuthorizePage() {
     );
   }, []);
 
-  const details = useQuery({
+  const { data, error, isPending, isError, refetch } = useQuery({
     queryKey: ["mcp", "consent", requestId],
     queryFn: () => accountApi.mcpConsentRequest(requestId!),
     enabled: Boolean(requestId),
@@ -56,7 +50,7 @@ export default function AuthorizePage() {
       </div>
     );
 
-  if (!requestId || details.isPending)
+  if (!requestId || isPending)
     return (
       <div className="page-read" aria-busy="true">
         <PageHeader title="Connect an app" />
@@ -67,9 +61,8 @@ export default function AuthorizePage() {
       </div>
     );
 
-  if (details.isError) {
-    const expired =
-      details.error instanceof ApiError && details.error.status === 410;
+  if (isError) {
+    const expired = error instanceof ApiError && error.status === 410;
     return (
       <div className="page-read">
         <PageHeader title="Connect an app" />
@@ -83,13 +76,13 @@ export default function AuthorizePage() {
               : "Try again, or start connecting again from the app."
           }
           severity={expired ? "info" : "critical"}
-          onRetry={expired ? undefined : () => void details.refetch()}
+          onRetry={expired ? undefined : () => void refetch()}
         />
       </div>
     );
   }
 
-  const { client, person, plan, access, lasts, can_connect } = details.data;
+  const { client, person, plan, access, lasts, can_connect } = data;
   const failure =
     decide.error instanceof ApiError ? decide.error.message : null;
   return (

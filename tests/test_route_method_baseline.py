@@ -19,6 +19,9 @@ baseline's paths and its own. Only these differences are allowed:
 * /v1/assets/{asset_id}/thumbnail is new (signed WebP preview). Every method
   must answer exactly as the sibling /v1/assets/{asset_id}/content route does:
   GET is the one route, every other method is the same 405 or catch-all;
+* the MCP authorization server's paths are new (/.well-known/oauth-authorization-server,
+  /oauth/..., /me/api/mcp/...): each answers with its own route or that route's
+  405; in r18 they fell to the catch-all;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -46,6 +49,7 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/api/mcp/")
 THUMBNAIL_PATH, THUMBNAIL_SIBLING = "/v1/assets/sample/thumbnail", "/v1/assets/sample/content"
 SHOWCASE_PAGES = {"/showcase/": "/showcase/ showcase_page", "/showcase": "/showcase showcase_page_slashless"}
 DOCS_ROUTES = {"/showcase/docs": "/showcase/docs docs_root", "/showcase/docs/sample/x": "/showcase/docs/{path:path} docs_page"}
@@ -66,6 +70,8 @@ def _deliberate(key: str) -> str | None:
         return "new"
     if path == THUMBNAIL_PATH:
         return "thumbnail"
+    if path.startswith(MCP_OAUTH_PREFIXES):
+        return "mcp_oauth"
     if path in SHOWCASE_PAGES and _method in {"GET", "HEAD"}:
         return "showcase"
     if path in DOCS_ROUTES:
@@ -135,6 +141,9 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
                 "assets_content", "assets_thumbnail")
             if outcome == same_as_content:
                 continue
+        if kind == "mcp_oauth" and (key not in old or route_matrix.is_catch_all(old[key])) and (
+                not route_matrix.is_catch_all(outcome) or key not in old):
+            continue
         if kind == "docs" and key not in old:
             route = DOCS_ROUTES[key.split(" ", 1)[1]]
             if outcome == route if _method_of(key) in {"GET", "HEAD"} else route_matrix.is_catch_all(outcome):
@@ -156,7 +165,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new"}:
+        if kind in {"ui", "deleted", "new", "mcp_oauth"}:
             continue
         if kind == "html404" and _any_accept(old.get(key)) == _any_accept(new.get(key)):
             continue

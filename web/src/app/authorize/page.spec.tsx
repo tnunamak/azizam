@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { accountApi, type McpConsentRequest } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
-import AuthorizePage, { navigate } from "./page";
+import { navigate } from "@/lib/navigate";
+import AuthorizePage from "./page";
 
 const request: McpConsentRequest = {
   client: {
@@ -85,11 +86,9 @@ describe("Authorize (MCP consent)", () => {
 
   test("Allow sends the decision and follows the gateway's redirect", async () => {
     vi.spyOn(accountApi, "mcpConsentRequest").mockResolvedValue(request);
-    const decide = vi
-      .spyOn(accountApi, "decideMcpConsent")
-      .mockResolvedValue({
-        redirect: "https://client.example/cb?code=c&state=s&iss=x",
-      });
+    const decide = vi.spyOn(accountApi, "decideMcpConsent").mockResolvedValue({
+      redirect: "https://client.example/cb?code=c&state=s&iss=x",
+    });
     const go = vi.spyOn(navigate, "to").mockImplementation(() => {});
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
@@ -103,11 +102,9 @@ describe("Authorize (MCP consent)", () => {
 
   test("Cancel sends a denial back to the app", async () => {
     vi.spyOn(accountApi, "mcpConsentRequest").mockResolvedValue(request);
-    const decide = vi
-      .spyOn(accountApi, "decideMcpConsent")
-      .mockResolvedValue({
-        redirect: "https://client.example/cb?error=access_denied",
-      });
+    const decide = vi.spyOn(accountApi, "decideMcpConsent").mockResolvedValue({
+      redirect: "https://client.example/cb?error=access_denied",
+    });
     const go = vi.spyOn(navigate, "to").mockImplementation(() => {});
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
