@@ -94,6 +94,7 @@ def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
                           signing_key_provider, oidc_provider: Callable,
                           on_person_prompt_purge: Callable | None = None,
+                          on_person_removed: Callable[[str], None] | None = None,
                           instance_provider: Callable | None = None,
                           client_ip_resolver: Callable | None = None,
                           effective_plan_resolver: Callable | None = None) -> APIRouter:
@@ -233,6 +234,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         if isinstance(ctx, JSONResponse):
             return ctx
         accounts.change_person(user_id, ctx.audit_actor_id, remove=True, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        if on_person_removed:
+            on_person_removed(user_id)
         result = on_person_prompt_purge(user_id) if on_person_prompt_purge else None
         return {"ok": True, **(result or {})}
 
