@@ -47,6 +47,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))
+import scratch_owner  # noqa: E402
+
 HOME = Path.home()
 EXIT = {"PASS": 0, "FAIL": 1, "SKIPPED": 3, "INCOMPLETE": 4}
 # tests/suites.toml `task` values this script runs; scripts/ci/policy.py SCHEDULED_TASKS equals this.
@@ -258,8 +261,11 @@ class Night:
     def prepare_tree(self) -> None:
         assert self.sha, f"{self.args.ref} is not a commit"
         scratch = Path(os.environ.get("AZIZAM_CI_SCRATCH", HOME / ".tmp"))
+        # A SIGKILLed run leaves its tree and worktree registration; remove dead owners' trees first.
+        if scratch_owner.sweep(scratch, "azizam-scheduled."):
+            subprocess.run(["git", "-C", str(REPO), "worktree", "prune"], capture_output=True)
         self.tree = Path(tempfile.mkdtemp(prefix="azizam-scheduled.", dir=scratch))
-        (self.tree / ".scheduled-run").touch()
+        scratch_owner.mark(self.tree)
         subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--quiet", "--detach", "--force",
                         str(self.tree / "repo"), self.sha], check=True)
 

@@ -196,8 +196,13 @@ def run(compose):
     # All scratch files remain in this worktree, on disk rather than /tmp.
     scratch = REPO / "venv"
     scratch.mkdir(exist_ok=True)
+    sys.path.insert(0, str(REPO / "scripts"))
+    import scratch_owner  # the repo's own harness helper, not a gateway module
+    scratch_owner.sweep(scratch, "fresh-instance-")  # what a SIGKILLed run left
+    scratch_owner.exit_on_signals()  # TERM must unwind the TemporaryDirectory below
     with ExitStack() as stack:
         root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="fresh-instance-", dir=scratch)))
+        scratch_owner.mark(root)
         source = root / "source"
         source.mkdir()
         snapshot(source)

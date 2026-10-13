@@ -38,7 +38,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${AUTH[@]}" "$BASE/
 size=$(curl -s --max-time 60 "${AUTH[@]}" "$BASE/v1/audio/speech" -H 'Content-Type: application/json' -d '{"model":"tts-fast","input":"Smoke test.","voice":"alloy","response_format":"wav"}' | wc -c)
 check "tts-fast" "$([ "$size" -gt 1000 ] && echo ok || echo "only $size bytes")"
 # Web app at the root (CONNECT_ROOT_MAIL.md section 2.5 step 4, design/connect-root-mail branch).
-home=$(mktemp); trap 'rm -f "$home"' EXIT
+home=$(mktemp); trap 'rm -f "$home"' EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
 code=$(curl -s -o "$home" -w '%{http_code} %{content_type}' --max-time 30 "$BASE/")
 check "home /" "$(case "$code" in "200 text/html"*) echo ok;; *) echo "got $code";; esac)"
 loc=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 30 "$BASE/library")

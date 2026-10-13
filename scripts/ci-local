@@ -127,6 +127,8 @@ receipts=$(cd "$receipts" && pwd)
 rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/signoff-$sha.tsv"
 rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
 mkdir -p "$receipts/steps" "$receipts/raw"
+# Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
+python3 "$repo/scripts/ci/prune_receipts.py" "$receipts_root" --keep "$receipts" || true
 # A run directory holds worktrees and dependency copies (about 7 GB). Exit
 # removes it, except that the latest failed run's directory is kept for
 # debugging, named in $kept. With the lock held, no other run is live, so any

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import secrets
 import statistics
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,12 @@ def main():
     if not all(18000 <= port <= 18999 for port in (args.engine_port, args.gateway_port)):
         parser.error("proof listeners must use ports 18000 through 18999")
     repo = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(repo / "scripts"))
+    import scratch_owner
+    scratch_owner.sweep(repo / "venv", "decisions-proof-")  # what a SIGKILLed proof left
+    scratch_owner.exit_on_signals()
     state = Path(tempfile.mkdtemp(prefix="decisions-proof-", dir=repo / "venv"))
+    scratch_owner.mark(state)
     key = secrets.token_urlsafe(24)
     config = {
         "proxy": {"host": "127.0.0.1", "port": args.gateway_port},
@@ -100,7 +106,7 @@ uvicorn.run(proxy.app, host="127.0.0.1", port=int(sys.argv[1]), lifespan="off", 
         deadline = time.monotonic() + 30
         while True:
             if process.poll() is not None:
-                raise RuntimeError(f"throwaway gateway exited {process.returncode}; inspect {state / 'gateway.log'}")
+                raise RuntimeError(f"throwaway gateway exited {process.returncode}; last log lines: {(state / 'gateway.log').read_text()[-2000:]}")
             try:
                 models, _ = call("/typesafe/v1/models")
                 assert any(model["name"] == "decide" for model in models["models"])
@@ -146,6 +152,7 @@ uvicorn.run(proxy.app, host="127.0.0.1", port=int(sys.argv[1]), lifespan="off", 
             process.kill()
             process.wait()
         log.close()
+        shutil.rmtree(state, ignore_errors=True)  # holds the throwaway App's database
 
 
 if __name__ == "__main__":
