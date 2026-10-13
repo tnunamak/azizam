@@ -223,7 +223,7 @@ describe("models catalog refresh", () => {
       await waitFor(() => {
         expect(screen.queryByRole("dialog")).toBeNull();
         expect(screen.getByRole("status")).toHaveTextContent(
-          "This model is no longer in the catalog.",
+          "This model is no longer listed. Choose another model, or review setup if the list is empty.",
         );
       });
       vi.mocked(productApi.models).mockResolvedValue(snapshot);
@@ -234,14 +234,14 @@ describe("models catalog refresh", () => {
         name: "Copy model name removed-model",
       });
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
+      expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
       fireEvent.click(
         within(restoredCopy.closest("tr")!).getByRole("button", {
           name: "Details",
         }),
       );
       expect(screen.getByRole("dialog")).toBeVisible();
-      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
+      expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
     },
   );
 });
@@ -418,7 +418,7 @@ describe("models catalog contract distinctions", () => {
       within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByText("Example request")).toBeVisible();
+    expect(dialog.getByText("Example for app setup")).toBeVisible();
     expect(dialog.getByRole("link", { name: "Check status" })).toBeVisible();
     expect(dialog.getByText(/curl 'http/)).toBeInTheDocument();
   });
@@ -448,7 +448,7 @@ describe("models catalog contract distinctions", () => {
   it("keeps free remote placement honest and price filters quiet in the capability row", async () => {
     renderModels(catalog([row({ locality: "remote" })]));
     await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.queryByText("Remote", { exact: true })).toBeNull();
+    expect(screen.queryByText("Online service", { exact: true })).toBeNull();
     expect(screen.queryByText(/Local/)).toBeNull();
     const price = screen.getByRole("group", {
       name: "Price filters (choose any)",
@@ -570,9 +570,9 @@ describe("models catalog contract distinctions", () => {
         name: "Model facts",
       }),
     );
-    expect(facts.getByText("Reasoning")).toBeVisible();
-    expect(facts.getByText("Tool use")).toBeVisible();
-    expect(facts.getByText("Vision")).toBeVisible();
+    expect(facts.getByText("Thinks through questions")).toBeVisible();
+    expect(facts.getByText("Uses tools")).toBeVisible();
+    expect(facts.getByText("Understands images")).toBeVisible();
     expect(facts.getAllByRole("listitem")[0]).toHaveTextContent(
       "text, image→totext",
     );
@@ -618,7 +618,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeVisible();
     expect(card.queryByText("Ready")).toBeNull();
     expect(card.queryByText("Recent request succeeded.")).toBeNull();
-    expect(card.queryByText("Allowed by your access")).toBeNull();
+    expect(card.queryByText("Your access allows this model")).toBeNull();
     expect(card.queryByText("Observed:")).toBeNull();
     expect(card.queryByText("Not measured yet")).toBeNull();
     expect(card.queryByRole("button", { name: "Use" })).toBeNull();
@@ -707,7 +707,7 @@ describe("models catalog contract distinctions", () => {
           id: "fast",
           title: "Fast",
           description: "Answers quickly for everyday prompts.",
-          technical_description: "Served via local llama.cpp on :5051.",
+          technical_description: "Served via local engine-a.",
         }),
       ]),
     );
@@ -720,13 +720,13 @@ describe("models catalog contract distinctions", () => {
       card.queryByText("Answers quickly for everyday prompts."),
     ).toBeNull();
     expect(
-      card.queryByText("Served via local llama.cpp on :5051."),
+      card.queryByText("Served via local engine-a."),
     ).not.toBeInTheDocument();
     fireEvent.click(card.getByRole("button", { name: "Details" }));
     const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.queryByText("Technical description")).toBeNull();
+    expect(dialog.queryByText("How this model runs")).toBeNull();
     expect(
-      dialog.queryByText("Served via local llama.cpp on :5051."),
+      dialog.queryByText("Served via local engine-a."),
     ).toBeNull();
   });
 
@@ -736,7 +736,7 @@ describe("models catalog contract distinctions", () => {
         row({
           title: "Default",
           description: "Thinks through questions before answering.",
-          engine_label: "llama.cpp (chat)",
+          engine_label: "engine-a (chat)",
         }),
       ]),
     );
@@ -745,9 +745,9 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("tr")!);
     expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
-    expect(card.queryByText("llama.cpp (chat)")).toBeNull();
+    expect(card.queryByText("engine-a (chat)")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("llama.cpp (chat)")).toBeVisible();
+    expect(screen.getByText("engine-a (chat)")).toBeVisible();
     expect(card.queryByText(/rollback|official/i)).toBeNull();
   });
 
@@ -757,7 +757,7 @@ describe("models catalog contract distinctions", () => {
         row({
           locality: "remote",
           provider: "provider-internal-id",
-          engine_label: "OpenRouter",
+          engine_label: "provider-a",
         }),
       ]),
     );
@@ -767,9 +767,9 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("tr")!);
 
-    expect(card.queryByText("OpenRouter")).toBeNull();
+    expect(card.queryByText("provider-a")).toBeNull();
     fireEvent.click(card.getByRole("button", { name: /Details/ }));
-    expect(screen.getByText("OpenRouter")).toBeVisible();
+    expect(screen.getByText("provider-a")).toBeVisible();
   });
 
   it("groups explicit music and speech capabilities separately with server labels", async () => {
@@ -777,10 +777,10 @@ describe("models catalog contract distinctions", () => {
       catalog([
         row({
           id: "music",
-          display_name: "ACE-Step music",
-          name: "ace-step-xl",
+          display_name: "Model B music",
+          name: "model-b",
           description: "Generate music from a prompt.",
-          engine_label: "Music (ACE-Step XL Turbo)",
+          engine_label: "Music (engine-b)",
           capabilities: [
             {
               capability: "music",
@@ -795,10 +795,10 @@ describe("models catalog contract distinctions", () => {
         }),
         row({
           id: "speech",
-          display_name: "Chatterbox speech",
-          name: "chatterbox",
+          display_name: "Model C speech",
+          name: "model-c",
           description: "Read text aloud.",
-          engine_label: "Chatterbox (speech)",
+          engine_label: "engine-c (speech)",
           capabilities: [
             {
               capability: "speech",
@@ -816,8 +816,8 @@ describe("models catalog contract distinctions", () => {
 
     expect(await screen.findByRole("heading", { name: "Make music" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Read text aloud" })).toBeVisible();
-    expect(screen.queryByText("Music (ACE-Step XL Turbo)")).toBeNull();
-    expect(screen.queryByText("Chatterbox (speech)")).toBeNull();
+    expect(screen.queryByText("Music (engine-b)")).toBeNull();
+    expect(screen.queryByText("engine-c (speech)")).toBeNull();
   });
 
   it("uses the server audio taxonomy instead of the operation intent", async () => {
@@ -891,9 +891,9 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    await screen.findByRole("button", { name: "Copy model name chat" });
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
-    expect(screen.queryByText("Price not provided")).toBeNull();
+    expect(within(copy.closest("tr")!).queryByText("Price not provided")).toBeNull();
   });
 
   it("filters local unknown-cost rows with the no-provider-charge toggle", async () => {
@@ -939,9 +939,9 @@ describe("models catalog contract distinctions", () => {
     const localCopy = await screen.findByRole("button", {
       name: "Copy model name local-unknown",
     });
-    expect(within(localCopy.closest("tr")!).queryByText("Cost not recorded")).toBeNull();
+    expect(within(localCopy.closest("tr")!).queryByText("Price not provided")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cost not recorded" }));
+    fireEvent.click(screen.getByRole("button", { name: "Price not provided" }));
     expect(localCopy).toBeVisible();
     expect(screen.queryByRole("button", { name: "Copy model name remote-unknown" })).toBeNull();
   });
@@ -966,14 +966,14 @@ describe("models catalog contract distinctions", () => {
         name: "Copy model name chat",
       });
       const card = within(copy.closest("tr")!);
-      expect(card.getByText("Cost not recorded")).toBeVisible();
+      expect(card.getByText("Price not provided")).toBeVisible();
       fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
       const alternative = screen.getByRole("button", {
         name: "Copy model name unknown-alternative",
       }).closest("tr")!;
-      expect(within(alternative).getByText("Cost not recorded")).toBeVisible();
+      expect(within(alternative).getByText("Price not provided")).toBeVisible();
       fireEvent.click(card.getByRole("button", { name: "Details" }));
-      expect(within(screen.getByRole("dialog")).getByText("Cost not recorded")).toBeVisible();
+      expect(within(screen.getByRole("dialog")).getByText("Price not provided")).toBeVisible();
       fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", {
         name: "Close",
       }));
@@ -981,7 +981,7 @@ describe("models catalog contract distinctions", () => {
       const tableRow = screen.getByRole("button", {
         name: "Copy model name unknown-exact",
       }).closest("tr")!;
-      expect(within(tableRow).getByText("Cost not recorded")).toBeVisible();
+      expect(within(tableRow).getByText("Price not provided")).toBeVisible();
     },
   );
 
@@ -1012,7 +1012,7 @@ describe("models catalog contract distinctions", () => {
         name: "Price filters (choose any)",
       }));
       const unknownFilter = priceFilters.getByRole("button", {
-        name: "Cost not recorded",
+        name: "Price not provided",
       });
       expect(unknownFilter).toHaveAttribute("aria-pressed", "true");
       fireEvent.click(priceFilters.getByRole("button", { name: "No provider charge" }));
@@ -1190,7 +1190,7 @@ describe("models catalog contract distinctions", () => {
           title: "Music",
           icon_key: "music",
           capability_title: "Music",
-          use_names: ["music", "song", "ace-step"],
+          use_names: ["music", "song", "model-b"],
           capabilities: [
             {
               capability: "music",
@@ -1246,7 +1246,7 @@ describe("models catalog contract distinctions", () => {
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByText("Names you can use")).toBeVisible();
     expect(dialog.getByText("song")).toBeVisible();
-    expect(dialog.getByText("ace-step")).toBeVisible();
+    expect(dialog.getByText("model-b")).toBeVisible();
   });
 
   it("treats only explicit configured false as catalog-only and gives owners an engine action", async () => {
@@ -1280,14 +1280,14 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
     expect(screen.getByText("Unavailable")).toBeVisible();
     expect(screen.queryByText("The service is not configured.")).toBeNull();
-    expect(screen.queryByText("Catalog only")).toBeNull();
+    expect(screen.queryByText("Not set up")).toBeNull();
     fireEvent.click(
       within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
     const action = screen.getByRole("link", { name: "Connect an engine" });
     expect(action).toHaveAttribute("href", "/engines/");
     expect(
-      within(screen.getByRole("dialog")).getByText("Catalog only"),
+      within(screen.getByRole("dialog")).getByText("Not set up"),
     ).toBeVisible();
   });
 
@@ -1387,7 +1387,7 @@ describe("models catalog contract distinctions", () => {
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText("Configuration not reported")).toBeNull();
     expect(screen.queryByText("Observation time not reported")).toBeNull();
-    expect(screen.queryByText("Catalog only")).toBeNull();
+    expect(screen.queryByText("Not set up")).toBeNull();
     fireEvent.click(
       within(copy.closest("tr")!).getByRole("button", { name: "Details" }),
     );
@@ -1433,23 +1433,23 @@ describe("models catalog contract distinctions", () => {
     const table = within(screen.getByRole("table", { name: "All models" }));
 
     expect(table.getByText("Unavailable")).toBeVisible();
-    expect(table.queryByText("From configuration")).toBeNull();
-    expect(table.queryByText("Disabled")).toBeNull();
+    expect(table.queryByText("From saved settings")).toBeNull();
+    expect(table.queryByText("Turned off")).toBeNull();
     expect(table.queryByText("Observed:")).toBeNull();
-    expect(table.queryByRole("link", { name: "Review provider" })).toBeNull();
+    expect(table.queryByRole("link", { name: "Check provider settings" })).toBeNull();
     expect(
       table.getByRole("button", { name: "Copy model name remote-model" }),
     ).toBeVisible();
     fireEvent.click(table.getByRole("button", { name: "Details" }));
     expect(
-      screen.getByRole("link", { name: "Review provider" }),
+      screen.getByRole("link", { name: "Check provider settings" }),
     ).toHaveAttribute("href", "/providers/");
   });
 });
 
 describe("model cost and clipboard recovery", () => {
   it.each([
-    { price: null, label: "Paid · price unavailable" },
+    { price: null, label: "Paid · price not provided" },
     { price: 0, label: "Paid · 0" },
   ])(
     "preserves paid classification for price $price across cards, details, and tables",
@@ -1497,7 +1497,7 @@ describe("model cost and clipboard recovery", () => {
       await screen.findByRole("button", { name: `Copy model name ${id}` }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Copy failed. Select the model name and copy it manually.",
+      "Could not copy the name. Select it below and copy it.",
     );
     expect(
       screen.getByRole("textbox", { name: "Model name for manual copy" }),
@@ -1721,7 +1721,7 @@ describe("member copy boundaries", () => {
     const copy = await screen.findByRole("button", { name: "Copy model name chat" });
     fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
     const sheet = within(screen.getByRole("dialog"));
-    for (const value of ["Technical details", "Resolves to", "chat.completions: private-target", "Technical description", "Private engine configuration."]) {
+    for (const value of ["Technical details", "Model used for each task", "chat.completions: private-target", "How this model runs", "Private engine configuration."]) {
       if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
       else expect(sheet.queryByText(value)).toBeNull();
     }
@@ -1760,7 +1760,7 @@ describe("catalog state regressions", () => {
     expect(screen.queryByRole("button", { name: "All models" })).toBeNull();
     expect(screen.getAllByRole("button", { name: "Copy model name profile" })).toHaveLength(1);
     fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
-    expect(within(screen.getByRole("dialog")).queryByText("Inputs and outputs")).toBeNull();
+    expect(within(screen.getByRole("dialog")).queryByText("What you send and receive")).toBeNull();
   });
 
   it("says when filters hide every model in All models and clears them", async () => {
@@ -1812,9 +1812,9 @@ describe("model availability and removal recovery", () => {
     fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
     vi.mocked(productApi.models).mockResolvedValue(catalog([]));
     await act(async () => { await client.refetchQueries({ queryKey: ["models", "catalog"] }); });
-    expect(await screen.findByText("This model is no longer in the catalog.")).toBeVisible();
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
@@ -1860,10 +1860,10 @@ describe("catalog loading, reload, in-flight status labels and role actions", ()
         </QueryClientProvider>
       </ViewerContext.Provider>,
     );
-    expect(await screen.findByText("Models catalog could not be loaded. Try again.")).toBeVisible();
+    expect(await screen.findByText("We couldn't load the models. Try again.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /try again|retry/i }));
     expect(await screen.findByRole("button", { name: "Copy model name chat" })).toBeVisible();
-    expect(screen.queryByText("Models catalog could not be loaded. Try again.")).toBeNull();
+    expect(screen.queryByText("We couldn't load the models. Try again.")).toBeNull();
   });
 
   it.each([
@@ -1975,5 +1975,79 @@ describe("polished catalog states (moved from the catalog-polish browser spec)",
         name: "No provider charge",
       }),
     ).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("plain Models copy", () => {
+  it.each([
+    [owner, "Connect an engine to run models on your equipment, or connect an online provider. Start with Review setup."],
+    [member, "Ask the owner to connect an engine or online provider and give you access to a model."],
+  ] as const)("explains what to add for an empty $role catalog", async (viewer, guidance) => {
+    renderModels(catalog([]), viewer);
+    expect(await screen.findByText("No models are available yet")).toBeVisible();
+    expect(screen.getByText(guidance)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Review setup" })).toHaveAttribute("href", "/");
+  });
+
+  it("explains empty examples and recent activity without inventing data", async () => {
+    renderModels(catalog([row()]));
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const detail = within(screen.getByRole("dialog"));
+    expect(detail.getByText("No example was provided. Use one of the model names above when connecting your app.")).toBeVisible();
+    expect(detail.getByText("No recent requests were reported. Use this model in an app, then check Usage for results.")).toBeVisible();
+    expect(detail.getByText("The software or online service that runs this model.")).toBeVisible();
+    expect(detail.getByText("On your equipment")).toBeVisible();
+  });
+
+  it.each(["unavailable", "degraded"] as const)("gives a next step for a %s model", async (status) => {
+    renderModels(catalog([row({ availability: { ...row().availability, status, available: false } })]));
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    expect(within(screen.getByRole("dialog")).getByText(/Choose another model, or check Status for help\./)).toBeVisible();
+  });
+
+  it.each([member, owner])("keeps technical values and explains their terms only for $role", async (viewer) => {
+    const description = "Context window: 8192 tokens. Quantization: Q4. Speed: 12 tokens per second.";
+    renderModels(catalog([row({ technical_description: description })]), viewer);
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const detail = within(screen.getByRole("dialog"));
+    if (viewer.admin) {
+      expect(detail.getByText(description)).toBeVisible();
+      expect(detail.getByText(/Context window is how much text a model can handle/)).toHaveTextContent(
+        "Context window is how much text a model can handle in one request, including its reply. Quantization makes a model smaller and uses less memory. It can affect answer quality. Tokens per second measures how fast text is produced. A token is a small piece of text.",
+      );
+    } else {
+      expect(detail.queryByText(description)).toBeNull();
+      expect(detail.queryByText(/Context window is how much text/)).toBeNull();
+    }
+  });
+
+  it("only explains technical terms included in the supplied description", async () => {
+    renderModels(catalog([row({ technical_description: "Quantization: Q8." })]), owner);
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const detail = within(screen.getByRole("dialog"));
+    expect(detail.getByText("Quantization: Q8.")).toBeVisible();
+    expect(detail.getByText("Quantization makes a model smaller and uses less memory. It can affect answer quality.")).toBeVisible();
+    expect(detail.queryByText(/Context window is|Tokens per second measures/)).toBeNull();
+  });
+
+  it("does not add technical terms when no matching data was supplied", async () => {
+    renderModels(catalog([row({ technical_description: "Runs on the school server." })]), owner);
+    const copy = await screen.findByRole("button", { name: "Copy model name chat" });
+    fireEvent.click(within(copy.closest("tr")!).getByRole("button", { name: "Details" }));
+    const detail = within(screen.getByRole("dialog"));
+    expect(detail.getByText("Runs on the school server.")).toBeVisible();
+    expect(detail.queryByText(/Context window is|Quantization makes|Tokens per second measures/)).toBeNull();
+  });
+
+  it("explains how to reveal exact models without implying a recommendation", async () => {
+    renderModels(catalog([], [row({ id: "exact", alias: false, object: "model_catalog.model" })]));
+    expect(await screen.findByText("More models are available below")).toBeVisible();
+    expect(screen.getByText("Choose Show all models to see matching models and copy a name.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show all models" }));
+    expect(screen.getByRole("button", { name: "Copy model name exact" })).toBeVisible();
   });
 });

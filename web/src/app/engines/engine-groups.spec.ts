@@ -140,16 +140,16 @@ describe("engine capability groups", () => {
   it("omits protocol tags from user-facing capability summaries and groups without changing raw data", () => {
     const rows = [
       service("api", {
-        capabilities: ["openai", "chat", "completions", "llm_execution"],
+        capabilities: ["protocol-a", "chat", "completions", "llm_execution"],
       }),
       service("protocol-only", {
-        capabilities: ["typesafe_systemone"],
+        capabilities: ["protocol-b"],
       }),
     ];
 
     expect(humanCapabilities(rows[0].capabilities)).toEqual(["Chat", "Text"]);
     expect(rows[0].capabilities).toEqual([
-      "openai",
+      "protocol-a",
       "chat",
       "completions",
       "llm_execution",

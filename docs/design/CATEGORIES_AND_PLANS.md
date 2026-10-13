@@ -67,10 +67,10 @@ as scenarios. It checks internal consistency, not product behaviour.
 
 An owner wants rules like "kids get general-audience services only", "the team
 plan uses nothing non-commercial", "no route that may train on our data".
-Today a plan restricts capabilities, models, workflows, providers and four
-fixed tags. A tag allow list passes if any tag matches. There is no tag deny.
-15 of 24 policy-request call sites pass no tag data, so the tag check is
-skipped there. The gateway must not learn what "adult" or "non-commercial"
+At the time of this design, a plan restricted capabilities, models, workflows,
+providers and four fixed tags. A tag allow list passes if any tag matches. There is no tag deny.
+The design review found 15 of 24 policy-request call sites passed no tag data,
+so the old tag check was skipped there. The gateway must not learn what "adult" or "non-commercial"
 means (`ENGINE_KNOWLEDGE_BOUNDARY.md`): the owner, or a bundled default the
 owner can edit, supplies that meaning as data.
 

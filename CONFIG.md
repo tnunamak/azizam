@@ -10,8 +10,15 @@ The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0`.
 It sets `auth.setup_allowed_cidrs` (the networks that may claim the first
 owner) to loopback, `192.168.0.0/16`, `10.0.0.0/8` and `100.64.0.0/10`.
 It sets `auth.trusted_proxies` to `192.168.1.4`.
-There is no keyless access: every request needs an App key or a browser
-session, and the gateway refuses to start while `auth.enabled`,
+Protected API requests need an App key unless an owner has added the client
+address to an App under **Apps & keys → app menu → Trusted addresses**.
+Without a key or matching trusted address, the response is `401 key_required`.
+A sent key always wins; a placeholder such as `loopback` returns
+`401 key_invalid`, even from a trusted address. `X-Forwarded-For` counts only
+when the request comes through `auth.trusted_proxies`. Browser sign-in uses
+sessions. Authentication cannot be disabled, and there is no global LAN
+bypass or unauthenticated Ollama discovery setting.
+The gateway refuses to start while `auth.enabled`,
 `auth.lan_bypass_enabled`, `auth.lan_bypass_cidrs`, `auth.path_tokens`,
 `auth.ollama_compat_discovery` or the env vars `AZIZAM_AUTH_ENABLED`,
 `AZIZAM_LAN_BYPASS` and `OLLAMA_COMPAT_DISCOVERY` are set.

@@ -34,7 +34,7 @@ const service = (id: string, role = "primary", enabled = true): Service => ({
   editable: true,
   capabilities: ["chat"],
   role,
-  config: { host: "localhost", port: 18090 },
+  config: { base_url: "http://engine-a.test" },
 });
 const registry: ServiceRegistry = {
   schema_version: 1,
@@ -443,7 +443,7 @@ it("shows each detected model once with its engine name in technical details", a
   });
   render(
     <QueryClientProvider client={client}>
-      <EngineChecks service={service("primary")} endpoint="http://localhost:18090"
+      <EngineChecks service={service("primary")} endpoint="http://engine-a.test"
         onSaved={vi.fn()} onEdit={vi.fn()} />
     </QueryClientProvider>,
   );
@@ -538,7 +538,7 @@ it("shows an observed-up engine with a bad health tone as unavailable, never rea
         editable: true,
         capabilities: ["chat"],
         role: "primary",
-        config: { protocol: "openai-compatible" },
+        config: { protocol: "protocol-a" },
       },
     },
   });

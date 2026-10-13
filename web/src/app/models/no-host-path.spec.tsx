@@ -3,8 +3,10 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { ViewerContext } from "@/components/shell/session";
-import { GGUF, expectNoHostPath } from "../../../tests/helpers/host-path";
+import { expectNoHostPath } from "../../../tests/helpers/host-path";
 import ModelsClient from "./models-client";
+
+const MODEL_PATH = "/opt/models/model-b.gguf";
 
 afterEach(() => {
   cleanup();
@@ -22,17 +24,17 @@ test("Models shows no host path when a model is registered by file path", async 
         aliases: [],
         models: [
           {
-            id: GGUF,
+            id: MODEL_PATH,
             object: "model_catalog.model",
-            display_name: GGUF,
-            name: GGUF,
+            display_name: MODEL_PATH,
+            name: MODEL_PATH,
             alias: false,
             operations: ["chat.completions"],
             resolves_to: {},
             description: null,
             capabilities: [],
             provider: null,
-            engine_label: "llama.cpp",
+            engine_label: "engine-a",
             locality: "local",
             cost: { kind: "free", price: null },
             timing: {},
@@ -40,7 +42,7 @@ test("Models shows no host path when a model is registered by file path", async 
             io: { input_modalities: ["text"], output_modalities: ["text"] },
             examples: [],
             recent_receipts: [],
-            use: { model: GGUF },
+            use: { model: MODEL_PATH },
             type: "language",
           },
         ],
@@ -59,6 +61,7 @@ test("Models shows no host path when a model is registered by file path", async 
   );
   await userEvent.setup().click(await screen.findByRole("button", { name: "Show all models" }));
   // The model is on screen by its file name, so the check below is not vacuous.
-  expect((await screen.findAllByText(/Qwen3\.8/)).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText(/model-b\.gguf/)).length).toBeGreaterThan(0);
+  expect(document.body.textContent).not.toContain("/opt/models/");
   expectNoHostPath(expect, "models");
 });

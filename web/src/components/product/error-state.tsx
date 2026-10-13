@@ -78,7 +78,7 @@ export function ErrorState({
       )}
       {copy.details && (
         <details className="text-muted-foreground">
-          <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">
+          <summary className="flex min-h-8 w-fit items-center max-sm:min-h-11">
             Technical details
           </summary>
           <p className="font-mono break-words">{copy.details}</p>

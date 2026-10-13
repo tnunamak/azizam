@@ -190,6 +190,12 @@ describe("Library delete failure boundaries", () => {
       expect(new Headers(last.init.headers).get("x-azizam-user-action")).toBe("1");
       expect(new Headers(last.init.headers).get("x-azizam-csrf")).toBe("fixture-csrf-2");
       expect(new URLSearchParams(window.location.search).has("asset")).toBe(false);
+      const status = screen.getByRole("status");
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toHaveAttribute("aria-atomic", "true");
+      expect(status).toHaveTextContent("Deleted from your library.");
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Library" })).toHaveFocus());
+      expect(screen.queryByRole("button", { name: /Undo/i })).toBeNull();
       view.queryClient.clear();
     },
   );

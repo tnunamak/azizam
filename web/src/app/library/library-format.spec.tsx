@@ -7,10 +7,28 @@ import {
   prettifyModelId,
   tileDate,
   captionTitle,
+  thumbnailSize,
 } from "./library-format";
 
 // Thursday 8 October 2026, mid-afternoon local time.
 const now = new Date(2026, 9, 8, 15, 0);
+
+describe("thumbnailSize", () => {
+  test.each([
+    [1536, 1024, 480, 320],
+    [1024, 1536, 320, 480],
+    [480, 480, 480, 480],
+    [128, 64, 128, 64],
+    [8192, 1, 480, 1],
+    [null, null, 480, 360],
+    [0, 1024, 480, 360],
+    [-1, 1024, 480, 360],
+    [Infinity, 1024, 480, 360],
+    [1536, NaN, 480, 360],
+  ])("sizes %s × %s within the thumbnail bounds", (width, height, w, h) => {
+    expect(thumbnailSize(width, height)).toEqual({ width: w, height: h });
+  });
+});
 
 describe("tileDate", () => {
   test.each([

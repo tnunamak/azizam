@@ -1,7 +1,7 @@
 # Extension Targets
 
 This document tracks where gateway-specific request controls belong. The rule
-is conservative: standard API fields stay top-level, policy stays in profiles,
+is conservative: standard API fields stay top-level, policy stays in access plans,
 and backend/workflow knobs only become request extensions when they are
 validated against an explicit contract.
 
@@ -12,12 +12,12 @@ validated against an explicit contract.
 | `extensions.com.azizam.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for image, audio, and video workflow routes. |
 | `extensions.com.azizam.prompts` | `mode: "forget"` disables prompt retention for one request. | Implemented for media generation, speech, and Responses routes. |
 | `extensions.com.azizam.chat` | Local chat/runtime behavior that is not an OpenAI field. | Proposed. |
-| `extensions.com.azizam.routing` | Per-request routing hints that profiles may allow or deny. | Proposed. |
+| `extensions.com.azizam.routing` | Per-request routing hints that access plans may allow or deny. | Proposed. |
 | `extensions.com.azizam.telemetry` | Receipt/debug verbosity preferences without prompt/body capture. | Proposed. |
 
-Do not use extensions for credentials, profile permissions, backend URLs,
+Do not use extensions for credentials, access plan permissions, backend URLs,
 cloud fallback policy, native passthrough permission, cache TTLs, or status
-visibility. Those remain configuration/profile concerns.
+visibility. Those remain configuration/access plan concerns.
 
 The live discovery contract is:
 

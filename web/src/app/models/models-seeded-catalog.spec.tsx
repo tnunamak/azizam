@@ -118,7 +118,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -276,7 +276,7 @@ const seededCatalog = {
           available: true,
         },
       ],
-      provider: "OpenRouter",
+      provider: "provider-a",
       locality: "remote",
       cost: { kind: "paid", price: "$0.04 per image" },
       timing: { typical_seconds: null, source: null },
@@ -424,8 +424,8 @@ describe("seeded catalog", () => {
     }
     const chat = screen.getByRole("rowgroup", { name: "Chat models" });
     const facts = within(chat).getByRole("list", { name: "Model facts" });
-    expect(within(facts).getByText("Reasoning")).toBeVisible();
-    expect(within(facts).getByText("Vision")).toBeVisible();
+    expect(within(facts).getByText("Thinks through questions")).toBeVisible();
+    expect(within(facts).getByText("Understands images")).toBeVisible();
     expect(within(facts).getAllByRole("listitem")[0]).toHaveTextContent(
       "text, image→totext",
     );
@@ -492,7 +492,7 @@ describe("empty and error catalog", () => {
       </ViewerContext.Provider>,
     );
     expect(
-      await screen.findByText("Models catalog could not be loaded. Try again."),
+      await screen.findByText("We couldn't load the models. Try again."),
     ).toBeVisible();
   });
 });
@@ -517,7 +517,7 @@ describe("filters, snippets, table and detail sheet", () => {
     const imageDetails = within(
       (fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]), screen.getByRole("dialog")),
     );
-    expect(imageDetails.getByText("Example request")).toBeVisible();
+    expect(imageDetails.getByText("Example for app setup")).toBeVisible();
     expect(imageDetails.getByText(/\/v1\/images\/generations/)).toBeVisible();
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     fireEvent.click(screen.getByRole("button", { name: /All models/ }));
@@ -549,12 +549,12 @@ describe("truthful metadata", () => {
     const [first, second] = cards.map((card) => within(card));
     const aliasGroups = within(screen.getByLabelText("Available model names", { selector: "div" }));
     expect(aliasGroups.queryByText("Local · no provider charge", { exact: true })).toBeNull();
-    expect(first.queryByText("Local", { exact: true })).toBeNull();
+    expect(first.queryByText("On your equipment", { exact: true })).toBeNull();
     expect(first.queryByText("Household chat")).toBeNull();
     expect(first.queryByText("~151 ms · Measured")).toBeNull();
     expect(first.queryByText("Unknown", { exact: true })).toBeNull();
     expect(first.queryByText("Live availability is not measured yet")).toBeNull();
-    expect(second.queryByText("Remote", { exact: true })).toBeNull();
+    expect(second.queryByText("Online service", { exact: true })).toBeNull();
     expect(second.queryByText("Example image provider")).toBeNull();
     expect(second.queryByText("~8.0 s · Typical")).toBeNull();
     expect(within(table).queryByText("Not measured yet", { exact: true })).toBeNull();

@@ -24,7 +24,7 @@ Current baseline:
 The registry now projects service, workflow, capability, and route facts, and
 the capability router selects embeddings, TTS, and STT from declared service
 capabilities. The remaining gap is cross-surface truth: model discovery,
-workflow discovery, service health, queue facts, and profile policy do not yet
+workflow discovery, service health, queue facts, and access plan policy do not yet
 have one live inventory with an end-to-end agreement proof.
 
 Done means:
@@ -43,7 +43,7 @@ Primary references: `docs/API_TARGETS.md`, `docs/CORE_CONTRACTS.md`,
 ### 2. Backend Adapter Contract Extraction
 
 `proxy.py` still contains too much backend-specific request execution. The
-contract is known: protocol request -> canonical intent -> App/Profile policy
+contract is known: protocol request -> canonical intent -> App/access-plan policy
 -> capability match -> resource claim -> backend binding -> receipt/events.
 The next extraction should be narrow and behavior-preserving.
 
@@ -71,7 +71,7 @@ Done means:
 
 - The admission decision covers each constrained route that the gateway
   advertises, with its reason exposed consistently to the caller and admin.
-- Profile limits, service availability, queue/concurrency caps, and resource
+- Access plan limits, service availability, queue/concurrency caps, and resource
   reservations feed that decision without route-local policy copies.
 - Denied routes return the documented 403/409/429/503 shape and `Retry-After`
   where a retry is meaningful.

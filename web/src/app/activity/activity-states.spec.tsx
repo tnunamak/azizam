@@ -307,6 +307,7 @@ it("opens a request with its outcome in the body, filters by person and clears t
   );
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveFocus();
   expect(
     within(screen.getByRole("combobox", { name: "Person" })).getByText(
       "Everyone",
@@ -369,3 +370,93 @@ it.each([
     ).toBeVisible();
   },
 );
+
+it("preserves keyboard focus through change details and final pagination", async () => {
+  const user = userEvent.setup();
+  mountActivity({
+    tab: "Changes",
+    audit: async (params) => ({
+      records: params?.before ? [] : [entry({
+        id: "a11y-change", action: "app.create", actor_id: "sam",
+        actor_kind: "user", actor_label: "Sam", target_kind: "app",
+        target_id: "reader", metadata: { name: "Reader" }, created_at: 1,
+      })],
+      next_cursor: params?.before ? null : "older",
+    }),
+  });
+  const row = await screen.findByRole("button", { name: "Details: Created an app by Sam" });
+  expect(row).toHaveAccessibleDescription(/Created an app.*Sam.*Reader/);
+  row.focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(row).toHaveFocus());
+  const more = screen.getByRole("button", { name: "Load more" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  const end = await screen.findByText("End of changes");
+  await waitFor(() => expect(end).toHaveFocus());
+  expect(screen.getByRole("status", { name: "Changes updates" }))
+    .toHaveTextContent("1 change loaded. End of changes.");
+});
+
+it("empty requests have a purpose and a destination that matches the action", async () => {
+  mountActivity({});
+  const region = await screen.findByRole("region", { name: "No request receipts yet" });
+  expect(region).toHaveAccessibleDescription("Requests from apps and devices on your trusted network appear here.");
+  expect(within(region).getAllByRole("link")).toHaveLength(1);
+  expect(within(region).getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
+  expect(within(region).queryByRole("button")).toBeNull();
+});
+
+it("empty request filters have one reset action that restores the unfiltered state", async () => {
+  mountActivity({ requests: { records: [], next_cursor: null, people: [{ id: "mira", label: "Mira" }] } });
+  await screen.findByRole("region", { name: "No request receipts yet" });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Person" }));
+  await user.click(await screen.findByRole("option", { name: "Mira" }));
+  const region = await screen.findByRole("region", { name: "No matching requests" });
+  expect(region).toHaveAccessibleDescription("Receipts show request outcomes from your apps and devices; none match these filters.");
+  expect(within(region).getAllByRole("button")).toHaveLength(1);
+  expect(within(region).queryByRole("link")).toBeNull();
+  await user.click(within(region).getByRole("button", { name: "Clear filters" }));
+  expect(await screen.findByRole("region", { name: "No request receipts yet" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Person" })).toHaveTextContent("Everyone");
+});
+
+it("empty changes explain their purpose without offering an unverified creation permission", async () => {
+  mountActivity({ tab: "Changes" });
+  const region = await screen.findByRole("region", { name: "No changes yet" });
+  expect(region).toHaveAccessibleDescription("Changes to apps, keys and access plans appear here.");
+  expect(within(region).getAllByRole("link")).toHaveLength(1);
+  expect(within(region).getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
+  expect(within(region).queryByRole("link", { name: "Create an app" })).toBeNull();
+});
+
+it("empty changes reveal existing automated records instead of claiming there are no changes", async () => {
+  const row = entry({
+    id: "automated-empty-state",
+    action: "app.create",
+    actor_kind: "service_account",
+    actor_id: "service",
+    actor_label: "Automation",
+    target_kind: "app",
+    target_id: "app",
+    metadata: {},
+    created_at: 1_760_000_000,
+  });
+  mountActivity({
+    tab: "Changes",
+    audit: async (params) => ({
+      records: params?.show_automated ? [row] : [],
+      next_cursor: null,
+      automated_count: 1,
+    }),
+  });
+  const region = await screen.findByRole("region", { name: "No visible changes" });
+  expect(region).toHaveAccessibleDescription("Changes to apps, keys and access plans appear here; automated changes are currently hidden.");
+  expect(within(region).getAllByRole("button")).toHaveLength(1);
+  await userEvent.setup().click(within(region).getByRole("button", { name: "Show automated changes" }));
+  expect(await screen.findByRole("button", { name: /Created an app/ })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "No visible changes" })).toBeNull();
+});

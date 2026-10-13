@@ -9,14 +9,15 @@ letting one operator's current machine become the core product.
 
 ## Implemented So Far
 
-The status of each build-order item below reflects what currently lives on
-`main`. Anything not listed here is still aspirational.
+This list records earlier build milestones. Access plans v4 replace the old
+Profile setup model. Legacy implementation paths are historical; any v4
+replacement not established here is marked UNVERIFIED.
 
-- [x] Pure app-profile policy module (`gateway/policy.py`, `tests/test_policy.py`)
-- [x] Pure app-profile loader for existing key-entry config (`gateway/profiles.py`, `tests/test_profiles.py`)
-- [x] Pure runtime-auth/profile bridge (`gateway/runtime_auth.py`,
+- [x] Pure App/access-plan policy module (`gateway/policy.py`, `tests/test_policy.py`)
+- [x] Historical Profile loader for legacy key-entry config (`gateway/profiles.py`, `tests/test_profiles.py`). Access plans v4 replace this setup model; the current loader path is UNVERIFIED here.
+- [x] Pure runtime-auth/access plan bridge (`gateway/runtime_auth.py`,
       `tests/test_runtime_auth.py`) — `RuntimeIdentity`, identity registry,
-      policy bridge, profile→audience helper
+      policy bridge, access plan→audience helper
 - [x] Pure workflow registry with audience-aware summaries (`gateway/discovery.py`, `tests/test_workflow_discovery_registry.py`)
 - [x] Workflow manifest parsing/validation/binding with receipt-ready binding provenance (`gateway/manifests.py`)
 - [x] Typed request-extension validation contract (`gateway/extensions.py`, `tests/test_extensions.py`)
@@ -27,7 +28,7 @@ The status of each build-order item below reflects what currently lives on
 - [x] Route receipt data model (`gateway/receipts.py`)
 - [x] Durable SQLite receipt store (`gateway/receipt_store.py`, `tests/test_receipt_store.py`)
 - [x] Gateway media-job model and durable store (`gateway/media_jobs.py`)
-- [x] Image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` with profile-aware policy decisions, safe field-name outcomes, manifest identity, durable persistence, and body-free firehose events
+- [x] Image-route receipts wired into `/v1/images/generations` and `/v1/images/edits` with access-plan-aware policy decisions, safe field-name outcomes, manifest identity, durable persistence, and body-free firehose events
 - [x] Live `/gateway/v1/*` mount in `proxy.py` for workflows, capabilities, receipts, and media jobs
 - [x] Durable `image.generate` media-job execution through `POST /gateway/v1/media/jobs` with retry, idempotency, persisted job state, and completed image content retrieval
 - [x] Live Anthropic Messages and Ollama chat/generate/tags/show/ps/version frontends over the existing chat route, including Anthropic SSE and Ollama NDJSON streaming
@@ -44,7 +45,7 @@ Active known work now lives in [`docs/KNOWN_WORK.md`](KNOWN_WORK.md). Treat
 this file as build history and architecture sequencing, not the live backlog.
 The current highest-leverage open items are:
 
-- Reconcile capability, model, workflow, health, queue, and profile facts
+- Reconcile capability, model, workflow, health, queue, and access plan facts
   across every discovery surface.
 - Backend adapter contract extracted from `proxy.py`.
 - Close long-tail app/client verification from the compatibility matrix.
@@ -73,7 +74,7 @@ The gateway has three surfaces:
    and controlled native passthrough.
 
 3. **Local extension surface**
-   Workflow manifests, backend adapters, app profiles, and policy files that
+   Workflow manifests, backend adapters, app access plans, and policy files that
    can be hacked locally and promoted only when they prove general.
 
 ## Core Archetypes
@@ -153,7 +154,7 @@ Minimum receipt fields:
 - path
 - intent
 - auth identity name
-- app profile
+- app access plan
 - policy decision and policy source
 - requested model/workflow
 - resolved model/workflow
@@ -171,7 +172,7 @@ Initial delivery:
 - [x] unit tests
 - [x] internal/admin/client redaction behavior (`RouteReceipt.to_dict(...)` and
       `gateway/receipt_store.py` audience filtering)
-- [x] attach profile-aware receipts internally to image generation/edit paths
+- [x] attach access-plan-aware receipts internally to image generation/edit paths
       with safe field-name accepted/rejected/ignored outcomes
 - [x] persist receipts durably and expose audience-filtered views under
       `/gateway/v1/receipts`
@@ -217,7 +218,7 @@ Only after the pure modules stay green, thread them into the existing proxy at
 the narrowest points:
 
 - [x] `images_generations` and `images_edits` for handler-level image receipts
-      after auth succeeds (profile-aware, post-auth, safe field-name capture)
+      after auth succeeds (access-plan-aware, post-auth, safe field-name capture)
 - [x] `_build_image_response_payload` for final response metadata
       (implemented in `proxy.py`; returns `created`, `data[]`, durable
       `asset_id`/`asset_url`, `media_type`, and requested `b64_json`/`url`)
@@ -234,7 +235,7 @@ the narrowest points:
       `gateway/local_capabilities.py` `build_local_capabilities`, wired into
       the gateway capability provider)
 
-Do not spread policy checks through handlers. Resolve profile/policy once, pass
+Do not spread policy checks through handlers. Resolve access plan/policy once, pass
 the decision into receipt and routing helpers, and keep client/admin/internal
 visibility decisions explicit.
 
@@ -341,7 +342,7 @@ Local extension -> shared feature only when at least two are true:
 - full ElevenLabs-compatible protocol
 - scheduler preemption
 - UI/dashboard redesign
-- broad app-profile installers
+- broad App/access-plan installers
 - Trellis mesh route v1: planned but not implemented; it is not an MVP blocker. Its
   fixed-route, exclusive-pool, and proof-gate constraints are canonical in
   `docs/design/TRELLIS_MESH_ROUTE_DESIGN.md`.

@@ -189,16 +189,16 @@ function PersonJobNotices({ personId }: { personId: string }) {
         failures.current,
       ),
   });
-  function dismiss(id: string, restoreFocus = false) {
+  function dismiss(ids: string[], restoreFocus = false) {
     const region = noticesRef.current;
     const sections = region ? Array.from(region.children) : [];
-    const index = sections.findIndex((section) => section.getAttribute("data-job-id") === id);
+    const index = sections.findIndex((section) => ids.includes(section.getAttribute("data-job-id") ?? ""));
     if (restoreFocus && index >= 0 && sections[index].contains(document.activeElement)) {
       const successor = sections[index + 1] ?? sections[index - 1];
       (successor?.querySelector<HTMLElement>("a, button") ?? region)?.focus();
     }
-    dismissed.current.add(id);
-    setNotices((current) => current.filter((job) => job.job_id !== id));
+    ids.forEach((id) => dismissed.current.add(id));
+    setNotices((current) => current.filter((job) => !ids.includes(job.job_id)));
     try {
       sessionStorage.setItem(
         storageKey,
@@ -208,40 +208,103 @@ function PersonJobNotices({ personId }: { personId: string }) {
       /* Optional storage. */
     }
   }
+  // Keep overflow groups queued: their eight-second lifetime starts only when
+  // they become visible. Replayed polls never add a second copy of a job.
+  const groups = new Map<string, LongJob[]>();
+  for (const job of notices) {
+    const key = `${jobLabel(job)}:${job.status}`;
+    const group = groups.get(key) ?? [];
+    group.push(job);
+    groups.set(key, group);
+  }
   return (
     <div
       ref={noticesRef}
       tabIndex={-1}
       role="region"
       aria-live="polite"
-      aria-relevant="additions"
+      aria-relevant="additions text"
       aria-label="Job updates"
+      className="pointer-events-none fixed inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-50 flex max-h-[calc(100dvh-7rem)] flex-col gap-3 overflow-y-auto sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-96"
     >
-      {notices.map((job) => (
+      {[...groups].slice(0, 3).map(([key, jobs]) => (
         <JobNotice
-          key={job.job_id}
-          job={job}
-          onDismiss={(restoreFocus) => dismiss(job.job_id, restoreFocus)}
+          key={key}
+          job={jobs[jobs.length - 1]}
+          jobs={jobs}
+          onOpen={(id) => dismiss([id])}
+          onDismiss={(restoreFocus) => dismiss(jobs.map((job) => job.job_id), restoreFocus)}
         />
       ))}
     </div>
   );
 }
 
+const TOAST_DURATION_MS = 8_000;
+
 export function JobNotice({
   job,
+  jobs = [job],
+  onOpen,
   onDismiss,
 }: {
   job: LongJob;
+  jobs?: LongJob[];
+  onOpen?: (jobId: string) => void;
   onDismiss: (restoreFocus?: boolean) => void;
 }) {
   const done = job.status === "succeeded";
   const Icon = done ? Check : CircleAlert;
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const remaining = useRef(TOAST_DURATION_MS);
+  const identity = JSON.stringify(jobs.map((item) => item.job_id));
+  const previousIdentity = useRef(identity);
+  const dismissRef = useRef(onDismiss);
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
+  useEffect(() => {
+    // A new completion in a group gets a fresh reading interval. Hover and
+    // keyboard focus independently pause the remaining time, like Radix Toast.
+    if (previousIdentity.current !== identity) {
+      remaining.current = TOAST_DURATION_MS;
+      previousIdentity.current = identity;
+    }
+    if (hovered || focused) return;
+    const started = Date.now();
+    const timer = window.setTimeout(() => dismissRef.current(), remaining.current);
+    return () => {
+      window.clearTimeout(timer);
+      remaining.current = Math.max(0, remaining.current - (Date.now() - started));
+    };
+  }, [identity, hovered, focused]);
+  const label = jobLabel(job);
+  const plural = ({
+    Picture: "pictures",
+    Video: "videos",
+    Audio: "audio creations",
+    Music: "music creations",
+    Sound: "sounds",
+    Creation: "creations",
+  } as Record<string, string>)[label];
+  const message = jobs.length === 1
+    ? `${label} ${done ? "is ready" : "couldn’t finish"}`
+    : `${jobs.length} ${plural} ${done ? "are ready" : "couldn’t finish"}`;
+  const open = (id: string) => onOpen ? onOpen(id) : onDismiss();
   return (
     <section
-      className="border-border bg-card rounded-panel mb-3 flex flex-wrap items-center gap-3 border p-3"
+      className="pointer-events-auto border-border bg-card rounded-panel flex flex-wrap items-center gap-3 border p-3 shadow-lg"
       data-job-id={job.job_id}
-      aria-label={`${jobLabel(job)} ${done ? "ready" : "failed"}`}
+      aria-label={jobs.length === 1 ? `${label} ${done ? "ready" : "failed"}` : message}
+      aria-atomic="true"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          setFocused(false);
+      }}
     >
       <Icon
         aria-hidden="true"
@@ -249,24 +312,42 @@ export function JobNotice({
           done ? "text-success size-5 shrink-0" : "text-danger size-5 shrink-0"
         }
       />
-      <p className="min-w-0 flex-1">
-        {jobLabel(job)} {done ? "is ready" : "couldn’t finish"}
-      </p>
+      <p className="min-w-0 flex-1 break-words">{message}</p>
       <Link prefetch={false}
         className="text-link inline-flex min-h-11 items-center rounded-md px-3 underline underline-offset-4"
         href={jobLink(job)}
-        onClick={() => onDismiss()}
+        onClick={() => open(job.job_id)}
       >
         {done ? "Open result" : "See details"}
       </Link>
       <button
         type="button"
         className="hover:bg-muted inline-flex min-h-11 min-w-11 items-center justify-center rounded-md"
-        aria-label={`Dismiss ${jobLabel(job).toLowerCase()} update`}
+        aria-label={`Dismiss ${label.toLowerCase()} update`}
         onClick={() => onDismiss(true)}
       >
         <X aria-hidden="true" className="size-5" />
       </button>
+      {jobs.length > 1 && (
+        <details className="w-full">
+          <summary className="text-link min-h-11 cursor-pointer rounded-md px-3 py-3 underline underline-offset-4">
+            View all {jobs.length} {done ? "results" : "jobs"}
+          </summary>
+          <ul className="max-h-40 overflow-y-auto">
+            {jobs.map((item, index) => (
+              <li key={item.job_id}>
+                <Link prefetch={false}
+                  className="text-link flex min-h-11 items-center rounded-md px-3 underline underline-offset-4"
+                  href={jobLink(item)}
+                  onClick={() => open(item.job_id)}
+                >
+                  {done ? "Open result" : "See details"} {index + 1}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }

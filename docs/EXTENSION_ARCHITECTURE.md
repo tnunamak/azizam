@@ -34,6 +34,10 @@ The pattern is a blend of:
 
 ## Core Object Kinds
 
+The following extension schema sketch predates access plans v4.
+UNVERIFIED: the replacement for `profile_template` and the `profiles/` package
+path. They are historical identifiers, not current plan configuration guidance.
+
 Extension packages can provide these data objects:
 
 - `extension_package`
@@ -165,14 +169,14 @@ The admin UI is the normal extension surface:
 1. **Import** package, directory, URL, or bundled extension.
 2. **Review** publisher, version, signature/trust, object counts, permissions,
    adapters/translators, staged code objects, required secrets, and affected
-   Profiles.
+   Access plans.
 3. **Validate** schemas, unique IDs, adapter presence, route collisions, binding
    targets, dependency declarations, and policy impact.
 4. **Configure** service URLs, secret refs, provenance, and which records to
    enable.
 5. **Test** health checks, inventory, dry-run binding, and optional smoke jobs.
 6. **Enable** DB registry records. New capabilities do not become available to
-   Apps until Profiles allow them.
+   Apps until Access plans allow them.
 7. **Operate** disable, update, rollback, repair dependencies, edit
    non-managed service rows, or uninstall when no active references remain.
 

@@ -17538,9 +17538,8 @@ async def _deny_realtime(websocket: WebSocket, response: Response) -> None:
 
 async def _fail_open_realtime(websocket: WebSocket, message: str, code: str) -> None:
     """End an accepted session the way OpenAI Realtime does: an ``error`` event, then close 1011."""
-    event = {"type": "error", "error": {"type": "server_error", "code": code, "message": message}}
     try:
-        await websocket.send_text(json.dumps(event))
+        await websocket.send_text(json.dumps(realtime_proxy.error_event(code, message)))
         await websocket.close(code=1011)
     except (RuntimeError, WebSocketDisconnect):
         pass

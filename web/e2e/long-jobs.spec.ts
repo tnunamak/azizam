@@ -88,6 +88,9 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   await expect(notice).toBeVisible({ timeout: 75_000 });
   expect(polls.length).toBeGreaterThanOrEqual(2);
   expect(polls[1].since).toBe(String(polls[0].polledAt));
+  // A notice leaves after eight seconds unless the keyboard focus is inside it.
+  // Focus holds it while the checks below change themes, sizes and text scale.
+  await notice.getByRole("link", { name: "Open result" }).focus();
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     for (const theme of ["light", "dark"]) {

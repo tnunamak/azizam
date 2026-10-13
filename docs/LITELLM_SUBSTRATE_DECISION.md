@@ -30,7 +30,7 @@ OpenAI-shaped LLM execution and model-group discovery for:
 The Azizam owns the product/control-plane responsibilities around that
 substrate:
 
-- runtime App keys, OIDC users, Profiles, and policy gates
+- runtime App keys, OIDC users, Access plans, and policy gates
 - local service availability, resource admission, and model readiness
 - media workflows, durable jobs, generated assets, and provider-native passthrough
 - Anthropic/Ollama/Responses protocol frontends where the gateway has product
@@ -80,8 +80,8 @@ LiteLLM has already replaced the gateway's control plane.
 
 There are two distinct kinds of key, owned by two distinct planes:
 
-- **Gateway App keys** (`opk_`/`oak_`) are the product control plane. They live
-  in `admin.db`, carry the App/Profile/policy identity, and authenticate product
+- **Gateway keys** (`opk_` App keys and `oak_` admin keys) are the product control plane. They live
+  in `admin.db`, carry the App/access-plan/policy identity, and authenticate product
   requests that enter through the gateway. The gateway owns their lifecycle
   (mint, list, revoke) under `/admin/api/apps/*` and `/admin/api`.
 - **LiteLLM virtual keys** (`sk-…`) are the *execution* plane. LiteLLM mints and
@@ -91,7 +91,7 @@ There are two distinct kinds of key, owned by two distinct planes:
 
 A virtual key authorizes eligible local LLM-shaped protocol frontends: the
 three OpenAI execution routes above, the gateway's Anthropic Messages frontend,
-and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Profile
+and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Access plan
 policy for those calls. It does not authorize gateway-owned media, jobs, admin,
 or native passthrough routes; those remain behind gateway App-key auth and their
 own gateway policy.
@@ -233,7 +233,7 @@ Context for whoever revisits it:
 
 - `litellm[proxy]` is already a gateway dependency (importable in the venv), so
   the choice is about process topology, not dependency footprint.
-- The gateway owns its product control plane (App keys, Profiles, policy, admin
+- The gateway owns its product control plane (App keys, Access plans, policy, admin
   UI, receipts) **in the current state** and uses LiteLLM for raw execution,
   virtual-key administration, and `v1/models`; the target state keeps product
   access policy in the gateway while LiteLLM executes eligible LLM calls.
