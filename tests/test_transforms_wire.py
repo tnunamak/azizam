@@ -432,3 +432,28 @@ def test_crlf_and_lf_line_endings_and_blank_lines_survive_a_rewrite():
 
 def test_text_before_a_close_tag_with_no_opener_is_reasoning_in_the_stream():
     assert _stream(_frame("A</think>B")) == ("B", "A")
+
+
+# --- a close tag before any opener ---------------------------------------------------------------
+
+def _split(text, *, final=True, state=None):
+    return StreamingThinkSplitTransform()._split_text(state if state is not None else ["", False], text, final=final)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("r</think><think>x</think>v", ("v", "rx")),          # a stray close, then a whole block
+    ("r</think>v<think>t</think>w", ("vw", "rt")),
+    ("</think><think>x</think>v", ("v", "x")),
+    ("r</think>x", ("x", "r")),
+    ("</think>x", ("x", "")),
+    ("a<think>b</think>c</think>d", ("ad", "bc")),        # a stray close after a whole block: "c" was reasoning
+    ("<think>a</think><think>b</think>", ("", "ab")),
+])
+def test_a_close_tag_before_any_opener_never_leaks_into_the_visible_text(text, expected):
+    assert _split(text) == expected
+
+
+def test_a_stray_close_cut_between_frames_is_still_routed():
+    # "r" went out before the cut tag could be known to be a close tag; the held tag text is not leaked.
+    assert _stream(_frame("r</thi"), _frame("nk><think>x</think>v")) == ("rv", "x")
+    assert _stream(_frame("</thi"), _frame("nk><think>x</think>v")) == ("v", "x")

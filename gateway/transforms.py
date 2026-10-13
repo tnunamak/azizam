@@ -882,10 +882,10 @@ class StreamingThinkSplitTransform:
             lowered = text.translate(_ASCII_LOWER)
             tag = _THINK_CLOSE_TAG if in_think else _THINK_OPEN_TAG
             idx = lowered.find(tag)
-            if idx < 0 and not in_think:
-                # A close tag with no opener: the text before it was reasoning.
+            if not in_think:
+                # A close tag before any opener: the text before it was reasoning.
                 idx_close = lowered.find(_THINK_CLOSE_TAG)
-                if idx_close >= 0 and (lowered.find(_THINK_OPEN_TAG) < 0 or idx_close < lowered.find(_THINK_OPEN_TAG)):
+                if idx_close >= 0 and (idx < 0 or idx_close < idx):
                     reasoning.append(text[:idx_close])
                     text = text[idx_close + _THINK_CLOSE_TAG_LEN :]
                     continue
