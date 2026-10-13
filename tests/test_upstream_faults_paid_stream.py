@@ -54,6 +54,9 @@ def test_paid_stream_ends_and_settles_at_done_while_the_upstream_stays_open(fake
     ))
     runtime = LiteLlmRuntimeConfig(enabled=True, base_url=fake.base_url, api_key="sk-litellm", service_id="litellm")
 
+    # The stream assembly imports litellm on first use; keep that cold import out of the open-stream bound.
+    from litellm.main import stream_chunk_builder  # noqa: F401
+
     async def run() -> tuple[bytes, bool]:
         response = await provider_execution.execute_paid_litellm(
             _request(), request_path="/v1/chat/completions", body=dict(BODY), provider=provider,
