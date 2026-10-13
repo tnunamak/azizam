@@ -510,11 +510,12 @@ def test_decision_dispatch_is_cancelled_when_client_disconnects_after_body(path)
     started = asyncio.Event()
     cancelled = asyncio.Event()
     continued_after_disconnect = asyncio.Event()
+    never_released = asyncio.Event()  # dispatch can only end by cancellation
 
     async def dispatch(_auth, _profile, _body, _request_id):
         started.set()
         try:
-            await asyncio.sleep(0.2)
+            await never_released.wait()
             continued_after_disconnect.set()
             return DecisionDispatchResult(
                 body={
@@ -577,7 +578,9 @@ def test_decision_dispatch_is_cancelled_when_client_disconnects_after_body(path)
         }
         await app(scope, receive, send)
 
-    asyncio.run(asyncio.wait_for(run_app(), timeout=2))
+    # Hang watchdog only: the oracle is the disconnect cancelling the dispatch
+    # (a regression leaves it blocked on never_released until this fires).
+    asyncio.run(asyncio.wait_for(run_app(), timeout=30))
 
     assert cancelled.is_set()
     assert not continued_after_disconnect.is_set()

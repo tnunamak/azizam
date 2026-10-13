@@ -390,7 +390,14 @@ def test_prepare_request_validates_all_contexts_before_prime_post(monkeypatch, t
     assert len(build_calls) == 2
 
 
-def _post_json_with_headers(base_url: str, path: str, body: dict, *, headers: dict[str, str], timeout: float = 1.0) -> tuple[int, dict, dict]:
+# Client-side socket timeout only: it turns a hung server into a failure. The
+# oracle is the server's own response (504 deadline_exceeded, 503 unhealthy);
+# a client timeout shorter than a scheduler stall would replace it with a
+# URLError on a correct run.
+_TRANSPORT_WATCHDOG_S = 30.0
+
+
+def _post_json_with_headers(base_url: str, path: str, body: dict, *, headers: dict[str, str], timeout: float = _TRANSPORT_WATCHDOG_S) -> tuple[int, dict, dict]:
     request_headers = {"content-type": "application/json", **headers}
     req = urllib.request.Request(
         f"{base_url}{path}",
@@ -416,7 +423,6 @@ def test_deadline_expires_while_waiting_for_request_lock_without_scoring():
                 "/v1/systemone",
                 _systemone_body("deadline"),
                 headers={"x-decision-deadline-ms": "50"},
-                timeout=1,
             )
         finally:
             handler.request_lock.release()
@@ -435,7 +441,7 @@ def test_health_reports_unhealthy_when_owned_child_has_exited():
 
     with _ThreadedServer(handler) as base_url:
         try:
-            with urllib.request.urlopen(f"{base_url}/health", timeout=1) as resp:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=_TRANSPORT_WATCHDOG_S) as resp:
                 status = resp.status
                 body = json.loads(resp.read())
         except urllib.error.HTTPError as exc:
@@ -612,7 +618,6 @@ def test_invalid_or_nonfinite_deadline_header_does_not_disable_default_cap():
                 "/v1/systemone",
                 _systemone_body("bad_deadline"),
                 headers={"x-decision-deadline-ms": "NaN"},
-                timeout=1,
             )
         finally:
             handler.request_lock.release()
@@ -663,7 +668,9 @@ def test_post_timeout_uses_remaining_budget_for_prime_rows_and_retry(monkeypatch
         return {"completion_probabilities": [{"top_logprobs": [{"id": 101, "logprob": -1.0}]}]}
 
     client._post = fake_post
-    deadline = time.monotonic() + 1.0
+    clock = _SteppedClock()  # the 1 s budget cannot be spent by scheduler delay
+    monkeypatch.setattr(server, "time", clock)
+    deadline = clock.now + 1.0
     ctx = decision_engine.ScoreContext(state="x", question="q", options=("no", "yes"), kind="noul", index=0)
 
     client.prepare_request([ctx, ctx], deadline=deadline)
@@ -735,7 +742,10 @@ def test_wait_health_requires_expected_model_identity(monkeypatch):
 
     monkeypatch.setattr(server.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
-    assert server.wait_health(18024, 0.2, expected_model="decider-test") is True
+    # The scripted responses end the poll, not the clock: the budget is only a
+    # watchdog and must not be a scheduler-speed limit between the two replies.
+    assert server.wait_health(18024, 30, expected_model="decider-test") is True
+    assert next(responses, None) is None, "the wrong-model reply was skipped, not examined"
 
 
 def test_cancellable_post_decodes_chunked_json_response():
