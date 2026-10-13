@@ -13441,21 +13441,26 @@ async def _filter_model_list_for_profile(
         for capability in registered_model_capabilities(registry):
             if capability.model:
                 declared_intents.setdefault(capability.model, []).append(capability.intent)
-    filtered = []
-    for item in visible:
-        intents = None
-        if category_protocols is None and not any(item.get(key) for key in (
-            "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
-        )):
-            intents = declared_intents.get(str(item.get("id") or ""))
-        if category_protocols is not None:
-            category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
-                                for intent, protocol in category_protocols.items()]
-        else:
-            category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
-                                if intents is not None else [item])
-        if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
-            filtered.append(item)
+    def category_filter() -> list[Any]:
+        kept = []
+        for item in visible:
+            intents = None
+            if category_protocols is None and not any(item.get(key) for key in (
+                "azizam_intent", "intent", "azizam_workflow_id", "azizam_resolves_to",
+            )):
+                intents = declared_intents.get(str(item.get("id") or ""))
+            if category_protocols is not None:
+                category_entries = [{**item, "azizam_intent": intent, "azizam_protocol": protocol}
+                                    for intent, protocol in category_protocols.items()]
+            else:
+                category_entries = ([{**item, "azizam_intent": intent} for intent in intents]
+                                    if intents is not None else [item])
+            if any(_category_entry_visible(auth_context, entry) for entry in category_entries):
+                kept.append(item)
+        return kept
+
+    # The category gate reads SQLite: keep it off the event loop.
+    filtered = await asyncio.to_thread(category_filter)
 
     allowlist = _profile_model_allowlist(auth_context)
     if allowlist is not None:
@@ -24596,12 +24601,17 @@ async def list_models(request: Request):
         if desc:
             item["description"] = desc
 
+    def visible_decision_entries() -> list[dict[str, Any]]:
+        entries = []
+        for decision_model in _decision_models_for(auth_context, _profile_for_auth_context(auth_context)):
+            entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
+                     "created": 0, "capabilities": decision_model.view()["capabilities"]}
+            if _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
+                entries.append(entry)
+        return entries
+
     decision_ids: set[str] = set()
-    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
-        entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
-                 "created": 0, "capabilities": decision_model.view()["capabilities"]}
-        if not _category_entry_visible(auth_context, {**entry, "azizam_intent": "decision.systemone"}):
-            continue
+    for entry in await asyncio.to_thread(visible_decision_entries):
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
@@ -24628,19 +24638,24 @@ async def list_models(request: Request):
     # Resolve metadata against the full catalog, then hide target IDs that the
     # caller cannot see. This does not change which alias entries are listed.
     visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
-    for item in data:
-        if isinstance(item.get("azizam_engine_candidates"), Mapping):
-            item["azizam_engine_candidates"] = {
-                operation: [target for target in targets
-                            if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
-                for operation, targets in item["azizam_engine_candidates"].items()
-            }
-        if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
-            item["azizam_resolves_to"] = {
-                operation: target for operation, target in item["azizam_resolves_to"].items()
-                if target and normalize_model_id(str(target)) in visible_ids
-                and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
-            }
+
+    def hide_unseen_targets() -> None:
+        for item in data:
+            if isinstance(item.get("azizam_engine_candidates"), Mapping):
+                item["azizam_engine_candidates"] = {
+                    operation: [target for target in targets
+                                if _category_entry_visible(auth_context, {"id": target, "operation": operation})]
+                    for operation, targets in item["azizam_engine_candidates"].items()
+                }
+            if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
+                item["azizam_resolves_to"] = {
+                    operation: target for operation, target in item["azizam_resolves_to"].items()
+                    if target and normalize_model_id(str(target)) in visible_ids
+                    and _category_entry_visible(auth_context, {"id": item["id"], "operation": operation})
+                }
+
+    # Per-target category checks read SQLite: keep them off the event loop.
+    await asyncio.to_thread(hide_unseen_targets)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
