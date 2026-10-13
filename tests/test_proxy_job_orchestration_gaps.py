@@ -237,7 +237,7 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
     async def parked(*args, **kwargs):
         await asyncio.Event().wait()
 
-    for name in ("maintenance_loop", "_workflow_drift_loop",
+    for name in ("_workflow_drift_loop",
                  "_prompt_memory_maintenance_loop", "_receipts_maintenance_loop"):
         monkeypatch.setattr(proxy, name, parked)
     monkeypatch.setattr(proxy.prompt_metadata_migration, "background_migration", parked)
