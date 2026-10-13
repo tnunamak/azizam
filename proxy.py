@@ -3685,74 +3685,76 @@ async def _stream_tts_upstream(
     """
     client = httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10))
     upstream = None
+    streaming = False
+    # Until the body is handed to the StreamingResponse this function owns the
+    # client and the upstream body, on every exit including cancellation.
     try:
-        upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
-        if not 200 <= upstream.status_code < 300:
-            content = await upstream.aread()
-            if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
-                return _tts_gpu_memory_response()
-            return Response(
-                content=content,
-                status_code=upstream.status_code,
-                media_type=upstream.headers.get("content-type", "application/json"),
-            )
-    except httpx.TimeoutException:
-        await client.aclose()
-        return _tts_error("TTS request timeout", 504)
-    except httpx.ConnectError:
-        await client.aclose()
-        return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
-    except Exception as e:  # noqa: BLE001
-        await client.aclose()
-        return _tts_error(f"TTS proxy error: {e}", 502)
-
-    # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
-    # first and fails inside the stream when GPU0 is full, so the status alone cannot be
-    # trusted. Read the first chunk before committing a 200 to the client: a stream that
-    # dies before any audio becomes a 503 and the tier falls back to its next engine.
-    raw_chunks = upstream.aiter_raw()
-    try:
-        first_chunk = await anext(raw_chunks, b"")
-    except (httpx.TransportError, httpx.StreamError) as e:
-        await upstream.aclose()
-        await client.aclose()
-        print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
-        return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
-    except Exception:  # noqa: BLE001
-        await upstream.aclose()
-        await client.aclose()
-        raise
-    if not first_chunk:
-        await upstream.aclose()
-        await client.aclose()
-        return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
-
-    async def with_first_chunk() -> AsyncIterator[bytes]:
-        yield first_chunk
-        async for chunk in raw_chunks:
-            yield chunk
-
-    async def frames():
         try:
-            source = speech_stream.align_samples(with_first_chunk())
-            if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
-                source = speech_stream.transcode_pcm_stream(
-                    source, src_rate=native_rate, response_format=response_format
+            upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
+            if not 200 <= upstream.status_code < 300:
+                content = await upstream.aread()
+                if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+                    return _tts_gpu_memory_response()
+                retry_after = upstream.headers.get("retry-after")
+                return Response(
+                    content=content,
+                    status_code=upstream.status_code,
+                    media_type=upstream.headers.get("content-type", "application/json"),
+                    headers={"Retry-After": retry_after} if retry_after else None,
                 )
-            if stream_format == "sse":
-                source = speech_stream.pcm_to_sse(source)
-            async for chunk in source:
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
+        except httpx.TimeoutException:
+            return _tts_error("TTS request timeout", 504)
+        except httpx.ConnectError:
+            return _tts_error(f"TTS backend unavailable at {url}", 502, "tts_backend_unavailable")
+        except Exception as e:  # noqa: BLE001
+            return _tts_error(f"TTS proxy error: {e}", 502)
 
-    media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
-    return StreamingResponse(
-        frames(),
-        media_type=media_type,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+        # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
+        # first and fails inside the stream when GPU0 is full, so the status alone cannot be
+        # trusted. Read the first chunk before committing a 200 to the client: a stream that
+        # dies before any audio becomes a 503 and the tier falls back to its next engine.
+        raw_chunks = upstream.aiter_raw()
+        try:
+            first_chunk = await anext(raw_chunks, b"")
+        except (httpx.TransportError, httpx.StreamError) as e:
+            print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
+            return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
+        if not first_chunk:
+            return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
+
+        async def with_first_chunk() -> AsyncIterator[bytes]:
+            yield first_chunk
+            async for chunk in raw_chunks:
+                yield chunk
+
+        async def frames():
+            try:
+                source = speech_stream.align_samples(with_first_chunk())
+                if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
+                    source = speech_stream.transcode_pcm_stream(
+                        source, src_rate=native_rate, response_format=response_format
+                    )
+                if stream_format == "sse":
+                    source = speech_stream.pcm_to_sse(source)
+                async for chunk in source:
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        media_type = "text/event-stream" if stream_format == "sse" else TTS_RESPONSE_MEDIA_TYPES[response_format]
+        response = StreamingResponse(
+            frames(),
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+        streaming = True
+        return response
+    finally:
+        if not streaming:
+            if upstream is not None:
+                await upstream.aclose()
+            await client.aclose()
 
 
 async def proxy_tts_request(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
@@ -7557,6 +7559,13 @@ async def proxy_comfy_request(
             status_code=400,
             media_type="application/json"
         )
+    if not isinstance(body, dict):
+        _record_image_input(receipt, "body", rejected_reason="invalid_json")
+        return Response(
+            content=json.dumps({"error": {"message": "Request body must be a JSON object", "type": "invalid_request_error"}}),
+            status_code=400,
+            media_type="application/json"
+        )
     unknown_response = _record_unknown_image_fields(
         receipt,
         body,
@@ -8525,6 +8534,7 @@ async def proxy_comfy_edit_request(
                 output_background="transparent" if background_decision.remove_background else "opaque",
                 output_quality=quality,
                 output_size=effective_size,
+                fixed_seed=_workflow_extension_integer(form_dict, "seed"),
             )
 
     except httpx.TimeoutException:
@@ -9229,18 +9239,20 @@ async def _fetch_comfy_state() -> tuple[Optional[set[str]], Optional[dict]]:
         return (None, None)
     if q_resp.status_code != 200 or h_resp.status_code != 200:
         return (None, None)
+    # A body that is not the expected JSON object says nothing about the
+    # queue: an empty answer here would read as "ComfyUI forgot every prompt"
+    # and orphan live jobs, so it counts as unavailable.
     try:
-        q_data = q_resp.json() or {}
+        q_data = q_resp.json()
+        h_data = h_resp.json()
     except Exception:
-        q_data = {}
-    try:
-        h_data = h_resp.json() or {}
-    except Exception:
-        h_data = {}
+        return (None, None)
+    if not isinstance(q_data, dict) or not isinstance(h_data, dict):
+        return (None, None)
     active: set[str] = set()
     active |= _extract_prompt_ids(q_data.get("queue_running") or [])
     active |= _extract_prompt_ids(q_data.get("queue_pending") or [])
-    return (active, h_data if isinstance(h_data, dict) else {})
+    return (active, h_data)
 
 
 async def _reconcile_video_progress() -> None:
@@ -10403,7 +10415,18 @@ async def proxy_comfy_video_create(
     if metadata_error is not None:
         return metadata_error
 
-    prompt = (body.get("prompt") or "").strip()
+    raw_prompt = body.get("prompt")
+    if raw_prompt is not None and not isinstance(raw_prompt, str):
+        return Response(
+            content=json.dumps({"error": {
+                "message": "prompt must be a string",
+                "type": "invalid_request_error",
+                "param": "prompt",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
+    prompt = (raw_prompt or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
     public_model = str(requested_model)
     size_from_body = body.get("size")
@@ -12509,10 +12532,20 @@ async def lifespan(app: FastAPI):
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
-    for task in list(_image_media_job_tasks):
+    # Every worker registry is owned by the gateway: cancel and join them all
+    # before returning, not only the image workers.
+    owned_job_tasks = [
+        task
+        for registry in (
+            _image_media_job_tasks, _audio_media_job_tasks,
+            _video_media_job_tasks, _identity_job_tasks,
+        )
+        for task in registry
+    ]
+    for task in owned_job_tasks:
         task.cancel()
-    if _image_media_job_tasks:
-        await asyncio.gather(*list(_image_media_job_tasks), return_exceptions=True)
+    if owned_job_tasks:
+        await asyncio.gather(*owned_job_tasks, return_exceptions=True)
     if comfy_ws_task is not None:
         comfy_ws_stop.set()
         comfy_ws_task.cancel()
@@ -19173,14 +19206,19 @@ def _image_receipt_status(status_code: int) -> str:
 
 def finish_image_route_receipt(
     receipt: RouteReceipt,
-    response: Response,
+    response: Response | None,
+    *,
+    status: str | None = None,
 ) -> None:
-    """Finish the receipt and emit a body-free firehose event."""
+    """Finish the receipt and emit a body-free firehose event.
+
+    ``status`` overrides the one derived from the response; a cancelled
+    request has no response."""
     status_code = int(getattr(response, "status_code", 0) or 0)
     response_headers = getattr(response, "headers", {})
     if response_headers.get("X-ComfyUI-Models-Freed") == "true":
         receipt.metadata["comfyui_models_freed_for_vram"] = True
-    receipt.finish(_image_receipt_status(status_code))
+    receipt.finish(status or _image_receipt_status(status_code))
     try:
         receipt_store.record(receipt)
     except Exception as e:
@@ -20316,6 +20354,8 @@ async def _run_image_media_job(job_id: str) -> None:
                     _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
                 finish_image_route_receipt(receipt, response)
             except asyncio.CancelledError:
+                # An interrupted attempt keeps its terminal receipt.
+                finish_image_route_receipt(receipt, None, status="cancelled")
                 raise
             except Exception as exc:  # noqa: BLE001
                 finish_image_route_receipt(
@@ -20448,7 +20488,12 @@ def _schedule_image_media_job(job_id: str) -> bool:
     if job_id in _image_media_job_scheduled:
         return False
     _image_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_image_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_image_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _image_media_job_scheduled.discard(job_id)
+        raise
     _image_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
@@ -21004,7 +21049,12 @@ def _schedule_audio_media_job(job_id: str) -> bool:
     if job_id in _audio_media_job_scheduled:
         return False
     _audio_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_audio_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_audio_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _audio_media_job_scheduled.discard(job_id)
+        raise
     _audio_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
@@ -21515,6 +21565,11 @@ async def _run_video_media_job(job_id: str) -> None:
                 _mark_video_media_job_failed(job_id, message, http_status=content_status)
                 return
 
+            # A cancel that arrived during the fetch must not leave a stored asset behind.
+            current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
+            if (current.get("metadata") or {}).get("cancel_requested_at"):
+                raise media_jobs.CancellationPending()
+
             content = bytes(getattr(content_response, "body", b"") or b"")
             filename = _video_filename_from_response(
                 content_response,
@@ -21578,7 +21633,12 @@ def _schedule_video_media_job(job_id: str) -> bool:
     if job_id in _video_media_job_scheduled:
         return False
     _video_media_job_scheduled.add(job_id)
-    task = asyncio.create_task(_run_video_media_job(job_id))
+    try:
+        task = asyncio.create_task(_run_video_media_job(job_id))
+    except BaseException:
+        # A launch that never started must not leave the job looking scheduled.
+        _video_media_job_scheduled.discard(job_id)
+        raise
     _video_media_job_tasks.add(task)
 
     def _done(done_task: asyncio.Task) -> None:
@@ -22095,7 +22155,11 @@ async def images_generations(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -22118,7 +22182,11 @@ async def images_variations(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_variations_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -22136,7 +22204,11 @@ async def images_edits(request: Request):
         response = _policy_denied_response(decision)
         finish_image_route_receipt(receipt, response)
         return response
-    response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+    try:
+        response = await proxy_comfy_edit_request(request, auth_context, receipt=receipt)
+    except asyncio.CancelledError:
+        finish_image_route_receipt(receipt, None, status="cancelled")
+        raise
     finish_image_route_receipt(receipt, response)
     return response
 
@@ -23950,10 +24022,12 @@ async def _litellm_models_payload(
         print(f"[proxy] LiteLLM model catalog fetch failed: {e}", flush=True)
         return None
     finally:
-        if resp is not None:
-            await resp.aclose()
-        if client is not None:
-            await client.aclose()
+        try:
+            if resp is not None:
+                await resp.aclose()
+        finally:
+            if client is not None:
+                await client.aclose()
 
 
 def _litellm_model_summaries_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -24502,6 +24576,21 @@ def _responses_upstream_error(message: str, status_code: int) -> Response:
     )
 
 
+def _upstream_error_message(payload: Any) -> str:
+    """The message of an upstream error body; valid JSON need not be an error object."""
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else error
+    return message if isinstance(message, str) else ""
+
+
+async def _close_upstream_stream(client: httpx.AsyncClient, upstream: httpx.Response) -> None:
+    """Close a streamed response and its client; the client closes even if the response cannot."""
+    try:
+        await upstream.aclose()
+    finally:
+        await client.aclose()
+
+
 def _api_key_name(auth_context) -> Optional[str]:
     try:
         ident = getattr(auth_context, "identity", None)
@@ -24561,13 +24650,18 @@ async def _forward_chat_completions(
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
     if stream:
-        req = client.build_request(
-            "POST",
-            loopback_request.url,
-            headers=loopback_request.headers,
-            content=loopback_request.body,
-        )
-        resp = await client.send(req, stream=True)
+        # The caller owns the client only once it is returned.
+        try:
+            req = client.build_request(
+                "POST",
+                loopback_request.url,
+                headers=loopback_request.headers,
+                content=loopback_request.body,
+            )
+            resp = await client.send(req, stream=True)
+        except BaseException:
+            await client.aclose()
+            raise
         return client, resp
     try:
         resp = await client.post(
@@ -25956,8 +26050,7 @@ async def create_response(request: Request):
                             if len(body_bytes) > 8192:
                                 break
                     finally:
-                        await upstream.aclose()
-                        await client.aclose()
+                        await _close_upstream_stream(client, upstream)
                     owner.report(status="failed", reason="failed")
                     try:
                         upstream_json = json.loads(body_bytes.decode("utf-8", errors="replace") or "{}")
@@ -25968,7 +26061,7 @@ async def create_response(request: Request):
                     if refusal is not None:
                         return refusal
                     return _responses_upstream_error(
-                        (upstream_json.get("error") or {}).get("message") or "",
+                        _upstream_error_message(upstream_json),
                         upstream.status_code,
                     )
 
@@ -26028,8 +26121,7 @@ async def create_response(request: Request):
                         for ev in translator.terminal_event():
                             yield ev
                     finally:
-                        await upstream.aclose()
-                        await client.aclose()
+                        await _close_upstream_stream(client, upstream)
 
                 return StreamingResponse(
                     owner.handoff_stream(event_stream()),
@@ -26051,7 +26143,7 @@ async def create_response(request: Request):
                 if refusal is not None:
                     return refusal
                 return _responses_upstream_error(
-                    (upstream_json.get("error") or {}).get("message") or "",
+                    _upstream_error_message(upstream_json),
                     upstream.status_code,
                 )
 

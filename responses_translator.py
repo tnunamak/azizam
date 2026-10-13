@@ -1113,7 +1113,8 @@ class StreamTranslator:
         self._finished = False
 
         # Output bookkeeping
-        self._reasoning: Optional[dict] = None  # index, id, text parts, closed
+        self._reasoning: Optional[dict] = None  # newest segment: index, id, text parts, closed
+        self._reasoning_items: dict[int, dict] = {}  # every segment, by output index
         self._message_index: Optional[int] = None
         self._message_id: Optional[str] = None
         self._message_text: list[str] = []
@@ -1213,7 +1214,8 @@ class StreamTranslator:
 
     def _reasoning_delta(self, text: str) -> list[bytes]:
         events: list[bytes] = []
-        if self._reasoning is None:
+        # A closed item is immutable: reasoning that follows output starts a new item.
+        if self._reasoning is None or self._reasoning["closed"]:
             idx = len(self._output_order)
             self._reasoning = {
                 "index": idx,
@@ -1221,6 +1223,7 @@ class StreamTranslator:
                 "text": [],
                 "closed": False,
             }
+            self._reasoning_items[idx] = self._reasoning
             self._output_order.append(("reasoning", idx))
             events.append(sse_pack("response.output_item.added", {
                 "type": "response.output_item.added",
@@ -1350,8 +1353,8 @@ class StreamTranslator:
                 entry["call_id"] = tc_id
             elif tc_id:
                 entry["call_id"] = tc_id
-            if name and not entry["name"]:
-                entry["name"] = name
+            if name:
+                entry["name"] += name
         return out_events, self._tool_calls[tc_index]
 
     @staticmethod
@@ -1647,10 +1650,10 @@ class StreamTranslator:
         full_text = "".join(self._message_text)
         for kind, key in self._output_order:
             if kind == "reasoning":
-                if self._reasoning is not None:
-                    output.append(_reasoning_item(
-                        self._reasoning["id"], "".join(self._reasoning["text"])
-                    ))
+                reasoning = self._reasoning_items[key]
+                output.append(_reasoning_item(
+                    reasoning["id"], "".join(reasoning["text"])
+                ))
             elif kind == "message":
                 if self._message_id is None:
                     continue

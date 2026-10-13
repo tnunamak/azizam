@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import HomePage from "@/app/_home/home-page";
 import { homeApi } from "@/app/_home/home-api";
@@ -80,4 +80,92 @@ it("retries a partial key creation on the same app without creating a second one
     ["fixture-app-1", "Open WebUI"],
     ["fixture-app-1", "Open WebUI"],
   ]);
+});
+
+it.each(["Open WebUI", "LibreChat"] as const)(
+  "keeps partial key creation attached to the correct app when retrying %s",
+  async (choice) => {
+    const makeApp = (id: string, name: string) =>
+      ({ id, name } as Awaited<ReturnType<typeof accountApi.createApp>>);
+    const create = vi.spyOn(accountApi, "createApp")
+      .mockResolvedValueOnce(makeApp("fixture-app-1", "Open WebUI"))
+      .mockResolvedValue(makeApp("fixture-app-2", "LibreChat"));
+    const mint = vi.spyOn(accountApi, "mintKey")
+      .mockRejectedValueOnce(new Error("fixture mint failure"))
+      .mockResolvedValue({
+        id: "fixture-key",
+        api_key: "fixture-secret-not-a-real-key",
+      } as Awaited<ReturnType<typeof accountApi.mintKey>>);
+
+    const client = renderHome([alias("allowed-chat", "chat")]);
+    vi.spyOn(client, "invalidateQueries").mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /^Open WebUI$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Create key for Open WebUI" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent)
+        .toBe("We couldn't tell where key creation stopped. Try again."),
+    );
+    expect(create.mock.calls).toEqual([["Open WebUI"]]);
+    expect(mint.mock.calls).toEqual([["fixture-app-1", "Open WebUI"]]);
+
+    if (choice === "LibreChat") {
+      fireEvent.click(screen.getByRole("button", { name: /^LibreChat$/ }));
+    }
+    fireEvent.click(screen.getByRole("button", {
+      name: /^(Retry key creation|Create key for LibreChat)$/,
+    }));
+    await waitFor(() => expect(mint).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+
+    if (choice === "Open WebUI") {
+      expect(create.mock.calls).toEqual([["Open WebUI"]]);
+      expect(mint.mock.calls).toEqual([
+        ["fixture-app-1", "Open WebUI"],
+        ["fixture-app-1", "Open WebUI"],
+      ]);
+    } else {
+      expect(create.mock.calls).toEqual([["Open WebUI"], ["LibreChat"]]);
+      expect(mint.mock.calls).toEqual([
+        ["fixture-app-1", "Open WebUI"],
+        ["fixture-app-2", "LibreChat"],
+      ]);
+    }
+  },
+);
+
+it("does not load or play an audio renewal that completes after Home unmounts", async () => {
+  let finish!: (value: Awaited<ReturnType<typeof homeApi.mediaDownload>>) => void;
+  const pending = new Promise<Awaited<ReturnType<typeof homeApi.mediaDownload>>>(
+    (resolve) => { finish = resolve; },
+  );
+  const renew = vi.spyOn(homeApi, "mediaDownload").mockReturnValue(pending);
+  const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+  const load = vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  const client = renderHome([], [{
+    asset_id: "fixture-late-audio",
+    kind: "audio",
+    prompt: "Late renewal",
+    available: true,
+    download_url: "/fixture-expired.wav",
+  }]);
+  try {
+    const audio = document.querySelector("audio")!;
+    expect(audio).not.toBeNull();
+    fireEvent.error(audio);
+    fireEvent.click(screen.getByRole("button", { name: "Play Late renewal" }));
+    await waitFor(() =>
+      expect(renew).toHaveBeenCalledWith("fixture-late-audio"),
+    );
+    expect(play).not.toHaveBeenCalled();
+    cleanup();
+    expect(audio.isConnected).toBe(false);
+    await act(async () => {
+      finish({ download_url: "/fixture-renewed.wav" });
+      await pending;
+    });
+    expect(load).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+  } finally {
+    client.clear();
+  }
 });

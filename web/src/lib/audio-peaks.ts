@@ -37,7 +37,7 @@ async function measure(src: string, bins: number): Promise<number[] | null> {
     const peaks: number[] = [];
     for (let bin = 0; bin < bins; bin += 1) {
       let peak = 0;
-      const end = Math.min(data.length, (bin + 1) * size);
+      const end = bin === bins - 1 ? data.length : Math.min(data.length, (bin + 1) * size);
       for (let index = bin * size; index < end; index += 1) {
         const value = Math.abs(data[index]);
         if (value > peak) peak = value;

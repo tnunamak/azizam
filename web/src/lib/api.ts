@@ -598,15 +598,16 @@ export async function fetchSession(options?: {
 }): Promise<Session> {
   if (!options?.force && cachedSession) return cachedSession;
   if (!options?.force && sessionInFlight) return sessionInFlight;
-  sessionInFlight = requestSession()
+  const request: Promise<Session> = requestSession()
     .then((session) => {
-      cachedSession = session;
+      if (sessionInFlight === request) cachedSession = session;
       return session;
     })
     .finally(() => {
-      sessionInFlight = null;
+      if (sessionInFlight === request) sessionInFlight = null;
     });
-  return sessionInFlight;
+  sessionInFlight = request;
+  return request;
 }
 
 /** Drop the cached session (sign-out, tests). */
