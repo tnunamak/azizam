@@ -234,7 +234,7 @@ def _stt_chunk_payloads(kind: str, count: int) -> list[bytes]:
     return payloads
 
 
-async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[str, Any]:
+async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path, only: frozenset[str] | None = None) -> dict[str, Any]:
     from starlette.requests import Request
 
     from gateway import stt_chunking
@@ -252,6 +252,8 @@ async def _observe_stt(proxy: Any, upstream: _Upstream, scratch: Path) -> dict[s
              for chunks in (2, 3)]
     cases += [(sid, "timing", 1) for sid in sorted(services)]  # short audio: direct passthrough
     for service_id, kind, chunks in cases:
+        if only is not None and f"{service_id} {kind} x{chunks}" not in only:
+            continue
         execution = snapshot("transcriptions", service_id)
         if execution is None:
             out[f"{service_id} {kind} x{chunks}"] = "no execution config"
@@ -395,8 +397,9 @@ def running_gateway(fixture: dict[str, Any]) -> Iterator[tuple[Any, Any, _Upstre
         yield proxy, stack.enter_context(one_portal(TestClient(proxy.app))), upstream, root
 
 
-def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design", "speech", "stt")) -> dict[str, Any]:
-    """Run the requested observation sections against the imported gateway."""
+def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design", "speech", "stt"),
+            stt_cases: frozenset[str] | None = None) -> dict[str, Any]:
+    """Run the requested observation sections against the imported gateway; `stt_cases` limits the stt sweep to those cases."""
     results: dict[str, Any] = {}
     with running_gateway(fixture) as (proxy, client, upstream, root):
         if "voice_design" in sections:
@@ -404,7 +407,7 @@ def observe(fixture: dict[str, Any], sections: tuple[str, ...] = ("voice_design"
         if "speech" in sections:
             results["speech"] = asyncio.run(_observe_speech(proxy, client, upstream))
         if "stt" in sections:
-            results["stt"] = asyncio.run(_observe_stt(proxy, upstream, root))
+            results["stt"] = asyncio.run(_observe_stt(proxy, upstream, root, stt_cases))
     return results
 
 
