@@ -22,7 +22,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import directory_index, admin_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -486,8 +486,6 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
             raise PublicFailure("owner_required", 403, param="person")
         if person == "all":
             return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
-        if person == "local-network":
-            return _MediaScope(app_ids=None, person_id="local-network", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
     # Everyone starts with their own work; "everyone" is an explicit owner choice.
     scope = str(raw_scope or "me")
@@ -535,7 +533,7 @@ def _list_media(
     limit = _bounded_int(request.query_params.get("limit"), MEDIA_DEFAULT_LIMIT, MEDIA_MAX_LIMIT)
     cursor = _decode_cursor(request.query_params.get("cursor"))
     sources = _media_sources(scope, admin_db_path)
-    source_filter = "local-network" if request.query_params.get("person") == "local-network" else _media_source_filter(request, scope)
+    source_filter = _media_source_filter(request, scope)
     with server_timing.span("db"):
         entries = _media_entries(
             request=request,
@@ -1125,10 +1123,22 @@ def _source_projection(
     embedded: Mapping[str, Any] | None = None,
     visible_app_ids: list[str] | None = None,
     apps: _Apps | None = None,
+    connections: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     def lookup(app_id: str) -> dict[str, Any] | None:
         return apps.get(app_id) if apps is not None else admin_store.get_app(app_id, path=admin_db_path)
 
+    # A request an MCP sign-in made runs as its person's session App; the
+    # connection is the source, so it is not blended into the person's own use.
+    connection = (connections or {}).get(str((receipt or {}).get("connection_id") or ""))
+    if connection is not None:
+        return {
+            "kind": "connection",
+            "connection_id": connection["connection_id"],
+            "label": str(connection["label"]),
+            "profile": (receipt or {}).get("app_profile"),
+            "client_hint": _client_hint(receipt),
+        }
     app_id = str((receipt or {}).get("app_id") or "")
     if app_id:
         app = lookup(app_id)
@@ -1220,14 +1230,15 @@ def _source_id(source: Any) -> str | None:
     if kind == "app":
         app_id = source.get("app_id")
         return f"app:{app_id}" if isinstance(app_id, str) and app_id else None
-    if kind == "local-network":
-        return "local-network"
+    if kind == "connection":
+        connection_id = source.get("connection_id")
+        return f"connection:{connection_id}" if isinstance(connection_id, str) and connection_id else None
     return None
 
 
 def _media_sources(scope: _MediaScope, admin_db_path: Path) -> list[dict[str, Any]]:
     app_ids = set(scope.app_ids) if scope.app_ids is not None else None
-    sources = [{"id": "local-network", "kind": "local-network", "label": "Local network · no key"}] if app_ids is None else []
+    sources: list[dict[str, Any]] = []
     for app in admin_store.list_apps(path=admin_db_path):
         app_id = str(app.get("id") or "")
         if not app_id or (app_ids is not None and app_id not in app_ids):
@@ -1246,16 +1257,12 @@ def _media_source_filter(request: Request, scope: _MediaScope) -> str | None:
     source = request.query_params.get("source")
     if source in (None, "", "all"):
         return None
-    if source == "local-network":
-        if scope.app_ids is not None:
-            raise PublicFailure("source_not_allowed", 403, source=source)
-        return source
     if source.startswith("app:"):
         app_id = source.removeprefix("app:")
         if scope.app_ids is not None and app_id not in set(scope.app_ids):
             raise PublicFailure("source_not_allowed", 403, source=source)
         return source
-    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "local-network", "app:<id>"])
+    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "app:<id>"])
 
 
 def _client_hint(receipt: Mapping[str, Any] | None) -> str | None:
@@ -1420,9 +1427,11 @@ def _usage_summary(
     if request.query_params.get("period", "month") != "month":
         raise PublicFailure("unsupported_period", 400, param="period", accepted=["month"])
     app_ids, scope_label, scoped_users = _usage_app_scope(request, actor, admin_db_path)
-    source_filter = "local-network" if request.query_params.get("person") == "local-network" else _source_filter(request)
-    _reject_forbidden_source_filter(source_filter, app_ids)
-    sources = _usage_sources(admin_db_path, app_ids=None if actor.owner else app_ids)
+    source_filter = _source_filter(request)
+    sources = _usage_sources(admin_db_path, app_ids=None if actor.owner else app_ids,
+                             person_ids=None if actor.owner else scoped_users)
+    _reject_forbidden_source_filter(source_filter, app_ids, sources, scoped_users)
+    connections = {str(source["connection_id"]): source for source in sources if source.get("kind") == "connection"}
     apps = _Apps(admin_db_path)  # apps and credential links, read once for the whole summary
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
@@ -1467,7 +1476,7 @@ def _usage_summary(
             if not _receipt_in_scope(value, media_scope):
                 continue
             value["_stored_at"] = stored_at
-            _annotate_receipt_source(value, sources, admin_db_path, apps)
+            _annotate_receipt_source(value, sources, admin_db_path, apps, connections)
             tallied = _source_id(value.get("source"))
             if tallied:
                 source_requests[tallied] = source_requests.get(tallied, 0) + 1
@@ -1475,6 +1484,8 @@ def _usage_summary(
                 receipts.append(value)
     for source_row in sources:
         source_row["requests"] = source_requests.get(str(source_row.get("id")), 0)
+    # A disconnected connection stays listed only while it has requests to show.
+    sources[:] = [row for row in sources if not (row.get("kind") == "connection" and row.get("disabled") and not row["requests"])]
     by_day: dict[str, dict[str, Any]] = {}
     by_model: dict[tuple[str, str], dict[str, Any]] = {}
     spend = 0.0
@@ -1535,7 +1546,7 @@ def _usage_summary(
             if job_receipt is None:
                 job_receipt = older.get(request_id)
                 if job_receipt is not None:
-                    _annotate_receipt_source(job_receipt, sources, admin_db_path, apps)
+                    _annotate_receipt_source(job_receipt, sources, admin_db_path, apps, connections)
             if job_receipt is not None:
                 break
         if job_receipt is not None:
@@ -1569,7 +1580,8 @@ def _usage_summary(
                 receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
                 if receipt is not None and not _receipt_in_scope(receipt, media_scope):
                     continue
-                source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids, apps=apps)
+                source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded,
+                                            visible_app_ids=app_ids, apps=apps, connections=connections)
                 # A file without a recorded creation time counts by its file time.
                 made_at = _asset_created_at(path, {}, receipt, embedded) or _file_modified_at(path) or 0
                 if made_at >= start and _source_matches_filter(source, source_filter):
@@ -1628,8 +1640,6 @@ def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tu
         raise PublicFailure("owner_required", 403, param="person")
     if person == "all":
         return None, "everyone", None
-    if person == "local-network":
-        return None, "everyone", None
     return _owned_app_ids(person, admin_db_path), "person", [person]
 
 
@@ -1637,7 +1647,6 @@ def _usage_people(actor: _Actor, admin_db_path: Path) -> list[dict[str, str]]:
     people = [
         {"id": "all", "label": "Everyone"},
         {"id": "self", "label": "You"},
-        {"id": "local-network", "label": "Local network · no key"},
     ]
     for user in admin_store.list_users(path=admin_db_path):
         user_id = str(user["id"])
@@ -1650,8 +1659,11 @@ def _usage_people(actor: _Actor, admin_db_path: Path) -> list[dict[str, str]]:
     return people
 
 
-def _usage_sources(admin_db_path: Path, *, app_ids: list[str] | None) -> list[dict[str, Any]]:
-    sources = [{"id": "local-network", "label": "Local network · no key", "kind": "local-network"}] if app_ids is None else []
+def _usage_sources(
+    admin_db_path: Path, *, app_ids: list[str] | None, person_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Apps, then connections. ``None`` lists everyone's; otherwise only the given people's."""
+    sources: list[dict[str, Any]] = []
     allowed = set(app_ids) if app_ids is not None else None
     for app in admin_store.list_apps(path=admin_db_path):
         app_id = str(app.get("id") or "")
@@ -1665,6 +1677,19 @@ def _usage_sources(admin_db_path: Path, *, app_ids: list[str] | None) -> list[di
                 "created_at": app.get("created_at"),
                 "disabled": app.get("disabled_at") is not None,
             })
+    # A connection is its own source, labelled by the client that was approved.
+    with admin_store.shared_connection(admin_db_path) as conn:
+        grants = mcp_oauth_store.grants_in(conn, person_ids)
+    for grant in grants:
+        sources.append({
+            "id": f"connection:{grant.id}",
+            "label": grant.client_name,
+            "kind": "connection",
+            "connection_id": grant.id,
+            "owner_user_id": grant.person_id,
+            "created_at": grant.created_at,
+            "disabled": grant.revoked_at is not None,
+        })
     return sources
 
 
@@ -1672,18 +1697,23 @@ def _source_filter(request: Request) -> str | None:
     source = request.query_params.get("source")
     if source in (None, "", "all"):
         return None
-    if source == "local-network" or source.startswith("app:"):
+    if source.startswith(("app:", "connection:")):
         return source
-    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "local-network", "app:<id>"])
+    raise PublicFailure("invalid_source", 400, param="source", accepted=["all", "app:<id>", "connection:<id>"])
 
 
-def _reject_forbidden_source_filter(source: str | None, app_ids: list[str] | None) -> None:
-    if source is None or app_ids is None:
+def _reject_forbidden_source_filter(
+    source: str | None, app_ids: list[str] | None,
+    sources: list[Mapping[str, Any]] = (), person_ids: list[str] | None = None,
+) -> None:
+    if source is None:
         return
-    if source == "local-network":
+    if app_ids is not None and source.startswith("app:") and source.removeprefix("app:") not in set(app_ids):
         raise PublicFailure("source_not_allowed", 403, source=source)
-    if source.startswith("app:") and source.removeprefix("app:") not in set(app_ids):
-        raise PublicFailure("source_not_allowed", 403, source=source)
+    if person_ids is not None and source.startswith("connection:"):
+        # Only a connection made by someone in scope may be asked for.
+        if not any(row.get("id") == source and row.get("owner_user_id") in person_ids for row in sources):
+            raise PublicFailure("source_not_allowed", 403, source=source)
 
 
 def _source_matches_filter(source: Any, source_filter: str | None) -> bool:
@@ -1695,13 +1725,15 @@ def _annotate_receipt_source(
     sources: list[Mapping[str, Any]],
     admin_db_path: Path,
     apps: _Apps | None = None,
+    connections: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     visible_app_ids = [
         str(source["app_id"])
         for source in sources
         if isinstance(source.get("app_id"), str) and source["app_id"]
     ]
-    source = _source_projection(receipt, admin_db_path, visible_app_ids=visible_app_ids, apps=apps)
+    source = _source_projection(receipt, admin_db_path, visible_app_ids=visible_app_ids, apps=apps,
+                                connections=connections)
     receipt["source"] = source
     receipt.setdefault("source_kind", source["kind"])
     receipt.setdefault("source_label", source["label"])

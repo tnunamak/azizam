@@ -169,7 +169,7 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router
-from gateway.request_source import note_trusted_address
+from gateway.request_source import note_connection, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
@@ -2051,6 +2051,8 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
         return access_error("person_disabled")
     if identity.denial:
         return access_error(identity.denial)
+    if identity.app_id:
+        note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)"))
 
 

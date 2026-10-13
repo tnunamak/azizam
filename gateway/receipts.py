@@ -63,7 +63,7 @@ CLIENT_VISIBLE_FIELDS = {
 ADMIN_VISIBLE_FIELDS = frozenset(
     CLIENT_VISIBLE_FIELDS
     | {
-        "app_profile", "app_id", "api_key_name", "client_address", "backend",
+        "app_profile", "app_id", "api_key_name", "connection_id", "client_address", "backend",
         "manifest_id", "manifest_version", "manifest_hash",
         "parent_request_id", "visibility",
         "policy_decision", "policy_sources", "policy_reasons",
@@ -249,6 +249,10 @@ class RouteReceipt:
     # legacy config keys, or provider-native passthrough without identity).
     app_id: str | None = None
     api_key_name: str | None = None
+    # The MCP sign-in connection (``mcp_oauth_grants.id``) that made the request.
+    # Such a request runs as the person's own session App, so ``app_id`` alone
+    # cannot tell ChatGPT from the person's browser. None for every other request.
+    connection_id: str | None = None
     # The trusted client address a keyless request ran under; None when a key did.
     client_address: str | None = None
     source_kind: str | None = None
@@ -295,9 +299,12 @@ class RouteReceipt:
     owner_key_hash: str | None = None
 
     def __post_init__(self) -> None:
-        from gateway.request_source import current_client_hint, current_gateway_ui, trusted_address_for
+        from gateway.request_source import (
+            connection_for, current_client_hint, current_gateway_ui, trusted_address_for,
+        )
 
         self.client_address = self.client_address or trusted_address_for(self.app_id)
+        self.connection_id = self.connection_id or connection_for(self.app_id)
         if self.source_kind is not None:
             return
         if self.parent_request_id:
@@ -406,10 +413,11 @@ class RouteReceipt:
         self.mark_phase("finished_at_ms", now_ms=self.updated_at_ms)
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
-        from gateway.request_source import trusted_address_for
+        from gateway.request_source import connection_for, trusted_address_for
 
         # Facades that attach their App after construction get the address here.
         self.client_address = self.client_address or trusted_address_for(self.app_id)
+        self.connection_id = self.connection_id or connection_for(self.app_id)
         # Some facades attach their resolved App after constructing the receipt.
         # Derive its source from that final identity before persisting it.
         if self.app_id and self.source_kind == "local-network":
@@ -430,6 +438,7 @@ class RouteReceipt:
             "client_hint": self.client_hint,
             "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
+            "connection_id": self.connection_id,
             "requested_model": self.requested_model,
             "resolved_model": self.resolved_model,
             "requested_workflow": self.requested_workflow,

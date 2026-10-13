@@ -250,7 +250,6 @@ test("usage fits a 390 px phone with long model names", async ({ page }) => {
 });
 
 const manySources = [
-  { id: "local-network", label: "Local network · no key", kind: "local-network", requests: 60, disabled: false, created_at: null },
   { id: "app:1", label: "tim.nunamaker@gmail.com personal access with a rather long name", kind: "app", requests: 90, disabled: false, created_at: 1 },
   ...Array.from({ length: 20 }, (_, index) => ({
     id: `app:tmp${index}`,

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
@@ -9,7 +9,7 @@ import { ErrorState } from "@/components/product/error-state";
 import { CopyField } from "@/components/product/copy-field";
 import { CodeBlock } from "@/components/product/code-block";
 import { SettingsSection } from "@/components/product/setting-row";
-import { RelativeTime } from "@/components/product/relative-time";
+import { SignInConnections } from "@/components/product/sign-in-connections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,7 +25,6 @@ import {
   type McpClientNote,
 } from "@/lib/account-api";
 import { PRODUCT_NAME } from "@/lib/product";
-import { toast } from "@/lib/toast";
 
 const KEY_PLACEHOLDER = "<your app key>";
 
@@ -236,7 +235,7 @@ function ConnectDetails({
           </div>
         </div>
       </SettingsSection>
-      <McpConnections />
+      <SignInConnections empty="No connections yet. Connect an app with the address above." />
       {notes.length ? (
         <SettingsSection
           title="Notes for each app"
@@ -325,75 +324,5 @@ function ClientNote({ note, url }: { note: McpClientNote; url: string }) {
         </a>
       </AccordionContent>
     </AccordionItem>
-  );
-}
-
-/** Apps this person connected by signing in, each with Disconnect. */
-function McpConnections() {
-  const queryClient = useQueryClient();
-  const { data, isPending, isError, refetch } = useQuery({
-    queryKey: ["mcp", "connections"],
-    queryFn: accountApi.mcpConnections,
-  });
-  const revoke = useMutation({
-    mutationFn: (id: string) => accountApi.revokeMcpConnection(id),
-    onSuccess: () => {
-      toast.success("Disconnected. That app can't use your account any more.");
-      void queryClient.invalidateQueries({ queryKey: ["mcp", "connections"] });
-    },
-    onError: () => toast.error("Couldn't disconnect. Try again."),
-  });
-  return (
-    <SettingsSection
-      title="Connected AI apps"
-      description="Apps you approved by signing in. Disconnecting stops them at once."
-    >
-      <div className="p-4">
-        {isPending ? (
-          <Skeleton className="h-10 w-full" />
-        ) : isError ? (
-          <ErrorState
-            message="Couldn't load your connected apps."
-            onRetry={() => void refetch()}
-          />
-        ) : data.length === 0 ? (
-          <p className="text-muted-foreground text-meta">
-            No apps yet. Connect one with the address above.
-          </p>
-        ) : (
-          <ul aria-label="Connected AI apps" className="flex flex-col gap-3">
-            {data.map((connection) => (
-              <li
-                key={connection.id}
-                className="flex flex-wrap items-center justify-between gap-2"
-              >
-                <div className="min-w-0">
-                  <p className="text-body font-medium break-words">
-                    {connection.client_name}
-                  </p>
-                  <p className="text-muted-foreground text-meta">
-                    Returns to {connection.redirect_host} · connected{" "}
-                    <RelativeTime ts={connection.created_at} /> · last used{" "}
-                    <RelativeTime
-                      ts={connection.last_used_at}
-                      fallback="never"
-                    />
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate(connection.id)}
-                  aria-label={`Disconnect ${connection.client_name}`}
-                >
-                  Disconnect
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </SettingsSection>
   );
 }

@@ -29,6 +29,8 @@ vi.mock("@/lib/account-api", () => ({
     createApp: vi.fn(),
     mintKey: vi.fn(),
     revokeKey: vi.fn(),
+    mcpConnections: vi.fn(),
+    revokeMcpConnection: vi.fn(),
   },
 }));
 
@@ -52,6 +54,8 @@ beforeEach(() => {
   navigation.search = "";
   vi.mocked(accountApi.session).mockReset().mockResolvedValue(snapshot);
   vi.mocked(accountApi.discovery).mockResolvedValue({ recipes: {} });
+  vi.mocked(accountApi.mcpConnections).mockReset().mockResolvedValue([]);
+  vi.mocked(accountApi.revokeMcpConnection).mockReset().mockResolvedValue({});
   vi.mocked(accountApi.createApp).mockReset().mockResolvedValue(app);
   vi.mocked(accountApi.mintKey)
     .mockReset()
@@ -650,5 +654,48 @@ it("hands focus to the key reveal and returns to app actions if its opener disap
   fireEvent.click(saved);
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Actions for My laptop" })).toHaveFocus(),
+  );
+});
+
+it("lists the person's sign-in connections apart from their keyed apps, and disconnects one", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [app],
+  });
+  vi.mocked(accountApi.mcpConnections).mockResolvedValue([
+    {
+      id: "mcg_chatgpt",
+      client_name: "ChatGPT",
+      client_id: "https://chatgpt.example/client.json",
+      redirect_host: "chatgpt.example",
+      created_at: 1800000000,
+      last_used_at: null,
+    },
+  ]);
+  renderApps();
+  const section = (
+    await screen.findByRole("heading", { name: "Connected with sign-in" })
+  ).closest("section")!;
+  const list = await within(section).findByRole("list", { name: "Connections" });
+  expect(within(list).getByText("ChatGPT")).toBeVisible();
+  // The keyed apps stay in their own list; a connection is not an app row.
+  expect(
+    within(screen.getByRole("list", { name: "Apps" })).queryByText("ChatGPT"),
+  ).toBeNull();
+  fireEvent.click(
+    within(list).getByRole("button", { name: "Disconnect ChatGPT" }),
+  );
+  await waitFor(() =>
+    expect(accountApi.revokeMcpConnection).toHaveBeenCalledWith("mcg_chatgpt"),
+  );
+});
+
+it("says how to make a connection when there is none", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [app] });
+  renderApps();
+  expect(await screen.findByText(/No connections yet/)).toBeVisible();
+  expect(screen.getByRole("link", { name: "connect one" })).toHaveAttribute(
+    "href",
+    "/connect",
   );
 });

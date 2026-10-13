@@ -33,7 +33,7 @@ def test_documented_constants():
     assert rs.RETAIN_S is None and rs.RETENTION_SETTING_KEY == "receipt_retention"
     assert rs.RETENTION_DAYS == (None, 365, 90, 30) and rs.STALE_AFTER_MS == 300_000 and rs.SCHEMA_VERSION == 2
     assert rs._IMMUTABLE_ACCEPTED_FIELDS == {
-        "request_id", "protocol", "path", "intent", "app_profile", "app_id", "api_key_name", "requested_model", "stream",
+        "request_id", "protocol", "path", "intent", "app_profile", "app_id", "api_key_name", "connection_id", "requested_model", "stream",
         "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility", "owner_key_hash",
         "source_kind", "source_label", "client_hint", "attempt_number"}
 
@@ -113,6 +113,15 @@ def test_finalize_terminalizes_once_and_keeps_the_accepted_facts(db):
     assert body["accepted_at_ms"] == 5_000_000 and body["finished_at_ms"] == 6_000_000 and body["attempt_number"] == 1
     assert rs.finalize({**done, "status": "failed"}, path=db) is False
     assert raw(db, "SELECT status FROM receipts") == [{"status": "succeeded"}]
+
+
+def test_finalize_keeps_the_connection_that_made_the_accepted_request(db):
+    rs.begin({**accepted(), "connection_id": "mcg_accepted"}, now_ms=5_000_000, path=db)
+    done = {"request_id": "r1", "status": "succeeded", "connection_id": "mcg_other", "accepted_at_ms": 1,
+            "updated_at_ms": 6_000_000}
+    assert rs.finalize(done, path=db) is True
+    body = json.loads(raw(db, "SELECT receipt_json FROM receipts")[0]["receipt_json"])
+    assert body["connection_id"] == "mcg_accepted"
 
 
 def test_finalize_refuses_an_unbegun_or_malformed_row_and_a_non_terminal_receipt(db):

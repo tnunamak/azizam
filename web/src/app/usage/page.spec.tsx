@@ -573,7 +573,6 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
       { id: "app:idle", label: "Idle app", requests: 0, disabled: false, created_at: 50 },
       { id: "app:old2", label: "Temp triage", requests: 5, disabled: true, created_at: 200 },
       { id: "app:small", label: "Small app", requests: 2, disabled: false, created_at: 10 },
-      { id: "local-network", label: "Local network · no key", requests: 700, disabled: false, created_at: null },
       { id: "app:big", label: "Big app", requests: 90, disabled: false, created_at: 20 },
     ],
   });
@@ -584,7 +583,6 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
   const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
   expect(labels).toEqual([
     "All sources",
-    "Local network · no key",
     "Big app",
     "Small app",
     "Temp triage (1)",
@@ -594,6 +592,35 @@ test("Usage Source list ranks busy apps first and tells same-named apps apart", 
   expect(screen.getByText("Turned off or no requests")).toBeVisible();
 });
 
+test("Usage Source list offers each sign-in connection by client name, apart from apps, and filters by it", async () => {
+  renderUsage({
+    sources: [
+      { id: "app:session", kind: "app", label: "Azizam", requests: 12, disabled: false, created_at: 5 },
+      { id: "connection:mcg_1", kind: "connection", label: "ChatGPT", requests: 40, disabled: false, created_at: 30 },
+      { id: "connection:mcg_2", kind: "connection", label: "Old client", requests: 3, disabled: true, created_at: 10 },
+      { id: "connection:mcg_3", kind: "connection", label: "Claude", requests: 0, disabled: false, created_at: 20 },
+    ],
+  });
+  await screen.findByText("Top models by requests");
+  const user = userEvent.setup();
+  screen.getByRole("combobox", { name: "Source" }).focus();
+  await user.keyboard("{Enter}");
+  const labels = (await screen.findAllByRole("option")).map((option) => option.textContent);
+  expect(labels).toEqual([
+    "All sources",
+    "Azizam",
+    "ChatGPT",
+    "Old client (disconnected)",
+    "Claude",
+  ]);
+  expect(screen.getByText("Connected with sign-in")).toBeVisible();
+  await user.click(screen.getByRole("option", { name: "ChatGPT" }));
+  await waitFor(() =>
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("source=connection%3Amcg_1")),
+    ).toBe(true),
+  );
+});
 
 test("Usage daily bars use recorded totals without stacking and preserve overfull counts", async () => {
   renderUsage({
@@ -1035,7 +1062,6 @@ test("Usage model table shows names, never a path or packing tag, and a Cost in 
 });
 
 const manySources = [
-  { id: "local-network", label: "Local network · no key", kind: "local-network", requests: 60, disabled: false, created_at: null },
   { id: "app:1", label: "tim.nunamaker@gmail.com personal access with a rather long name", kind: "app", requests: 90, disabled: false, created_at: 1 },
   ...Array.from({ length: 20 }, (_, index) => ({
     id: `app:tmp${index}`,
@@ -1064,8 +1090,8 @@ test("Usage Source list ranks busy apps first, numbers same-named apps and puts 
   expect(labels.slice(0, 4)).toEqual([
     "All sources",
     "tim.nunamaker@gmail.com personal access with a rather long name",
-    "Local network · no key",
     "Household app 0",
+    "Household app 1",
   ]);
   expect(labels.filter((label) => label?.startsWith("Temporary empathy"))).toEqual([
     "Temporary empathy Jev triage (1)",

@@ -21,7 +21,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
@@ -167,6 +167,29 @@ def _client(row: sqlite3.Row) -> ClientRecord:
 
 def _grant(row: sqlite3.Row) -> GrantRecord:
     return GrantRecord(**{key: row[key] for key in GrantRecord.__dataclass_fields__})
+
+
+def grants_in(conn: sqlite3.Connection, person_ids: "Iterable[str] | None" = None) -> list[GrantRecord]:
+    """Every connection of the given people (``None``: everyone), revoked ones
+    included, newest first, read through ``conn`` (an admin database
+    connection, for a request that already holds one). Read only: a database
+    that has no connections yet gives an empty list and is not changed. Usage
+    history names a connection long after it ends."""
+    people = None if person_ids is None else sorted({str(person) for person in person_ids})
+    if people == []:
+        return []
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_oauth_grants'").fetchone() is None:
+        return []
+    query = "SELECT * FROM mcp_oauth_grants"
+    args: list[str] = []
+    if people is not None:
+        query += " WHERE person_id IN (" + ",".join("?" for _ in people) + ")"
+        args = people
+    previous, conn.row_factory = conn.row_factory, sqlite3.Row
+    try:
+        return [_grant(row) for row in conn.execute(query + " ORDER BY created_at DESC, id", args).fetchall()]
+    finally:
+        conn.row_factory = previous
 
 
 class Store:
