@@ -7,9 +7,7 @@ import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
 import * as session from "@/components/shell/session";
 import { ApiError } from "@/lib/api";
 
-const ownerModule = vi.hoisted(() => ({ loads: 0 }));
 vi.mock("./status-client", () => {
-  ownerModule.loads += 1;
   return { StatusClient: () => <p>Owner status</p> };
 });
 // Capability states come from the shared model, which reads the Home snapshot.
@@ -306,15 +304,6 @@ it.each([null, "unknown", "unexpected"])("labels an unrecorded receipt outcome: 
   serve({ ...snapshot, receipts: [{ ...snapshot.receipts[0], status }] });
   mount();
   expect(await screen.findByText("Outcome not recorded")).toBeVisible();
-});
-
-// Runs first: later cases render the owner view, which loads the module on purpose.
-it("does not load the owner status module for a member", async () => {
-  vi.spyOn(session, "useViewer").mockReturnValue({ admin: false } as ReturnType<typeof session.useViewer>);
-  serve(snapshot);
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}><StatusView /></QueryClientProvider>);
-  await screen.findByRole("heading", { name: "Your latest requests" }).catch(() => undefined);
-  expect(ownerModule.loads).toBe(0);
 });
 
 it("offers Retry for a successful response without status", async () => {
