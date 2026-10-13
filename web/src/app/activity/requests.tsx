@@ -59,6 +59,19 @@ type RequestPage = {
   sources?: { id: string; label: string }[];
 };
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Rows are dereferenced after the query succeeds, so a malformed page must fail
+// the query, where the retry callout can reach it.
+function isRequestPage(payload: unknown): payload is RequestPage {
+  return (
+    isObject(payload) &&
+    Array.isArray(payload.records) &&
+    payload.records.every((row) => isObject(row) && isObject(row.receipt))
+  );
+}
+
 // The title of a request in the words people use, never the stored intent.
 const requestNames: Record<string, string> = {
   chat: "Chat",
@@ -193,7 +206,11 @@ export function Requests() {
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("Requests could not be loaded.");
-      return response.json();
+      const payload: unknown = await response.json();
+      if (!isRequestPage(payload)) {
+        throw new Error("Requests response is not in the expected shape.");
+      }
+      return payload;
     },
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });

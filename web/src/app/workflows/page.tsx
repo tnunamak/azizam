@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -842,6 +842,10 @@ export default function WorkflowsPage() {
   );
   // Read the open workflow from the latest catalog so a refresh reaches it.
   const detail = allRows.find((row) => row.id === detailId) ?? null;
+  // A workflow that left the catalog stays dismissed if it comes back.
+  useEffect(() => {
+    if (data && detailId !== null && detail === null) setDetailId(null);
+  }, [data, detailId, detail]);
   const allCapabilities = [
     ...capabilityOrder,
     ...new Set(
