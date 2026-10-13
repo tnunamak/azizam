@@ -14397,6 +14397,14 @@ def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
     return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
 
 
+def _mcp_allowed_origins(_request: Request) -> list[str]:
+    """Browser origins allowed to call /mcp: the configured list plus the
+    saved public address. A request's own Host header is not evidence."""
+    listed = [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])]
+    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    return [*listed, pinned] if pinned else listed
+
+
 mcp_server.register_mcp_routes(
     app,
     mcp_server.McpDeps(
@@ -14408,7 +14416,7 @@ mcp_server.register_mcp_routes(
         read_asset=_mcp_read_asset,
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
-        allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+        allowed_origins=_mcp_allowed_origins,
     ),
 )
 
