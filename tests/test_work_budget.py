@@ -115,3 +115,42 @@ def test_usage_summary_probes_a_file_no_job_knows_once(usage: UsageFixture) -> N
     with count_work() as again:
         usage.usage()
     assert first.processes == 1 and again.processes == 0, (first.commands, again.commands)
+
+
+# -- category gate: one store read per read request ----------------------------
+
+def test_category_gate_asks_the_store_once_per_read_request(tmp_path: Path) -> None:
+    from gateway import category_enforcement, request_connections
+    from gateway.policy import PolicyRequest
+    from tests.test_category_enforcement import Identity, _activate, _snapshot
+
+    path = tmp_path / "categories.db"
+    _activate(path, _snapshot())
+    category_enforcement.configure(path)
+    try:
+        request = PolicyRequest(protocol="openai.images", intent="image.generate", workflow="flux")
+        who = Identity("mia", "family-app")
+
+        def checks(count: int) -> int:
+            with count_work() as work, request_connections.request_scope():
+                for _ in range(count):
+                    category_enforcement.visible(who, request)
+            return work.statements
+
+        checks(1)  # opens the gate's own watch connection
+        few, many = checks(2), checks(200)
+        assert many == few, f"{few} statements for 2 checks in one read request, {many} for 200"
+        # An activation made after the request started is seen by the next one.
+        with request_connections.request_scope():
+            category_enforcement.visible(who, request)
+        from gateway.category_api import snapshot_to_json
+        from gateway.category_store import CategoryStore
+
+        store = CategoryStore(path)
+        base = store.get_active().revision
+        later = store.create_candidate(snapshot_to_json(_snapshot(value="adult")), base, "owner-1", "tighten")
+        store.activate(later.revision, base)
+        with request_connections.request_scope():
+            assert category_enforcement.visible(who, request) is False
+    finally:
+        category_enforcement.configure(None)
