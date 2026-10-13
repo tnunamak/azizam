@@ -45,7 +45,6 @@ def _write_config(state: Path, port: int, engine_port: int) -> Path:
   host: 127.0.0.1
   port: {port}
 auth:
-  enabled: true
   public_paths: [/health]
 backends:
   kobold: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}

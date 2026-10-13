@@ -91,8 +91,8 @@ def test_no_json_get_response_contains_an_internal_key(people):  # noqa: F811
     member = people.alice
     failures = []
     for audience in ("client", "admin", "internal"):
-        # The router captured the resolver at import; the profile mapping is looked up per request.
-        people.monkeypatch.setattr(proxy, "discovery_audience_for_profile", lambda _profile: audience)
+        # The router captured the resolver at import; the plan is looked up per request.
+        people.monkeypatch.setattr(proxy, "discovery_audience_for_access", lambda _access: audience)
         checked = 0
         for template in _get_routes():
             headers = member.browser if template.startswith("/me/api") else member.bearer

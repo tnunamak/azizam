@@ -62,9 +62,6 @@ cat > "$state/config.yml" <<EOF
 proxy:
   host: 127.0.0.1
   port: $gateway_port
-auth:
-  enabled: true
-  lan_bypass_enabled: false
 backends:
   kobold: {enabled: false, host: 127.0.0.1, port: $backend_port}
   comfyui: {enabled: false, host: 127.0.0.1, port: $backend_port}
