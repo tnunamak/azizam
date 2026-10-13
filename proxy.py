@@ -6710,16 +6710,21 @@ def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode:
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
     from gateway.ownership import owner_key
-    return owner_key(auth_context, path=ADMIN_STORE.path)
+    # A list route asks once per row; in a read request the answer is read once.
+    # The entry holds the context itself, so its id cannot be reused by another object.
+    return request_connections.memo(
+        ("asset-owner-key", id(auth_context)),
+        lambda: (auth_context, owner_key(auth_context, path=ADMIN_STORE.path)))[1]
 
 
 def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
     from gateway.ownership import credential_owner_keys
     identity = getattr(auth_context, "identity", None)
-    return credential_owner_keys(
-        _asset_owner_key(auth_context), path=ADMIN_STORE.path,
-        current_key_hash=getattr(identity, "key_hash", None),
-    )
+    return request_connections.memo(
+        ("asset-read-owner-keys", id(auth_context)),
+        lambda: (auth_context, credential_owner_keys(
+            _asset_owner_key(auth_context), path=ADMIN_STORE.path,
+            current_key_hash=getattr(identity, "key_hash", None))))[1]
 
 
 def _asset_metadata_path(asset_id: str) -> Path | None:

@@ -119,9 +119,13 @@ def scoped(kind: str, path: object, opener: Callable[[], sqlite3.Connection]) ->
 
 
 class RequestConnectionsMiddleware:
-    """Open a ``request_scope`` around read requests to the hot API prefixes."""
+    """Open a ``request_scope`` around read requests to the hot API prefixes.
 
-    PREFIXES = ("/me/api/", "/admin/api/", "/v1/")
+    The OpenAI, Anthropic and gateway twins of ``/v1/`` are listed too: without a
+    scope a list route opened one SQLite connection per row it checked.
+    """
+
+    PREFIXES = ("/me/api/", "/admin/api/", "/v1/", "/openai/v1/", "/anthropic/v1/", "/gateway/v1/")
     BULK_SUFFIXES = ("/content", "/download", "/sample", "/stream")
 
     def __init__(self, app):
