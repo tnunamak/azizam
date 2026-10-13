@@ -13705,6 +13705,9 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
 async def _status_payload_with_service_rows(
     status_payload: Mapping[str, Any], service_records: Mapping[str, Any], service_ids: Iterable[str],
 ) -> Mapping[str, Any]:
@@ -13724,10 +13727,22 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    extra = await status_endpoint._backend_grid({"backends": missing})
-    checked_at = int(time.time())
-    for row in extra:
-        row.setdefault("observed_at_s", checked_at)
+    # Every capabilities and overview read asks about the same few services. Their
+    # rows are kept as long as the status grid keeps its own, so a read costs no
+    # HTTP probe or `systemctl` process unless a row has expired.
+    now = time.monotonic()
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
+    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
+    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
+    probed: list[dict[str, Any]] = []
+    if unchecked:
+        probed = await status_endpoint._backend_grid({"backends": unchecked})
+        checked_at = int(time.time())
+        for row in probed:
+            row.setdefault("observed_at_s", checked_at)
+            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
+    extra = status_endpoint._merge_backend_observations([*kept, *probed])
     return {**status_payload, "backends": [*rows, *extra]}
 
 
