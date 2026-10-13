@@ -205,6 +205,7 @@ class HealthState:
 
 
 class ProcessState:
+    UNKNOWN   = "unknown"
     STOPPED   = "stopped"
     STARTING  = "starting"
     RUNNING   = "running"
@@ -464,7 +465,7 @@ class DockerDriver:
         driver_cfg = self._driver_config(svc)
         running = await self._is_running(driver_cfg)
         if running is None:
-            return ProcessState.UNKNOWN  # type: ignore[attr-defined]
+            return ProcessState.UNKNOWN
         if running:
             ok = await _poll_health(svc, self._DOCKER_POLL_INTERVAL_S)
             return ProcessState.RUNNING if ok else ProcessState.STARTING
@@ -1519,11 +1520,12 @@ class HttpLoadUnloadDriver:
         """
         import httpx
 
-        target_model = activation.get("model_name", "")
+        dc = self._driver_config(svc)
+        model_key = str(dc.get("activation_model_key") or "model_name")
+        target_model = activation.get(model_key, "")
         if not target_model:
             return False
 
-        dc = self._driver_config(svc)
         base_url = self._base_url(svc)
         admin_key = self._admin_key(svc, dc)
         admin_header = dc.get("admin_header", "x-admin-key")
@@ -1581,7 +1583,8 @@ class HttpLoadUnloadDriver:
                 model_params = PARAMS_PROVIDERS[load_body_params_key](svc)
             else:
                 model_params = {}
-        load_payload = {"model_name": target_model, **model_params}
+        # The requested model wins over a stray key in the extra params.
+        load_payload = {**model_params, model_key: target_model}
 
         # Step 4: POST load endpoint, stream the response.
         try:
@@ -1641,7 +1644,9 @@ class HttpLoadUnloadDriver:
         ctx: SwapContext,
     ) -> bool:
         """True when swap() would unload/load. Like swap(), ignores pin_loaded."""
-        target_model = activation.get("model_name", "")
+        dc = self._driver_config(svc)
+        model_key = str(dc.get("activation_model_key") or "model_name")
+        target_model = activation.get(model_key, "")
         return bool(target_model) and ctx.loaded_model != target_model
 
     # ------------------------------------------------------------------
