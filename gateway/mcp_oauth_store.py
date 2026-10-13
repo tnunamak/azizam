@@ -23,8 +23,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping
 
-from gateway.sqlite_startup import connect_readonly
-
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -171,28 +169,27 @@ def _grant(row: sqlite3.Row) -> GrantRecord:
     return GrantRecord(**{key: row[key] for key in GrantRecord.__dataclass_fields__})
 
 
-def read_grants(path: Path, person_ids: "Iterable[str] | None" = None) -> list[GrantRecord]:
+def grants_in(conn: sqlite3.Connection, person_ids: "Iterable[str] | None" = None) -> list[GrantRecord]:
     """Every connection of the given people (``None``: everyone), revoked ones
-    included, newest first. Read only: a database that has no connections yet
-    gives an empty list and is not changed. Usage history names a connection
-    long after it ends."""
+    included, newest first, read through ``conn`` (an admin database
+    connection, for a request that already holds one). Read only: a database
+    that has no connections yet gives an empty list and is not changed. Usage
+    history names a connection long after it ends."""
     people = None if person_ids is None else sorted({str(person) for person in person_ids})
     if people == []:
         return []
-    conn = connect_readonly(path, timeout=5)
-    conn.row_factory = sqlite3.Row
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_oauth_grants'").fetchone() is None:
+        return []
+    query = "SELECT * FROM mcp_oauth_grants"
+    args: list[str] = []
+    if people is not None:
+        query += " WHERE person_id IN (" + ",".join("?" for _ in people) + ")"
+        args = people
+    previous, conn.row_factory = conn.row_factory, sqlite3.Row
     try:
-        conn.execute("PRAGMA busy_timeout=5000")
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_oauth_grants'").fetchone() is None:
-            return []
-        query = "SELECT * FROM mcp_oauth_grants"
-        args: list[str] = []
-        if people is not None:
-            query += " WHERE person_id IN (" + ",".join("?" for _ in people) + ")"
-            args = people
         return [_grant(row) for row in conn.execute(query + " ORDER BY created_at DESC, id", args).fetchall()]
     finally:
-        conn.close()
+        conn.row_factory = previous
 
 
 class Store:

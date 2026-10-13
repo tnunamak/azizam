@@ -716,6 +716,16 @@ def runtime_auth_connection(path: Path = DB_PATH):
         yield conn
 
 
+@contextmanager
+def shared_connection(path: Path = DB_PATH):
+    """The request's admin connection, for a read another module's tables need.
+
+    Inside a request this is the connection the other admin reads use, so it
+    costs no extra open. Do not write through it, or keep it past the request."""
+    with _conn(path) as conn:
+        yield conn
+
+
 def schema_version(path: Path = DB_PATH) -> int | None:
     with _conn(path) as conn:
         row = conn.execute(

@@ -1678,7 +1678,9 @@ def _usage_sources(
                 "disabled": app.get("disabled_at") is not None,
             })
     # A connection is its own source, labelled by the client that was approved.
-    for grant in mcp_oauth_store.read_grants(admin_db_path, person_ids):
+    with admin_store.shared_connection(admin_db_path) as conn:
+        grants = mcp_oauth_store.grants_in(conn, person_ids)
+    for grant in grants:
         sources.append({
             "id": f"connection:{grant.id}",
             "label": grant.client_name,
