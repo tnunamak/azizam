@@ -8,7 +8,8 @@
 //   ready_ms       the last change to <main>'s content before it stayed still for 700 ms (at least
 //                  meaningful_ms): when the data the page shows is on screen — the ranked number.
 //                  Shell fetches that only change the header do not count.
-//   requests, bytes (response bodies), api_requests, long_tasks (count / total ms), fcp_ms
+//   requests, bytes (response bodies), api_requests, long_tasks (count / total ms), fcp_ms,
+//   gateway_cpu_ms (CPU the gateway process used during the load: does not grow with host load)
 // Each page is loaded REPEATS times in a fresh context (cold JS cache is not simulated: one
 // warm-up load fills the HTTP cache); the median is reported.
 import { createRequire } from "node:module";
@@ -20,6 +21,14 @@ import { fileURLToPath } from "node:url";
 const { chromium, request } = createRequire(join(process.cwd(), "package.json"))("@playwright/test");
 
 const REPEATS = 3;
+const CLK_TCK = 100;
+function cpuMs(pid) {
+  try {
+    const f = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const parts = f.slice(f.lastIndexOf(")") + 2).split(" "); // fields after "(comm) state"
+    return ((Number(parts[11]) + Number(parts[12])) * 1000) / CLK_TCK; // utime, stime
+  } catch { return null; }
+}
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, v, i, all) => (v.startsWith("--") ? [...acc, [v.slice(2), all[i + 1]]] : acc), []));
 const manifest = JSON.parse(readFileSync(args.manifest, "utf8"));
 const base = manifest.base_url;
@@ -57,7 +66,9 @@ const INIT = `
       for (const r of records) {
         if (r.type === "attributes") continue;
         const node = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-        if (node && node.closest && node.closest("main")) window.__perf.lastMain = performance.now();
+        // Decorations (aria-hidden: waveform bars, icons) filling in are not content arriving.
+        if (node && node.closest && node.closest("main") && !node.closest('[aria-hidden="true"]'))
+          window.__perf.lastMain = performance.now();
       }
       check();
     }).observe(document, { childList: true, subtree: true, characterData: true, attributes: true });
@@ -85,6 +96,7 @@ async function loadOnce(context, route) {
     if (/^\/(me\/api|admin\/api|v1|auth\/api)/.test(url.pathname)) { api += 1; apiDone.push(Date.now()); }
   });
   const start = Date.now();
+  const cpu0 = cpuMs(manifest.gateway_pid);
   t0.v = start;
   let error = null;
   try {
@@ -106,7 +118,7 @@ async function loadOnce(context, route) {
     ready_ms: perf.meaningful === null ? null : Math.max(perf.meaningful, perf.lastMain),
     meaningful_ms: perf.meaningful, fcp_ms: perf.fcp, settled_ms: settled,
     requests, api_requests: api, bytes, long_tasks: perf.long.length, long_task_ms: Math.round(perf.long.reduce((a, b) => a + b, 0)),
-    final, error,
+    gateway_cpu_ms: cpu0 === null ? null : Math.round(cpuMs(manifest.gateway_pid) - cpu0), final, error,
   };
 }
 
@@ -131,6 +143,7 @@ for (const [who, email] of [["owner", manifest.owner_email], ["member", manifest
       ready_ms: ok.length ? Math.round(median(ok.map((r) => r.ready_ms))) : null,
       settled_ms: median(runs.map((r) => r.settled_ms ?? 0)), fcp_ms: Math.round(median(runs.map((r) => r.fcp_ms ?? 0))),
       requests: median(runs.map((r) => r.requests)), api_requests: median(runs.map((r) => r.api_requests)),
+      gateway_cpu_ms: median(runs.map((r) => r.gateway_cpu_ms ?? 0)),
       bytes: median(runs.map((r) => r.bytes)), long_tasks: median(runs.map((r) => r.long_tasks)), long_task_ms: median(runs.map((r) => r.long_task_ms)),
     });
     console.error(`${who} ${route} -> meaningful ${rows.at(-1).ready_ms} ms (shell ${rows.at(-1).meaningful_ms})`);
@@ -140,5 +153,5 @@ for (const [who, email] of [["owner", manifest.owner_email], ["member", manifest
 await browser.close();
 writeFileSync(args.out, JSON.stringify({ rows }, null, 1));
 const sorted = [...rows].sort((a, b) => (b.ready_ms ?? 1e9) - (a.ready_ms ?? 1e9));
-console.log("| page | who | ready ms | shell ms | requests | api | KB | long tasks (ms) |\n|---|---|--:|--:|--:|--:|--:|--:|");
-for (const r of sorted) console.log(`| ${r.route}${r.final !== r.route ? " -> " + r.final : ""} | ${r.who} | ${r.ready_ms ?? "NONE"} | ${r.meaningful_ms} | ${r.requests} | ${r.api_requests} | ${Math.round(r.bytes / 1024)} | ${r.long_tasks} (${r.long_task_ms}) |`);
+console.log("| page | who | ready ms | shell ms | requests | api | KB | gateway cpu ms | long tasks (ms) |\n|---|---|--:|--:|--:|--:|--:|--:|--:|");
+for (const r of sorted) console.log(`| ${r.route}${r.final !== r.route ? " -> " + r.final : ""} | ${r.who} | ${r.ready_ms ?? "NONE"} | ${r.meaningful_ms} | ${r.requests} | ${r.api_requests} | ${Math.round(r.bytes / 1024)} | ${r.gateway_cpu_ms} | ${r.long_tasks} (${r.long_task_ms}) |`);

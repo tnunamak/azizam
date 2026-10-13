@@ -95,7 +95,7 @@ def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
                 time.sleep(0.3)
         else:
             raise RuntimeError("fixture gateway did not become ready")
-        manifest = {**manifest, "ready": True, "port": port, "base_url": f"http://127.0.0.1:{port}", "state": str(state),
+        manifest = {**manifest, "ready": True, "port": port, "gateway_pid": children[1].pid, "base_url": f"http://127.0.0.1:{port}", "state": str(state),
                     "routes_file": env["PERF_ROUTES_FILE"]}
         (state / "perf-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         print(json.dumps(manifest), flush=True)

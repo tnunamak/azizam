@@ -2,8 +2,8 @@
 
 Runs `proxy:app` under uvicorn and stamps every response with the work the
 request caused: SQLite statements (`x-perf-sql`), SQLite connections
-(`x-perf-connects`), spawned processes (`x-perf-subproc`) and server time
-(`x-perf-ms`). Counters are process-wide deltas, so the caller sends requests
+(`x-perf-connects`), spawned processes (`x-perf-subproc`), server time
+(`x-perf-ms`) and the process's CPU time (`x-perf-cpu-ms`). Counters are process-wide deltas, so the caller sends requests
 one at a time and takes the minimum over repeats to drop background noise.
 It also writes the GET route table to PERF_ROUTES_FILE for the bench.
 
@@ -135,6 +135,7 @@ class PerfStamp:
         with _LOCK:
             before = dict(COUNTS)
         started = time.perf_counter()
+        cpu_before = time.process_time()
 
         async def stamped(message):
             if message["type"] == "http.response.start":
@@ -146,6 +147,8 @@ class PerfStamp:
                     (b"x-perf-connects", str(now["connects"] - before["connects"]).encode()),
                     (b"x-perf-subproc", str(now["subproc"] - before["subproc"]).encode()),
                     (b"x-perf-ms", f"{(time.perf_counter() - started) * 1000:.1f}".encode()),
+                    # Process CPU, all threads: unlike wall time it does not grow with host load.
+                    (b"x-perf-cpu-ms", f"{(time.process_time() - cpu_before) * 1000:.1f}".encode()),
                 ]
                 message = {**message, "headers": headers}
             await send(message)

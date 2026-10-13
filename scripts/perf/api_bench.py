@@ -175,7 +175,7 @@ def run(manifest: dict) -> dict:
                     size = len(body)
                     if index >= WARMUP:
                         samples.append(ms)
-                        stamps.append({k: float(headers.get(f"x-perf-{k}", 0)) for k in ("sql", "connects", "subproc", "ms")})
+                        stamps.append({k: float(headers.get(f"x-perf-{k}", 0)) for k in ("sql", "connects", "subproc", "ms", "cpu-ms")})
                     if status >= 400 and index == 0:
                         break
             except Exception as error:  # a hung or reset route is a finding, not a crash
@@ -188,15 +188,16 @@ def run(manifest: dict) -> dict:
                 **row, "status": status, "p50_ms": round(pct(samples, 0.5), 1), "p95_ms": round(pct(samples, 0.95), 1),
                 "bytes": size, "sql": int(min(s["sql"] for s in stamps)), "connects": int(min(s["connects"] for s in stamps)),
                 "subproc": int(min(s["subproc"] for s in stamps)), "server_ms": round(min(s["ms"] for s in stamps), 1),
+                "cpu_ms": round(min(s["cpu-ms"] for s in stamps), 1),
             })
     return {"rows": rows, "pool": sorted(pool), "repeats": REPEATS}
 
 
 def table(rows: list[dict], limit: int = 0) -> str:
     timed = sorted((r for r in rows if "p95_ms" in r), key=lambda r: -r["p95_ms"])
-    lines = ["| route | who | p50 ms | p95 ms | bytes | sql | conns | procs |", "|---|---|--:|--:|--:|--:|--:|--:|"]
+    lines = ["| route | who | p50 ms | p95 ms | cpu ms | bytes | sql | conns | procs |", "|---|---|--:|--:|--:|--:|--:|--:|--:|"]
     for r in timed[: limit or None]:
-        lines.append(f"| {r['route']} | {r['who']} | {r['p50_ms']} | {r['p95_ms']} | {r['bytes']} | {r['sql']} | {r['connects']} | {r['subproc']} |")
+        lines.append(f"| {r['route']} | {r['who']} | {r['p50_ms']} | {r['p95_ms']} | {r.get('cpu_ms', '')} | {r['bytes']} | {r['sql']} | {r['connects']} | {r['subproc']} |")
     return "\n".join(lines)
 
 
