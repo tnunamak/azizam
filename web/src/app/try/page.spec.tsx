@@ -433,6 +433,14 @@ test("an empty decision catalog has no inferred model and cannot run", async () 
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });
 
+// Run is disabled until the model list has loaded, and a click on a disabled
+// button does nothing. Wait for it to be enabled, which is the event that
+// the list arrived, before pressing it.
+async function pressRun() {
+  const run = await screen.findByRole("button", { name: "Run" });
+  await waitFor(() => expect(run).toBeEnabled());
+  fireEvent.click(run);
+}
 function bearerOfLastRun() {
   const call = fetchMock.mock.calls.findLast(
     ([, init]) => init?.method === "POST",
@@ -441,7 +449,7 @@ function bearerOfLastRun() {
 }
 test("a later visit mints a fresh Try key because the secret stays in page memory", async () => {
   const first = render(<TryPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await pressRun();
   await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
@@ -450,7 +458,7 @@ test("a later visit mints a fresh Try key because the secret stays in page memor
 
   fetchMock.mockClear();
   render(<TryPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await pressRun();
   await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
@@ -462,7 +470,7 @@ test("an old stored secret is removed unused and Remove this key ends the page k
   );
   render(<TryPage />);
   expect(localStorage.getItem("azizam.try.key")).toBeNull();
-  fireEvent.click(await screen.findByRole("button", { name: "Run" }));
+  await pressRun();
   await screen.findByText("Key details");
   expect(mocks.tryKey).toHaveBeenLastCalledWith(null);
   await waitFor(() => expect(bearerOfLastRun()).toBe("Bearer test-secret"));
