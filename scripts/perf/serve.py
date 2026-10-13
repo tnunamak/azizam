@@ -8,9 +8,13 @@ copy only). This adds the media files (copied from the source checkout's image
 cache) and runs scripts/perf/gateway_main.py so every response carries
 statement, connection and subprocess counts. The source tree is never written.
 
-    scripts/perf/serve.py --port 18710 [--source ~/applications/azizam] [--state DIR [--reuse]]
+    scripts/perf/serve.py --port 18710 [--source ~/applications/azizam] [--clone STATE_OF_A_RUNNING_SERVER]
 
-Prints {"ready": true, ...manifest} on one line, then serves until SIGTERM.
+The copy lives in a scratch directory (scripts/scratch_owner.py): it is removed when this process
+ends, also on TERM, INT or HUP, and a copy left by a killed run is removed by the next start.
+Copies of the owner's data never outlive the run; there is no way to keep one.
+
+Prints {"ready": true, "serve_pid": ..., ...manifest} on one line, then serves until SIGTERM.
 Ports: PORT and PORT+1 (fake engine). Both must be in 18000-18998.
 """
 from __future__ import annotations
@@ -19,15 +23,20 @@ import argparse
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "scripts"))
+
+import scratch_owner  # noqa: E402
+
+SCRATCH_PREFIX = "azizam-perf-run-"
 
 from scripts.ui import live_data_copy  # noqa: E402
 
@@ -53,9 +62,13 @@ def prepare(state: Path, port: int, engine_port: int, source: Path) -> dict:
     return manifest
 
 
-def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
+def serve(state: Path, port: int, source: Path, clone: Path | None = None) -> None:
     engine_port = port + 1
-    if reuse:  # same data as an earlier run, so before/after responses can be compared byte for byte
+    if clone is not None:
+        # The same data as a running server, so two versions of the code answer the same requests
+        # (scripts/perf/snapshot.py). The clone is its own scratch directory, deleted with this process.
+        shutil.copytree(clone, state, symlinks=True, dirs_exist_ok=True)
+        scratch_owner.mark(state)
         manifest = json.loads((state / "perf-manifest.json").read_text(encoding="utf-8"))
         live_data_copy.write_config(state, port, engine_port)
         os.environ["AZIZAM_CONFIG_PATH"] = str(state / "config.yml")
@@ -73,12 +86,6 @@ def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
     ]
     children: list[subprocess.Popen] = []
 
-    def stop(_signum=None, _frame=None):
-        raise KeyboardInterrupt
-
-    (state / "serve.pid").write_text(str(os.getpid()), encoding="utf-8")  # stop with: kill $(cat STATE/serve.pid)
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
     try:
         for command, child_port in commands:
             log = (state / f"{child_port}.log").open("w")
@@ -95,13 +102,13 @@ def serve(state: Path, port: int, source: Path, reuse: bool = False) -> None:
                 time.sleep(0.3)
         else:
             raise RuntimeError("fixture gateway did not become ready")
-        manifest = {**manifest, "ready": True, "port": port, "gateway_pid": children[1].pid, "base_url": f"http://127.0.0.1:{port}", "state": str(state),
+        manifest = {**manifest, "ready": True, "port": port, "gateway_pid": children[1].pid, "serve_pid": os.getpid(), "base_url": f"http://127.0.0.1:{port}", "state": str(state),
                     "routes_file": env["PERF_ROUTES_FILE"]}
         (state / "perf-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         print(json.dumps(manifest), flush=True)
         while all(child.poll() is None for child in children):
             time.sleep(0.5)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         for child in children:
@@ -119,24 +126,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--source", type=Path, default=Path.home() / "applications" / "azizam")
-    parser.add_argument("--state", type=Path, default=None, help="state directory (default: fresh under ~/.tmp)")
-    parser.add_argument("--reuse", action="store_true", help="serve the existing --state copy instead of copying again")
-    parser.add_argument("--prepare-only", action="store_true", help="copy the data into --state, write the manifest and exit (a pristine copy to run two versions against)")
+    parser.add_argument("--clone", type=Path, help="start from the data of a running perf server (its `state` path), not the live data")
     args = parser.parse_args()
     if not 18000 <= args.port < 18998:
         raise SystemExit("port must be between 18000 and 18998")
     if args.port in (5000, 15000):
         raise SystemExit("refusing a production port")
-    state = args.state or Path.home() / ".tmp" / f"azizam-perf-state-{args.port}"
-    if not args.reuse:
+    root = Path(os.environ.get("AZIZAM_CI_SCRATCH", Path.home() / ".tmp"))
+    scratch_owner.sweep(root, SCRATCH_PREFIX)  # copies left by a killed run
+    scratch_owner.exit_on_signals()  # TERM, INT and HUP unwind through the finally below
+    state = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=root))
+    scratch_owner.mark(state)
+    try:
+        serve(state, args.port, args.source, args.clone)
+    finally:
         shutil.rmtree(state, ignore_errors=True)
-        state.mkdir(parents=True)
-    if args.prepare_only:
-        manifest = prepare(state, args.port, args.port + 1, args.source)
-        (state / "perf-manifest.json").write_text(json.dumps({**manifest, "port": args.port}), encoding="utf-8")
-        print(json.dumps(manifest))
-        return
-    serve(state, args.port, args.source, args.reuse)
 
 
 if __name__ == "__main__":

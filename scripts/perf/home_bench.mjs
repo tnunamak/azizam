@@ -13,7 +13,7 @@
 //   api[]        each API call: start, end, status, bytes (ms from navigation start)
 //   by_type      bytes and count per resource type, plus encoding (gzip/br/none) of the largest scripts
 import { createRequire } from "node:module";
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const { chromium, request, devices } = createRequire(join(process.cwd(), "package.json"))("@playwright/test");
@@ -93,6 +93,7 @@ async function load(browser, context, profile, label) {
   await page.close();
   // main-thread cost from the trace
   const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents ?? [];
+  rmSync(traceFile.replace(/trace\.json$/, ""), { recursive: true, force: true }); // the trace holds URLs and timings of a real session
   const mainPid = (events.find((e) => e.name === "thread_name" && e.args?.name === "CrRendererMain") ?? {}).pid;
   const mainTids = new Set(events.filter((e) => e.name === "thread_name" && e.args?.name === "CrRendererMain").map((e) => `${e.pid}:${e.tid}`));
   const dur = (names) => sum(events.filter((e) => e.ph === "X" && names.includes(e.name) && mainTids.has(`${e.pid}:${e.tid}`)).map((e) => e.dur)) / 1000 / profile.cpu; // trace durations are throttled time already; report as measured

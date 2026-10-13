@@ -146,3 +146,45 @@ def test_each_home_limit_is_enforced() -> None:
 def test_a_home_that_never_showed_content_is_a_violation() -> None:
     report = _home(mobile_cold=None)
     assert check.home_violations(report, BUDGETS["home"])[0]["value"] == "never"
+
+
+# -- the fixture's copy of the owner's data never outlives the run ----------------------
+
+def test_the_fixture_copy_is_a_scratch_directory_removed_on_exit_and_swept_when_orphaned(tmp_path, monkeypatch) -> None:
+    import os
+    import subprocess
+
+    serve = _load("serve")
+    monkeypatch.setenv("AZIZAM_CI_SCRATCH", str(tmp_path))
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    started = serve.scratch_owner.start_time(dead.pid)
+    dead.wait()
+    orphan = tmp_path / f"{serve.SCRATCH_PREFIX}orphan"
+    orphan.mkdir()
+    (orphan / ".scratch-owner").write_text(f"{dead.pid}-{started}\n")
+    (orphan / "admin.db").write_text("a copy of someone's data")
+    live_neighbour = tmp_path / "azizam-other-tool"
+    live_neighbour.mkdir()
+    seen: list[Path] = []
+
+    def fake_serve(state, port, source, clone=None):
+        seen.append(state)
+        assert state.parent == tmp_path and state.name.startswith(serve.SCRATCH_PREFIX)
+        assert (state / ".scratch-owner").read_text().startswith(f"{os.getpid()}-")
+        assert not orphan.exists(), "a dead owner's copy was not swept at start"
+        (state / "admin.db").write_text("copy")
+        raise RuntimeError("the run failed")
+
+    monkeypatch.setattr(serve, "serve", fake_serve)
+    monkeypatch.setattr(sys, "argv", ["serve.py", "--port", "18700"])
+    monkeypatch.setattr(serve.scratch_owner, "exit_on_signals", lambda: None)
+    with pytest.raises(RuntimeError):
+        serve.main()
+    assert seen and not seen[0].exists(), "the copy outlived a failed run"
+    assert live_neighbour.is_dir()
+
+
+def test_there_is_no_way_to_keep_a_copy() -> None:
+    text = (PERF / "serve.py").read_text(encoding="utf-8")
+    assert "--state" not in text and "--reuse" not in text and "--prepare-only" not in text
+    assert "scratch_owner.sweep" in text and "rmtree(state" in text
