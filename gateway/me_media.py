@@ -752,7 +752,8 @@ def _media_entries(
             if job_source is None:
                 job_source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids, apps=apps)
             prompt_record = prompts.get(asset_id)
-            created_at = _asset_created_at(None, job, receipt)
+            path = asset_path_resolver(asset_id)
+            created_at = _asset_created_at(path, job, receipt, _embedded_provenance_cached(path, probe=False))
             out.append(_Entry(
                 asset_id=asset_id,
                 kind=_asset_kind(asset_id, asset),
