@@ -45,6 +45,37 @@ def _where(kind: str, detail: str) -> None:
         WHERE[f"{kind} {detail[:70]!r} @ {chain}"] += 1
 
 
+PROFILE = os.environ.get("PERF_PROFILE") == "1"
+_INCLUSIVE: collections.Counter = collections.Counter()
+_LEAF: collections.Counter = collections.Counter()
+_SAMPLES = [0]
+
+
+def _sampler() -> None:
+    """Every 4 ms, charge each busy repo frame on every other thread (inclusive) and its leaf."""
+    me = threading.get_ident()
+    while True:
+        time.sleep(0.004)
+        for ident, frame in sys._current_frames().items():
+            if ident == me:
+                continue
+            chain, leaf = [], None
+            while frame is not None:
+                name = frame.f_code.co_filename
+                if "/site-packages/" not in name and "/lib/python" not in name and "/scripts/perf/" not in name:
+                    chain.append(f"{os.path.basename(name)}:{frame.f_code.co_name}")
+                elif leaf is None:
+                    leaf = f"{os.path.basename(name)}:{frame.f_code.co_name}"  # the library call at the top
+                frame = frame.f_back
+            if not chain or chain[0] in ("selectors.py:select", "threading.py:wait", "queue.py:get"):
+                continue
+            with _LOCK:
+                _SAMPLES[0] += 1
+                _LEAF[f"{chain[0]}{' -> ' + leaf if leaf else ''}"] += 1
+                for entry in set(chain):
+                    _INCLUSIVE[entry] += 1
+
+
 def install_counters() -> None:
     real_connect = sqlite3.connect
 
@@ -82,6 +113,16 @@ class PerfStamp:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+        if PROFILE and scope["path"] == "/__perf/prof":
+            with _LOCK:
+                body = json.dumps({"samples": _SAMPLES[0], "inclusive": _INCLUSIVE.most_common(70),
+                                   "leaf": _LEAF.most_common(40)}).encode()
+                if scope.get("query_string") == b"reset=1":
+                    _INCLUSIVE.clear(), _LEAF.clear()
+                    _SAMPLES[0] = 0
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": body})
             return
         if ATTRIBUTE and scope["path"] == "/__perf/where":
             with _LOCK:
@@ -127,6 +168,8 @@ def dump_routes(app, path: str) -> None:
 def main() -> None:
     port = int(sys.argv[1])
     install_counters()
+    if PROFILE:
+        threading.Thread(target=_sampler, daemon=True, name="perf-sampler").start()
     import proxy
     import uvicorn
 
