@@ -41,7 +41,7 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 - Use `POST /anthropic/v1/messages` only for Anthropic-shaped clients. The legacy convenience route is `POST /v1/messages`. Streaming is supported with Anthropic Messages SSE.
 - Use `GET /ollama/api/tags`, `POST /ollama/api/chat`, `POST /ollama/api/generate`, `POST /ollama/api/show`, `GET /ollama/api/ps`, and `GET /ollama/api/version` only for Ollama-shaped clients. `/api/*` remains a convenience route for clients hard-coded to an Ollama root. Chat/generate support Ollama NDJSON streaming.
 - Use `/gateway/v1/media/jobs` for durable long-running media jobs and `/gateway/v1/receipts` for diagnostics. For durable image generation, submit `{"intent":"image.generate","request":{...OpenAI image body...}}`, then poll `/gateway/v1/media/jobs/{job_id}` and fetch `/gateway/v1/media/jobs/{job_id}/content`.
-- Use `GET /gateway/v1/providers` and `GET /gateway/v1/providers/{provider}` to discover provider-native lanes. Use `/gateway/v1/providers/{provider}/{path...}` only when the App profile explicitly allows `provider-native` and `native_passthrough` for that provider and operation. There is no root Tabby shim.
+- Use `GET /gateway/v1/providers` and `GET /gateway/v1/providers/{provider}` to discover provider-native lanes. Use `/gateway/v1/providers/{provider}/{path...}` only when the App profile explicitly allows `provider-native` and `native_passthrough` for that provider and operation.
 - Use `data[].asset_id` and signed `/v1/assets/{asset_id}/content` URLs when image outputs need to be reused by later gateway-aware calls.
 
 ## Auth Rules

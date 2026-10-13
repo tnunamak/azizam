@@ -6,7 +6,7 @@ Covers:
 - _highest_priority_chat_backend: priority ordering
 - vision_capable_llm_backends: membership + ordering
 - check_service_health: reads health_endpoint from config["backends"]
-- Pinning: today's proxy_config.yml produces tabby+kobold in LLM_BACKEND_HOSTS
+- Pinning: today's proxy_config.yml produces kobold in LLM_BACKEND_HOSTS
 - Pinning: comfyui gets /system_stats, kobold gets /v1/models from seed
 
 For imports, follow the pattern in test_proxy_gateway_acceptance.py:
@@ -42,7 +42,7 @@ def _backends_config(**overrides: dict) -> dict:
     return {"backends": overrides}
 
 
-def _make_tabby(
+def _make_vision_llm(
     *,
     enabled: bool = True,
     capabilities: list[str] | None = None,
@@ -99,14 +99,14 @@ class TestIsChatCapableNativeBackend(unittest.TestCase):
     def _call(self, backend_id: str, cfg: dict) -> bool:
         return proxy._is_chat_capable_native_backend(backend_id, cfg)
 
-    def test_tabby_chat_completions_vision_is_true(self) -> None:
-        self.assertTrue(self._call("tabby", _make_tabby()))
+    def test_vision_llm_chat_completions_vision_is_true(self) -> None:
+        self.assertTrue(self._call("vision-llm", _make_vision_llm()))
 
     def test_kobold_chat_completions_is_true(self) -> None:
         self.assertTrue(self._call("kobold", _make_kobold()))
 
     def test_disabled_backend_is_false(self) -> None:
-        self.assertFalse(self._call("tabby", _make_tabby(enabled=False)))
+        self.assertFalse(self._call("vision-llm", _make_vision_llm(enabled=False)))
 
     def test_backend_without_chat_or_completions_is_false(self) -> None:
         cfg = {"enabled": True, "capabilities": ["audio", "speech"], "port": 8001}
@@ -155,25 +155,25 @@ class TestBuildLlmBackendHosts(unittest.TestCase):
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
             return proxy._build_llm_backend_hosts()
 
-    def test_tabby_and_kobold_included(self) -> None:
-        result = self._build({"tabby": _make_tabby(), "kobold": _make_kobold()})
-        self.assertIn("tabby", result)
+    def test_vision_llm_and_kobold_included(self) -> None:
+        result = self._build({"vision-llm": _make_vision_llm(), "kobold": _make_kobold()})
+        self.assertIn("vision-llm", result)
         self.assertIn("kobold", result)
-        self.assertEqual(result["tabby"], "http://127.0.0.1:5050")
+        self.assertEqual(result["vision-llm"], "http://127.0.0.1:5050")
         self.assertEqual(result["kobold"], "http://127.0.0.1:5051")
 
     def test_litellm_excluded(self) -> None:
-        result = self._build({"tabby": _make_tabby(), "litellm": _make_litellm()})
+        result = self._build({"vision-llm": _make_vision_llm(), "litellm": _make_litellm()})
         self.assertNotIn("litellm", result)
 
     def test_tts_excluded(self) -> None:
         tts = {"enabled": True, "capabilities": ["audio", "speech"], "host": "127.0.0.1", "port": 8001}
-        result = self._build({"tabby": _make_tabby(), "tts": tts})
+        result = self._build({"vision-llm": _make_vision_llm(), "tts": tts})
         self.assertNotIn("tts", result)
 
     def test_disabled_backend_excluded(self) -> None:
-        result = self._build({"tabby": _make_tabby(enabled=False), "kobold": _make_kobold()})
-        self.assertNotIn("tabby", result)
+        result = self._build({"vision-llm": _make_vision_llm(enabled=False), "kobold": _make_kobold()})
+        self.assertNotIn("vision-llm", result)
         self.assertIn("kobold", result)
 
     def test_backend_without_port_excluded(self) -> None:
@@ -211,19 +211,19 @@ class TestHighestPriorityChatBackend(unittest.TestCase):
 
     def test_lower_priority_number_wins(self) -> None:
         backends = {
-            "tabby": _make_tabby(priority=50),
+            "vision-llm": _make_vision_llm(priority=50),
             "kobold": _make_kobold(priority=100),
         }
-        self.assertEqual(self._call(backends), "tabby")
+        self.assertEqual(self._call(backends), "vision-llm")
 
     def test_equal_priority_deterministic(self) -> None:
         # Both at 100: one of them is returned (not None), test is stable.
         backends = {
-            "tabby": _make_tabby(priority=100),
+            "vision-llm": _make_vision_llm(priority=100),
             "kobold": _make_kobold(priority=100),
         }
         result = self._call(backends)
-        self.assertIn(result, ("tabby", "kobold"))
+        self.assertIn(result, ("vision-llm", "kobold"))
 
     def test_empty_hosts_returns_none(self) -> None:
         result = self._call({})
@@ -250,9 +250,9 @@ class TestVisionCapableLlmBackends(unittest.TestCase):
             with patch.object(proxy, "LLM_BACKEND_HOSTS", hosts):
                 return proxy.vision_capable_llm_backends()
 
-    def test_tabby_with_vision_included(self) -> None:
-        result = self._call({"tabby": _make_tabby(capabilities=["chat", "completions", "vision"])})
-        self.assertIn("tabby", result)
+    def test_vision_llm_with_vision_included(self) -> None:
+        result = self._call({"vision-llm": _make_vision_llm(capabilities=["chat", "completions", "vision"])})
+        self.assertIn("vision-llm", result)
 
     def test_kobold_without_vision_excluded(self) -> None:
         result = self._call({"kobold": _make_kobold(capabilities=["chat", "completions"])})
@@ -260,8 +260,8 @@ class TestVisionCapableLlmBackends(unittest.TestCase):
 
     def test_priority_ordering(self) -> None:
         backends = {
-            "beta": {**_make_tabby(capabilities=["chat", "completions", "vision"], priority=200), "port": 5052},
-            "alpha": {**_make_tabby(capabilities=["chat", "completions", "vision"], priority=50), "port": 5053},
+            "beta": {**_make_vision_llm(capabilities=["chat", "completions", "vision"], priority=200), "port": 5052},
+            "alpha": {**_make_vision_llm(capabilities=["chat", "completions", "vision"], priority=50), "port": 5053},
         }
         result = self._call(backends)
         self.assertEqual(result, ["alpha", "beta"])
@@ -270,14 +270,14 @@ class TestVisionCapableLlmBackends(unittest.TestCase):
         result = self._call({"kobold": _make_kobold(capabilities=["chat", "completions"])})
         self.assertEqual(result, [])
 
-    def test_today_config_tabby_is_vision_capable(self) -> None:
-        """Pin: today's config has tabby with vision, kobold without."""
+    def test_today_config_vision_llm_is_vision_capable(self) -> None:
+        """Pin: a config with a vision backend, kobold without."""
         backends = {
-            "tabby": _make_tabby(capabilities=["chat", "completions", "vision"]),
+            "vision-llm": _make_vision_llm(capabilities=["chat", "completions", "vision"]),
             "kobold": _make_kobold(capabilities=["openai", "chat", "completions"]),
         }
         result = self._call(backends)
-        self.assertIn("tabby", result)
+        self.assertIn("vision-llm", result)
         self.assertNotIn("kobold", result)
 
 
@@ -593,9 +593,6 @@ class TestSeedPinning(unittest.TestCase):
     def test_comfyui_health_endpoint_is_system_stats(self) -> None:
         self.assertEqual(self.backends["comfyui"]["health_endpoint"], "/system_stats")
 
-    def test_tabby_health_endpoint_is_v1_models(self) -> None:
-        self.assertEqual(self.backends["tabby"]["health_endpoint"], "/v1/models")
-
     def test_tts_health_endpoint_is_health(self) -> None:
         self.assertEqual(self.backends["tts"]["health_endpoint"], "/health")
 
@@ -605,20 +602,10 @@ class TestSeedPinning(unittest.TestCase):
     def test_embeddings_health_endpoint_is_health(self) -> None:
         self.assertEqual(self.backends["embeddings"]["health_endpoint"], "/health")
 
-    def test_tabby_is_chat_capable(self) -> None:
-        caps = self.backends["tabby"]["capabilities"]
-        cap_set = {str(c).lower() for c in caps}
-        self.assertTrue(cap_set & {"chat", "completions"})
-
     def test_kobold_is_chat_capable(self) -> None:
         caps = self.backends["kobold"]["capabilities"]
         cap_set = {str(c).lower() for c in caps}
         self.assertTrue(cap_set & {"chat", "completions"})
-
-    def test_tabby_has_vision_capability(self) -> None:
-        caps = self.backends["tabby"]["capabilities"]
-        cap_set = {str(c).lower() for c in caps}
-        self.assertIn("vision", cap_set)
 
     def test_kobold_does_not_have_vision_capability(self) -> None:
         caps = self.backends["kobold"]["capabilities"]
@@ -632,10 +619,9 @@ class TestSeedPinning(unittest.TestCase):
             result = proxy._build_llm_backend_hosts()
         self.assertNotIn("litellm", result)
 
-    def test_tabby_and_kobold_in_llm_backend_hosts(self) -> None:
+    def test_kobold_in_llm_backend_hosts(self) -> None:
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
             result = proxy._build_llm_backend_hosts()
-        self.assertIn("tabby", result)
         self.assertIn("kobold", result)
 
     def test_llm_backend_hosts_excludes_tts_stt_embeddings_comfyui(self) -> None:
@@ -644,13 +630,12 @@ class TestSeedPinning(unittest.TestCase):
         for excluded in ("tts", "stt", "embeddings", "comfyui"):
             self.assertNotIn(excluded, result, f"{excluded} should not be in LLM_BACKEND_HOSTS")
 
-    def test_today_vision_backends_is_tabby_only(self) -> None:
-        """For today's deployment, only tabby is vision-capable."""
+    def test_today_no_seeded_backend_is_statically_vision_capable(self) -> None:
+        """kobold gains vision at runtime through its loaded mmproj, not a static capability."""
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
             hosts = proxy._build_llm_backend_hosts()
             with patch.object(proxy, "LLM_BACKEND_HOSTS", hosts):
                 result = proxy.vision_capable_llm_backends()
-        self.assertIn("tabby", result)
         self.assertNotIn("kobold", result)
 
 

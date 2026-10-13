@@ -34,7 +34,7 @@ node = 103
 # patch.object(proxy.httpx, "AsyncClient", ...) fakes). FK-NEXT: 50 -> 47 (video workflow
 # execution, speech privacy over HTTP, prompt-memory image route).
 [ratchets]
-ad_hoc_upstream_fake_files = 47
+ad_hoc_upstream_fake_files = 46
 
 # Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3): occurrences in Playwright
 # code under web/e2e and *.e2e.* / *.playwright.* files under web/src. Set at

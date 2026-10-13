@@ -115,8 +115,7 @@ def test_render_default_status_nav_keeps_status_page_chrome() -> None:
     assert 'href="/status/" aria-current="page">Status</a>' in html
     assert 'href="/admin"' not in html
     assert 'href="/">Home</a>' in html
-    assert "ai.vivid.fish" in html
-    assert "openai.vivid.fish" not in html
+    assert "vivid.fish" not in html
     assert "Sign out" not in html
     assert html.endswith("</main></body></html>")
 
@@ -165,20 +164,20 @@ def test_quick_test_snippets_use_ai_azizam_host() -> None:
     snippets = [_text(node) for node in _Document(html).find("pre")]
     # Six snippets cover five endpoints: both video workflows must use this host.
     assert [re.findall(r"https://[^\s]+", snippet) for snippet in snippets] == [
-        ["https://ai.vivid.fish/openai/v1/chat/completions"],
-        ["https://ai.vivid.fish/openai/v1/images/generations"],
-        ["https://ai.vivid.fish/openai/v1/audio/speech"],
-        ["https://ai.vivid.fish/openai/v1/audio/transcriptions"],
-        ["https://ai.vivid.fish/openai/v1/videos"],
-        ["https://ai.vivid.fish/openai/v1/videos"],
+        ["https://gateway.example/openai/v1/chat/completions"],
+        ["https://gateway.example/openai/v1/images/generations"],
+        ["https://gateway.example/openai/v1/audio/speech"],
+        ["https://gateway.example/openai/v1/audio/transcriptions"],
+        ["https://gateway.example/openai/v1/videos"],
+        ["https://gateway.example/openai/v1/videos"],
     ]
-    assert "openai.vivid.fish" not in html
+    assert "vivid.fish" not in html
 
 
 def test_module_copy_does_not_say_root_serves_status() -> None:
     assert "/firehose" not in (firehose_render.__doc__ or "")
     assert "served at `/status/raw`" in (firehose_render.__doc__ or "")
-    assert "ai.vivid.fish status dashboard" in (firehose_render.__doc__ or "")
+    assert "gateway status dashboard" in (firehose_render.__doc__ or "")
 
 
 def test_live_video_jobs_renderer_has_no_prompt_column() -> None:

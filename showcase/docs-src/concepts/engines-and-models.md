@@ -17,7 +17,7 @@ For example, an owner could connect one engine for chat and another for pictures
 
 ## Settings, not code
 
-The owner can add, change, turn off and remove engine records. The gateway records each change in its activity history. Because engines are settings, you can replace an engine when a better one comes out, without changing the gateway.
+The owner can add, change, turn off and remove engine records. The gateway records each change in its activity history. You can change engine records without editing gateway code. A replacement still needs to support a protocol and capabilities that the gateway can use.
 
 ## Configured is not the same as running
 

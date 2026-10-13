@@ -73,7 +73,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         ))
         _patch(self, patch.object(proxy.status_endpoint, "_backend_grid", _test_backend_grid))
-        _patch(self, patch.object(proxy, "currently_loaded_kobold_model", return_value=None))
+        _patch(self, patch.object(proxy, "currently_loaded_model", return_value=None))
         admin_store.init_db(self.db)
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
@@ -2130,7 +2130,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         _patch(self, patch.object(
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         ))
-        _patch(self, patch.object(proxy, "currently_loaded_kobold_model", return_value=None))
+        _patch(self, patch.object(proxy, "currently_loaded_model", return_value=None))
         admin_store.init_db(self.db)
         # No service-account admin key here -> no owner/admin exists yet.
         self.client = TestClient(

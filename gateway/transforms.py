@@ -420,7 +420,7 @@ class ClampTransform(_Primitive):
 
     YAML::
 
-        tabby-penalty-clamp:
+        penalty-clamp:
           kind: clamp
           param: frequency_penalty
           min: 0.0
@@ -1114,26 +1114,6 @@ REGISTRY.register(
             "param": "presence_penalty",
             "min": -2.0,
             "max": 2.0,
-        },
-    ],
-)
-
-# ---- tabby-penalty-floor --------------------------------------------------
-# TabbyAPI (ExLlamaV2) enforces ge=0 on frequency/presence_penalty via Pydantic.
-# Clamp both to a floor of 0.0 so negative client values don't 422.
-# Source: ENGINE_TRANSFORMS_DESIGN.md §2.6 (tabby-penalty-clamp example).
-REGISTRY.register(
-    "tabby-penalty-floor",
-    [
-        {
-            "kind": "clamp",
-            "param": "frequency_penalty",
-            "min": 0.0,
-        },
-        {
-            "kind": "clamp",
-            "param": "presence_penalty",
-            "min": 0.0,
         },
     ],
 )

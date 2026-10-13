@@ -773,7 +773,7 @@ class TestRuntimePlane(unittest.TestCase):
     def test_provider_native_route_requires_policy(self) -> None:
         """Accessing a provider-native path without native_passthrough profile -> 403 or 404."""
         r = self.gw.get(
-            "/gateway/v1/providers/tabby/v1/models",
+            "/gateway/v1/providers/example-llm/v1/models",
             bearer=self._key(),
         )
         self.assertIn(
@@ -788,7 +788,7 @@ class TestRuntimePlane(unittest.TestCase):
         elif r.status == 404:
             record_gap(
                 "provider_native_not_found",
-                "GET /gateway/v1/providers/tabby/v1/models -> 404 (provider may not exist in this harness)",
+                "GET /gateway/v1/providers/example-llm/v1/models -> 404 (provider may not exist in this harness)",
                 {"status": r.status},
             )
 

@@ -60,10 +60,10 @@ Model: my-llama, or choose a configured model from GET /v1/models
 
 ```bash
 # Check status
-systemctl --user status tabbyapi azizam qwen3-tts parakeet-stt
+systemctl --user status azizam qwen3-tts parakeet-stt
 
 # Restart engines; restart the gateway with scripts/safe-restart
-systemctl --user restart tabbyapi qwen3-tts parakeet-stt
+systemctl --user restart qwen3-tts parakeet-stt
 scripts/safe-restart
 
 # View logs

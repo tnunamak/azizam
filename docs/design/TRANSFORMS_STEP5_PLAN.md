@@ -134,7 +134,6 @@ config (these attach to NEW backends or are opt-in).
 - `koboldcpp-null-strip` (drop-params: null-valued params Kobold chokes on).
 - `llamacpp-cache-prompt` (default-params: `cache_prompt` true).
 - `mistral-penalty-clamp` (clamp: frequency/presence_penalty to Mistral's range).
-- `tabby-penalty-floor` (clamp: penalties `ge=0`).
 Each with a unit test (applies correctly, no-op when `when:` unmet). Do NOT auto-attach to existing
 services — these are suggested-on-add (the UI wiring for suggestion is a separate later increment;
 this step just ships the named transforms + tests so they EXIST and are correct).

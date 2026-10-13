@@ -60,14 +60,14 @@
 </tr>
 <tr>
 <td><code>job</code></td>
-<td>Reads a job by <code>job_id</code>, waits for it, or cancels it with <code>cancel: true</code>.</td>
+<td>Reads a job by <code>job_id</code>, waits for it, or requests cancellation with <code>cancel: true</code>. Continue polling until its status is <code>succeeded</code>, <code>failed</code> or <code>canceled</code>.</td>
 </tr>
 </tbody>
 </table>
 </div>
 <p>Call <code>capabilities</code> before you build inputs. Do not assume that an example model exists.</p>
-<p>Results include signed URLs in <code>resource_link</code> blocks and asset records in <code>structuredContent</code>. For image and video inputs, use an asset ID, a signed asset URL from this gateway, or a data URI. The server does not fetch other URLs.</p>
-<p>Requests use the same access plan and media routes as other clients. A refusal comes back as a tool error. Check <code>isError</code> and <code>structuredContent</code>, not only the HTTP status.</p>
+<p>Successful media results include signed URLs in <code>resource_link</code> blocks and asset records in <code>structuredContent</code>. Capability results and unfinished jobs do not necessarily include assets. For image and video inputs, use an asset ID, a signed asset URL from this gateway, or a data URI. The server does not fetch other URLs.</p>
+<p>Check the HTTP status and any top-level JSON-RPC error first. For a tool result, check <code>isError</code> and <code>structuredContent.status</code>. A failed or canceled job can have status <code>failed</code> or <code>canceled</code> without <code>isError</code>. Read its <code>error</code> field. Tool execution uses the existing core routes with the caller's credentials.</p>
 <h2 id="claude-code">Claude Code <a class="anchor" href="#claude-code" aria-label="Link to Claude Code">#</a></h2>
 <p>With <code>AZIZAM_BASE_URL</code> and <code>AZIZAM_API_KEY</code> set:</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>gateway<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/mcp"</span><span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span><span class="se">\</span>
@@ -90,7 +90,7 @@
 </code></pre></div>
 <p><code>protocolVersion</code> can be <code>legacy</code>, <code>auto</code> or <code>2026-07-28</code>.</p>
 <h2 id="test-with-curl">Test with curl <a class="anchor" href="#test-with-curl" aria-label="Link to Test with curl">#</a></h2>
-<p>This request lists capabilities. It does not make anything.</p>
+<p>This request uses the server's legacy-compatible path to list capabilities. It does not start media generation.</p>
 <div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code>curl<span class="w"> </span>--fail-with-body<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"</span><span class="nv">$AZIZAM_BASE_URL</span><span class="s2">/mcp"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$AZIZAM_API_KEY</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
@@ -100,7 +100,7 @@
 <ul>
 <li>Protocol revisions: <code>2026-07-28</code>, and the earlier <code>2025-03-26</code>, <code>2025-06-18</code> and <code>2025-11-25</code>.</li>
 <li>The server is stateless. It issues no session IDs and has no SSE streams. <code>GET</code> and <code>DELETE</code> on <code>/mcp</code> return HTTP 405.</li>
-<li>With the newest revision, the version, method and tool name headers must match the request body. A compatible MCP client sets them.</li>
+<li>For revision <code>2026-07-28</code>, <code>MCP-Protocol-Version</code> must match <code>params._meta[&quot;io.modelcontextprotocol/protocolVersion&quot;]</code>, <code>Mcp-Method</code> must match <code>method</code>, and <code>Mcp-Name</code> must match <code>params.name</code> for <code>tools/call</code>. A compatible client supplies these fields.</li>
 <li>The server offers tools only. Resources, prompts, sampling, elicitation, tasks and subscriptions are not supported.</li>
 </ul>
 <p>MCP is not in the gateway's <a href="/openapi.json">OpenAPI document</a>. Use <code>capabilities</code> for each target's inputs.</p>

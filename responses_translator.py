@@ -1,6 +1,6 @@
 """Translation layer between OpenAI Responses API and Chat Completions API.
 
-The proxy's downstream backends (llama-server, TabbyAPI) speak Chat
+The proxy's downstream backends speak Chat
 Completions. We expose the newer Responses API by translating at the proxy
 boundary.
 

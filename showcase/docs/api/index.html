@@ -39,10 +39,10 @@
       <p class="eyebrow">Build with the API</p>
       <h1 id="api-overview">API overview</h1>
 <p>The gateway speaks several protocols at one address. Use the protocol your app or SDK already knows.</p>
-<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#set-up-your-environment">Set up your environment</a></li><li class="toc-l2"><a href="#choose-a-base-url">Choose a base URL</a></li><li class="toc-l2"><a href="#check-access-and-find-models">Check access and find models</a></li><li class="toc-l2"><a href="#handle-errors">Handle errors</a></li><li class="toc-l2"><a href="#protocols">Protocols</a></li></ul></nav></details><p>The full list of the gateway's own routes is in its <a href="/openapi.json">OpenAPI document</a>. Each gateway serves its own copy at <code>/openapi.json</code>. Some compatibility routes are not in it; their pages say so.</p>
+<details class="toc-inline"><summary>On this page</summary><nav aria-label="On this page (inline)"><ul><li class="toc-l2"><a href="#set-up-your-environment">Set up your environment</a></li><li class="toc-l2"><a href="#choose-a-base-url">Choose a base URL</a></li><li class="toc-l2"><a href="#check-access-and-find-models">Check access and find models</a></li><li class="toc-l2"><a href="#handle-errors">Handle errors</a></li><li class="toc-l2"><a href="#protocols">Protocols</a></li></ul></nav></details><p>Retrieve <code>openapi.json</code> from your own gateway at <code>$AZIZAM_BASE_URL/openapi.json</code>. It describes the routes included in that gateway's OpenAPI schema. Some compatibility routes are excluded; their pages say so.</p>
 <h2 id="set-up-your-environment">Set up your environment <a class="anchor" href="#set-up-your-environment" aria-label="Link to Set up your environment">#</a></h2>
-<p>The examples in this section read three environment variables:</p>
-<div class="codeblock"><div class="code-bar"><span class="code-lang">Shell</span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_BASE_URL</span><span class="o">=</span><span class="s1">'http://127.0.0.1:5000'</span>
+<p>Run the following setup in Bash. The shell examples require curl with <code>--fail-with-body</code> support; JSON-encoding examples also require Python 3. Run Bash first if your current shell is different.</p>
+<div class="codeblock"><div class="code-bar"><span class="code-lang"></span><button class="copy js-only" type="button">Copy</button></div><pre><code><span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_BASE_URL</span><span class="o">=</span><span class="s1">'http://127.0.0.1:5000'</span>
 <span class="nb">read</span><span class="w"> </span>-r<span class="w"> </span>-s<span class="w"> </span>-p<span class="w"> </span><span class="s1">'App key: '</span><span class="w"> </span>AZIZAM_API_KEY<span class="p">;</span><span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'\n'</span><span class="p">;</span><span class="w"> </span><span class="nb">export</span><span class="w"> </span>AZIZAM_API_KEY
 <span class="nb">export</span><span class="w"> </span><span class="nv">AZIZAM_MODEL</span><span class="o">=</span><span class="s1">'my-chat'</span>
 </code></pre></div>
@@ -92,7 +92,7 @@
 <p>The response lists the models your key can use. Model names depend on each gateway's settings.</p>
 <p>For the gateway's own discovery, use <code>/gateway/v1/capabilities</code>. If a model or protocol is missing, the app's <a href="/showcase/docs/concepts/access-plans/">access plan</a> may not allow it. Changing the plan does not need a new key.</p>
 <h2 id="handle-errors">Handle errors <a class="anchor" href="#handle-errors" aria-label="Link to Handle errors">#</a></h2>
-<p>Check both the HTTP status and the <code>code</code> in the body. <a href="/showcase/docs/reference/errors/">Error codes</a> lists the shapes and codes. Compatibility routes keep their protocol's error format.</p>
+<p>Check both the HTTP status and the appropriate protocol's error body. Do not assume every error has a field named <code>code</code>. <a href="/showcase/docs/reference/errors/">Error codes</a> lists the shapes and codes. Compatibility routes keep their protocol's error format.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Table">
 <table>
 <thead>
@@ -126,7 +126,7 @@
 </tbody>
 </table>
 </div>
-<p>Follow <code>Retry-After</code> when it is present. If you lose the response to a media request, retry with the same idempotency key and the same request. See <a href="/showcase/docs/api/media-jobs/#retry-safely">Media jobs</a>.</p>
+<p>Follow <code>Retry-After</code> when it is present. For a media-job submission, retry a lost response with the same idempotency key and unchanged request, subject to the replay rules in <a href="/showcase/docs/api/media-jobs/#retry-safely">Media jobs</a>. Do not assume that other media endpoints deduplicate retries.</p>
 <h2 id="protocols">Protocols <a class="anchor" href="#protocols" aria-label="Link to Protocols">#</a></h2>
 <ul>
 <li><a href="/showcase/docs/api/openai/">OpenAI-compatible API</a>: chat, Responses, embeddings, images, audio and video.</li>
